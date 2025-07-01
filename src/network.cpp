@@ -66,27 +66,32 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
 
         // Loop over each column in current row t_i
         for (int j = 0; j < lenght_network; ++j) {
-            // Check if the site above (t_i - 1, j) is active
-            if (net.get({t_i - 1, j}) == 1) {
-                // Generate a random number r ∈ [0, 1]
-                double r = rng.uniform_real(0.0, 1.0);
+            bool has_active_above = false;
 
-                // If r < p(t-1), activate the site in the current row
+            // Check if any of the three sites above (diagonal left, up, diagonal right) are active
+            if (j > 0 && net.get({t_i - 1, j - 1}) == 1) has_active_above = true;
+            if (net.get({t_i - 1, j}) == 1) has_active_above = true;
+            if (j < lenght_network - 1 && net.get({t_i - 1, j + 1}) == 1) has_active_above = true;
+
+            // If at least one site above is active, try to activate current site
+            if (has_active_above) {
+                double r = rng.uniform_real(0.0, 1.0);
                 if (r < p[t_i - 1]) {
                     net.set({t_i, j}, 1);
                     N_current++;
                 }
             }
         }
+
         // Compute p(t_i) using the SOP update rule
         double p_next = generate_p(type_N_t, p[t_i - 1], t_i, N_current, k, a, alpha);
+
         // Store p(t_i) directly at the corresponding position
         p[t_i] = p_next;
-        
-        if( t_i <= 20 ){
-            std::cout << "t = " << t_i << ", N_current = " << N_current << ", N_T = " << type_Nt_create(type_N_t, t_i, a, alpha) << ", p_next = " << p[t_i] << "\n";
-            }
-        };
+        if (t_i < 10) std::cout << "t = " << t_i << ", p(t) = " << p[t_i] << "\n";
+
+    }
+
     
     // Return the initialized network
     return net;

@@ -1,66 +1,45 @@
-#ifndef rand_utils_hpp
-#define rand_utils_hpp
+#ifndef RAND_UTILS_HPP
+#define RAND_UTILS_HPP
 
-#include "network.hpp"
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/normal_distribution.hpp>
 #include <boost/random/uniform_int_distribution.hpp>
 #include <boost/random/uniform_real_distribution.hpp>
-#include <ctime>
-#include <cmath>
 #include <random>
+#include <limits>
+#include <ctime>
 
-
-// Defining clip template for double variable
+// Template function to clip a value within a specified [min, max] range
 template<typename T>
 T clip(T value, T min_val, T max_val) {
-    if (value < min_val) {
-        return min_val;
-    } else if (value > max_val) {
-        return max_val;
-    } else {
-        return value;
-    }
+    if (value < min_val) return min_val;
+    else if (value > max_val) return max_val;
+    else return value;
 }
 
-#ifndef RAND_UTILS_HPP
-#define RAND_UTILS_HPP
-
-#include <boost/random.hpp>
-#include <random>
-#include <ctime>
-
+// Class that encapsulates random number generation functionality
 class all_random {
 private:
+    // Mersenne Twister generator from Boost
     boost::random::mt19937 gen;
 
 public:
-    // Construtor com seed fornecida
-    explicit all_random(int seed) {
-        if (seed > 0) {
-            gen.seed(seed);
-        } else {
-            // Seed aleatória com base no dispositivo
-            std::random_device rd;
-            boost::mt19937 Gen(rd());
-            boost::random::uniform_int_distribution<int> dist(1, 2147483647);
-            int now = dist(Gen);
-            gen.seed(now);
-        }
-    }
+    // Constructor using a fixed seed.
+    // If seed < 0, the generator will still be initialized, but it's expected
+    // that the caller uses generate_random_seed() to get a valid seed.
+    explicit all_random(int seed);
 
-    // Acesso controlado ao gerador (para uso no std::shuffle, por exemplo)
-    boost::random::mt19937& get_gen() { return gen; }
+    // Provides reference to the internal generator (useful for std::shuffle, etc.)
+    boost::random::mt19937& get_gen();
 
-    // Gera inteiro uniforme entre min e max (inclusive)
+    // Returns a uniformly distributed integer between [min, max]
     int uniform_int(int min, int max);
 
-    // Gera número real uniforme entre min e max
+    // Returns a uniformly distributed double between [min, max)
     double uniform_real(const double min, const double max);
+
+    // Static utility function that generates a random seed across the full range of int
+    static int generate_random_seed();
 };
 
-#endif
-
-
-
-#endif // rand_utils_hpp
+#endif // RAND_UTILS_HPP

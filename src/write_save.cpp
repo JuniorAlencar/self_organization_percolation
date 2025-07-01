@@ -71,6 +71,7 @@ void save_data::save_network_as_npz(const NetworkPattern& net, const std::string
 void save_data::save_p_values_as_npy(const std::vector<double>& p_values, const std::string& filename) {
     std::vector<size_t> shape = {p_values.size()};
     cnpy::npy_save(filename, &p_values[0], shape);
+    std::cout << "Saving to file: " << filename << std::endl;
 }
 
 
