@@ -50,7 +50,7 @@ int main(int argc, char* argv[]){
     // Creating the network and vector p(t)
     network net_generator(N_samples);  // 👈 must pass num_samples to constructor
     
-    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha);
+    NetworkPattern net = net_generator.create_network_bond(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha);
         
     vector<double> p_values = net_generator.get_p();
 

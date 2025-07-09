@@ -96,3 +96,83 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
     // Return the initialized network
     return net;
 }
+
+#include <vector>
+#include <queue>
+#include <unordered_set>
+#include <numeric>
+#include <algorithm>
+#include <iostream>
+
+NetworkPattern network::create_network_bond(const int dim, const int lenght_network, const int num_of_samples,
+                                            const double k, const double N_t, const int seed, const int type_N_t,
+                                            const double p0, const double P0, const double a, const double alpha) {
+
+    this->N_t = N_t;
+    NetworkPattern net(dim, {num_of_samples, lenght_network});
+    all_random rng(seed);
+
+    // Inicializa p[0]
+    p.clear();
+    p.resize(num_of_samples);
+    p[0] = p0;
+
+    // Inicializa sementes na linha inferior
+    int active_count = static_cast<int>(P0 * lenght_network);
+    std::vector<int> indices(lenght_network);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::shuffle(indices.begin(), indices.end(), rng.get_gen());
+
+    std::queue<std::vector<int>> fronteira;
+    std::unordered_set<long long> visitados;
+
+    auto to_hash = [=](int x, int y) {
+        return static_cast<long long>(x) * lenght_network + y;
+    };
+
+    for (int i = 0; i < active_count; ++i) {
+        int col = indices[i];
+        std::vector<int> pos = {0, col};
+        net.set(pos, 1);
+        fronteira.push(pos);
+        visitados.insert(to_hash(0, col));
+    }
+
+    int t = 0;
+    while (!fronteira.empty() && t < num_of_samples - 1) {
+        int N_current = 0;
+        int n_fronteira = fronteira.size();
+
+        for (int i = 0; i < n_fronteira; ++i) {
+            std::vector<int> site = fronteira.front(); fronteira.pop();
+            int x = site[0], y = site[1];
+
+            std::vector<std::vector<int>> vizinhos = {
+                {x + 1, y}, {x + 1, y - 1}, {x + 1, y + 1}
+            };
+
+            for (auto& v : vizinhos) {
+                int vx = v[0], vy = v[1];
+                if (vx < 0 || vx >= num_of_samples || vy < 0 || vy >= lenght_network) continue;
+                if (visitados.count(to_hash(vx, vy))) continue; // Já testado
+
+                // Tentativa de ativar a ligação (bond) entre site -> v
+                double r = rng.uniform_real(0.0, 1.0);
+                if (r < p[t]) {
+                    net.set(v, 1);  // Ativa o sítio vizinho se ligação for aceita
+                    fronteira.push(v);
+                    N_current++;
+                }
+                visitados.insert(to_hash(vx, vy));
+            }
+        }
+
+        t++;
+        double p_next = generate_p(type_N_t, p[t - 1], t, N_current, k, a, alpha);
+        p[t] = p_next;
+
+        if (t < 10) std::cout << "[bond] t = " << t << ", p(t) = " << p[t] << "\n";
+    }
+
+    return net;
+}

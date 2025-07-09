@@ -104,6 +104,9 @@ class network{
         double type_Nt_create(const int type_N_t, const int t_i, const double a, const double alpha);
         NetworkPattern create_network(const int dim, const int lenght_network, const int num_of_samples, const double k, const double N_t, 
                                 const int seed, const int type_N_t, const double p0, const double P0, const double a, const double alpha);
+        NetworkPattern create_network_bond(const int dim, const int lenght_network, const int num_of_samples,
+                                            const double k, const double N_t, const int seed, const int type_N_t,
+                                            const double p0, const double P0, const double a, const double alpha);
 };
 
 
