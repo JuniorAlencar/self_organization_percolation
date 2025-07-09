@@ -57,5 +57,16 @@ where
 
 Running this way will generate a folder structure
 
-<pre> ```bash SELF_ORGANIZATION_PERCOLATION/ ├── .vscode/ ├── build/ ├── Data/ # simulation results ├── docs/ ├── jupyter/ ├── src/ ├── .gitignore ├── CMakeLists.txt └── README.md ``` </pre>
+```bash
+SELF_ORGANIZATION_PERCOLATION/
+├── .vscode/
+├── build/
+├── Data/              # simulation results
+├── docs/
+├── jupyter/
+├── src/
+├── .gitignore
+├── CMakeLists.txt
+└── README.md
+```
 
