@@ -55,7 +55,7 @@ where
 <b> p0 </b>: Initial growth probability;  
 <b> seed </b>: Seed to implemetantion (If it is <b> -1 </b> it generates a random integer seed).
 
-Running this way will generate a folder structure
+## Running this way will generate a folder structure
 
 ```bash
 SELF_ORGANIZATION_PERCOLATION/
@@ -68,4 +68,6 @@ SELF_ORGANIZATION_PERCOLATION/
 ├── CMakeLists.txt
 └── README.md
 ```
+
+
 

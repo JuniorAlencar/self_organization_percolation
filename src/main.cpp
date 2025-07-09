@@ -10,6 +10,7 @@ int main(int argc, char* argv[]){
     int N_samples = stoi(argv[2]);
     double p0 = stod(argv[3]);
     int seed = stoi(argv[4]);
+    string type_percolation = argv[5];
     double k = 1e-5;
     double N_t = 200;
     int type_N_t = 0;
@@ -19,8 +20,9 @@ int main(int argc, char* argv[]){
     //int seed = 1;
     //double p0 = 1.0;
     double P0 = 0.1;
+    //string type_percolation = "site";
     
-    if (argc != 5) {
+    if (argc != 6) {
         cout << "Usage: " << argv[0] << "<L> <N_samples> <seed>" << endl;
         return 1;
     }
@@ -43,6 +45,7 @@ int main(int argc, char* argv[]){
         N_samples,
         a,
         alpha,
+        type_percolation,
         p0,
         P0
     );
@@ -50,7 +53,7 @@ int main(int argc, char* argv[]){
     // Creating the network and vector p(t)
     network net_generator(N_samples);  // 👈 must pass num_samples to constructor
     
-    NetworkPattern net = net_generator.create_network_bond(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha);
+    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation);
         
     vector<double> p_values = net_generator.get_p();
 
