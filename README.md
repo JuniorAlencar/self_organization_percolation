@@ -7,33 +7,49 @@ required libraries
 * zlib.h
 * boost.h
 
-To install *cnpy.h*
-<pre> 
+# To install *cnpy.h*
+
+```bash
 git clone https://github.com/rogersce/cnpy.git
-</pre>
-2 - cd cnpy
 
-3 - mkdir build
+cd cnpy
 
-4 - cd build
+mkdir build
 
-5 - cmake ..
+cd build
 
-6 - make
+cmake ..
 
-7 - sudo make install
+make
 
-To install *zip.h* 
-(linux ubuntu)
-1 - sudo apt install libzip-dev
+sudo make install
+```
 
-To install *zlib*
-(linux ubuntu)
-1 - sudo apt install zlib1g-dev
+# To install *cnpy.h* (linux ubuntu)
+```bash
+sudo apt install libzip-dev
+```
 
-To install *boost*
-(linux ubuntu)
-1 - sudo apt install libboost-all-dev
+# To install *zlib* (linux ubuntu)
+```bash
+sudo apt install zlib1g-dev
+```
+
+# To install *boost* (linux ubuntu)
+```bash
+sudo apt install libboost-all-dev
+```
 
 # After all libraries installed
+
+```bash
+mkdir build
+
+cd build
+
+cmake ..
+
+make
+```
+
 
