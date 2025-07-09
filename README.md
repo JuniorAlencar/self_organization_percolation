@@ -11,17 +11,11 @@ required libraries
 
 ```bash
 git clone https://github.com/rogersce/cnpy.git
-
 cd cnpy
-
 mkdir build
-
 cd build
-
 cmake ..
-
 make
-
 sudo make install
 ```
 
@@ -40,16 +34,28 @@ sudo apt install zlib1g-dev
 sudo apt install libboost-all-dev
 ```
 
-# After all libraries installed
+# How to run the program
+After all libraries are installed, create the build folder, access it and do
 
 ```bash
 mkdir build
-
 cd build
-
 cmake ..
-
 make
 ```
 
+This will generate the <b>SOP</b> executable. Run the code outside the build folder
+
+```bash
+./build/SOP <L> <N_samples> <p0> <seed>
+```
+where  
+<b> L </b>: Side of network;  
+<b> N_samples </b>: Number of implementations;  
+<b> p0 </b>: Initial growth probability;  
+<b> seed </b>: Seed to implemetantion (If it is <b> -1 </b> it generates a random integer seed).
+
+Running this way will generate a folder structure
+
+<pre> ```bash project/ ├── Data/ # simulation results │  ├── src/ │ ├── build/ ├── CMakeLists.txt ├── jupyter └── README.md ``` </pre>
 

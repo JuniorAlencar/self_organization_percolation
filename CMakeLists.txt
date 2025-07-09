@@ -13,21 +13,21 @@ if(SOURCES STREQUAL "")
     message(FATAL_ERROR "Nenhum arquivo .cpp encontrado em ${SRC_DIR}")
 endif()
 
-add_executable(my_program ${SOURCES} ${HEADERS})
+add_executable(SOP ${SOURCES} ${HEADERS})
 
-target_include_directories(my_program PRIVATE
+target_include_directories(SOP PRIVATE
     ${SRC_DIR}
     /usr/local/include
 )
 
 # <-- Aqui está a linha que resolve seu problema:
-set_target_properties(my_program PROPERTIES
+set_target_properties(SOP PROPERTIES
     BUILD_RPATH /usr/local/lib
 )
 
 link_directories(/usr/local/lib)
 
-target_link_libraries(my_program
+target_link_libraries(SOP
     cnpy
     zip
 )
