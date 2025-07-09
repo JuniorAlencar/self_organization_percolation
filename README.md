@@ -59,7 +59,6 @@ Running this way will generate a folder structure
 
 ```bash
 SELF_ORGANIZATION_PERCOLATION/
-├── .vscode/
 ├── build/
 ├── Data/              # simulation results
 ├── docs/
