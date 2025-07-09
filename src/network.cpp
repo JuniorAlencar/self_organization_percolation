@@ -23,6 +23,14 @@ const std::vector<double>& network::get_p() const {
     }
 
 
+#include <vector>
+#include <queue>
+#include <unordered_set>
+#include <unordered_map>
+#include <numeric>
+#include <algorithm>
+#include <iostream>
+
 NetworkPattern network::create_network(const int dim, const int lenght_network, const int num_of_samples,
                                        const double k, const double N_t, const int seed, const int type_N_t,
                                        const double p0, const double P0, const double a, const double alpha,
@@ -58,15 +66,22 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
     for (int t = 1; t < num_of_samples; ++t) {
         int N_current = 0;
         std::queue<std::pair<int, int>> nova_fronteira;
-        std::unordered_set<long long> ativados_nesta_etapa;
 
         while (!fronteira.empty()) {
             auto [x, y] = fronteira.front(); fronteira.pop();
 
-            // Vizinho "à frente" (linha abaixo)
-            std::vector<std::pair<int, int>> candidatos = {
-                {x + 1, y}, {x, y - 1}, {x, y + 1}
-            };
+            std::vector<std::pair<int, int>> candidatos;
+
+            if (type_percolation == "bond") {
+                // vertical
+                candidatos.push_back({x + 1, y});
+                // lateral
+                candidatos.push_back({x, y - 1});
+                candidatos.push_back({x, y + 1});
+            } else {
+                // site percolation - apenas posição abaixo
+                candidatos.push_back({x + 1, y});
+            }
 
             for (auto& [nx, ny] : candidatos) {
                 if (nx < 0 || nx >= num_of_samples || ny < 0 || ny >= lenght_network) continue;
@@ -77,7 +92,6 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
                 if (r < p[t - 1]) {
                     net.set({nx, ny}, 1);
                     nova_fronteira.push({nx, ny});
-                    ativados_nesta_etapa.insert(h);
                     N_current++;
                 }
                 visitados.insert(h);
@@ -96,6 +110,7 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
 
     return net;
 }
+
 
 
 

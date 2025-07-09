@@ -19,11 +19,6 @@ make
 sudo make install
 ```
 
-# To install *cnpy.h* (linux ubuntu)
-```bash
-sudo apt install libzip-dev
-```
-
 # To install *zlib* (linux ubuntu)
 ```bash
 sudo apt install zlib1g-dev
