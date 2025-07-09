@@ -51,11 +51,11 @@ This will generate the <b>SOP</b> executable. Run the code outside the build fol
 ```
 where  
 <b> L </b>: Side of network;  
-<b> N_samples </b>: Number of implementations;  
+<b> N_samples </b>: Number of implementations (time);  
 <b> p0 </b>: Initial growth probability;  
 <b> seed </b>: Seed to implemetantion (If it is <b> -1 </b> it generates a random integer seed).
 
 Running this way will generate a folder structure
 
-<pre> ```bash project/ ├── Data/ # simulation results │  ├── src/ │ ├── build/ ├── CMakeLists.txt ├── jupyter └── README.md ``` </pre>
+<pre> ```bash SELF_ORGANIZATION_PERCOLATION/ ├── .vscode/ ├── build/ ├── Data/ # simulation results ├── docs/ ├── jupyter/ ├── src/ ├── .gitignore ├── CMakeLists.txt └── README.md ``` </pre>
 
