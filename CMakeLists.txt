@@ -18,10 +18,10 @@ if(SOURCES STREQUAL "")
 endif()
 
 # Adicionar o executável
-add_executable(my_program ${SOURCES} ${HEADERS})
+add_executable(SOP ${SOURCES} ${HEADERS})
 
 # Incluir diretórios
-target_include_directories(my_program PRIVATE
+target_include_directories(SOP PRIVATE
     ${SRC_DIR}
     /usr/local/include
 )
@@ -29,7 +29,7 @@ target_include_directories(my_program PRIVATE
 # Linkar bibliotecas necessárias
 link_directories(/usr/local/lib)
 
-target_link_libraries(my_program
+target_link_libraries(SOP
     cnpy
     zip
 )

@@ -15,8 +15,14 @@ class save_data {
 
     public:
         // Save a binary matrix (NetworkPattern) into a compressed .npz file
-        void save_network_as_npz(const NetworkPattern& net, const std::string& filename) const;
-        void save_p_values_as_npy(const std::vector<double>& p_values, const std::string& filename);
+        void save_network_as_npz(const NetworkPattern& net, 
+                                const std::string& filename) const;
+        void save_p_values_as_npy(  const std::vector<int>& t_values, 
+                                    const std::vector<double>& p_values, 
+                                    const std::string& filename);
+        void save_Nt_values_as_npy( const std::vector<int>& t_values, 
+                                    const std::vector<int>& Nt_values, 
+                                    const std::string& filename);
 };
 
 #endif // write_save_hpp

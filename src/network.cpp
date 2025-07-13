@@ -20,79 +20,121 @@ double network::generate_p(const int type_N_t, const double p_t, const int t_i, 
 
 const std::vector<double>& network::get_p() const {
         return p;
-    }
+}
 
-NetworkPattern network::create_network(const int dim, const int lenght_network, const int num_of_samples, const double k, const double N_t, 
-                                const int seed, const int type_N_t, const double p0, const double P0, const double a, const double alpha){
+const std::vector<int>& network::get_N_t() const {
+    return N_t_list;
+}
 
-    
+const std::vector<int>& network::get_t() const {
+    return t_list;
+}
+
+NetworkPattern network::create_network(const int dim, const int lenght_network, const int num_of_samples,
+                                       const double k, const double N_t, const int seed, const int type_N_t,
+                                       const double p0, const double P0, const double a, const double alpha,
+                                       const std::string& type_percolation) {
     this->N_t = N_t;
-    // Create empty network (all values of 0) => num_of_samples:height, lenght_network:width
     NetworkPattern net(dim, {num_of_samples, lenght_network});
+    all_random rng(seed);
 
-    // We use P0 to determine the fraction of sites that will be activated at the start of the simulation.
-
-    // First activate ========================================
-
-    // First activation (t = 0) ========================================
-
-    // Pre-allocate p vector with size = num_of_samples
+    // Inicialização de p(t)
+    p.clear();
     p.resize(num_of_samples);
-
-    // Set initial value p(0)
     p[0] = p0;
 
-    // Determine how many active sites to initialize in the bottom row
-    int active_count = static_cast<int>(P0 * lenght_network);
+    // Limpa os vetores associados aos membros da classe
+    t_list.clear();
+    N_t_list.clear();
 
-    // Generate a vector with column indices: [0, 1, ..., lenght_network - 1]
-    std::vector<int> indices(lenght_network);
-    std::iota(indices.begin(), indices.end(), 0);
-    
-    all_random rng(seed);
-    
-    // Shuffle the indices randomly using the RNG
-    std::shuffle(indices.begin(), indices.end(), rng.get_gen());
+    auto to_hash = [=](int x, int y) {
+        return static_cast<long long>(x) * lenght_network + y;
+    };
 
-    // Activate the first 'active_count' shuffled positions in the bottom row (row index 0)
-    for (int i = 0; i < active_count; ++i) {
-        int col = indices[i];
-        net.set({0, col}, 1);  // Set site (0, col) as active
+    std::unordered_set<long long> visitados;
+
+    // Inicializa a matriz com 0 (não checado)
+    for (int i = 0; i < num_of_samples; ++i) {
+        for (int j = 0; j < lenght_network; ++j) {
+            net.set({i, j}, 0);
+        }
     }
 
-    // Subsequent activations following p(t+1) ========================
-    for (int t_i = 1; t_i < num_of_samples; ++t_i) {
+    // Inicializa sementes
+    int active_count = static_cast<int>(P0 * lenght_network);
+    std::vector<int> indices(lenght_network);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::shuffle(indices.begin(), indices.end(), rng.get_gen());
+
+    std::queue<std::pair<int, int>> fronteira;
+    for (int i = 0; i < active_count; ++i) {
+        int col = indices[i];
+        net.set({0, col}, 1);
+        fronteira.push({0, col});
+        visitados.insert(to_hash(0, col));
+    }
+
+    // ✅ Adiciona t = 0 e os valores correspondentes
+    t_list.push_back(0);
+    N_t_list.push_back(active_count);
+
+    for (int t = 1; t < num_of_samples; ++t) {
         int N_current = 0;
+        std::queue<std::pair<int, int>> nova_fronteira;
 
-        // Loop over each column in current row t_i
-        for (int j = 0; j < lenght_network; ++j) {
-            bool has_active_above = false;
+        while (!fronteira.empty()) {
+            auto [x, y] = fronteira.front(); fronteira.pop();
 
-            // Check if any of the three sites above (diagonal left, up, diagonal right) are active
-            if (j > 0 && net.get({t_i - 1, j - 1}) == 1) has_active_above = true;
-            if (net.get({t_i - 1, j}) == 1) has_active_above = true;
-            if (j < lenght_network - 1 && net.get({t_i - 1, j + 1}) == 1) has_active_above = true;
+            std::vector<std::pair<int, int>> candidatos = {
+                {x + 1, y}, {x - 1, y}, {x, y - 1}, {x, y + 1}
+            };
 
-            // If at least one site above is active, try to activate current site
-            if (has_active_above) {
+            for (auto& [nx, ny] : candidatos) {
+                if (nx < 0 || nx >= num_of_samples || ny < 0 || ny >= lenght_network) continue;
+                long long h = to_hash(nx, ny);
+                if (visitados.count(h)) continue;
+
                 double r = rng.uniform_real(0.0, 1.0);
-                if (r < p[t_i - 1]) {
-                    net.set({t_i, j}, 1);
-                    N_current++;
+
+                if (type_percolation == "node") {
+                    if (r < p[t - 1]) {
+                        net.set({nx, ny}, 1);
+                        nova_fronteira.push({nx, ny});
+                        N_current++;
+                    } else {
+                        net.set({nx, ny}, -1);
+                    }
+                    visitados.insert(h);
+                } else if (type_percolation == "bond") {
+                    // só tenta ativar se ainda não foi ativado
+                    if (net.get({nx, ny}) == 0) {
+                        if (r < p[t - 1]) {
+                            net.set({nx, ny}, 1);             // ativa o sítio
+                            nova_fronteira.push({nx, ny});    // novo sítio ativo para próxima iteração
+                            N_current++;
+                            visitados.insert(h);              // marca como visitado APENAS SE ATIVADO
+                        }
+                        // do contrário: não faz nada; o sítio ainda pode ser acessado por outro caminho
+                    }
                 }
             }
         }
 
-        // Compute p(t_i) using the SOP update rule
-        double p_next = generate_p(type_N_t, p[t_i - 1], t_i, N_current, k, a, alpha);
+        fronteira = nova_fronteira;
+        double p_next = generate_p(type_N_t, p[t - 1], t, N_current, k, a, alpha);
+        p[t] = p_next;
 
-        // Store p(t_i) directly at the corresponding position
-        p[t_i] = p_next;
-        if (t_i < 10) std::cout << "t = " << t_i << ", p(t) = " << p[t_i] << "\n";
+        t_list.push_back(t);
+        N_t_list.push_back(N_current);
 
+        if (t < 10 || t % 100 == 0)
+            std::cout << "[" << type_percolation << "] t = " << t << ", p(t) = " << p[t] << ", N(t) = " << N_current << "\n";
+
+        if (fronteira.empty()) break;
     }
 
-    
-    // Return the initialized network
     return net;
 }
+
+
+

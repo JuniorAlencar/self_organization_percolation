@@ -41,7 +41,6 @@ static std::vector<unsigned char> generate_npy_data(const NetworkPattern& net) {
     return result;
 }
 
-
 void save_data::save_network_as_npz(const NetworkPattern& net, const std::string& filename) const {
     int errorp;
     zip_t* archive = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errorp);
@@ -67,10 +66,47 @@ void save_data::save_network_as_npz(const NetworkPattern& net, const std::string
     std::cout << "Saving to file: " << filename << std::endl;
 }
 
+void save_data::save_p_values_as_npy(const std::vector<int>& t_values,
+                                     const std::vector<double>& p_values,
+                                     const std::string& filename) {
+    if (t_values.size() != p_values.size()) {
+        std::cerr << "Erro: t_values e p_values têm tamanhos diferentes!\n";
+        return;
+    }
 
-void save_data::save_p_values_as_npy(const std::vector<double>& p_values, const std::string& filename) {
-    std::vector<size_t> shape = {p_values.size()};
-    cnpy::npy_save(filename, &p_values[0], shape);
+    size_t N = t_values.size();
+    std::vector<double> combined(2 * N);
+
+    for (size_t i = 0; i < N; ++i) {
+        combined[2 * i]     = static_cast<double>(t_values[i]); // coluna 0: t
+        combined[2 * i + 1] = p_values[i];                      // coluna 1: p_t
+    }
+
+    std::vector<size_t> shape = {N, 2}; // matriz N x 2: [t, p_t]
+    cnpy::npy_save(filename, &combined[0], shape);
+
+    std::cout << "Saving to file: " << filename << std::endl;
+}
+
+void save_data::save_Nt_values_as_npy(const std::vector<int>& t_values,
+                                      const std::vector<int>& Nt_values,
+                                      const std::string& filename) {
+    if (t_values.size() != Nt_values.size()) {
+        std::cerr << "Erro: t_values e Nt_values têm tamanhos diferentes!\n";
+        return;
+    }
+
+    size_t N = t_values.size();
+    std::vector<int> combined(2 * N);
+
+    for (size_t i = 0; i < N; ++i) {
+        combined[2 * i]     = t_values[i];     // coluna 0: t
+        combined[2 * i + 1] = Nt_values[i];    // coluna 1: N_t
+    }
+
+    std::vector<size_t> shape = {N, 2}; // matriz N x 2: [t, N_t]
+    cnpy::npy_save(filename, &combined[0], shape);
+
     std::cout << "Saving to file: " << filename << std::endl;
 }
 

@@ -1,2 +1,4 @@
 /Data
 /build
+/results_paper_SOP
+*.pyc
