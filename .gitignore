@@ -1,4 +1,8 @@
 /Data
 /build
+<<<<<<< HEAD
 /results_paper_SOP
 *.pyc
+=======
+.vscode/
+>>>>>>> 3199f00405dc30fc9383e3db35d3339145d2578c
