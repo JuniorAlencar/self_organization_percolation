@@ -13,15 +13,10 @@ if(SOURCES STREQUAL "")
     message(FATAL_ERROR "Nenhum arquivo .cpp encontrado em ${SRC_DIR}")
 endif()
 
-<<<<<<< HEAD
 # Adicionar o executável
 add_executable(SOP ${SOURCES} ${HEADERS})
 
 # Incluir diretórios
-=======
-add_executable(SOP ${SOURCES} ${HEADERS})
-
->>>>>>> 3199f00405dc30fc9383e3db35d3339145d2578c
 target_include_directories(SOP PRIVATE
     ${SRC_DIR}
     /usr/local/include

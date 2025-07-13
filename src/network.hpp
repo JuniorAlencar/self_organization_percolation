@@ -20,7 +20,6 @@ using namespace std;
 
 class network{
     private:
-<<<<<<< HEAD
         int lenght_network;     // Length of Network - L
         int num_of_samples;     // Number of samples - t
         double k;               // Kinetic Coefficient
@@ -37,21 +36,6 @@ class network{
         std::vector<int> N_t_list;
         std::vector<int> t_list;
     
-=======
-        int lenght_network;         // Length of Network - L
-        double P0;                  // Initial number of sites actives
-        int num_of_samples;         // Number of samples - t
-        double k;                   // Kinetic Coefficient
-        double N_t = 0;             // Threshold parameters
-        int type_N_t;               // type_N_t = 0 => N_t = const || type_N_t = 1 => N_t = at^\alpha
-        double a;                   // Used to N_t if type = 1(at^\alpha)
-        double alpha;               // Used to N_t if type = 1(at^\alpha)
-        int dim;                    // Dimension of network
-        int seed;                   // Used for random processes
-        double p0;                  // p(t=0) Initial probability of occupation of candidate sites for growth.
-        string type_percolation;    // bond or node
-        std::vector<double> p;      // Allocate p-values
->>>>>>> 3199f00405dc30fc9383e3db35d3339145d2578c
     public:
         const std::vector<double>& get_p() const;
         const std::vector<int>& get_N_t() const;
