@@ -106,15 +106,14 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
                     }
                     visitados.insert(h);
                 } else if (type_percolation == "bond") {
-                    // só tenta ativar se ainda não foi ativado
                     if (net.get({nx, ny}) == 0) {
                         if (r < p[t - 1]) {
-                            net.set({nx, ny}, 1);             // ativa o sítio
-                            nova_fronteira.push({nx, ny});    // novo sítio ativo para próxima iteração
+                            net.set({nx, ny}, 1);
+                            nova_fronteira.push({nx, ny});
                             N_current++;
-                            visitados.insert(h);              // marca como visitado APENAS SE ATIVADO
+                            visitados.insert(h);
                         }
-                        // do contrário: não faz nada; o sítio ainda pode ser acessado por outro caminho
+                        // do contrário: não marca como -1 ainda — pode ser acessado por outro caminho
                     }
                 }
             }
@@ -133,8 +132,21 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
         if (fronteira.empty()) break;
     }
 
+    // ✅ Pós-processamento: marca sítios não alcançados como -1 no caso bond
+    if (type_percolation == "bond") {
+        for (int i = 0; i < num_of_samples; ++i) {
+            for (int j = 0; j < lenght_network; ++j) {
+                std::vector<int> coords = {i, j};
+                if (net.get(coords) == 0) {
+                    net.set(coords, -1);
+                }
+            }
+        }
+    }
+
     return net;
 }
+
 
 
 
