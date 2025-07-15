@@ -8,11 +8,11 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <omp.h>      // OpenMP
 #include <zip.h> // Requires libzip-dev installed
 #include <cnpy.h>  // Make sure cnpy is installed and included
 
 class save_data {
-
     public:
         // Save a binary matrix (NetworkPattern) into a compressed .npz file
         void save_network_as_npz(const NetworkPattern& net, 

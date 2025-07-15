@@ -30,122 +30,270 @@ const std::vector<int>& network::get_t() const {
     return t_list;
 }
 
+// NetworkPattern network::create_network(const int dim, const int lenght_network, const int num_of_samples,
+//                                        const double k, const double N_t, const int seed, const int type_N_t,
+//                                        const double p0, const double P0, const double a, const double alpha,
+//                                        const std::string& type_percolation) {
+//     this->N_t = N_t;
+//     NetworkPattern net(dim, {num_of_samples, lenght_network});
+//     all_random rng(seed);
+
+//     // Inicialização de p(t)
+//     p.clear();
+//     p.resize(num_of_samples);
+//     p[0] = p0;
+
+//     // Limpa os vetores associados aos membros da classe
+//     t_list.clear();
+//     N_t_list.clear();
+
+//     auto to_hash = [=](int x, int y) {
+//         return static_cast<long long>(x) * lenght_network + y;
+//     };
+
+//     std::unordered_set<long long> visitados;
+
+//     // Inicializa a matriz com 0 (não checado)
+//     for (int i = 0; i < num_of_samples; ++i) {
+//         for (int j = 0; j < lenght_network; ++j) {
+//             net.set({i, j}, 0);
+//         }
+//     }
+
+//     // Inicializa sementes
+//     int active_count = static_cast<int>(P0 * lenght_network);
+//     std::vector<int> indices(lenght_network);
+//     std::iota(indices.begin(), indices.end(), 0);
+//     std::shuffle(indices.begin(), indices.end(), rng.get_gen());
+
+//     std::queue<std::pair<int, int>> fronteira;
+//     for (int i = 0; i < active_count; ++i) {
+//         int col = indices[i];
+//         net.set({0, col}, 1);
+//         fronteira.push({0, col});
+//         visitados.insert(to_hash(0, col));
+//     }
+
+//     // ✅ Adiciona t = 0 e os valores correspondentes
+//     t_list.push_back(0);
+//     N_t_list.push_back(active_count);
+
+//     for (int t = 1; t < num_of_samples; ++t) {
+//         int N_current = 0;
+//         std::queue<std::pair<int, int>> nova_fronteira;
+
+//         while (!fronteira.empty()) {
+//             auto [x, y] = fronteira.front(); fronteira.pop();
+
+//             std::vector<std::pair<int, int>> candidatos = {
+//                 {x + 1, y}, {x - 1, y}, {x, y - 1}, {x, y + 1}
+//             };
+
+//             for (auto& [nx, ny] : candidatos) {
+//                 if (nx < 0 || nx >= num_of_samples || ny < 0 || ny >= lenght_network) continue;
+//                 long long h = to_hash(nx, ny);
+//                 if (visitados.count(h)) continue;
+
+//                 double r = rng.uniform_real(0.0, 1.0);
+
+//                 if (type_percolation == "node") {
+//                     if (r < p[t - 1]) {
+//                         net.set({nx, ny}, 1);
+//                         nova_fronteira.push({nx, ny});
+//                         N_current++;
+//                     } else {
+//                         net.set({nx, ny}, -1);
+//                     }
+//                     visitados.insert(h);
+//                 } else if (type_percolation == "bond") {
+//                     if (net.get({nx, ny}) == 0) {
+//                         if (r < p[t - 1]) {
+//                             net.set({nx, ny}, 1);
+//                             nova_fronteira.push({nx, ny});
+//                             N_current++;
+//                             visitados.insert(h);
+//                         }
+//                         // do contrário: não marca como -1 ainda — pode ser acessado por outro caminho
+//                     }
+//                 }
+//             }
+//         }
+
+//         fronteira = nova_fronteira;
+//         double p_next = generate_p(type_N_t, p[t - 1], t, N_current, k, a, alpha);
+//         p[t] = p_next;
+
+//         t_list.push_back(t);
+//         N_t_list.push_back(N_current);
+
+//         if (t < 10 || t % 100 == 0)
+//             std::cout << "[" << type_percolation << "] t = " << t << ", p(t) = " << p[t] << ", N(t) = " << N_current << "\n";
+
+//         if (fronteira.empty()) break;
+//     }
+
+//     // ✅ Pós-processamento: marca sítios não alcançados como -1 no caso bond
+//     if (type_percolation == "bond") {
+//         for (int i = 0; i < num_of_samples; ++i) {
+//             for (int j = 0; j < lenght_network; ++j) {
+//                 std::vector<int> coords = {i, j};
+//                 if (net.get(coords) == 0) {
+//                     net.set(coords, -1);
+//                 }
+//             }
+//         }
+//     }
+
+//     return net;
+// }
+
 NetworkPattern network::create_network(const int dim, const int lenght_network, const int num_of_samples,
                                        const double k, const double N_t, const int seed, const int type_N_t,
                                        const double p0, const double P0, const double a, const double alpha,
                                        const std::string& type_percolation) {
     this->N_t = N_t;
-    NetworkPattern net(dim, {num_of_samples, lenght_network});
+
+    std::vector<int> shape;
+    if (dim == 2)
+        shape = {num_of_samples, lenght_network};
+    else if (dim == 3)
+        shape = {num_of_samples, lenght_network, lenght_network};
+    else
+        throw std::invalid_argument("Only dim=2 or dim=3 are supported.");
+
+    const size_t total_sites = std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
+    NetworkPattern net(dim, shape);
     all_random rng(seed);
 
-    // Inicialização de p(t)
+    // Initial probability
     p.clear();
-    p.resize(num_of_samples);
-    p[0] = p0;
+    p.push_back(p0);
 
-    // Limpa os vetores associados aos membros da classe
     t_list.clear();
     N_t_list.clear();
 
-    auto to_hash = [=](int x, int y) {
-        return static_cast<long long>(x) * lenght_network + y;
-    };
+    std::vector<uint8_t> visited(total_sites, 0);
 
-    std::unordered_set<long long> visitados;
+    std::fill(net.data.begin(), net.data.end(), 0);
 
-    // Inicializa a matriz com 0 (não checado)
-    for (int i = 0; i < num_of_samples; ++i) {
-        for (int j = 0; j < lenght_network; ++j) {
-            net.set({i, j}, 0);
+    // Adjust active seed count based on dimension
+    int active_count = 0;
+
+    if (dim == 3)
+        active_count = static_cast<int>(pow(lenght_network * P0, 2)); // agora P0 = número absoluto
+    else if (dim == 2)
+        active_count = static_cast<int>(P0 * lenght_network);
+
+
+    std::queue<std::vector<int>> fronteira;
+    if (dim == 2) {
+        std::vector<int> indices(lenght_network);
+        std::iota(indices.begin(), indices.end(), 0);
+        std::shuffle(indices.begin(), indices.end(), rng.get_gen());
+        for (int i = 0; i < active_count; ++i) {
+            std::vector<int> coords(dim, 0);
+            coords[1] = indices[i];
+            size_t idx = net.to_index(coords);
+            net.data[idx] = 1;
+            visited[idx] = 1;
+            fronteira.push(std::move(coords));
+        }
+    } else if (dim == 3) {
+        std::vector<std::pair<int, int>> base_coords;
+        for (int i = 0; i < lenght_network; ++i) {
+            for (int j = 0; j < lenght_network; ++j) {
+                base_coords.emplace_back(i, j);
+            }
+        }
+        std::shuffle(base_coords.begin(), base_coords.end(), rng.get_gen());
+        for (int i = 0; i < active_count; ++i) {
+            std::vector<int> coords = {0, base_coords[i].first, base_coords[i].second};
+            size_t idx = net.to_index(coords);
+            net.data[idx] = 1;
+            visited[idx] = 1;
+            fronteira.push(std::move(coords));
         }
     }
 
-    // Inicializa sementes
-    int active_count = static_cast<int>(P0 * lenght_network);
-    std::vector<int> indices(lenght_network);
-    std::iota(indices.begin(), indices.end(), 0);
-    std::shuffle(indices.begin(), indices.end(), rng.get_gen());
-
-    std::queue<std::pair<int, int>> fronteira;
-    for (int i = 0; i < active_count; ++i) {
-        int col = indices[i];
-        net.set({0, col}, 1);
-        fronteira.push({0, col});
-        visitados.insert(to_hash(0, col));
-    }
-
-    // ✅ Adiciona t = 0 e os valores correspondentes
     t_list.push_back(0);
     N_t_list.push_back(active_count);
 
+    std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
+
     for (int t = 1; t < num_of_samples; ++t) {
         int N_current = 0;
-        std::queue<std::pair<int, int>> nova_fronteira;
+        std::queue<std::vector<int>> nova_fronteira;
 
         while (!fronteira.empty()) {
-            auto [x, y] = fronteira.front(); fronteira.pop();
+            const std::vector<int>& pos = fronteira.front();
 
-            std::vector<std::pair<int, int>> candidatos = {
-                {x + 1, y}, {x - 1, y}, {x, y - 1}, {x, y + 1}
-            };
+            int v_idx = 0;
+            for (int d = 0; d < dim; ++d) {
+                for (int delta : {-1, 1}) {
+                    std::vector<int>& viz = neighbor_buffer[v_idx++];
+                    viz = pos;
+                    viz[d] += delta;
 
-            for (auto& [nx, ny] : candidatos) {
-                if (nx < 0 || nx >= num_of_samples || ny < 0 || ny >= lenght_network) continue;
-                long long h = to_hash(nx, ny);
-                if (visitados.count(h)) continue;
-
-                double r = rng.uniform_real(0.0, 1.0);
-
-                if (type_percolation == "node") {
-                    if (r < p[t - 1]) {
-                        net.set({nx, ny}, 1);
-                        nova_fronteira.push({nx, ny});
-                        N_current++;
-                    } else {
-                        net.set({nx, ny}, -1);
-                    }
-                    visitados.insert(h);
-                } else if (type_percolation == "bond") {
-                    if (net.get({nx, ny}) == 0) {
-                        if (r < p[t - 1]) {
-                            net.set({nx, ny}, 1);
-                            nova_fronteira.push({nx, ny});
-                            N_current++;
-                            visitados.insert(h);
+                    bool valid = true;
+                    for (int i = 0; i < dim; ++i) {
+                        if (viz[i] < 0 || viz[i] >= shape[i]) {
+                            valid = false;
+                            break;
                         }
-                        // do contrário: não marca como -1 ainda — pode ser acessado por outro caminho
+                    }
+
+                    if (!valid) continue;
+
+                    size_t idx = net.to_index(viz);
+                    if (visited[idx]) continue;
+
+                    double r = rng.uniform_real(0.0, 1.0);
+                    if (type_percolation == "node") {
+                        if (r < p[t - 1]) {
+                            net.data[idx] = 1;
+                            nova_fronteira.push(viz);
+                            N_current++;
+                        } else {
+                            net.data[idx] = -1;
+                        }
+                        visited[idx] = 1;
+                    } else if (type_percolation == "bond") {
+                        if (net.data[idx] == 0 && r < p[t - 1]) {
+                            net.data[idx] = 1;
+                            nova_fronteira.push(viz);
+                            N_current++;
+                            visited[idx] = 1;
+                        }
                     }
                 }
             }
+
+            fronteira.pop();
         }
 
-        fronteira = nova_fronteira;
+        if (nova_fronteira.empty()) break;
+
+        fronteira = std::move(nova_fronteira);
         double p_next = generate_p(type_N_t, p[t - 1], t, N_current, k, a, alpha);
-        p[t] = p_next;
+        p.push_back(p_next);
 
         t_list.push_back(t);
         N_t_list.push_back(N_current);
 
         if (t < 10 || t % 100 == 0)
             std::cout << "[" << type_percolation << "] t = " << t << ", p(t) = " << p[t] << ", N(t) = " << N_current << "\n";
-
-        if (fronteira.empty()) break;
     }
 
-    // ✅ Pós-processamento: marca sítios não alcançados como -1 no caso bond
     if (type_percolation == "bond") {
-        for (int i = 0; i < num_of_samples; ++i) {
-            for (int j = 0; j < lenght_network; ++j) {
-                std::vector<int> coords = {i, j};
-                if (net.get(coords) == 0) {
-                    net.set(coords, -1);
-                }
-            }
+        for (int& val : net.data) {
+            if (val == 0) val = -1;
         }
     }
 
     return net;
 }
+
+
 
 
 

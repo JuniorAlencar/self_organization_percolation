@@ -3,6 +3,7 @@
 #include "write_save.hpp"
 #include "create_folders.hpp"
 #include <iomanip>
+#include <cstdlib>
 #include <sstream>
 
 int main(int argc, char* argv[]){
@@ -13,22 +14,27 @@ int main(int argc, char* argv[]){
     string type_percolation = argv[5];
     double k = stod(argv[6]);
     int N_t = stoi(argv[7]);
+    int dim = stoi(argv[8]);
     int type_N_t = 0;
     //double k = 1e-5;
     //double N_t = 200;
     double a = 0;
     double alpha = 0;
-    int dim = 2;
-    double P0 = 0.1;
+    double P0 = 0.01;
 
-    if (argc != 8) {
-        std::cout << "Usage: " << argv[0] << " <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t>" << std::endl;
+    if (argc != 9) {
+        std::cout << "Usage: " << argv[0] << " <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim>" << std::endl;
         return 1;
     }
 
     if (seed < 0) {
         seed = all_random::generate_random_seed();
         std::cout << "[INFO] Random seed generated: " << seed << std::endl;
+    }
+
+    if(dim != 2 && dim != 3){
+        std::cerr << "Error: only dim = 2 or dim = 3 are supported." << std::endl;
+        std::exit(EXIT_FAILURE);
     }
 
     FolderCreator creator("./Data");

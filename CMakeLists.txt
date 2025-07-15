@@ -5,6 +5,9 @@ project(SelfOrganizationPercolation CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Ativar suporte a OpenMP
+find_package(OpenMP REQUIRED)
+
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 file(GLOB SOURCES ${SRC_DIR}/*.cpp)
 file(GLOB HEADERS ${SRC_DIR}/*.hpp)
@@ -22,14 +25,16 @@ target_include_directories(SOP PRIVATE
     /usr/local/include
 )
 
-# <-- Aqui está a linha que resolve seu problema:
+# RPATH para bibliotecas
 set_target_properties(SOP PROPERTIES
     BUILD_RPATH /usr/local/lib
 )
 
 link_directories(/usr/local/lib)
 
+# Vincular bibliotecas
 target_link_libraries(SOP
     cnpy
     zip
+    OpenMP::OpenMP_CXX
 )

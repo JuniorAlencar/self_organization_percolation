@@ -1,23 +1,25 @@
 #include "write_save.hpp"
-#include <zip.h>
-#include <stdexcept>
-#include <cstring>
+
 
 // Utility function: write raw .npy header (version 1.0, little-endian, shape info)
 static std::vector<unsigned char> generate_npy_data(const NetworkPattern& net) {
-    int rows = net.shape[0];
-    int cols = net.shape[1];
+    const std::vector<int>& shape = net.shape;
     std::vector<unsigned char> result;
 
     // Magic string + version
     const char magic[] = "\x93NUMPY";
     result.insert(result.end(), magic, magic + 6);
-    result.push_back(1);  // major
-    result.push_back(0);  // minor
+    result.push_back(1);  // major version
+    result.push_back(0);  // minor version
 
-    // Construct header dict (corrected dtype to 4-byte integer)
+    // Header (shape-based)
     std::string header = "{'descr': '|i4', 'fortran_order': False, 'shape': (";
-    header += std::to_string(rows) + ", " + std::to_string(cols) + "), }";
+    for (size_t i = 0; i < shape.size(); ++i) {
+        header += std::to_string(shape[i]);
+        if (i != shape.size() - 1) header += ", ";
+    }
+    if (shape.size() == 1) header += ",";
+    header += "), }";
     while ((header.size() + 10) % 16 != 0) header += ' ';
     header += '\n';
 
@@ -29,17 +31,21 @@ static std::vector<unsigned char> generate_npy_data(const NetworkPattern& net) {
     // Add header
     result.insert(result.end(), header.begin(), header.end());
 
-    // Add data as 4-byte integers
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            int value = net.get({i, j});
-            unsigned char* bytes = reinterpret_cast<unsigned char*>(&value);
-            result.insert(result.end(), bytes, bytes + sizeof(int));
-        }
+    // Reserve space for raw binary data
+    size_t start_pos = result.size();
+    size_t data_size = net.data.size() * sizeof(int);
+    result.resize(start_pos + data_size);
+
+    // Fill data in parallel
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < net.data.size(); ++i) {
+        int val = net.data[i];
+        std::memcpy(&result[start_pos + i * sizeof(int)], &val, sizeof(int));
     }
 
     return result;
 }
+
 
 void save_data::save_network_as_npz(const NetworkPattern& net, const std::string& filename) const {
     int errorp;
