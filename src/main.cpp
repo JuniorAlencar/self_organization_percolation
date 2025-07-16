@@ -20,7 +20,7 @@ int main(int argc, char* argv[]){
     //double N_t = 200;
     double a = 0;
     double alpha = 0;
-    double P0 = 0.01;
+    double P0 = 0.1;
 
     if (argc != 9) {
         std::cout << "Usage: " << argv[0] << " <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim>" << std::endl;

@@ -11,7 +11,7 @@ p0_values_bond=("0.3" "0.7" "1.0")
 p0_values_node=("0.4" "0.8" "1.0")
 
 # Valores de Nt
-Nt_values=(100 1000 2000 4000 6000 8000 10000)
+Nt_values=(2000 4000 5000 6000 8000 10000)
 
 # Número de amostras para cada (type, p0, Nt)
 num_samples=5
