@@ -33,7 +33,7 @@ class network{
         double p0;                  // p(t=0) Initial probability of occupation of candidate sites for growth.
         double P0;                  // Initial number of sites actives
         int num_colors;             // Number of colors of network
-        vector<double> rho(num_colors, 0.0);         // Allocate initial density colors of network
+        vector<double> rho;         // Allocate initial density colors of network
         vector<double> p;           // Allocate p(t)-values
         vector<int> N_t_list;       // Allocate N(t)-values
         vector<int> t_list;         // Allocate t-values
@@ -46,6 +46,7 @@ class network{
         network(int num_samples)
             : num_of_samples(num_samples), p(num_samples, 0.0) {
         };
+        
         double generate_p(const int type_N_t, const double p0, const int t_i, const int N_current, const double k, const double a, const double alpha);
         double type_Nt_create(const int type_N_t, const int t_i, const double a, const double alpha);
         NetworkPattern create_network(const int dim, const int lenght_network, const int num_of_samples,

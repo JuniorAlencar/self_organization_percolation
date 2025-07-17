@@ -73,47 +73,58 @@ void save_data::save_network_as_npz(const NetworkPattern& net, const std::string
 }
 
 void save_data::save_p_values_as_npy(const std::vector<int>& t_values,
-                                     const std::vector<double>& p_values,
+                                     const std::vector<std::vector<double>>& p_values,
                                      const std::string& filename) {
-    if (t_values.size() != p_values.size()) {
-        std::cerr << "Erro: t_values e p_values têm tamanhos diferentes!\n";
-        return;
+    size_t N = t_values.size();
+    size_t num_colors = p_values.empty() ? 0 : p_values[0].size();
+
+    // Validação
+    for (const auto& row : p_values) {
+        if (row.size() != num_colors) {
+            std::cerr << "Erro: Linhas de p_values têm número de colunas inconsistentes!\n";
+            return;
+        }
     }
 
-    size_t N = t_values.size();
-    std::vector<double> combined(2 * N);
+    std::vector<double> combined(N * (1 + num_colors)); // [t, p1, p2, ..., pc]
 
     for (size_t i = 0; i < N; ++i) {
-        combined[2 * i]     = static_cast<double>(t_values[i]); // coluna 0: t
-        combined[2 * i + 1] = p_values[i];                      // coluna 1: p_t
+        combined[i * (1 + num_colors)] = static_cast<double>(t_values[i]);
+        for (size_t j = 0; j < num_colors; ++j) {
+            combined[i * (1 + num_colors) + j + 1] = p_values[i][j];
+        }
     }
 
-    std::vector<size_t> shape = {N, 2}; // matriz N x 2: [t, p_t]
+    std::vector<size_t> shape = {N, 1 + num_colors};
     cnpy::npy_save(filename, &combined[0], shape);
-
     std::cout << "Saving to file: " << filename << std::endl;
 }
+
 
 void save_data::save_Nt_values_as_npy(const std::vector<int>& t_values,
-                                      const std::vector<int>& Nt_values,
+                                      const std::vector<std::vector<int>>& Nt_values,
                                       const std::string& filename) {
-    if (t_values.size() != Nt_values.size()) {
-        std::cerr << "Erro: t_values e Nt_values têm tamanhos diferentes!\n";
-        return;
+    size_t N = t_values.size();
+    size_t num_colors = Nt_values.empty() ? 0 : Nt_values[0].size();
+
+    for (const auto& row : Nt_values) {
+        if (row.size() != num_colors) {
+            std::cerr << "Erro: Linhas de Nt_values têm número de colunas inconsistentes!\n";
+            return;
+        }
     }
 
-    size_t N = t_values.size();
-    std::vector<int> combined(2 * N);
+    std::vector<int> combined(N * (1 + num_colors)); // [t, N1, N2, ..., Nc]
 
     for (size_t i = 0; i < N; ++i) {
-        combined[2 * i]     = t_values[i];     // coluna 0: t
-        combined[2 * i + 1] = Nt_values[i];    // coluna 1: N_t
+        combined[i * (1 + num_colors)] = t_values[i];
+        for (size_t j = 0; j < num_colors; ++j) {
+            combined[i * (1 + num_colors) + j + 1] = Nt_values[i][j];
+        }
     }
 
-    std::vector<size_t> shape = {N, 2}; // matriz N x 2: [t, N_t]
+    std::vector<size_t> shape = {N, 1 + num_colors};
     cnpy::npy_save(filename, &combined[0], shape);
-
     std::cout << "Saving to file: " << filename << std::endl;
 }
-
 
