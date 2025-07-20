@@ -18,97 +18,80 @@ double network::generate_p(const int type_N_t, const double p_t, const int t_i, 
     return p_next;
 }
 
-const std::vector<double>& network::get_p() const {
-        return p;
-}
-
-const std::vector<int>& network::get_N_t() const {
-    return N_t_list;
-}
-
-const std::vector<int>& network::get_t() const {
-    return t_list;
-}
-
 NetworkPattern network::create_network(const int dim, const int lenght_network, const int num_of_samples,
                                        const double k, const double N_t, const int seed, const int type_N_t,
-                                       const double p0, const double P0, const double a, const double alpha,
-                                       const std::string& type_percolation) {
+                                       const std::vector<double> p0, const double P0, const double a, const double alpha,
+                                       const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
+                                       TimeSeries& ts_out) {
     this->N_t = N_t;
 
-    std::vector<int> shape;
-    if (dim == 2)
-        shape = {num_of_samples, lenght_network};
-    else if (dim == 3)
-        shape = {num_of_samples, lenght_network, lenght_network};
-    else
-        throw std::invalid_argument("Only dim=2 or dim=3 are supported.");
+    std::vector<int> shape = (dim == 2) ? std::vector<int>{num_of_samples, lenght_network}
+                                        : std::vector<int>{num_of_samples, lenght_network, lenght_network};
 
     const size_t total_sites = std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
-    NetworkPattern net(dim, shape);
+    NetworkPattern net(dim, shape, num_colors, rho);
     all_random rng(seed);
 
-    // Initial probability
-    p.clear();
-    p.push_back(p0);
+    std::vector<std::vector<double>> p_t(num_colors, std::vector<double>());
+    std::vector<std::vector<int>> Nt_t(num_colors, std::vector<int>());
+    for (int c = 0; c < num_colors; ++c) {
+        p_t[c].push_back(p0[c]);
+        Nt_t[c].push_back(0);
+    }
+    std::vector<int> t_list = {0};
 
-    t_list.clear();
-    N_t_list.clear();
-
-    std::vector<uint8_t> visited(total_sites, 0);
-
-    std::fill(net.data.begin(), net.data.end(), 0);
-
-    // Adjust active seed count based on dimension
-    int active_count = 0;
-
-    if (dim == 3)
-        active_count = static_cast<int>(pow(lenght_network * P0, 2)); // agora P0 = número absoluto
-    else if (dim == 2)
-        active_count = static_cast<int>(P0 * lenght_network);
-
+    int active_count = (dim == 3)
+        ? static_cast<int>(std::pow(lenght_network * P0, 2))
+        : static_cast<int>(P0 * lenght_network);
 
     std::queue<std::vector<int>> fronteira;
-    if (dim == 2) {
-        std::vector<int> indices(lenght_network);
-        std::iota(indices.begin(), indices.end(), 0);
-        std::shuffle(indices.begin(), indices.end(), rng.get_gen());
-        for (int i = 0; i < active_count; ++i) {
+    std::vector<int> base_indices(lenght_network);
+    std::iota(base_indices.begin(), base_indices.end(), 0);
+    std::shuffle(base_indices.begin(), base_indices.end(), rng.get_gen());
+
+    int seeds_per_color = active_count / num_colors;
+    int rest = active_count % num_colors;
+    int current = 0;
+
+    for (int c = 0; c < num_colors; ++c) {
+        int n_c = seeds_per_color + (c < rest ? 1 : 0);
+        for (int i = 0; i < n_c && current < (int)base_indices.size(); ++i, ++current) {
             std::vector<int> coords(dim, 0);
-            coords[1] = indices[i];
-            size_t idx = net.to_index(coords);
-            net.data[idx] = 1;
-            visited[idx] = 1;
-            fronteira.push(std::move(coords));
-        }
-    } else if (dim == 3) {
-        std::vector<std::pair<int, int>> base_coords;
-        for (int i = 0; i < lenght_network; ++i) {
-            for (int j = 0; j < lenght_network; ++j) {
-                base_coords.emplace_back(i, j);
+            if (dim == 2) coords[1] = base_indices[current];
+            else {
+                coords.resize(3);
+                coords[1] = base_indices[current % lenght_network];
+                coords[2] = base_indices[(current / lenght_network) % lenght_network];
             }
-        }
-        std::shuffle(base_coords.begin(), base_coords.end(), rng.get_gen());
-        for (int i = 0; i < active_count; ++i) {
-            std::vector<int> coords = {0, base_coords[i].first, base_coords[i].second};
             size_t idx = net.to_index(coords);
-            net.data[idx] = 1;
-            visited[idx] = 1;
-            fronteira.push(std::move(coords));
+
+            // Tratamento para caso num_colors == 1
+            int target_val = (num_colors == 1) ? -1 : -(c + 2);
+            int new_val = (num_colors == 1) ? 1 : (c + 2);
+
+            if (net.data[idx] == target_val) {
+                net.data[idx] = new_val;
+                fronteira.push(coords);
+                Nt_t[c][0]++;
+            }
         }
     }
 
-    t_list.push_back(0);
-    N_t_list.push_back(active_count);
 
     std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
 
     for (int t = 1; t < num_of_samples; ++t) {
-        int N_current = 0;
+        std::vector<int> N_current(num_colors, 0);
         std::queue<std::vector<int>> nova_fronteira;
 
         while (!fronteira.empty()) {
             const std::vector<int>& pos = fronteira.front();
+            int active_val = net.get(pos);
+            if (active_val <= 0) {
+                fronteira.pop();
+                continue;
+            }
+            int cor_idx = std::abs(active_val) - 2;
 
             int v_idx = 0;
             for (int d = 0; d < dim; ++d) {
@@ -124,29 +107,23 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
                             break;
                         }
                     }
-
                     if (!valid) continue;
 
-                    size_t idx = net.to_index(viz);
-                    if (visited[idx]) continue;
+                    int val_viz = net.get(viz);
+                    if (val_viz > 0 || val_viz == 0) continue;
+
+                    bool same_color = (val_viz == -(cor_idx + 2));
+                    bool no_color = (val_viz == -1);
+
+                    if (!same_color && !no_color) continue;
 
                     double r = rng.uniform_real(0.0, 1.0);
-                    if (type_percolation == "node") {
-                        if (r < p[t - 1]) {
-                            net.data[idx] = 1;
-                            nova_fronteira.push(viz);
-                            N_current++;
-                        } else {
-                            net.data[idx] = -1;
-                        }
-                        visited[idx] = 1;
-                    } else if (type_percolation == "bond") {
-                        if (net.data[idx] == 0 && r < p[t - 1]) {
-                            net.data[idx] = 1;
-                            nova_fronteira.push(viz);
-                            N_current++;
-                            visited[idx] = 1;
-                        }
+                    if (r < p_t[cor_idx].back()) {
+                        net.set(viz, cor_idx + 2);
+                        nova_fronteira.push(viz);
+                        N_current[cor_idx]++;
+                    } else {
+                        net.set(viz, 0);
                     }
                 }
             }
@@ -154,29 +131,44 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
             fronteira.pop();
         }
 
-        if (nova_fronteira.empty()) break;
+        if (std::accumulate(N_current.begin(), N_current.end(), 0) == 0) break;
 
         fronteira = std::move(nova_fronteira);
-        double p_next = generate_p(type_N_t, p[t - 1], t, N_current, k, a, alpha);
-        p.push_back(p_next);
 
+        for (int c = 0; c < num_colors; ++c) {
+            double Nt_i = (type_N_t == 0) ? N_t : a * std::pow(t, alpha);
+            double p_next = std::clamp(p_t[c].back() + k * (Nt_i - N_current[c]), 0.0, 1.0);
+            p_t[c].push_back(p_next);
+            Nt_t[c].push_back(N_current[c]);
+        }
         t_list.push_back(t);
-        N_t_list.push_back(N_current);
 
-        if (t < 10 || t % 100 == 0)
-            std::cout << "[" << type_percolation << "] t = " << t << ", p(t) = " << p[t] << ", N(t) = " << N_current << "\n";
-    }
-
-    if (type_percolation == "bond") {
-        for (int& val : net.data) {
-            if (val == 0) val = -1;
+        if (t < 10 || t % 100 == 0) {
+            std::cout << "[" << type_percolation << "] t = " << t;
+            for (int c = 0; c < num_colors; ++c)
+                std::cout << ", p" << c + 1 << "(t)=" << p_t[c].back();
+            std::cout << "\\n";
         }
     }
+
+    ts_out.num_colors = num_colors;
+    ts_out.p_t = p_t;
+    ts_out.Nt = Nt_t;
+    ts_out.t = t_list;
 
     return net;
 }
 
 
+void print_initial_network_info(const NetworkPattern& net) {
+    int total_sites = net.size();
+    std::map<int, int> counts;
+    for (int val : net.data) counts[val]++;
+    std::cout << "[Initial State] Total sites: " << total_sites << "\\n";
+    for (const auto& [val, count] : counts) {
+        std::cout << "  Value " << val << ": " << count << " sites\\n";
+    }
+}
 
 
 

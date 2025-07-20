@@ -1,6 +1,5 @@
 #include "write_save.hpp"
 
-
 // Utility function: write raw .npy header (version 1.0, little-endian, shape info)
 static std::vector<unsigned char> generate_npy_data(const NetworkPattern& net) {
     const std::vector<int>& shape = net.shape;
@@ -46,7 +45,6 @@ static std::vector<unsigned char> generate_npy_data(const NetworkPattern& net) {
     return result;
 }
 
-
 void save_data::save_network_as_npz(const NetworkPattern& net, const std::string& filename) const {
     int errorp;
     zip_t* archive = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errorp);
@@ -72,59 +70,63 @@ void save_data::save_network_as_npz(const NetworkPattern& net, const std::string
     std::cout << "Saving to file: " << filename << std::endl;
 }
 
-void save_data::save_p_values_as_npy(const std::vector<int>& t_values,
-                                     const std::vector<std::vector<double>>& p_values,
-                                     const std::string& filename) {
-    size_t N = t_values.size();
-    size_t num_colors = p_values.empty() ? 0 : p_values[0].size();
 
-    // Validação
-    for (const auto& row : p_values) {
-        if (row.size() != num_colors) {
-            std::cerr << "Erro: Linhas de p_values têm número de colunas inconsistentes!\n";
-            return;
+void save_data::save_time_series_as_csv(const TimeSeries& ts, 
+                                        const std::string& filename_pt, 
+                                        const std::string& filename_Nt) {
+    if (ts.t.empty() || ts.p_t.empty() || ts.Nt.empty() ||
+        ts.p_t.size() != ts.num_colors || ts.Nt.size() != ts.num_colors) {
+        std::cerr << "[Erro] TimeSeries inconsistente!\n";
+        return;
+    }
+
+    size_t T = ts.t.size();
+
+    // --- Salvando p(t) ---
+    {
+        std::ofstream file_pt(filename_pt);
+        if (!file_pt.is_open()) {
+            std::cerr << "Erro ao abrir " << filename_pt << " para escrita\n";
+        } else {
+            file_pt << "t";
+            for (int c = 0; c < ts.num_colors; ++c)
+                file_pt << ",pt_" << (c + 1);
+            file_pt << "\n";
+
+            for (size_t i = 0; i < T; ++i) {
+                file_pt << ts.t[i];
+                for (int c = 0; c < ts.num_colors; ++c)
+                    file_pt << "," << ts.p_t[c][i];
+                file_pt << "\n";
+            }
+            file_pt.close();
+            std::cout << "Saving CSV: " << filename_pt << std::endl;
         }
     }
 
-    std::vector<double> combined(N * (1 + num_colors)); // [t, p1, p2, ..., pc]
+    // --- Salvando N(t) ---
+    {
+        std::ofstream file_Nt(filename_Nt);
+        if (!file_Nt.is_open()) {
+            std::cerr << "Erro ao abrir " << filename_Nt << " para escrita\n";
+        } else {
+            file_Nt << "t";
+            for (int c = 0; c < ts.num_colors; ++c)
+                file_Nt << ",Nt_" << (c + 1);
+            file_Nt << "\n";
 
-    for (size_t i = 0; i < N; ++i) {
-        combined[i * (1 + num_colors)] = static_cast<double>(t_values[i]);
-        for (size_t j = 0; j < num_colors; ++j) {
-            combined[i * (1 + num_colors) + j + 1] = p_values[i][j];
+            for (size_t i = 0; i < T; ++i) {
+                file_Nt << ts.t[i];
+                for (int c = 0; c < ts.num_colors; ++c)
+                    file_Nt << "," << ts.Nt[c][i];
+                file_Nt << "\n";
+            }
+            file_Nt.close();
+            std::cout << "Saving CSV: " << filename_Nt << std::endl;
         }
     }
-
-    std::vector<size_t> shape = {N, 1 + num_colors};
-    cnpy::npy_save(filename, &combined[0], shape);
-    std::cout << "Saving to file: " << filename << std::endl;
 }
 
 
-void save_data::save_Nt_values_as_npy(const std::vector<int>& t_values,
-                                      const std::vector<std::vector<int>>& Nt_values,
-                                      const std::string& filename) {
-    size_t N = t_values.size();
-    size_t num_colors = Nt_values.empty() ? 0 : Nt_values[0].size();
 
-    for (const auto& row : Nt_values) {
-        if (row.size() != num_colors) {
-            std::cerr << "Erro: Linhas de Nt_values têm número de colunas inconsistentes!\n";
-            return;
-        }
-    }
-
-    std::vector<int> combined(N * (1 + num_colors)); // [t, N1, N2, ..., Nc]
-
-    for (size_t i = 0; i < N; ++i) {
-        combined[i * (1 + num_colors)] = t_values[i];
-        for (size_t j = 0; j < num_colors; ++j) {
-            combined[i * (1 + num_colors) + j + 1] = Nt_values[i][j];
-        }
-    }
-
-    std::vector<size_t> shape = {N, 1 + num_colors};
-    cnpy::npy_save(filename, &combined[0], shape);
-    std::cout << "Saving to file: " << filename << std::endl;
-}
 
