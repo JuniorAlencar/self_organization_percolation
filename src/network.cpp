@@ -18,6 +18,7 @@ double network::generate_p(const int type_N_t, const double p_t, const int t_i, 
     return p_next;
 }
 
+
 NetworkPattern network::create_network(const int dim, const int lenght_network, const int num_of_samples,
                                        const double k, const double N_t, const int seed, const int type_N_t,
                                        const std::vector<double> p0, const double P0, const double a, const double alpha,
@@ -65,7 +66,6 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
             }
             size_t idx = net.to_index(coords);
 
-            // Tratamento para caso num_colors == 1
             int target_val = (num_colors == 1) ? -1 : -(c + 2);
             int new_val = (num_colors == 1) ? 1 : (c + 2);
 
@@ -77,7 +77,6 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
         }
     }
 
-
     std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
 
     for (int t = 1; t < num_of_samples; ++t) {
@@ -87,11 +86,17 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
         while (!fronteira.empty()) {
             const std::vector<int>& pos = fronteira.front();
             int active_val = net.get(pos);
+
             if (active_val <= 0) {
                 fronteira.pop();
                 continue;
             }
-            int cor_idx = std::abs(active_val) - 2;
+
+            int cor_idx;
+            if (num_colors == 1)
+                cor_idx = 0;
+            else
+                cor_idx = std::abs(active_val) - 2;
 
             int v_idx = 0;
             for (int d = 0; d < dim; ++d) {
@@ -112,13 +117,22 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
                     int val_viz = net.get(viz);
                     if (val_viz > 0 || val_viz == 0) continue;
 
-                    bool same_color = (val_viz == -(cor_idx + 2));
+                    bool same_color = (num_colors == 1) || (val_viz == -(cor_idx + 2));
                     bool no_color = (val_viz == -1);
 
                     if (!same_color && !no_color) continue;
 
-                    double r = rng.uniform_real(0.0, 1.0);
-                    if (r < p_t[cor_idx].back()) {
+                    double r1 = rng.uniform_real(0.0, 1.0);
+                    double r2 = rng.uniform_real(0.0, 1.0);
+                    bool activate = false;
+
+                    if (type_percolation == "node") {
+                        activate = (r1 < p_t[cor_idx].back());
+                    } else if (type_percolation == "bond") {
+                        activate = (r1 < p_t[cor_idx].back()) && (r2 < p_t[cor_idx].back());
+                    }
+
+                    if (activate) {
                         net.set(viz, cor_idx + 2);
                         nova_fronteira.push(viz);
                         N_current[cor_idx]++;
@@ -147,7 +161,7 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
             std::cout << "[" << type_percolation << "] t = " << t;
             for (int c = 0; c < num_colors; ++c)
                 std::cout << ", p" << c + 1 << "(t)=" << p_t[c].back();
-            std::cout << "\\n";
+            std::cout << std::endl;
         }
     }
 
