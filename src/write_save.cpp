@@ -82,7 +82,7 @@ void save_data::save_time_series_as_csv(const TimeSeries& ts,
 
     size_t T = ts.t.size();
 
-    // --- Salvando p(t) ---
+    // --- Saving p(t) ---
     {
         std::ofstream file_pt(filename_pt);
         if (!file_pt.is_open()) {
@@ -104,7 +104,7 @@ void save_data::save_time_series_as_csv(const TimeSeries& ts,
         }
     }
 
-    // --- Salvando N(t) ---
+    // --- Saving N(t) ---
     {
         std::ofstream file_Nt(filename_Nt);
         if (!file_Nt.is_open()) {

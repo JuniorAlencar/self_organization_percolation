@@ -13,6 +13,8 @@
 #include <chrono>   // para fallback de seed, opcional
 #include <queue>
 #include <map>
+#include <iomanip>
+
 #include <unordered_set>
 #include "rand_utils.hpp"
 #include "struct_network.hpp"
@@ -38,19 +40,29 @@ class network{
         vector<double> p;           // Allocate p(t)-values
 
     public:
-        
         // Constructor to p
         network(int num_samples, int num_colors_)
             : num_of_samples(num_samples), p(num_samples, 0.0), rho(num_colors_, 0.0), p0(num_colors_,0.0) {
         };
         
         double generate_p(const int type_N_t, const double p0, const int t_i, const int N_current, const double k, const double a, const double alpha);
+        
         double type_Nt_create(const int type_N_t, const int t_i, const double a, const double alpha);
+        
         NetworkPattern create_network(const int dim, const int lenght_network, const int num_of_samples,
                                        const double k, const double N_t, const int seed, const int type_N_t,
-                                       const vector<double> p0, const double P0, const double a, const double alpha,
-                                       const string& type_percolation, const int& num_colors, const vector<double>& rho, TimeSeries& ts_out);
-        void print_initial_network_info(const NetworkPattern& net);
+                                       const std::vector<double> p0, const double P0, const double a, const double alpha,
+                                       const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
+                                       TimeSeries& ts_out);
+        
+                                       NetworkPattern initialize_network(int dim, int length_network, int num_samples, int num_colors, double P0, const std::vector<double>& rho, int seed);
+        
+        void print_initial_site_fractions(const NetworkPattern& net);
+        
+        NetworkPattern animate_network(const int dim, const int lenght_network, const int num_of_samples,
+                                       const double k, const double N_t, const int seed, const int type_N_t,
+                                       const std::vector<double> p0, const double P0, const double a, const double alpha,
+                                       const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho);
 };
 
 

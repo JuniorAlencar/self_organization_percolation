@@ -7,8 +7,11 @@
 all_random::all_random(int seed) {
     if (seed >= 0) {
         gen.seed(seed);
+        seed_val = seed;
     } else {
-        gen.seed(42);  // fallback; normally avoided
+        seed_val = 42;
+        gen.seed(seed_val);  // fallback; normally avoided
+
     }
 }
 

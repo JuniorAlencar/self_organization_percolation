@@ -77,5 +77,11 @@ SELF_ORGANIZATION_PERCOLATION/
 └── README.md
 ```
 
+# Initial trails to execute
 
+This algorithm is quite sensitive to the parameters $N_T$ and $k$, which vary greatly depending on the dimension. Below are some suggested parameters, depending on the network size. For dimension $d = 2$, the values used in the article /docs/SOP_paper.pdf are good. For $d = 3$, we have:
+
+
+
+We always used $N_t > f_{active}$, where $f_{active}$ representing the number of nodes initial activate. In 2D was used $f_{active} =P0 * L$ and in 3D $f_{active} =(P0 * L)^2$. 
 

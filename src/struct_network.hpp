@@ -7,48 +7,54 @@
 #include <numeric>
 #include <random>
 #include <algorithm>
+#include "rand_utils.hpp"
 
 using namespace std;
 
 struct NetworkPattern {
     int dim;
+    int num_colors;
+    int seed;
     std::vector<int> shape;
     std::vector<int> data;
+    std::vector<double> rho;
+    
+    NetworkPattern(int dim_, const std::vector<int>& shape_, int num_colors_, const std::vector<double>& rho_, all_random& rng_)
+    : dim(dim_), shape(shape_), num_colors(num_colors_), rho(rho_), seed(rng_.get_seed()) {
 
-    NetworkPattern(int dimension, const std::vector<int>& shape_, int num_colors = 1, const std::vector<double>& rho = {})
-        : dim(dimension), shape(shape_)
-    {
-        if ((int)shape.size() != dim) {
-            throw std::invalid_argument("Dimensão e tamanho do shape não coincidem");
+    const size_t total_sites = std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
+    data.resize(total_sites, 0);
+
+    int total_base = (dim == 2) ? shape[1] : shape[1] * shape[2];
+
+    std::vector<int> labels;
+
+    if (num_colors_ == 1) {
+        // Caso especial: uma única cor (como no artigo original)
+        labels.insert(labels.end(), total_base, -1);  // Tudo começa como -1 (sem cor)
+    } else {
+        // Múltiplas cores: preencher com base em rho
+        for (int i = 0; i < num_colors_; ++i) {
+            int label = -(i + 2);  // -2, -3, ...
+            int count = static_cast<int>(rho_[i] * total_base);
+            labels.insert(labels.end(), count, label);
         }
 
-        size_t total_size = 1;
-        for (int s : shape) total_size *= s;
+        int filled = static_cast<int>(labels.size());
+        if (filled < total_base) {
+            labels.insert(labels.end(), total_base - filled, -1);
+        }
+        std::shuffle(labels.begin(), labels.end(), rng_.get_gen());;
+    }
 
-        data.resize(total_size, -1);  // default: sítio inativo sem cor
-
-        if (num_colors > 1 && !rho.empty()) {
-            if ((int)rho.size() != num_colors) {
-                throw std::invalid_argument("rho deve ter o mesmo tamanho de num_colors");
-            }
-
-            double sum_rho = std::accumulate(rho.begin(), rho.end(), 0.0);
-            std::vector<double> norm_rho(num_colors);
-            for (int i = 0; i < num_colors; ++i)
-                norm_rho[i] = rho[i] / sum_rho;
-
-            std::vector<size_t> indices(total_size);
-            std::iota(indices.begin(), indices.end(), 0);
-            std::random_device rd;
-            std::mt19937 g(rd());
-            std::shuffle(indices.begin(), indices.end(), g);
-
-            size_t current = 0;
-            for (int c = 0; c < num_colors; ++c) {
-                size_t num_sites = static_cast<size_t>(norm_rho[c] * total_size);
-                for (size_t i = 0; i < num_sites && current < total_size; ++i, ++current) {
-                    data[indices[current]] = -(c + 2); // cor c (inativa)
-                }
+    for (int t = 0; t < shape[0]; ++t) {
+        for (int i = 0; i < total_base; ++i) {
+            std::vector<int> coord;
+            if (dim == 2)
+                coord = {t, i};
+            else
+                coord = {t, i / shape[2], i % shape[2]};
+            data[to_index(coord)] = labels[i];
             }
         }
     }

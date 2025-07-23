@@ -19,27 +19,31 @@ T clip(T value, T min_val, T max_val) {
 
 // Class that encapsulates random number generation functionality
 class all_random {
-private:
-    // Mersenne Twister generator from Boost
-    boost::random::mt19937 gen;
+    private:
+        // Mersenne Twister generator from Boost
+        boost::random::mt19937 gen;
+        int seed_val;
 
-public:
-    // Constructor using a fixed seed.
-    // If seed < 0, the generator will still be initialized, but it's expected
-    // that the caller uses generate_random_seed() to get a valid seed.
-    explicit all_random(int seed);
+    public:
+        // Constructor using a fixed seed.
+        // If seed < 0, the generator will still be initialized, but it's expected
+        // that the caller uses generate_random_seed() to get a valid seed.
+        explicit all_random(int seed);
+        
+        int get_seed() const { return seed_val; }
+        
+        // Provides reference to the internal generator (useful for std::shuffle, etc.)
+        boost::random::mt19937& get_gen();
 
-    // Provides reference to the internal generator (useful for std::shuffle, etc.)
-    boost::random::mt19937& get_gen();
+        // Returns a uniformly distributed integer between [min, max]
+        int uniform_int(int min, int max);
 
-    // Returns a uniformly distributed integer between [min, max]
-    int uniform_int(int min, int max);
+        // Returns a uniformly distributed double between [min, max)
+        double uniform_real(const double min, const double max);
 
-    // Returns a uniformly distributed double between [min, max)
-    double uniform_real(const double min, const double max);
+        // Static utility function that generates a random seed across the full range of int
+        static int generate_random_seed();
 
-    // Static utility function that generates a random seed across the full range of int
-    static int generate_random_seed();
-};
+    };
 
 #endif // RAND_UTILS_HPP

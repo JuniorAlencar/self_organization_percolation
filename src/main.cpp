@@ -56,13 +56,18 @@ int main(int argc, char* argv[]){
     
     TimeSeries ts;
     int num_colors = 1;
-    vector<double> rho;
+    vector<double> rho = {0.5, 0.5};
     vector<double> p0 = {pp0};
 
-    
     network net_generator(N_samples, num_colors);
-    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
-
+    
+    //NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
+    NetworkPattern net = net_generator.animate_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho);
+    // Check initial ratio between types of nodes
+    // NetworkPattern net = net_generator.initialize_network(dim, L, N_samples, num_colors, P0, rho, seed);
+    // net_generator.print_initial_site_fractions(net);
+    
+    
     // Monta os nomes dos arquivos
     std::ostringstream oss_name;
     oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0
