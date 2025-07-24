@@ -61,8 +61,8 @@ int main(int argc, char* argv[]){
 
     network net_generator(N_samples, num_colors);
     
-    //NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
-    NetworkPattern net = net_generator.animate_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho);
+    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
+    
     // Check initial ratio between types of nodes
     // NetworkPattern net = net_generator.initialize_network(dim, L, N_samples, num_colors, P0, rho, seed);
     // net_generator.print_initial_site_fractions(net);
@@ -82,7 +82,10 @@ int main(int argc, char* argv[]){
     std::string pt_filename = pt_dir + oss_name.str();
     std::string nt_filename = nt_dir + oss_name.str();
     std::string net_filename = oss_net.str();
-
+    
+    // Animation network
+    // NetworkPattern net = net_generator.animate_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
+    
     // Salva arquivos
     save_data saver;
     saver.save_network_as_npz(net, net_filename);

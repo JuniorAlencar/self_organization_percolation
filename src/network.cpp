@@ -177,7 +177,8 @@ NetworkPattern network::create_network(const int dim, const int lenght_network, 
 NetworkPattern network::animate_network(const int dim, const int lenght_network, const int num_of_samples,
                                        const double k, const double N_t, const int seed, const int type_N_t,
                                        const std::vector<double> p0, const double P0, const double a, const double alpha,
-                                       const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho) {
+                                       const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
+                                       TimeSeries& ts_out) {
     this->N_t = N_t;
 
     std::vector<int> shape = (dim == 2) ? std::vector<int>{num_of_samples, lenght_network}
@@ -188,29 +189,29 @@ NetworkPattern network::animate_network(const int dim, const int lenght_network,
     NetworkPattern net_animation(dim, shape, num_colors, rho, rng);
 
     std::vector<std::vector<double>> p_t(num_colors);
+    std::vector<std::vector<int>> Nt_t(num_colors);
     for (int c = 0; c < num_colors; ++c) {
         p_t[c].push_back(p0[c]);
+        Nt_t[c].push_back(0);
     }
+    std::vector<int> t_list = {0};
 
     int base_size = (dim == 3) ? lenght_network * lenght_network : lenght_network;
     int seeds_per_color = (dim == 3) ? static_cast<int>(pow(P0, 2) * base_size) : static_cast<int>(P0 * base_size);
 
     std::queue<std::vector<int>> borderland;
+    std::vector<int> N_current(num_colors, 0);
 
-    // Inicializa os sítios ativos na base
+    // Inicialização da base
     for (int c = 0; c < num_colors; ++c) {
-        int activated = 0;
-        int max_tries = base_size * 10;
-        int tries = 0;
+        int activated = 0, tries = 0;
+        const int max_tries = base_size * 10;
 
         while (activated < seeds_per_color && tries < max_tries) {
             std::vector<int> coords(dim, 0);
-            if (dim == 2) {
-                coords[1] = rng.uniform_int(0, lenght_network - 1);
-            } else {
-                coords[1] = rng.uniform_int(0, lenght_network - 1);
+            coords[1] = rng.uniform_int(0, lenght_network - 1);
+            if (dim == 3)
                 coords[2] = rng.uniform_int(0, lenght_network - 1);
-            }
 
             size_t idx = net.to_index(coords);
             int target_val = (num_colors == 1) ? -1 : -(c + 2);
@@ -219,9 +220,12 @@ NetworkPattern network::animate_network(const int dim, const int lenght_network,
             if (net.data[idx] == target_val) {
                 net.data[idx] = new_val;
                 borderland.push(coords);
-                net_animation.set(coords, 0); // t = 0
+                net_animation.set(coords, 0);  // marca ativação
+                Nt_t[c][0]++;
+                N_current[c]++;
                 activated++;
             }
+
             tries++;
         }
     }
@@ -229,11 +233,13 @@ NetworkPattern network::animate_network(const int dim, const int lenght_network,
     std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
 
     for (int t = 1; t < num_of_samples; ++t) {
+        std::vector<int> N_current(num_colors, 0);
         std::queue<std::vector<int>> new_borderland;
 
         while (!borderland.empty()) {
             const std::vector<int>& pos = borderland.front();
             int active_val = net.get(pos);
+
             if (active_val <= 0) {
                 borderland.pop();
                 continue;
@@ -261,41 +267,49 @@ NetworkPattern network::animate_network(const int dim, const int lenght_network,
                     if (val_viz > 0 || val_viz == 0) continue;
 
                     bool same_color = (num_colors == 1) || (val_viz == -(cor_idx + 2));
-                    bool no_color = (val_viz == -1);
+                    bool no_color   = (val_viz == -1);
                     if (!same_color && !no_color) continue;
 
+                    size_t idx = net.to_index(viz);
                     double r1 = rng.uniform_real(0.0, 1.0);
+                    double r2 = rng.uniform_real(0.0, 1.0);
 
                     if (type_percolation == "node") {
                         if (r1 < p_t[cor_idx].back()) {
                             int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
                             net.set(viz, new_val);
                             new_borderland.push(viz);
-                            net_animation.set(viz, t);
+                            net_animation.set(viz, t);  // tempo de ativação
+                            N_current[cor_idx]++;
                         } else {
                             net.set(viz, 0);
                         }
                     } else if (type_percolation == "bond") {
-                        if (val_viz < 0 && (r1 < p_t[cor_idx].back())) {
+                        if (val_viz < 0 && (r1 < p_t[cor_idx].back()))  {
                             int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
                             net.set(viz, new_val);
                             new_borderland.push(viz);
-                            net_animation.set(viz, t);
+                            net_animation.set(viz, t);  // tempo de ativação
+                            N_current[cor_idx]++;
                         }
                     }
                 }
             }
+
             borderland.pop();
         }
 
-        if (new_borderland.empty()) break;
+        if (std::accumulate(N_current.begin(), N_current.end(), 0) == 0) break;
 
         borderland = std::move(new_borderland);
 
         for (int c = 0; c < num_colors; ++c) {
-            double p_next = generate_p(type_N_t, p_t[c].back(), t, 0, k, a, alpha); // N(t) não importa para animação
+            double p_next = generate_p(type_N_t, p_t[c].back(), t, N_current[c], k, a, alpha);
             p_t[c].push_back(p_next);
+            Nt_t[c].push_back(N_current[c]);
         }
+
+        t_list.push_back(t);
 
         if (t < 10 || t % 100 == 0) {
             std::cout << "[ANIMATION] t = " << t;
@@ -304,6 +318,11 @@ NetworkPattern network::animate_network(const int dim, const int lenght_network,
             std::cout << std::endl;
         }
     }
+
+    ts_out.num_colors = num_colors;
+    ts_out.p_t = p_t;
+    ts_out.Nt = Nt_t;
+    ts_out.t = t_list;
 
     return net_animation;
 }
