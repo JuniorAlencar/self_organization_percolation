@@ -2,4 +2,4 @@
 /build
 /results_paper_SOP
 *.pyc
-/animation
+/animation/frames_*
