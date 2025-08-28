@@ -40,13 +40,12 @@ int main(int argc, char* argv[]){
     FolderCreator creator("./Data");
 
     // 👇 Atualizado para receber os 3 caminhos
-    auto [network_dir, pt_dir, nt_dir] = creator.create_structure(
+    auto [network_dir, pt_dir, nt_dir, info_dir] = creator.create_structure(
         dim,
         type_N_t,
         N_t,
         k,
         L,
-        N_samples,
         a,
         alpha,
         type_percolation,
@@ -55,20 +54,21 @@ int main(int argc, char* argv[]){
     );
     
     TimeSeries ts;
-    int num_colors = 2;
-    vector<double> rho = {0.5, 0.5};
-    vector<double> p0 = {pp0, pp0};
+    PercolationSeries ps;
+    int num_colors = 1;
+    vector<double> rho = {1.0};
+    vector<double> p0 = {pp0};
 
     network net_generator(N_samples, num_colors);
     
-    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
+    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts, ps);
     
     // Check initial ratio between types of nodes
     // NetworkPattern net = net_generator.initialize_network(dim, L, N_samples, num_colors, P0, rho, seed);
     // net_generator.print_initial_site_fractions(net);
     
     
-    // Monta os nomes dos arquivos
+    // Create name of files
     std::ostringstream oss_name;
     oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0
              << "_p0_" << std::fixed << std::setprecision(2) << pp0
@@ -79,18 +79,24 @@ int main(int argc, char* argv[]){
             << "_p0_" << std::fixed << std::setprecision(2) << pp0
             << "_seed_" << seed << ".npz";
 
+    std::ostringstream oss_info;
+    oss_info << "/info_"  << seed << ".dat";
+    
     std::string pt_filename = pt_dir + oss_name.str();
     std::string nt_filename = nt_dir + oss_name.str();
+    std::string info_filename = info_dir + oss_info.str();
     std::string net_filename = oss_net.str();
     
     // Animation network
     // NetworkPattern net = net_generator.animate_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
     
-    // Salva arquivos
+    // Saving files
     save_data saver;
     saver.save_network_as_npz(net, net_filename);
     
     saver.save_time_series_as_csv(ts, pt_filename, nt_filename);
 
+    saver.save_info_percolation(ps, info_filename);
+    
     return 0;
 }

@@ -127,6 +127,39 @@ void save_data::save_time_series_as_csv(const TimeSeries& ts,
     }
 }
 
+void save_data::save_info_percolation(const PercolationSeries& ps,
+                                      const std::string& filename_info){
+    
+    if (ps.color_percolation.empty() || ps.time_percolation.empty() || ps.percolation_order.empty() ||
+    ps.color_percolation.size() != ps.time_percolation.size() || ps.percolation_order.size() != ps.color_percolation.size()) {
+        std::cerr << "[Erro] TimeSeries inconsistente!\n";
+        return;
+    }
+    std::ofstream file_info(filename_info);
+    if (!file_info.is_open()) {
+        std::cerr << "Erro to open " << filename_info << "to write\n";
+    }
+    
+    else{
+        file_info << "color" << " " << "time_percolation" << " " << "percolation_order\r\n";
+        
+        // minimum value of vectors (number of colors)
+        const size_t n = std::min({ps.color_percolation.size(),
+                                ps.time_percolation.size(),
+                                ps.percolation_order.size()});
+        // Run from vectors elements
+        for (size_t i = 0; i < n; ++i) {
+        file_info << ps.color_percolation[i] << ' '
+                << ps.time_percolation[i]   << ' '
+                << ps.percolation_order[i]  << '\n';
+        }
+
+        file_info.close();
+
+    }
+
+}
+
 
 
 
