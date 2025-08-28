@@ -12,7 +12,7 @@ def list_npz_files():
     Raises:
         FileNotFoundError: If the target directory does not exist.
     """
-    folder = "../Data/bond_percolation/dim_2/L_1000_N_samples_1000/NT_constant/NT_200/k_1.0e-05/network/"
+    folder = "../Data/bond_percolation/dim_2/L_1000/NT_constant/NT_200/k_1.0e-05/network/"
     
     if not os.path.exists(folder):
         raise FileNotFoundError(f"Folder not found: {folder}")

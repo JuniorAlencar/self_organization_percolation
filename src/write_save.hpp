@@ -23,7 +23,9 @@ class save_data {
         void save_time_series_as_csv(const TimeSeries& ts, 
                                     const std::string& filename_pt, 
                                     const std::string& filename_Nt);
-
+        void save_info_percolation(const PercolationSeries& ps,
+                                   const std::string& filename_info);            
+        
 };
 
 #endif // write_save_hpp
