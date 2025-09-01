@@ -28,13 +28,13 @@ NetworkPattern network::create_network(
 {
     this->N_t = N_t;
 
-    // ===== Shape só espacial =====
+    // ----- shape somente espacial -----
     std::vector<int> shape = (dim == 2)
         ? std::vector<int>{lenght_network, lenght_network}
         : std::vector<int>{lenght_network, lenght_network, lenght_network};
 
     const int L = lenght_network;
-    const int grow_axis = dim - 1; // direção de crescimento (y em 2D, z em 3D)
+    const int grow_axis = dim - 1;
 
     auto wrap = [&](int coord, int Lax) {
         if (coord < 0) return Lax - 1;
@@ -45,56 +45,82 @@ NetworkPattern network::create_network(
     all_random rng(seed);
     NetworkPattern net(dim, shape, num_colors, rho, rng);
 
-    // Séries p_i(t) e N_i(t)
-    std::vector<std::vector<double>> p_t(num_colors);
-    std::vector<std::vector<int>>    Nt_t(num_colors);
-    for (int c = 0; c < num_colors; ++c) {
-        p_t[c].push_back(p0[c]);
-        Nt_t[c].push_back(0);
-    }
-    std::vector<int> t_list = {0};
+    // ----- séries por cor (cor-major) -----
+    std::vector<std::vector<double>> p_series(num_colors);
+    std::vector<std::vector<int>>    Nt_series(num_colors);
+    std::vector<int>                 t_list; t_list.reserve(num_of_samples);
 
-    // ===== Borda de partida (grow_axis = 0) =====
+    // prob. corrente por cor
+    std::vector<double> p_curr = p0;
+
+    // lambda para commitar um passo (garante consistência)
+    auto commit_step = [&](int t_k,
+                           const std::vector<double>& p_vec,
+                           const std::vector<int>& Nt_vec)
+    {
+        t_list.push_back(t_k);
+        for (int c = 0; c < num_colors; ++c) {
+            p_series[c].push_back(p_vec[c]);
+            Nt_series[c].push_back(Nt_vec[c]);
+        }
+    };
+
+    // ===== borda (grow_axis = 0) =====
     int base_size = 1;
     for (int ax = 0; ax < dim - 1; ++ax) base_size *= shape[ax];
 
-    const int seeds_per_color = static_cast<int>(std::round(P0 * base_size));
+    // quotas de seeds por cor a partir de P0 e p0
+    std::vector<int> seeds_quota(num_colors, 0);
+    {
+        double s = std::accumulate(p0.begin(), p0.end(), 0.0);
+        std::vector<double> p0_use = p0;
+        if (s > 0.0) for (double& x : p0_use) x /= s; // normaliza só para repartir P0
+        for (int c = 0; c < num_colors; ++c) {
+            seeds_quota[c] = (int)std::llround(P0 * base_size * p0_use[c]);
+        }
+    }
 
-    std::queue<std::vector<int>> borderland; // fronteira
+    std::queue<std::vector<int>> borderland;
     std::vector<int> N_current(num_colors, 0);
 
-    // Seeds por cor
+    // ---- semeadura inicial na borda ----
     for (int c = 0; c < num_colors; ++c) {
         int activated = 0, tries = 0;
         const int max_tries = base_size * 20;
 
-        while (activated < seeds_per_color && tries < max_tries) {
+        const int prefer_neg = (num_colors == 1) ? -1 : -(c + 2);
+        const int active_val = (num_colors == 1) ?  1 :  (c + 2);
+
+        while (activated < seeds_quota[c] && tries < max_tries) {
             std::vector<int> coords(dim, 0);
             for (int ax = 0; ax < dim - 1; ++ax)
                 coords[ax] = rng.uniform_int(0, shape[ax] - 1);
             coords[grow_axis] = 0;
 
-            const int target_val = (num_colors == 1) ? -1 : -(c + 2);
-            const int new_val    = (num_colors == 1) ?  1 :  (c + 2);
-
-            if (net.get(coords) == target_val) {
-                net.set(coords, new_val);
+            int v = net.get(coords);
+            // preferir rótulo da cor; aceitar -1 como fallback
+            if (v == prefer_neg || v == -1) {
+                net.set(coords, active_val);
                 borderland.push(coords);
-                Nt_t[c][0]++; N_current[c]++; activated++;
+                ++N_current[c];
+                ++activated;
             }
-            tries++;
+            ++tries;
         }
     }
 
-    // ===== Tracking de percolação =====
+    // ----- percolação -----
     std::vector<bool> percolated(num_colors, false);
     std::vector<int>  t_percolated(num_colors, -1);
-    int order_counter = 0; // 1º, 2º, ...
+    int order_counter = 0;
 
-    // Buffer de vizinhos
+    // ----- commit do passo t=0 (p=p0, Nt = seeds) -----
+    commit_step(0, p_curr, N_current);
+
+    // buffer de vizinhos
     std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
 
-    // ===== Evolução temporal =====
+    // ===== evolução =====
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
         std::queue<std::vector<int>> new_borderland;
@@ -103,10 +129,10 @@ NetworkPattern network::create_network(
             const std::vector<int> pos = borderland.front();
             borderland.pop();
 
-            const int active_val = net.get(pos);
-            if (active_val <= 0) continue; // expande só de ativo
+            const int a_val = net.get(pos);
+            if (a_val <= 0) continue; // expande só de ativo
 
-            const int cor_idx = (num_colors == 1) ? 0 : (std::abs(active_val) - 2);
+            const int cor_idx = (num_colors == 1) ? 0 : (std::abs(a_val) - 2);
 
             int v_idx = 0;
             for (int ax = 0; ax < dim; ++ax) {
@@ -115,7 +141,7 @@ NetworkPattern network::create_network(
                     viz = pos;
                     viz[ax] += delta;
 
-                    // Contorno: eixo de crescimento ABERTO, laterais PERIÓDICAS
+                    // contorno: crescimento aberto; laterais periódicas
                     bool valid = true;
                     for (int j = 0; j < dim; ++j) {
                         if (j == grow_axis) {
@@ -126,59 +152,54 @@ NetworkPattern network::create_network(
                     }
                     if (!valid) continue;
 
-                    const int val_viz = net.get(viz);
-                    if (val_viz >= 0) continue; // >0 ativo; ==0 checado/falhou
+                    const int vv = net.get(viz);
+                    if (vv >= 0) continue; // >0 ativo; ==0 checado e falhou
 
-                    const bool same_color = (num_colors == 1) || (val_viz == -(cor_idx + 2));
-                    const bool no_color   = (val_viz == -1);
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color   = (vv == -1);
                     if (!same_color && !no_color) continue;
 
                     const double r = rng.uniform_real(0.0, 1.0);
 
                     if (type_percolation == "node") {
-                        if (r < p_t[cor_idx].back()) {
+                        if (r < p_curr[cor_idx]) {
                             const int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
                             net.set(viz, new_val);
                             new_borderland.push(viz);
-                            N_current[cor_idx]++;
+                            ++N_current[cor_idx];
 
-                            // Checa percolação dessa cor
                             if (viz[grow_axis] == L - 1 && !percolated[cor_idx]) {
                                 percolated[cor_idx]   = true;
                                 t_percolated[cor_idx] = t;
-                                order_counter++;
-
+                                ++order_counter;
+                                ps_out.color_percolation.push_back(cor_idx + 1);
+                                ps_out.time_percolation.push_back(t);
+                                ps_out.percolation_order.push_back(order_counter);
                                 std::cout << "[CREATE] Cor " << (cor_idx + 1)
                                           << " percolou em t=" << t
                                           << "  (ordem=" << order_counter << ")\n";
-
-                                // grava na PercolationSeries (por referência)
-                                ps_out.color_percolation.push_back(cor_idx + 1); // 1-based
-                                ps_out.time_percolation.push_back(t);
-                                ps_out.percolation_order.push_back(order_counter);
                             }
                         } else {
                             net.set(viz, 0); // checado e não ativado
                         }
                     } else if (type_percolation == "bond") {
-                        // Placeholder igual ao node (implemente bonds únicos + flood-fill se desejar)
-                        if (r < p_t[cor_idx].back()) {
+                        // placeholder: igual ao node (implemente ligações explícitas se desejar)
+                        if (r < p_curr[cor_idx]) {
                             const int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
                             net.set(viz, new_val);
                             new_borderland.push(viz);
-                            N_current[cor_idx]++;
+                            ++N_current[cor_idx];
+
                             if (viz[grow_axis] == L - 1 && !percolated[cor_idx]) {
                                 percolated[cor_idx]   = true;
                                 t_percolated[cor_idx] = t;
-                                order_counter++;
-
-                                std::cout << "[CREATE] Cor " << (cor_idx + 1)
-                                          << " percolou em t=" << t
-                                          << "  (ordem=" << order_counter << ")\n";
-
+                                ++order_counter;
                                 ps_out.color_percolation.push_back(cor_idx + 1);
                                 ps_out.time_percolation.push_back(t);
                                 ps_out.percolation_order.push_back(order_counter);
+                                std::cout << "[CREATE] Cor " << (cor_idx + 1)
+                                          << " percolou em t=" << t
+                                          << "  (ordem=" << order_counter << ")\n";
                             }
                         }
                     }
@@ -186,21 +207,21 @@ NetworkPattern network::create_network(
             }
         }
 
-        // Sem crescimento → encerra
         const int grown_total = std::accumulate(N_current.begin(), N_current.end(), 0);
-        if (grown_total == 0) break;
+        if (grown_total == 0) break; // nada cresceu → encerra sem “passo vazio”
 
         borderland = std::move(new_borderland);
 
-        // Atualiza p_i(t) e N_i(t)
+        // atualiza p para o próximo passo
+        std::vector<double> p_next(num_colors);
         for (int c = 0; c < num_colors; ++c) {
-            const double p_next = generate_p(type_N_t, p_t[c].back(), t, N_current[c], k, a, alpha);
-            p_t[c].push_back(p_next);
-            Nt_t[c].push_back(N_current[c]);
+            p_next[c] = generate_p(type_N_t, p_curr[c], t, N_current[c], k, a, alpha);
         }
-        t_list.push_back(t);
 
-        // critério: todas as cores percolaram (alcançaram grow_axis == L-1)
+        // commit consistente do passo t
+        commit_step(t, p_next, N_current);
+
+        // critério: todas as cores percolaram
         if (std::all_of(percolated.begin(), percolated.end(), [](bool x){ return x; })) {
             std::cout << "[CREATE] Todas as cores percolaram em t=" << t << " (";
             for (int c = 0; c < num_colors; ++c) {
@@ -211,28 +232,52 @@ NetworkPattern network::create_network(
             break;
         }
 
+        // logging opcional
         if (t < 10 || t % 100 == 0) {
             std::cout << "[" << type_percolation << "] t = " << t;
             for (int c = 0; c < num_colors; ++c)
-                std::cout << ", p" << c + 1 << "(t)=" << p_t[c].back()
-                          << ", N_t" << c + 1 << "(t)=" << Nt_t[c].back();
+                std::cout << ", p" << c + 1 << "(t)=" << p_next[c]
+                          << ", N_t" << c + 1 << "(t)=" << N_current[c];
             std::cout << std::endl;
+        }
+
+        // avança
+        p_curr.swap(p_next);
+    }
+
+    // ----- sanity check -----
+    {
+        const size_t T = t_list.size();
+        bool ok = true;
+        if ((int)p_series.size() != num_colors || (int)Nt_series.size() != num_colors) ok = false;
+        else {
+            for (int c = 0; c < num_colors; ++c) {
+                if (p_series[c].size() != T || Nt_series[c].size() != T) { ok = false; break; }
+            }
+        }
+        if (!ok) {
+            std::cerr << "[BUG] TimeSeries mismatch: T=" << t_list.size()
+                      << " p_outer=" << p_series.size()
+                      << " Nt_outer=" << Nt_series.size() << "\n";
         }
     }
 
-    // Saída
+    // ----- saída -----
     ts_out.num_colors = num_colors;
-    ts_out.p_t = std::move(p_t);
-    ts_out.Nt  = std::move(Nt_t);
+    ts_out.p_t = std::move(p_series);
+    ts_out.Nt  = std::move(Nt_series);
     ts_out.t   = std::move(t_list);
-    
-    for(int i=0; i<num_colors;i++){
-        ps_out.pho.push_back(p0[i]);
-        ps_out.rho.push_back(rho[i]);
+
+    // guarda parâmetros em ps_out
+    ps_out.pho.clear(); ps_out.rho.clear();
+    for (int i = 0; i < num_colors; ++i) {
+        if (i < (int)p0.size())  ps_out.pho.push_back(p0[i]);
+        if (i < (int)rho.size()) ps_out.rho.push_back(rho[i]);
     }
-    
+
     return net;
 }
+
 
 NetworkPattern network::animate_network(
     const int dim, const int lenght_network, const int num_of_samples,

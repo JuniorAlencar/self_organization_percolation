@@ -6,7 +6,7 @@ cd ..
 
 # Parâmetros fixos do executável
 L=2000
-N_SAMPLES=2000
+N_SAMPLES=9000
 P0=1.0           # p0 fixo para a figura
 SEED=-1          # -1 => gera aleatório no código
 DIM=2
