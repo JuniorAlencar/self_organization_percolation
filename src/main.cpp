@@ -63,6 +63,15 @@ int main(int argc, char* argv[]){
     network net_generator(N_samples, num_colors);
     
     NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts, ps);
+    std::cerr << "[MAIN-CHK] num_colors=" << ts.num_colors
+            << " t=" << ts.t.size()
+            << " p_outer=" << ts.p_t.size()
+            << " Nt_outer=" << ts.Nt.size() << "\n";
+
+    if (!ts.p_t.empty())  std::cerr << "  p_t[0].size="  << ts.p_t[0].size()  << "\n";
+    if (!ts.Nt.empty())   std::cerr << "  Nt[0].size="   << ts.Nt[0].size()   << "\n";
+    if (ts.p_t.size() > 1) std::cerr << "  p_t[1].size=" << ts.p_t[1].size() << "\n";
+    if (ts.Nt.size() > 1)  std::cerr << "  Nt[1].size="  << ts.Nt[1].size()  << "\n";
 
     // Check initial ratio between types of nodes
 //    NetworkPattern net = net_generator.initialize_network(dim, L, num_colors, P0, rho, p0, seed);

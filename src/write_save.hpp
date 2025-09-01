@@ -10,6 +10,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <fstream>
+#include <unordered_map>
+#include <algorithm>
 #include <sstream>
 #include <omp.h>      // OpenMP
 #include <zip.h> // Requires libzip-dev installed
