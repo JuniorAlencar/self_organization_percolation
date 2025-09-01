@@ -70,62 +70,112 @@ void save_data::save_network_as_npz(const NetworkPattern& net, const std::string
     std::cout << "Saving to file: " << filename << std::endl;
 }
 
+void save_data::save_time_series_as_csv(const TimeSeries& ts,
+                                        const std::string& filename_pt,
+                                        const std::string& filename_Nt)
+{
+    auto bail = [&](const std::string& msg){
+        std::cerr << "[Erro] TimeSeries inconsistente: " << msg << "\n";
+    };
 
-void save_data::save_time_series_as_csv(const TimeSeries& ts, 
-                                        const std::string& filename_pt, 
-                                        const std::string& filename_Nt) {
-    if (ts.t.empty() || ts.p_t.empty() || ts.Nt.empty() ||
-        ts.p_t.size() != ts.num_colors || ts.Nt.size() != ts.num_colors) {
-        std::cerr << "[Erro] TimeSeries inconsistente!\n";
+    if (ts.t.empty()) { bail("t vazio"); return; }
+    if (ts.p_t.empty()) { bail("p_t vazio"); return; }
+    if (ts.Nt.empty())  { bail("Nt vazio"); return; }
+
+    const size_t T = ts.t.size();
+
+    // Detecta orientação
+    bool looks_color_major =
+        (ts.p_t.size() == static_cast<size_t>(ts.num_colors)) &&
+        (ts.Nt.size()  == static_cast<size_t>(ts.num_colors));
+
+    bool ok_color_major = looks_color_major;
+    if (looks_color_major) {
+        for (int c = 0; c < ts.num_colors; ++c) {
+            if (ts.p_t[c].size() != T || ts.Nt[c].size() != T) {
+                ok_color_major = false; break;
+            }
+        }
+    }
+
+    bool looks_time_major =
+        (ts.p_t.size() == T) && (ts.Nt.size() == T);
+
+    bool ok_time_major = looks_time_major;
+    if (looks_time_major) {
+        for (size_t i = 0; i < T; ++i) {
+            if (ts.p_t[i].size() != static_cast<size_t>(ts.num_colors) ||
+                ts.Nt[i].size()  != static_cast<size_t>(ts.num_colors)) {
+                ok_time_major = false; break;
+            }
+        }
+    }
+
+    if (!ok_color_major && !ok_time_major) {
+        bail("nem cor-major nem time-major: "
+             "p_t.outer=" + std::to_string(ts.p_t.size()) +
+             ", Nt.outer=" + std::to_string(ts.Nt.size()) +
+             ", T=" + std::to_string(T));
         return;
     }
 
-    size_t T = ts.t.size();
-
-    // --- Saving p(t) ---
+    // ---- Salvar p(t) ----
     {
-        std::ofstream file_pt(filename_pt);
-        if (!file_pt.is_open()) {
-            std::cerr << "Erro ao abrir " << filename_pt << " para escrita\n";
-        } else {
-            file_pt << "t";
-            for (int c = 0; c < ts.num_colors; ++c)
-                file_pt << ",pt_" << (c + 1);
-            file_pt << "\n";
+        std::ofstream f(filename_pt);
+        if (!f) { std::cerr << "Erro ao abrir " << filename_pt << "\n"; }
+        else {
+            f << "t";
+            for (int c = 0; c < ts.num_colors; ++c) f << ",pt_" << (c+1);
+            f << "\n";
 
-            for (size_t i = 0; i < T; ++i) {
-                file_pt << ts.t[i];
-                for (int c = 0; c < ts.num_colors; ++c)
-                    file_pt << "," << ts.p_t[c][i];
-                file_pt << "\n";
+            if (ok_color_major) {
+                for (size_t i = 0; i < T; ++i) {
+                    f << ts.t[i];
+                    for (int c = 0; c < ts.num_colors; ++c)
+                        f << "," << ts.p_t[c][i];
+                    f << "\n";
+                }
+            } else { // ok_time_major
+                for (size_t i = 0; i < T; ++i) {
+                    f << ts.t[i];
+                    for (int c = 0; c < ts.num_colors; ++c)
+                        f << "," << ts.p_t[i][c];
+                    f << "\n";
+                }
             }
-            file_pt.close();
             std::cout << "Saving CSV: " << filename_pt << std::endl;
         }
     }
 
-    // --- Saving N(t) ---
+    // ---- Salvar N(t) ----
     {
-        std::ofstream file_Nt(filename_Nt);
-        if (!file_Nt.is_open()) {
-            std::cerr << "Erro ao abrir " << filename_Nt << " para escrita\n";
-        } else {
-            file_Nt << "t";
-            for (int c = 0; c < ts.num_colors; ++c)
-                file_Nt << ",Nt_" << (c + 1);
-            file_Nt << "\n";
+        std::ofstream f(filename_Nt);
+        if (!f) { std::cerr << "Erro ao abrir " << filename_Nt << "\n"; }
+        else {
+            f << "t";
+            for (int c = 0; c < ts.num_colors; ++c) f << ",Nt_" << (c+1);
+            f << "\n";
 
-            for (size_t i = 0; i < T; ++i) {
-                file_Nt << ts.t[i];
-                for (int c = 0; c < ts.num_colors; ++c)
-                    file_Nt << "," << ts.Nt[c][i];
-                file_Nt << "\n";
+            if (ok_color_major) {
+                for (size_t i = 0; i < T; ++i) {
+                    f << ts.t[i];
+                    for (int c = 0; c < ts.num_colors; ++c)
+                        f << "," << ts.Nt[c][i];
+                    f << "\n";
+                }
+            } else { // ok_time_major
+                for (size_t i = 0; i < T; ++i) {
+                    f << ts.t[i];
+                    for (int c = 0; c < ts.num_colors; ++c)
+                        f << "," << ts.Nt[i][c];
+                    f << "\n";
+                }
             }
-            file_Nt.close();
             std::cout << "Saving CSV: " << filename_Nt << std::endl;
         }
     }
 }
+
 
 void save_data::save_info_percolation(const PercolationSeries& ps,
                                       const std::string& filename_info){
@@ -141,7 +191,7 @@ void save_data::save_info_percolation(const PercolationSeries& ps,
     }
     
     else{
-        file_info << "color" << " " << "time_percolation" << " " << "percolation_order\r\n";
+        file_info << "color" << " " << "rho" << " " << "pho" <<  " " << "time_percolation" << " " << "percolation_order\r\n";
         
         // minimum value of vectors (number of colors)
         const size_t n = std::min({ps.color_percolation.size(),
@@ -150,7 +200,7 @@ void save_data::save_info_percolation(const PercolationSeries& ps,
         // Run from vectors elements
         for (size_t i = 0; i < n; ++i) {
         file_info << ps.color_percolation[i] << ' '
-                << ps.time_percolation[i]   << ' '
+                << ps.rho[i] << ' ' << ps.pho[i] << ' '<< ps.time_percolation[i] << ' '
                 << ps.percolation_order[i]  << '\n';
         }
 

@@ -19,6 +19,7 @@ class FolderCreator {
             double N_t,
             double k,
             int L,
+            int n_colors,
             double a,
             double alpha,
             std::string type_percolation,
