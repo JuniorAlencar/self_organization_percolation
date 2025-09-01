@@ -55,7 +55,11 @@ class network{
                                        const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
                                        TimeSeries& ts_out, PercolationSeries& ps_out);
         
-        NetworkPattern initialize_network(int dim, int length_network, int num_colors, double P0, const std::vector<double>& rho, int seed);
+        NetworkPattern initialize_network(int dim, int length_network, int num_colors,
+                                           double P0,
+                                           const std::vector<double>& rho,
+                                           const std::vector<double>& p0,
+                                           int seed);
         
         void print_initial_site_fractions(const NetworkPattern& net);
         

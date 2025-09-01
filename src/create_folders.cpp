@@ -12,6 +12,7 @@ std::tuple<std::string, std::string, std::string, std::string> FolderCreator::cr
     double N_t,
     double k,
     int L,
+    int n_colors,
     double a,
     double alpha,
     std::string type_percolation,
@@ -19,8 +20,8 @@ std::tuple<std::string, std::string, std::string, std::string> FolderCreator::cr
     double /* P0 */) {
 
     char main_folder[256];
-    sprintf(main_folder, "%s/%s_percolation/dim_%d/L_%d",
-            base_path.c_str(), type_percolation.c_str(), dim, L);
+    sprintf(main_folder, "%s/%s_percolation/num_colors_%d/dim_%d/L_%d",
+            base_path.c_str(), type_percolation.c_str(), n_colors ,dim, L);
 
     std::string full_path;
 

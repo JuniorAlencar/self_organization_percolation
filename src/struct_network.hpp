@@ -17,7 +17,7 @@ struct NetworkPattern {
     int seed;
     std::vector<int> shape;   // (2D) {L, L}  |  (3D) {L, L, L}
     std::vector<int> data;    // estado por sítio
-    std::vector<double> rho;  // fração na borda por cor
+    std::vector<double> rho;  // fração global por cor (agora aplicada na REDE TODA)
     // Convenções de estado:
     //   >0 : ativo, +1 (1 cor) ou +(c+2) (multi-cor)
     //   -1 : inativo sem cor (pode virar qualquer cor)
@@ -31,49 +31,87 @@ struct NetworkPattern {
         // tamanho total
         const size_t total_sites = std::accumulate(shape.begin(), shape.end(), size_t{1},
                                                    std::multiplies<size_t>());
-        data.resize(total_sites, -1); // toda a rede começa "sem cor" (−1)
+        data.clear();
+        data.resize(total_sites, -1); // default: sem cor
 
-        // eixo de crescimento = última dimensão
-        const int Lgrow = shape.back();
+        if (num_colors_ <= 1) {
+            // Caso 1 cor: mantém toda a rede -1 (sem cor), como no comportamento anterior.
+            // (A ativação inicial via P0/p0 acontece depois, fora do construtor.)
+            return;
+        }
 
-        // tamanho da borda (plano/linha onde grow-index = 0)
-        int total_base = 1;
-        for (int ax = 0; ax < dim - 1; ++ax) total_base *= shape[ax];
-
-        // monta vetor de rótulos (negativos) para a borda de partida
-        std::vector<int> labels;
-        labels.reserve(total_base);
-
-        if (num_colors_ == 1) {
-            // uma única cor: borda toda com −1 (sem-cor) está OK,
-            // mas se quiser "pré-rotular" explicitamente, mantenha −1:
-            labels.insert(labels.end(), total_base, -1);
+        // ---------- Multi-cor: distribuir -(c+2) e -1 na REDE TODA conforme rho ----------
+        // Normaliza rho (se vier com soma != 1, mantém proporções)
+        std::vector<double> rho_use = rho_;
+        if ((int)rho_use.size() != num_colors_) {
+            rho_use.assign(num_colors_, 1.0 / std::max(1, num_colors_));
         } else {
-            // múltiplas cores: preencher quantidades proporcionais a rho na borda
-            int filled = 0;
-            for (int c = 0; c < num_colors_; ++c) {
-                const int want = static_cast<int>(std::round(rho_[c] * total_base));
-                labels.insert(labels.end(), want, -(c + 2)); // −2, −3, ...
-                filled += want;
-            }
-            // completa o restante com −1 (sem cor)
-            if (filled < total_base) labels.insert(labels.end(), total_base - filled, -1);
-            // embaralha
-            std::shuffle(labels.begin(), labels.end(), rng_.get_gen());
+            for (double &x : rho_use) if (x < 0.0) x = 0.0;
+            double s = std::accumulate(rho_use.begin(), rho_use.end(), 0.0);
+            if (s <= 0.0) rho_use.assign(num_colors_, 1.0 / std::max(1, num_colors_));
+            else for (double &x : rho_use) x /= s; // soma=1
         }
 
-        // grava os rótulos na borda: índice da última dimensão = 0
-        for (int idx = 0; idx < total_base; ++idx) {
-            // reconstrói coordenadas da borda a partir de idx linear nas (dim-1) primeiras dims
-            std::vector<int> coord(dim, 0);
-            int rem = idx;
-            for (int ax = dim - 2; ax >= 0; --ax) {
-                coord[ax] = rem % shape[ax];
-                rem /= shape[ax];
-            }
-            coord.back() = 0; // grow-axis = 0
-            data[to_index(coord)] = labels[idx];
+        // Se desejar permitir soma<1 para sobrar -1, basta comentar a normalização acima
+        // e usar a linha abaixo para "fracao_none". Aqui, como normalizamos rho para 1,
+        // fracao_none = 0.0 quando soma(rho) = 1.
+        double fracao_none = std::max(0.0, 1.0 - std::accumulate(rho_.begin(), rho_.end(), 0.0));
+
+        // Monta pesos: cores + "sem cor"
+        std::vector<double> pesos;
+        pesos.reserve(num_colors_ + 1);
+        for (int c = 0; c < num_colors_; ++c) pesos.push_back(rho_use[c]);
+        pesos.push_back(fracao_none);
+
+        // Quotas proporcionais
+        std::vector<double> quotas(num_colors_ + 1, 0.0);
+        for (size_t i = 0; i < quotas.size(); ++i) quotas[i] = pesos[i] * double(total_sites);
+
+        // Maiores restos (Hamilton): floors + distribui o restante pelos maiores decimais
+        std::vector<size_t> aloc(num_colors_ + 1, 0);
+        size_t soma_floor = 0;
+        for (size_t i = 0; i < quotas.size(); ++i) {
+            aloc[i] = static_cast<size_t>(std::floor(quotas[i]));
+            soma_floor += aloc[i];
         }
+        size_t leftover = (total_sites > soma_floor) ? (total_sites - soma_floor) : 0;
+
+        // índices por fração decimal descrescente
+        std::vector<size_t> idxs(quotas.size());
+        std::iota(idxs.begin(), idxs.end(), 0);
+        std::sort(idxs.begin(), idxs.end(),
+                  [&](size_t a, size_t b){
+                      double fa = quotas[a] - std::floor(quotas[a]);
+                      double fb = quotas[b] - std::floor(quotas[b]);
+                      if (fa == fb) return a < b;
+                      return fa > fb;
+                  });
+        for (size_t k = 0; k < leftover; ++k) {
+            aloc[idxs[k]] += 1;
+        }
+
+        // aloc[0..num_colors_-1] = contagem de -(c+2)
+        // aloc[num_colors_]       = contagem de -1
+        std::vector<int> labels;
+        labels.reserve(total_sites);
+
+        for (int c = 0; c < num_colors_; ++c) {
+            size_t cnt = aloc[c];
+            int lab = -(c + 2); // −2, −3, ...
+            for (size_t i = 0; i < cnt; ++i) labels.push_back(lab);
+        }
+        // "sem cor"
+        if (aloc[num_colors_] > 0) {
+            labels.insert(labels.end(), aloc[num_colors_], -1);
+        }
+
+        // Embaralha e grava
+        std::shuffle(labels.begin(), labels.end(), rng_.get_gen());
+        if (labels.size() != total_sites) {
+            // segurança: ajusta (por raríssimo drift numérico)
+            labels.resize(total_sites, -1);
+        }
+        data = std::move(labels);
     }
 
     size_t to_index(const std::vector<int>& coords) const {
@@ -98,6 +136,7 @@ struct NetworkPattern {
 
 
 
+
 // Struct to load (t, pt_i) and (t, Nt_i)
 struct TimeSeries{
     int num_colors;
@@ -107,9 +146,11 @@ struct TimeSeries{
 };
 
 struct PercolationSeries{
-    vector<int> color_percolation;
-    vector<int> time_percolation;
-    vector<int> percolation_order;
+    vector<int> color_percolation;  // Color
+    vector<int> time_percolation;   // Time when it percolated
+    vector<int> percolation_order; // Moment when it percolated
+    vector<double> rho; // Density for each color for all network (all inactive sites)
+    vector<double> pho;  // Initial fraction of active sites
 };
 
 #endif // network_hpp

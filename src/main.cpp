@@ -38,7 +38,7 @@ int main(int argc, char* argv[]){
     }
 
     FolderCreator creator("./Data");
-
+    int num_colors = 1;
     // 👇 Atualizado para receber os 3 caminhos
     auto [network_dir, pt_dir, nt_dir, info_dir] = creator.create_structure(
         dim,
@@ -46,6 +46,7 @@ int main(int argc, char* argv[]){
         N_t,
         k,
         L,
+        num_colors,
         a,
         alpha,
         type_percolation,
@@ -55,18 +56,17 @@ int main(int argc, char* argv[]){
     
     TimeSeries ts;
     PercolationSeries ps;
-    int num_colors = 1;
+    
     vector<double> rho = {1.0};
     vector<double> p0 = {pp0};
 
     network net_generator(N_samples, num_colors);
     
     NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts, ps);
-    
+
     // Check initial ratio between types of nodes
-    // NetworkPattern net = net_generator.initialize_network(dim, L, N_samples, num_colors, P0, rho, seed);
-    // net_generator.print_initial_site_fractions(net);
-    
+//    NetworkPattern net = net_generator.initialize_network(dim, L, num_colors, P0, rho, p0, seed);
+    //net_generator.print_initial_site_fractions(net);
     
     // Create name of files
     std::ostringstream oss_name;

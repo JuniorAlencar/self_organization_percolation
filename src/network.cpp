@@ -225,7 +225,12 @@ NetworkPattern network::create_network(
     ts_out.p_t = std::move(p_t);
     ts_out.Nt  = std::move(Nt_t);
     ts_out.t   = std::move(t_list);
-
+    
+    for(int i=0; i<num_colors;i++){
+        ps_out.pho.push_back(p0[i]);
+        ps_out.rho.push_back(rho[i]);
+    }
+    
     return net;
 }
 
@@ -413,73 +418,131 @@ NetworkPattern network::animate_network(
     ts_out.p_t = std::move(p_t);
     ts_out.Nt  = std::move(Nt_t);
     ts_out.t   = std::move(t_list);
-
+    
     return net_animation;
 }
 
-
-
-
-
-NetworkPattern network::initialize_network(int dim, int length_network, int num_colors, double P0, const std::vector<double>& rho, int seed) {
+// Ativa a base conforme P0 (total) e p0 (fração por cor na base)
+NetworkPattern network::initialize_network(int dim, int length_network, int num_colors,
+                                           double P0,
+                                           const std::vector<double>& rho,
+                                           const std::vector<double>& p0,
+                                           int seed)
+{
+    // ==== shape espacial ====
     std::vector<int> shape = (dim == 2)
         ? std::vector<int>{length_network, length_network}
         : std::vector<int>{length_network, length_network, length_network};
-    
+
     all_random rng(seed);
+    // Construtor: preenche data com -1 e rotula a base segundo 'rho' com -(c+2)
     NetworkPattern net(dim, shape, num_colors, rho, rng);
-    
 
-    int base_size = (dim == 3)
-        ? length_network * length_network
-        : length_network;
+    // ==== checagens de p0 ====
+    std::vector<double> p0_use = p0;
+    if ((int)p0_use.size() != num_colors) {
+        // fallback: distribui igualmente
+        p0_use.assign(num_colors, 1.0 / std::max(1, num_colors));
+    } else {
+        // normaliza se necessário
+        double s = std::accumulate(p0_use.begin(), p0_use.end(), 0.0);
+        if (s <= 0.0) p0_use.assign(num_colors, 1.0 / std::max(1, num_colors));
+        else for (double &x : p0_use) x /= s;
+    }
 
-    int active_per_color = static_cast<int>(P0 * base_size);
+    // ==== geometria da base (última dimensão = 0) ====
+    int base_size = 1;
+    for (int ax = 0; ax < dim - 1; ++ax) base_size *= shape[ax];
 
-    for (int c = 0; c < num_colors; ++c) {
-        int activated = 0;
-        int max_tries = base_size * 10;  // evita loop infinito
-        int tries = 0;
-
-        while (activated < active_per_color && tries < max_tries) {
-            std::vector<int> coords(dim, 0);
-            if (dim == 2) {
-                coords[1] = rng.uniform_int(0, length_network - 1);
-            } else {
-                coords[1] = rng.uniform_int(0, length_network - 1);
-                coords[2] = rng.uniform_int(0, length_network - 1);
-            }
-
-            size_t idx = net.to_index(coords);
-            int target_val = (num_colors == 1) ? -1 : -(c + 2);
-            int new_val    = (num_colors == 1) ?  1 :  (c + 2);
-
-            if (net.data[idx] == target_val) {
-                net.data[idx] = new_val;
-                activated++;
-            }
-
-            tries++;
+    auto base_coords_from_idx = [&](int idx_linear) {
+        std::vector<int> coords(dim, 0);
+        int rem = idx_linear;
+        for (int ax = dim - 2; ax >= 0; --ax) {
+            coords[ax] = rem % shape[ax];
+            rem /= shape[ax];
         }
+        coords.back() = 0;
+        return coords;
+    };
+
+    // Total a ativar na base
+    const int total_active_target = std::max(0, (int)std::llround(P0 * base_size));
+
+    if (num_colors == 1) {
+        // candidatos: -1 na base
+        std::vector<size_t> candidates; candidates.reserve(base_size);
+        for (int i = 0; i < base_size; ++i) {
+            size_t idx = net.to_index(base_coords_from_idx(i));
+            if (net.data[idx] == -1) candidates.push_back(idx);
+        }
+        std::shuffle(candidates.begin(), candidates.end(), rng.get_gen());
+        int take = std::min<int>(total_active_target, (int)candidates.size());
+        for (int k = 0; k < take; ++k) net.data[candidates[k]] = +1;
+        return net;
+    }
+
+    // multi-cor: quota por cor segundo p0
+    for (int c = 0; c < num_colors; ++c) {
+        int quota = std::max(0, (int)std::llround(p0_use[c] * total_active_target));
+        if (quota == 0) continue;
+
+        const int label_neg = -(c + 2); // preferido
+        const int label_pos =  (c + 2); // ativo dessa cor
+
+        std::vector<size_t> preferred; preferred.reserve(base_size);
+        std::vector<size_t> fallback;  fallback.reserve(base_size);
+
+        for (int i = 0; i < base_size; ++i) {
+            size_t idx = net.to_index(base_coords_from_idx(i));
+            int v = net.data[idx];
+            if (v == label_neg)      preferred.push_back(idx);
+            else if (v == -1)        fallback.push_back(idx);
+        }
+
+        std::shuffle(preferred.begin(), preferred.end(), rng.get_gen());
+        std::shuffle(fallback.begin(),  fallback.end(),  rng.get_gen());
+
+        int need = quota;
+        int take_pref = std::min<int>(need, (int)preferred.size());
+        for (int k = 0; k < take_pref; ++k) net.data[preferred[k]] = label_pos;
+        need -= take_pref;
+
+        int take_fb = std::min<int>(need, (int)fallback.size());
+        for (int k = 0; k < take_fb; ++k)  net.data[fallback[k]] = label_pos;
+        // se ainda faltar, não há mais slots adequados na base — OK.
     }
 
     return net;
 }
 
-void network::print_initial_site_fractions(const NetworkPattern& net) {
-    std::map<int, int> count;
-    size_t total = net.data.size();
 
-    for (int val : net.data) {
-        count[val]++;
-    }
+
+// ===== print_initial_site_fractions (compatível com o struct atual) =====
+void network::print_initial_site_fractions(const NetworkPattern& net) {
+    std::map<int, size_t> count;  // ordenado por chave (estado)
+    const size_t total = net.data.size();
+
+    for (int v : net.data) count[v]++;
 
     std::cout << "\n[ Fração inicial dos sítios ]\n";
-    for (const auto& [val, n] : count) {
-        double frac = static_cast<double>(n) / total;
-        std::cout << "valor = " << val << " | fração = " << frac << std::endl;
+    std::cout.setf(std::ios::fixed); std::cout << std::setprecision(6);
+
+    size_t check_sum = 0;
+    for (const auto& kv : count) {
+        int state = kv.first;
+        size_t n  = kv.second;
+        double frac = static_cast<double>(n) / static_cast<double>(total);
+        std::cout << "estado = " << std::setw(3) << state
+                  << " | contagem = " << std::setw(10) << n
+                  << " | fração = " << frac << '\n';
+        check_sum += n;
     }
+
+    std::cout << "total sites = " << total
+              << " | soma contagens = " << check_sum
+              << (check_sum == total ? " (OK)\n" : " (INCONSISTENTE!)\n");
 }
+
 
 
 

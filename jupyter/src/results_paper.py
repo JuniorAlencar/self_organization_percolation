@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 #from matplotlib.colors import ListedColormap
 
-def list_npz_files():
+def list_npz_files(folder):
     """
     Lists all '.npz' files in the specified directory.
     Returns:
@@ -12,7 +12,6 @@ def list_npz_files():
     Raises:
         FileNotFoundError: If the target directory does not exist.
     """
-    folder = "../Data/bond_percolation/dim_2/L_1000/NT_constant/NT_200/k_1.0e-05/network/"
     
     if not os.path.exists(folder):
         raise FileNotFoundError(f"Folder not found: {folder}")
@@ -33,56 +32,101 @@ def create_folder(folder_path):
     else:
         print(f"Folder already exists: {folder_path}")
 
-def plot_bond_network(filepath, savepath=None, dpi=600, min_density=1):
+def plot_bond_network(
+    filepath,
+    num_colors: int,
+    savepath=None,
+    dpi=600,
+    min_density=1,
+    color_map=None,          # dict[int,str] opcional: {valor_ativo: cor}
+    linewidth=0.25,
+    figsize=(8, 10),
+    show_legend=True
+):
     """
-    Plots only the bond connections (black segments) between active sites in the lattice.
-    The image is vertically cropped to include only rows with density ≥ min_density.
-    The y-axis is inverted (matching the orientation in the original paper).
+    Plota ligações entre sítios ativos de MESMA cor, conforme num_colors.
+
+    Regras:
+      - num_colors = 1 -> ativos = {+1} (cor cinza por padrão)
+      - num_colors >= 2 -> ativos = {+2, +3, ..., +(num_colors+1)}
+      - valores negativos e -1 são ignorados
     """
+    if num_colors < 1:
+        raise ValueError("num_colors deve ser >= 1")
+
+    # Define o conjunto de valores ativos conforme a regra solicitada
+    if num_colors == 1:
+        active_values = (1,)
+    else:
+        active_values = tuple(range(2, 2 + num_colors))
+
     data = np.load(filepath)
-    network = data["network"]
+    network = data["network"].T  # “em pé”
     nrows, ncols = network.shape
 
-    segments = []
+    # Paleta padrão
+    if color_map is None:
+        if num_colors == 1:
+            color_map = {1: "0.4"}  # cinza
+        else:
+            base = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple",
+                    "tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
+            color_map = {val: base[(i % len(base))] for i, val in enumerate(active_values)}
+
+    segments_by_color = {val: [] for val in active_values}
     density_per_row = np.zeros(nrows, dtype=int)
 
+    # Varre e cria segmentos apenas se vizinho tem o MESMO valor ativo
     for i in range(nrows):
         for j in range(ncols):
-            if network[i, j] == 1:
-                # right bond
-                if j + 1 < ncols and network[i, j + 1] == 1:
-                    segments.append([(j, i), (j + 1, i)])
+            v = network[i, j]
+            if v in active_values:
+                # horizontal (direita)
+                if j + 1 < ncols and network[i, j + 1] == v:
+                    segments_by_color[v].append([(j, i), (j + 1, i)])
                     density_per_row[i] += 1
-                # upward bond
-                if i + 1 < nrows and network[i + 1, j] == 1:
-                    segments.append([(j, i), (j, i + 1)])
+                # vertical (cima)
+                if i + 1 < nrows and network[i + 1, j] == v:
+                    segments_by_color[v].append([(j, i), (j, i + 1)])
                     density_per_row[i] += 1
 
     active_rows = np.where(density_per_row >= min_density)[0]
     if active_rows.size == 0:
         print("[!] No row found with minimum density.")
         return
-    row_start = active_rows[0]
-    row_end = active_rows[-1]
+    row_start, row_end = active_rows[0], active_rows[-1]
 
-    # Filter visible bonds
-    segments_filtered = [
-        [(x0, y0), (x1, y1)]
-        for (x0, y0), (x1, y1) in segments
-        if row_start <= y0 <= row_end and row_start <= y1 <= row_end
-    ]
+    # Recorte vertical
+    for val in active_values:
+        segments_by_color[val] = [
+            [(x0, y0), (x1, y1)]
+            for (x0, y0), (x1, y1) in segments_by_color[val]
+            if row_start <= y0 <= row_end and row_start <= y1 <= row_end
+        ]
 
-    # Plotting
-    fig, ax = plt.subplots(figsize=(8, 8))
-    lc = LineCollection(segments_filtered, colors="black", linewidths=0.25)
-    ax.add_collection(lc)
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    handles, labels = [], []
+    for val in active_values:
+        segs = segments_by_color[val]
+        if not segs:
+            continue
+        lc = LineCollection(segs, colors=color_map.get(val, "black"),
+                            linewidths=linewidth, label=f"+{val}")
+        ax.add_collection(lc)
+        handles.append(lc)
+        labels.append(f"+{val}")
+
     ax.set_xlim(0, ncols)
-    ax.set_ylim(row_end, row_start + 1)
-    ax.invert_yaxis()  # ensure top-to-bottom growth
+    ax.set_ylim(row_end, row_start)
+    ax.invert_yaxis()
     ax.set_aspect("equal")
     ax.axis("off")
-    plt.tight_layout(pad=0)
+    # if show_legend and handles:
+    #     ax.legend(handles=handles, labels=labels, loc="upper right",
+    #               frameon=False, fontsize=8)
 
+    plt.tight_layout(pad=0)
     if savepath:
         plt.savefig(savepath, dpi=dpi, bbox_inches="tight", pad_inches=0)
         print(f"[✔] Image saved to: {savepath}")
@@ -143,12 +187,12 @@ def list_npy_files(type_percolation:str, dim:int, L:int, N_samples:int, type_Nt:
     else:
         raise ValueError(f"[prop] must be 'Nt' or 'Pt'. Received: '{prop}'")
     
-    folder = f"../Data/{type_percolation}_percolation/dim_{dim}/L_{L}_N_samples_{N_samples}/NT_{typeNt}/NT_{Nt}/k_{k:.1e}/{folder_prop}/"
+    folder = f"../Data/{type_percolation}_percolation/num_colors_1/dim_{dim}/L_{L}/NT_{typeNt}/NT_{Nt}/k_{k:.1e}/{folder_prop}/"
 
     if not os.path.exists(folder):
         raise FileNotFoundError(f"Folder not found: {folder}")
     
-    npy_files = [folder + f for f in os.listdir(folder) if f.endswith('.npy')]
+    npy_files = [folder + f for f in os.listdir(folder) if f.endswith('.csv')]
     return npy_files
 
 def load_t_pt(filepath):
