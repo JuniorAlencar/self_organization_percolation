@@ -51,16 +51,16 @@ make
 This will generate the <b>SOP</b> executable. Run the code outside the build folder
 
 ```bash
-./build/SOP <L> <N_samples> <$p_0$> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <$\rho$>
+./build/SOP <L> <N_samples> <$\boldsymbol{p_0}$> <seed> <type_percolation> <k> <$\boldsymbol{N_t}$> <dim> <num_colors> <$\boldsymbol{\rho}$>
 ```
 where  
 <b> L </b>: Side of network;  
 <b> N_samples </b>: Number of implementations (time);  
-<b> $p_0$ </b>: Initial growth probability;  
+$\boldsymbol{p_0}$: Initial growth probability;  
 <b> seed </b>: Seed to implemetantion (If it is <b> -1 </b> it generates a random integer seed);  
 <b> type_percolation </b>: Define the type of percolation -> bond or node;  
 <b> $k$ </b>: kinetic coefficient (see SOP_paper.pdf in docs);  
-<b> $N_t$ </b>: threshold parameter (see SOP_paper.pdf in docs);  
+$\boldsymbol{N_t}$: threshold parameter (see SOP_paper.pdf in docs);  
 <b> dim </b>: dimension of network;    
 <b> num_colors </b>: Number of colors in network;  
 $\boldsymbol{\rho}$: Density of network for each color;  
@@ -68,8 +68,8 @@ $\boldsymbol{\rho}$: Density of network for each color;
 <b> VERY IMPORTANT!</b>  
 The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1, the gap will be filled with uncolored sites. If num_colors*$\rho$ = 1, all sites in the network will be uniformly and equally colored.
 
-<b> Example </b>: $\rho$ = 0.5 for 2 colors, this gives us num_colors*$\rho$ = 1.0, meaning that half of the network will be composed of inactive sites of each color.  
-<b> Example </b>: $\rho$ = 0.4 for 2 colors, this gives us num_colors*$\rho$ = 0.8, meaning that 40% of the network sites will have color 2, 40% will have color 3, and 20% will have no color.  
+<b> Example </b>: $\boldsymbol{\rho}$ = 0.5 for 2 colors, this gives us num_colors*$\boldsymbol{\rho}$ = 1.0, meaning that half of the network will be composed of inactive sites of each color.  
+<b> Example </b>: $\boldsymbol{\rho}$ = 0.4 for 2 colors, this gives us num_colors*$\boldsymbol{\rho}$ = 0.8, meaning that 40% of the network sites will have color 2, 40% will have color 3, and 20% will have no color.  
 
 
 ## Running this way will generate a folder structure
