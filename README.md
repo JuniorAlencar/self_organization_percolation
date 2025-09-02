@@ -51,19 +51,19 @@ make
 This will generate the <b>SOP</b> executable. Run the code outside the build folder
 
 ```bash
-./build/SOP <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho>
+./build/SOP <L> <N_samples> <$p_0$> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <$\rho$>
 ```
 where  
 <b> L </b>: Side of network;  
 <b> N_samples </b>: Number of implementations (time);  
-<b> p0 </b>: Initial growth probability;  
+<b> $p_0$ </b>: Initial growth probability;  
 <b> seed </b>: Seed to implemetantion (If it is <b> -1 </b> it generates a random integer seed);  
 <b> type_percolation </b>: Define the type of percolation -> bond or node;  
 <b> $k$ </b>: kinetic coefficient (see SOP_paper.pdf in docs);  
 <b> $N_t$ </b>: threshold parameter (see SOP_paper.pdf in docs);  
 <b> dim </b>: dimension of network;    
 <b> num_colors </b>: Number of colors in network;  
-<b> $\rho$ </b>: Density of network for each color;  
+**$\rho$**: Density of network for each color;  
 
 <b> VERY IMPORTANT!</b>  
 The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1, the gap will be filled with uncolored sites. If num_colors*$\rho$ = 1, all sites in the network will be uniformly and equally colored.
