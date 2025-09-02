@@ -12,12 +12,10 @@ int main(int argc, char* argv[]){
     double pp0 = stod(argv[3]);
     int seed = stoi(argv[4]);
     string type_percolation = argv[5];
-    double k = stod(argv[6]);
-    int N_t = stoi(argv[7]);
-    int dim = stoi(argv[8]);
-    int type_N_t = 0;
-    //double k = 1e-5;
-    //double N_t = 200;
+    double k = stod(argv[6]); // 1.0e-05
+    int N_t = stoi(argv[7]); // 200
+    int dim = stoi(argv[8]); // 2
+    int type_N_t = 0; // if ==0 (Nt = constant), if==1 (Nt = at^{\alpha})
     double a = 0;
     double alpha = 0;
     double P0 = 0.1;
@@ -40,7 +38,7 @@ int main(int argc, char* argv[]){
     FolderCreator creator("./Data");
     int num_colors = 1;
     // 👇 Atualizado para receber os 3 caminhos
-    auto [network_dir, pt_dir, nt_dir, info_dir] = creator.create_structure(
+    auto [network_dir, data_dir] = creator.create_structure(
         dim,
         type_N_t,
         N_t,
@@ -63,15 +61,20 @@ int main(int argc, char* argv[]){
     network net_generator(N_samples, num_colors);
     
     NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts, ps);
-    std::cerr << "[MAIN-CHK] num_colors=" << ts.num_colors
-            << " t=" << ts.t.size()
-            << " p_outer=" << ts.p_t.size()
-            << " Nt_outer=" << ts.Nt.size() << "\n";
+    
+    std::cerr << "[DBG] ps sizes -> "
+          << "order=" << ps.percolation_order.size()
+          << ", color=" << ps.color_percolation.size()
+          << ", time="  << ps.time_percolation.size()
+          << ", rho="   << ps.rho.size()
+          << ", pho="   << ps.pho.size() << "\n";
 
-    if (!ts.p_t.empty())  std::cerr << "  p_t[0].size="  << ts.p_t[0].size()  << "\n";
-    if (!ts.Nt.empty())   std::cerr << "  Nt[0].size="   << ts.Nt[0].size()   << "\n";
-    if (ts.p_t.size() > 1) std::cerr << "  p_t[1].size=" << ts.p_t[1].size() << "\n";
-    if (ts.Nt.size() > 1)  std::cerr << "  Nt[1].size="  << ts.Nt[1].size()  << "\n";
+    std::cerr << "[DBG] ts sizes -> "
+            << "num_colors=" << ts.num_colors
+            << ", t=" << ts.t.size()
+            << ", p_t=" << ts.p_t.size()
+            << ", Nt=" << ts.Nt.size() << "\n";
+
 
     // Check initial ratio between types of nodes
 //    NetworkPattern net = net_generator.initialize_network(dim, L, num_colors, P0, rho, p0, seed);
@@ -81,19 +84,14 @@ int main(int argc, char* argv[]){
     std::ostringstream oss_name;
     oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0
              << "_p0_" << std::fixed << std::setprecision(2) << pp0
-             << "_seed_" << seed << ".csv";
+             << "_seed_" << seed << ".json";
 
     std::ostringstream oss_net;
     oss_net << network_dir << "/P0_" << std::fixed << std::setprecision(2) << P0
             << "_p0_" << std::fixed << std::setprecision(2) << pp0
             << "_seed_" << seed << ".npz";
-
-    std::ostringstream oss_info;
-    oss_info << "/info_"  << seed << ".dat";
     
-    std::string pt_filename = pt_dir + oss_name.str();
-    std::string nt_filename = nt_dir + oss_name.str();
-    std::string info_filename = info_dir + oss_info.str();
+    std::string json_filename = data_dir + oss_name.str();
     std::string net_filename = oss_net.str();
     
     // Animation network
@@ -101,11 +99,8 @@ int main(int argc, char* argv[]){
     
     // Saving files
     save_data saver;
-    saver.save_network_as_npz(net, net_filename);
-    
-    saver.save_time_series_as_csv(ts, pt_filename, nt_filename);
-
-    saver.save_info_percolation(ps, info_filename);
-    
+    // saver.save_network_as_npz(net, net_filename);
+    // saver.save_time_series_as_csv(ts, pt_filename, nt_filename);
+    saver.save_percolation_json(ps, ts, json_filename, true);
     return 0;
 }
