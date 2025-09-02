@@ -51,7 +51,7 @@ make
 This will generate the <b>SOP</b> executable. Run the code outside the build folder
 
 ```bash
-./build/SOP <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim>
+./build/SOP <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho>
 ```
 where  
 <b> L </b>: Side of network;  
@@ -62,6 +62,15 @@ where
 <b> $k$ </b>: kinetic coefficient (see SOP_paper.pdf in docs);  
 <b> $N_t$ </b>: threshold parameter (see SOP_paper.pdf in docs);  
 <b> dim </b>: dimension of network;    
+<b> num_colors </b>: Number of colors in network;  
+<b> $\rho$ </b>: Density of network for each color;  
+
+<b> VERY IMPORTANT!</b>  
+The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1, the gap will be filled with uncolored sites. If num_colors*$\rho$ = 1, all sites in the network will be uniformly and equally colored.
+
+<b> Example </b>: $\rho$ = 0.5 for 2 colors, this gives us num_colors*$\rho$ = 1.0, meaning that half of the network will be composed of inactive sites of each color.  
+<b> Example </b>: $\rho$ = 0.4 for 2 colors, this gives us num_colors*$\rho$ = 0.8, meaning that 40% of the network sites will have color 2, 40% will have color 3, and 20% will have no color.  
+
 
 ## Running this way will generate a folder structure
 

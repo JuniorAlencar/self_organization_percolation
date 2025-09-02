@@ -132,7 +132,7 @@ NetworkPattern network::create_network(
             const int a_val = net.get(pos);
             if (a_val <= 0) continue; // expande só de ativo
 
-            const int cor_idx = (num_colors == 1) ? 0 : (std::abs(a_val) - 2);
+            const int cor_idx = (num_colors == 1) ? 0 : (std::abs(a_val) - 2); // 0-based
 
             int v_idx = 0;
             for (int ax = 0; ax < dim; ++ax) {
@@ -161,46 +161,39 @@ NetworkPattern network::create_network(
 
                     const double r = rng.uniform_real(0.0, 1.0);
 
+                    auto try_activate = [&](void) {
+                        const int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
+                        net.set(viz, new_val);
+                        new_borderland.push(viz);
+                        ++N_current[cor_idx];
+
+                        // ===== registro de percolação (evento) =====
+                        if (viz[grow_axis] == L - 1 && !percolated[cor_idx]) {
+                            percolated[cor_idx]   = true;
+                            t_percolated[cor_idx] = t;
+                            ++order_counter;
+                            // color 1-based no ps_out
+                            ps_out.color_percolation.push_back(cor_idx + 1);
+                            ps_out.time_percolation.push_back(t);
+                            ps_out.percolation_order.push_back(order_counter);
+                            std::cout << "[CREATE] Cor " << (cor_idx + 1)
+                                      << " percolou em t=" << t
+                                      << "  (ordem=" << order_counter << ")\n";
+                        }
+                    };
+
                     if (type_percolation == "node") {
                         if (r < p_curr[cor_idx]) {
-                            const int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
-                            net.set(viz, new_val);
-                            new_borderland.push(viz);
-                            ++N_current[cor_idx];
-
-                            if (viz[grow_axis] == L - 1 && !percolated[cor_idx]) {
-                                percolated[cor_idx]   = true;
-                                t_percolated[cor_idx] = t;
-                                ++order_counter;
-                                ps_out.color_percolation.push_back(cor_idx + 1);
-                                ps_out.time_percolation.push_back(t);
-                                ps_out.percolation_order.push_back(order_counter);
-                                std::cout << "[CREATE] Cor " << (cor_idx + 1)
-                                          << " percolou em t=" << t
-                                          << "  (ordem=" << order_counter << ")\n";
-                            }
+                            try_activate();
                         } else {
                             net.set(viz, 0); // checado e não ativado
                         }
                     } else if (type_percolation == "bond") {
-                        // placeholder: igual ao node (implemente ligações explícitas se desejar)
+                        // placeholder simples (como node). Se desejar, implemente ligações explícitas.
                         if (r < p_curr[cor_idx]) {
-                            const int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
-                            net.set(viz, new_val);
-                            new_borderland.push(viz);
-                            ++N_current[cor_idx];
-
-                            if (viz[grow_axis] == L - 1 && !percolated[cor_idx]) {
-                                percolated[cor_idx]   = true;
-                                t_percolated[cor_idx] = t;
-                                ++order_counter;
-                                ps_out.color_percolation.push_back(cor_idx + 1);
-                                ps_out.time_percolation.push_back(t);
-                                ps_out.percolation_order.push_back(order_counter);
-                                std::cout << "[CREATE] Cor " << (cor_idx + 1)
-                                          << " percolou em t=" << t
-                                          << "  (ordem=" << order_counter << ")\n";
-                            }
+                            try_activate();
+                        } else {
+                            net.set(viz, 0);
                         }
                     }
                 }
@@ -268,7 +261,7 @@ NetworkPattern network::create_network(
     ts_out.Nt  = std::move(Nt_series);
     ts_out.t   = std::move(t_list);
 
-    // guarda parâmetros em ps_out
+    // guarda parâmetros em ps_out (por cor; usados no JSON)
     ps_out.pho.clear(); ps_out.rho.clear();
     for (int i = 0; i < num_colors; ++i) {
         if (i < (int)p0.size())  ps_out.pho.push_back(p0[i]);
@@ -277,6 +270,7 @@ NetworkPattern network::create_network(
 
     return net;
 }
+
 
 
 NetworkPattern network::animate_network(

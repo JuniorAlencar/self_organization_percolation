@@ -6,7 +6,61 @@
 #include <cstdlib>
 #include <sstream>
 
+
+// --- imprime help/versão ---
+static void print_help(const char* prog){
+    std::cout <<
+R"(To run:
+  ./SOP <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val>
+
+Arguments:
+  L                : Length of network (int)
+  N_samples        : Number of implementation (int)
+  p0               : Initial Density (double)
+  seed             : -1 to random seed (int)
+  type_percolation : bond or node (string)
+  k                : Check article (double)
+  N_t              : Check article (int)
+  dim              : Dimension of Network (2 or 3)
+  num_colors       : Number of colors in network >= 1 (int)
+  rho_val          : Density for each color (double)  [IMPORTANT => num_colors * rho_val <= 1.0]
+
+Examples:
+  ./SOP 1000 1000 0.10 -1 bond 1.0e-05 200 2 2 0.30
+  ./SOP  500  200 0.05 42 node 1.0e-04 100 3 3 0.25
+
+Tips:
+  - Use seed = -1 to auto-generate a random seed.
+  - 'bond' vs 'node' picks percolation type.
+  - Check the article for recommended ranges of k and N_t.
+)" << std::endl;
+}
+
+static bool is_help_token(const char* s){
+    return (std::strcmp(s,"!help")==0 || std::strcmp(s,"--help")==0 || std::strcmp(s,"-h")==0);
+}
+
+static void print_version(){
+#ifdef SOP_VERSION
+    std::cout << "SOP version " << SOP_VERSION << std::endl;
+#else
+    std::cout << "SOP version (unknown)" << std::endl;
+#endif
+}
+
+
 int main(int argc, char* argv[]){
+    // ajuda/versão sem exigir todos os argumentos
+    if (argc >= 2) {
+        if (is_help_token(argv[1])) { print_help(argv[0]); return 0; }
+        if (std::strcmp(argv[1],"--version")==0) { print_version(); return 0; }
+    }
+    if (argc != 11) {
+        std::cerr << "[ERROR] Invalid number of arguments (" << argc-1 << ").\n";
+        print_help(argv[0]);
+        return 1;
+    }
+    
     int L = stoi(argv[1]);
     int N_samples = stoi(argv[2]);
     double pp0 = stod(argv[3]);
@@ -15,29 +69,40 @@ int main(int argc, char* argv[]){
     double k = stod(argv[6]); // 1.0e-05
     int N_t = stoi(argv[7]); // 200
     int dim = stoi(argv[8]); // 2
+    int num_colors = stoi(argv[9]);
+    double rho_val = stod(argv[10]);
     int type_N_t = 0; // if ==0 (Nt = constant), if==1 (Nt = at^{\alpha})
     double a = 0;
     double alpha = 0;
     double P0 = 0.1;
 
-    if (argc != 9) {
-        std::cout << "Usage: " << argv[0] << " <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim>" << std::endl;
+    // validações amigáveis
+    if (dim != 2 && dim != 3){
+        std::cerr << "[ERROR] dim must be 2 or 3.\n";
+        print_help(argv[0]);
+        return 1;
+    }
+    if (type_percolation != "bond" && type_percolation != "node"){
+        std::cerr << "[ERROR] type_percolation must be 'bond' or 'node'.\n";
+        print_help(argv[0]);
+        return 1;
+    }
+    if (num_colors < 1){
+        std::cerr << "[ERROR] num_colors must be >= 1.\n";
+        print_help(argv[0]);
+        return 1;
+    }
+    if (num_colors * rho_val > 1.0 + 1e-12){
+        std::cerr << "[ERROR] Constraint violated: num_colors * rho_val <= 1.0.\n"
+                     "        You passed: num_colors=" << num_colors
+                  << " and rho_val=" << rho_val << " (product=" << num_colors*rho_val << ")\n";
+        print_help(argv[0]);
         return 1;
     }
 
-    if (seed < 0) {
-        seed = all_random::generate_random_seed();
-        std::cout << "[INFO] Random seed generated: " << seed << std::endl;
-    }
-
-    if(dim != 2 && dim != 3){
-        std::cerr << "Error: only dim = 2 or dim = 3 are supported." << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
-
     FolderCreator creator("./Data");
-    int num_colors = 1;
-    // 👇 Atualizado para receber os 3 caminhos
+    
+    // 👇 Atualizado para receber os 2 caminhos
     auto [network_dir, data_dir] = creator.create_structure(
         dim,
         type_N_t,
@@ -55,8 +120,8 @@ int main(int argc, char* argv[]){
     TimeSeries ts;
     PercolationSeries ps;
     
-    vector<double> rho = {1.0};
-    vector<double> p0 = {pp0};
+    vector<double> rho(num_colors, rho_val);
+    vector<double> p0(num_colors, pp0);
 
     network net_generator(N_samples, num_colors);
     
