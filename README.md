@@ -63,7 +63,7 @@ where
 <b> $N_t$ </b>: threshold parameter (see SOP_paper.pdf in docs);  
 <b> dim </b>: dimension of network;    
 <b> num_colors </b>: Number of colors in network;  
-$\mathbf{\rho}$: Density of network for each color;  
+$\boldsymbol{\rho}$: Density of network for each color;  
 
 <b> VERY IMPORTANT!</b>  
 The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1, the gap will be filled with uncolored sites. If num_colors*$\rho$ = 1, all sites in the network will be uniformly and equally colored.
