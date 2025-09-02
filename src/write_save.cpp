@@ -234,6 +234,142 @@ void save_data::save_info_percolation(const PercolationSeries& ps,
     // std::cout << "Saving INFO: " << filename_info << std::endl;
 }
 
+// ------------------------------------------------------------
+// Saving all results in .json
+
+
+// ==================== Helpers locais (arquivo-local) ====================
+namespace {
+
+template <typename T>
+void write_json_array(std::ostream& os, const std::vector<T>& arr) {
+    os << "[";
+    for (size_t i = 0; i < arr.size(); ++i) {
+        if constexpr (std::is_floating_point<T>::value) {
+            os << std::setprecision(17) << arr[i];
+        } else {
+            os << arr[i];
+        }
+        if (i + 1 < arr.size()) os << ", ";
+    }
+    os << "]";
+}
+
+template <typename T>
+void write_json_array_row(std::ostream& os, const std::vector<std::vector<T>>& mat, int row_0based) {
+    if (row_0based < 0 || static_cast<size_t>(row_0based) >= mat.size()) {
+        os << "[]";
+        return;
+    }
+    write_json_array(os, mat[static_cast<size_t>(row_0based)]);
+}
+
+double get_by_color_or_fallback(const std::vector<double>& v, int color_1based) {
+    if (v.empty()) return 0.0;
+    const int idx0 = std::max(0, color_1based - 1); // tenta 1→0, 2→1, ...
+    if (static_cast<size_t>(idx0) < v.size()) return v[static_cast<size_t>(idx0)];
+    return v.front();
+}
+
+void check_ps_consistency(const PercolationSeries& ps) {
+    const size_t m = ps.percolation_order.size();
+    if (ps.color_percolation.size() != m || ps.time_percolation.size() != m) {
+        throw std::runtime_error("[save_percolation_json] PercolationSeries inconsistente: tamanhos diferentes.");
+    }
+}
+
+void check_ts_consistency(const TimeSeries& ts) {
+    const size_t C = static_cast<size_t>(ts.num_colors >= 0 ? ts.num_colors : 0);
+    if (C != ts.p_t.size() || C != ts.Nt.size()) {
+        throw std::runtime_error("[save_percolation_json] TimeSeries inconsistente: num_colors != p_t.size() || Nt.size().");
+    }
+    for (size_t c = 0; c < C; ++c) {
+        if (ts.p_t[c].size() != ts.t.size())
+            throw std::runtime_error("[save_percolation_json] p_t[c].size() != t.size().");
+        if (ts.Nt[c].size() != ts.t.size())
+            throw std::runtime_error("[save_percolation_json] Nt[c].size() != t.size().");
+    }
+}
+
+} // namespace
+// =======================================================================
+
+void save_data::save_percolation_json(const PercolationSeries& ps,
+                                      const TimeSeries& ts,
+                                      const std::string& filename_json,
+                                      bool sort_by_order)
+{
+    check_ps_consistency(ps);
+    check_ts_consistency(ts);
+
+    if (ps.percolation_order.empty()) {
+        std::cerr << "[WARN] save_percolation_json: nenhum evento de percolação; results ficará vazio\n";
+    }
+
+    std::ofstream ofs(filename_json);
+    if (!ofs.is_open()) {
+        throw std::runtime_error(std::string("[save_percolation_json] Não foi possível abrir: ") + filename_json);
+    }
+
+    const size_t M = ps.percolation_order.size();
+
+    // ordenar por order_percolation (crescente)
+    std::vector<size_t> idx(M);
+    for (size_t i = 0; i < M; ++i) idx[i] = i;
+    if (sort_by_order) {
+        std::sort(idx.begin(), idx.end(),
+                  [&](size_t a, size_t b) {
+                      return ps.percolation_order[a] < ps.percolation_order[b];
+                  });
+    }
+
+    ofs << "{\n";
+    ofs << "  \"results\": [\n";
+
+    for (size_t k = 0; k < M; ++k) {
+        const size_t i = idx[k];
+
+        const int order_i   = ps.percolation_order[i];
+        const int color_1b  = ps.color_percolation[i];     // armazenado 1-based no ps
+        const int tperc_i   = ps.time_percolation[i];
+
+        const double rho_i  = get_by_color_or_fallback(ps.rho, color_1b);
+        const double pho_i  = get_by_color_or_fallback(ps.pho, color_1b);
+
+        const int color_row = std::max(0, color_1b - 1);   // converter para acessar ts.p_t/Nt
+
+        ofs << "    {\n";
+        ofs << "      \"order_percolation\": " << order_i << ",\n";
+        ofs << "      \"data\": {\n";
+        ofs << "        \"color\": " << color_1b << ",\n";
+        ofs << "        \"rho\": "   << std::setprecision(17) << rho_i << ",\n";
+        ofs << "        \"pho\": "   << std::setprecision(17) << pho_i << ",\n";
+        ofs << "        \"time_percolation\": " << tperc_i << ",\n";
+
+        ofs << "        \"time\": ";
+        write_json_array(ofs, ts.t);
+        ofs << ",\n";
+
+        ofs << "        \"pt\": ";
+        write_json_array_row(ofs, ts.p_t, color_row);
+        ofs << ",\n";
+
+        ofs << "        \"nt\": ";
+        write_json_array_row(ofs, ts.Nt, color_row);
+        ofs << "\n";
+
+        ofs << "      }\n";
+        ofs << "    }";
+        if (k + 1 < M) ofs << ",";
+        ofs << "\n";
+    }
+
+    ofs << "  ]\n";
+    ofs << "}\n";
+    ofs.close();
+}
+
+
 
 
 

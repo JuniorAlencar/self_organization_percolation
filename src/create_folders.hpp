@@ -13,7 +13,7 @@ class FolderCreator {
     public:
         FolderCreator(const std::string& base_path);
 
-        std::tuple<std::string, std::string, std::string, std::string> create_structure(
+        std::tuple<std::string, std::string> create_structure(
             int dim,
             int type_Nt,
             double N_t,

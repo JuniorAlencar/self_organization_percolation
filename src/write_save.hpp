@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <fstream>
 #include <unordered_map>
+#include <iomanip>
+#include <type_traits>
 #include <algorithm>
 #include <sstream>
 #include <omp.h>      // OpenMP
@@ -26,7 +28,12 @@ class save_data {
                                     const std::string& filename_pt, 
                                     const std::string& filename_Nt);
         void save_info_percolation(const PercolationSeries& ps,
-                                   const std::string& filename_info);            
+                                   const std::string& filename_info);       
+        
+        void save_percolation_json(const PercolationSeries& ps,
+                                   const TimeSeries& ts,
+                                   const std::string& filename_json,
+                                   bool sort_by_order = true);     
         
 };
 
