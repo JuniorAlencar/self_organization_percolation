@@ -38,3 +38,7 @@ target_link_libraries(SOP
     zip
     OpenMP::OpenMP_CXX
 )
+
+# Opcional: embutir versão no executável (altere conforme desejar)
+set(SOP_VERSION "1.0.0")
+target_compile_definitions(SOP PRIVATE SOP_VERSION="${SOP_VERSION}")

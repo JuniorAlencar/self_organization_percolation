@@ -11,7 +11,9 @@ type="bond"
 k=1.0e-05
 NT=200
 dim=2
+num_colors=1
+rho=1.0
 
 echo "Running for size L=$L"
-./build/SOP $L $NumSamples $p0 $seed $type $k $NT $dim
+./build/SOP $L $NumSamples $p0 $seed $type $k $NT $dim $num_colors $rho
 
