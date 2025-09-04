@@ -99,7 +99,13 @@ int main(int argc, char* argv[]){
         print_help(argv[0]);
         return 1;
     }
-
+    if (seed == -1) {
+        seed = all_random::generate_random_seed();  // da sua rand_utils
+    }
+    
+    all_random rng(seed);
+    
+    // Create folder Data
     FolderCreator creator("./Data");
     
     // 👇 Atualizado para receber os 2 caminhos
@@ -114,18 +120,23 @@ int main(int argc, char* argv[]){
         alpha,
         type_percolation,
         pp0,
-        P0
+        P0,
+        rho_val
     );
-    
+    // Struct to allocate TimeSeries
     TimeSeries ts;
+    // Struct to allocate Percolation Informations
     PercolationSeries ps;
     
+    // Density of network for each color
     vector<double> rho(num_colors, rho_val);
+    // Initial probability for each color
     vector<double> p0(num_colors, pp0);
 
     network net_generator(N_samples, num_colors);
     
-    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts, ps);
+    // Network
+    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts, ps, rng);
     
     std::cerr << "[DBG] ps sizes -> "
           << "order=" << ps.percolation_order.size()
@@ -164,8 +175,10 @@ int main(int argc, char* argv[]){
     
     // Saving files
     save_data saver;
+    // Network
     // saver.save_network_as_npz(net, net_filename);
-    // saver.save_time_series_as_csv(ts, pt_filename, nt_filename);
+    
+    // Results
     saver.save_percolation_json(ps, ts, json_filename, true);
     return 0;
 }

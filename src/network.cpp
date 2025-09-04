@@ -21,10 +21,10 @@ double network::generate_p(const int type_N_t, const double p_t, const int t_i, 
 // Code to create network in 2D or 3D with num_colors >= 1
 NetworkPattern network::create_network(
     const int dim, const int lenght_network, const int num_of_samples,
-    const double k, const double N_t, const int seed, const int type_N_t,
+    const double k, const double N_t, const int type_N_t,
     const std::vector<double> p0, const double P0, const double a, const double alpha,
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-    TimeSeries& ts_out, PercolationSeries& ps_out)
+    TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
 {
     this->N_t = N_t;
 
@@ -42,7 +42,7 @@ NetworkPattern network::create_network(
         return coord;
     };
 
-    all_random rng(seed);
+    //all_random rng(seed);
     NetworkPattern net(dim, shape, num_colors, rho, rng);
 
     // ----- séries por cor (cor-major) -----

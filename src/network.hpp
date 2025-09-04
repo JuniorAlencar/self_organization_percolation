@@ -50,10 +50,10 @@ class network{
         double type_Nt_create(const int type_N_t, const int t_i, const double a, const double alpha);
         
         NetworkPattern create_network(const int dim, const int lenght_network, const int num_of_samples,
-                                       const double k, const double N_t, const int seed, const int type_N_t,
+                                       const double k, const double N_t, const int type_N_t,
                                        const std::vector<double> p0, const double P0, const double a, const double alpha,
                                        const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-                                       TimeSeries& ts_out, PercolationSeries& ps_out);
+                                       TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng);
         
         NetworkPattern initialize_network(int dim, int length_network, int num_colors,
                                            double P0,

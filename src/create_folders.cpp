@@ -17,7 +17,8 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
     double alpha,
     std::string type_percolation,
     double /* p0 */,
-    double /* P0 */) {
+    double /* P0 */,
+    double rho) {
 
     char main_folder[256];
     sprintf(main_folder, "%s/%s_percolation/num_colors_%d/dim_%d/L_%d",
@@ -27,12 +28,12 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
 
     if (type_Nt == 0) {
         char sub[512];
-        sprintf(sub, "%s/NT_constant/NT_%.0f/k_%.1e", main_folder, N_t, k);
+        sprintf(sub, "%s/NT_constant/NT_%.0f/k_%.1e/rho_%.1e", main_folder, N_t, k, rho);
         full_path = std::string(sub);
     } else {
         char sub[512];
-        sprintf(sub, "%s/NT_variable/type_%d/a_%.2f/alpha_%.2f/k_%.1e",
-                main_folder, type_Nt, a, alpha, k);
+        sprintf(sub, "%s/NT_variable/type_%d/a_%.2f/alpha_%.2f/k_%.1e/rho_%.1e",
+                main_folder, type_Nt, a, alpha, k, rho);
         full_path = std::string(sub);
     }
 
