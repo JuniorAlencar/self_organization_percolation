@@ -99,10 +99,12 @@ int main(int argc, char* argv[]){
         print_help(argv[0]);
         return 1;
     }
+    // If seed < 0, return random seed 
     if (seed == -1) {
         seed = all_random::generate_random_seed();  // da sua rand_utils
     }
     
+    // The generator
     all_random rng(seed);
     
     // Create folder Data
