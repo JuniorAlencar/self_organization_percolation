@@ -24,7 +24,8 @@ class FolderCreator {
             double alpha,
             std::string type_percolation,
             double p0,
-            double P0
+            double P0,
+            double rho
         );
 
     private:
