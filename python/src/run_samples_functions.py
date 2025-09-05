@@ -84,6 +84,5 @@ done
     print(f"✅ Shell script created at {path}")
 
 
-def custom_range(final: float, step: float, n_points: int):
-    start = final - (n_points - 1) * step
-    return [round(i, 8) for i in np.linspace(start, final, n_points)]
+def custom_range(start: float, stop: float, n_points: int):
+    return [round(i, 8) for i in np.linspace(start, stop, n_points)]

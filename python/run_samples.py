@@ -32,22 +32,22 @@ from src.run_samples_functions import *
 # shell_data(L, NumSamples, type_perc, p0, seed, k, NT, dim,
 #            num_colors, num_runs, rho, exec_name)
 
-num_runs = 5   # number of external repetitions
+num_runs = 20   # number of external repetitions
 
-final = 0.125
-step = 0.005
+stop = 0.33
+start = 0.003
 n_points = 20
-rho = custom_range(final, step, n_points)
+rho = custom_range(start, stop, n_points)
 
-L = 1000
+L = 2000
 NumSamples = 12000
 p0 = 1.0
 seed = -1
 type_perc = "bond"
-k = 1.0e-8
-NT = 12000
-dim = 3
-num_colors = 8
+k = 1.0e-4
+NT = 200
+dim = 2
+num_colors = 3
 exec_name = f"data_{dim}D.sh"
 
 shell_data(L, NumSamples, type_perc, p0, seed, k, NT, dim,
