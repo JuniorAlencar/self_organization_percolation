@@ -2,17 +2,17 @@
 
 cd .. # Got o project root
 
-num_runs=20   # number of external repetitions
-rho=(0.03 0.03 0.04 0.04 0.05 0.05 0.06 0.06 0.07 0.07 0.08 0.08 0.09 0.09 0.1 0.1 0.11 0.11 0.12)  # list of rho values
-L=1000
+num_runs=80   # number of external repetitions
+rho=(0.003 0.02021053 0.03742105 0.05463158 0.07184211 0.08905263 0.10626316 0.12347368 0.14068421 0.15789474 0.17510526 0.19231579 0.20952632 0.22673684 0.24394737 0.26115789 0.27836842 0.29557895 0.31278947 0.33)  # list of rho values
+L=2000
 NumSamples=12000
 p0=1.0
 seed=-1
 type="bond"
-k=1e-08
-NT=12000
-dim=3
-num_colors=8
+k=0.0001
+NT=200
+dim=2
+num_colors=3
 
 for ((run=1; run<=num_runs; run++)); do
   echo "=== Run $run ==="

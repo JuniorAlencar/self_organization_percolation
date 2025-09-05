@@ -66,7 +66,7 @@ int main(int argc, char* argv[]){
     double pp0 = stod(argv[3]);
     int seed = stoi(argv[4]);
     string type_percolation = argv[5];
-    double k = stod(argv[6]); // 1.0e-05
+    double k = stod(argv[6]); // 1.0e-04
     int N_t = stoi(argv[7]); // 200
     int dim = stoi(argv[8]); // 2
     int num_colors = stoi(argv[9]);
