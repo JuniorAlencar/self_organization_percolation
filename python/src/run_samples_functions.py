@@ -3,7 +3,7 @@ import stat
 import textwrap
 import numpy as np
 
-def shell_data(L:int, NumSamples:int, type_perc:str, p0:float, 
+def shell_data(L:int, type_perc:str, p0:float, 
                seed:int, k:float, NT:float, dim:int, num_colors:int, 
                num_runs:int, rho:list, exec_name:str):
     """
@@ -13,8 +13,6 @@ def shell_data(L:int, NumSamples:int, type_perc:str, p0:float,
     -----------
     L : int
         Side of the network
-    NumSamples : int
-        Number of time steps (samples)
     type_perc : str
         Type of percolation ("bond" or "node")
     p0 : float
@@ -51,7 +49,6 @@ cd .. # Got o project root
 num_runs={num_runs}   # number of external repetitions
 rho=({" ".join(map(str, rho))})  # list of rho values
 L={L}
-NumSamples={NumSamples}
 p0={p0}
 seed={seed}
 type="{type_perc}"
@@ -64,8 +61,8 @@ for ((run=1; run<=num_runs; run++)); do
   echo "=== Run $run ==="
   for idx in "${{!rho[@]}}"; do
     RHO=${{rho[$idx]}}
-    echo "./build/SOP $L $NumSamples $p0 $seed $type $k $NT $dim $num_colors $RHO"
-    ./build/SOP "$L" "$NumSamples" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO"
+    echo "./build/SOP $L $p0 $seed $type $k $NT $dim $num_colors $RHO"
+    ./build/SOP "$L" " "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO"
   done
 done
 """
