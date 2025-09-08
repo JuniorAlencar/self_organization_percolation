@@ -1,0 +1,49 @@
+# Azul, Laranja, Verde, Vermelho, Roxo, Marrom, Rosa
+axes.prop_cycle : cycler('color', ['1f77b4', 'ff7f0e', '2ca02c', 'd62728', '9467bd', '8c564b', 'e377c2', '7f7f7f', 'bcbd22', '17becf'])
+
+# Set default figure size and dpi to save
+figure.figsize : 14, 10
+savefig.dpi: 300         # Define alta resolução para manter a qualidade ao exportar
+
+# Set x axis
+xtick.direction : in
+xtick.major.size : 6
+xtick.major.width : 1.4
+xtick.top : True
+xtick.major.pad: 8
+xtick.minor.visible : False  # Desativa minor ticks no eixo X
+axes.xmargin : 0.05         # Adiciona uma margem para evitar cortes
+
+# Set y axis
+ytick.minor.visible : False  # Desativa minor ticks no eixo Y
+ytick.direction : in
+ytick.major.size : 6
+ytick.major.width : 1
+ytick.right : True
+ytick.major.pad: 8
+axes.ymargin : 0.05
+
+
+# Set line widhts
+axes.linewidth : 1.4
+
+# Set markers
+lines.markersize: 9
+lines.markerfacecolor : none
+lines.markeredgewidth : 0.8
+
+# Fontsize
+text.usetex: True        # Usa LaTeX para renderizar os textos
+font.size : 20            # Tamanho do texto principal, igual ao texto LaTeX (10pt)
+axes.labelsize: 20       # Labels dos eixos iguais ao corpo do texto LaTeX
+xtick.labelsize : 20       # Tamanho dos números do eixo X (~footnotesize)
+ytick.labelsize : 20       # Tamanho dos números do eixo Y (~footnotesize)
+legend.fontsize : 20       # Legenda um pouco menor que os labels, mas maior que os ticks
+legend.title_fontsize : 20
+
+# Remove legend frame
+legend.frameon : False
+
+# Always save as 'tight'
+savefig.bbox : tight
+savefig.pad_inches : 0.05

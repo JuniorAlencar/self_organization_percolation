@@ -182,5 +182,6 @@ int main(int argc, char* argv[]){
     
     // Results
     saver.save_percolation_json(ps, ts, json_filename, true);
+    cout << "file save with name" <<  oss_name.str() << endl;
     return 0;
 }
