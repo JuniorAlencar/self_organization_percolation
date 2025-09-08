@@ -15,7 +15,6 @@ R"(To run:
 
 Arguments:
   L                : Length of network (int)
-  N_samples        : Number of implementation (int)
   p0               : Initial Density (double)
   seed             : -1 to random seed (int)
   type_percolation : bond or node (string)
@@ -26,8 +25,8 @@ Arguments:
   rho_val          : Density for each color (double)  [IMPORTANT => num_colors * rho_val <= 1.0]
 
 Examples:
-  ./SOP 1000 1000 0.10 -1 bond 1.0e-05 200 2 2 0.30
-  ./SOP  500  200 0.05 42 node 1.0e-04 100 3 3 0.25
+  ./SOP 1000 0.10 -1 bond 1.0e-05 200 2 2 0.30
+  ./SOP  500  0.05 42 node 1.0e-04 100 3 3 0.25
 
 Tips:
   - Use seed = -1 to auto-generate a random seed.
@@ -55,22 +54,23 @@ int main(int argc, char* argv[]){
         if (is_help_token(argv[1])) { print_help(argv[0]); return 0; }
         if (std::strcmp(argv[1],"--version")==0) { print_version(); return 0; }
     }
-    if (argc != 11) {
+    if (argc != 10) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc-1 << ").\n";
         print_help(argv[0]);
         return 1;
     }
     
     int L = stoi(argv[1]);
-    int N_samples = stoi(argv[2]);
-    double pp0 = stod(argv[3]);
-    int seed = stoi(argv[4]);
-    string type_percolation = argv[5];
-    double k = stod(argv[6]); // 1.0e-04
-    int N_t = stoi(argv[7]); // 200
-    int dim = stoi(argv[8]); // 2
-    int num_colors = stoi(argv[9]);
-    double rho_val = stod(argv[10]);
+    //int N_samples = stoi(argv[2]);
+    int N_samples = 50000;
+    double pp0 = stod(argv[2]);
+    int seed = stoi(argv[3]);
+    string type_percolation = argv[4];
+    double k = stod(argv[5]); // 1.0e-04
+    int N_t = stoi(argv[6]); // 200
+    int dim = stoi(argv[7]); // 2
+    int num_colors = stoi(argv[8]);
+    double rho_val = stod(argv[9]);
     int type_N_t = 0; // if ==0 (Nt = constant), if==1 (Nt = at^{\alpha})
     double a = 0;
     double alpha = 0;
@@ -182,6 +182,6 @@ int main(int argc, char* argv[]){
     
     // Results
     saver.save_percolation_json(ps, ts, json_filename, true);
-    cout << "file save with name" <<  oss_name.str() << endl;
+    cout << "file save with name:\t" <<  oss_name.str() << endl;
     return 0;
 }
