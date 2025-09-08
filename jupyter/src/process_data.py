@@ -560,3 +560,38 @@ def data_single_sample(type_perc, num_colors, dim, L, Nt, k, rho, p0, seed):
         print("file empty, no percolation occurred, please, enter with other seed or p0:", e)
     except FileNotFoundError as e:
         print("File not found, enter with other parameters:", e)
+
+# ---------- helpers ----------
+def tail_mean(x, tail_frac=0.30):
+    """Média nos últimos tail_frac da série x (ignora NaN)."""
+    x = np.asarray(x, float)
+    n = len(x)
+    if n == 0:
+        return np.nan
+    start = int((1.0 - tail_frac) * n)
+    start = max(0, min(start, n-1))
+    seg = x[start:]
+    return np.nan if seg.size == 0 else np.nanmean(seg)
+
+def bootstrap_mean_scalar(vals, n_boot=20000, ci=0.95, rng=None):
+    """
+    Bootstrap do valor médio a partir de vals (array 1D).
+    Retorna: mean_point, se_boot, (ci_low, ci_high).
+    """
+    vals = np.asarray(vals, float)
+    vals = vals[np.isfinite(vals)]
+    m = vals.size
+    if m == 0:
+        return (np.nan, np.nan, (np.nan, np.nan))
+    if rng is None:
+        rng = np.random.default_rng()
+    if m == 1:
+        # com 1 curva, SEM entre-curvas é 0 (ou NaN se preferir)
+        return (float(vals[0]), 0.0, (float(vals[0]), float(vals[0])))
+    idx = rng.integers(0, m, size=(n_boot, m))
+    boot_means = vals[idx].mean(axis=1)
+    mean_point = float(vals.mean())
+    se_boot    = float(boot_means.std(ddof=1))
+    alpha = 0.5*(1-ci)
+    lo, hi = np.quantile(boot_means, [alpha, 1-alpha])
+    return mean_point, se_boot, (float(lo), float(hi))
