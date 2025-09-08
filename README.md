@@ -93,6 +93,11 @@ This algorithm is quite sensitive to the parameters $N_T$ and $k$, which vary gr
 We always used $N_t > f_{active}$, where $f_{active}$ representing the number of nodes initial activate. In 2D was used $f_{active} =P0 * L$ and in 3D $f_{active} =(P_0 * L)^2$. 
 
 # How to choice the $Nt$
-By performing some tests, I realized that the choice of Nt can be based on the fraction of initially active sites, $f_{active}$. We can adopt $Nt = 1.25 * f_{active}$. For dim = 3, we will have $Nt = 1.25 * (P_0 * L)^2$. For this to be valid, we must pay attention to the value we use for $k$, which varies according to the size of the network. For $L = 128$, we can use $k=1.0e-05$. Below we have some tested values ​​for $num_colors = 4$ and dim$ = 3$. Was  
+By performing some tests, I realized that the choice of Nt can be based on the fraction of initially active sites, $f_{active}$. We can adopt $Nt = 1.25 * f_{active}$. For dim = 3, we will have $Nt = 1.25 * (P_0 * L)^2$. For this to be valid, we must pay attention to the value we use for $k$, which varies according to the size of the network. For $L = 128$, we can use $k=1.0e-05$. Below we have some tested values ​​for $num_colors = 4$ and dim$ = 3$. The following relationships were observed to find valid values ​​of $Nt$ and $k$ for num_colors$ = 4$ and dim$ = 3$.  
+
+$Nt = 1.25 (LP_0)^2$,
+$k = 10^{-5}$ for $L = 128$,
+each time you double the side, you must decrease $k$ by an order of magnitude, that is,  
+$L = 256$ => $k=10^{-6}$.
 
 
