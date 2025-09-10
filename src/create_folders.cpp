@@ -28,11 +28,11 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
 
     if (type_Nt == 0) {
         char sub[512];
-        sprintf(sub, "%s/NT_constant/NT_%.0f/k_%.1e/rho_%.1e", main_folder, N_t, k, rho);
+        sprintf(sub, "%s/NT_constant/NT_%.0f/k_%.1e/rho_%.4e", main_folder, N_t, k, rho);
         full_path = std::string(sub);
     } else {
         char sub[512];
-        sprintf(sub, "%s/NT_variable/type_%d/a_%.2f/alpha_%.2f/k_%.1e/rho_%.1e",
+        sprintf(sub, "%s/NT_variable/type_%d/a_%.2f/alpha_%.2f/k_%.1e/rho_%.4e",
                 main_folder, type_Nt, a, alpha, k, rho);
         full_path = std::string(sub);
     }
