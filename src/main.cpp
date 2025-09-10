@@ -11,7 +11,7 @@
 static void print_help(const char* prog){
     std::cout <<
 R"(To run:
-  ./SOP <L> <N_samples> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val>
+  ./SOP <L> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val>
 
 Arguments:
   L                : Length of network (int)

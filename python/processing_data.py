@@ -2,11 +2,11 @@ from src.process_data import *
 
 # ====== Simulation parameters ======
 type_perc = 'bond'
-num_colors = 3
-dim = 2
+num_colors = 4
+dim = 3
 L = 128
-Nt = 1500
-k = 1.0e-04
+Nt = 205
+k = 1.0e-05
 
 # ===========================
 
@@ -15,7 +15,7 @@ rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root="..
 
 # Creating file with all data processing
 for rho in rho_values:
-    path_data = f"../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.1e}/data"
+    path_data = f"../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.4e}/data"
 
     all_data = glob.glob(os.path.join(path_data, "*.json"))
 

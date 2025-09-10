@@ -1,12 +1,11 @@
-import re, os, json, glob, math
+import re, os, json, glob, math, textwrap, stat
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from collections import Counter
-import math
 
 # --- regex para extrair params do caminho ---
-# Aceita k/rho em float normal ou notação científica (ex.: 1.0e-04, 8.9e-02)
+# Aceita k/rho em float normal ou notação científica (ex.: 1.0e-04, 8.9e-02, 1.0000e-04)
 PARAMS_RE = re.compile(r"""
     (?P<type_perc>[A-Za-z]+)_percolation
     /num_colors_(?P<num_colors>\d+)
@@ -23,7 +22,6 @@ def parse_params_from_path(path: str):
     Extrai type_perc, num_colors, dim, L, Nt, k, rho do caminho.
     Retorna dict tipado ou None se não casar.
     """
-    # normaliza separadores
     p = path.replace("\\", "/")
     m = PARAMS_RE.search(p)
     if not m:
@@ -39,12 +37,17 @@ def parse_params_from_path(path: str):
         "rho": float(gd["rho"]),
     }
 
-# --- já existente no seu código ---
+# --- regex do nome de arquivo de seed (P0/p0/seed) ---
 _fname_re = re.compile(
     r"P0_([0-9]*\.?[0-9]+(?:e[+\-]?[0-9]+)?)_p0_([0-9]*\.?[0-9]+(?:e[+\-]?[0-9]+)?)_seed_(\d+)\.json$",
     re.IGNORECASE
 )
 
+# regex para extrair p0 do nome do arquivo (com grupos nomeados)
+FNAME_RE = re.compile(
+    r"P0_(?P<P0>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)_p0_(?P<p0>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)_seed_(?P<seed>\d+)\.json$",
+    re.IGNORECASE,
+)
 
 def wilson_ci(M, N, z=1.96):
     if N <= 0:
@@ -90,7 +93,6 @@ def read_orders_one_file(file_path):
             out.append((int(order), p, n_arr))
     return out  # pode ser []
 
-
 def sem_acf(x, max_lag=None):
     x = np.asarray(x, float)
     x = x[np.isfinite(x)]
@@ -114,8 +116,106 @@ def sem_acf(x, max_lag=None):
     sem = std / math.sqrt(n_eff)
     return (mean, std, sem, n_eff)
 
+# ---------- Helpers: localizar subpastas k_xxx e rho_xxx por aproximação ----------
+_FLOAT_DIR_RE = re.compile(r"^(?P<key>k|rho)_(?P<val>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)$", re.I)
 
-# 3) build_dataframe_by_p0: usa num_samples=N e num_sample_perc=M (por ordem)
+def _find_numeric_subdir(base: Path, key: str, target: float,
+                         rel_tol: float = 1e-12, abs_tol: float = 1e-15) -> Path | None:
+    """
+    Procura em 'base' uma subpasta cujo nome seja '{key}_<numero>' (em qualquer formatação),
+    retornando aquela cujo valor numérico é ~== target.
+    """
+    key = key.lower()
+    best = None
+    best_err = None
+    if not base.exists():
+        return None
+    for d in base.iterdir():
+        if not d.is_dir():
+            continue
+        m = _FLOAT_DIR_RE.match(d.name)
+        if not m:
+            continue
+        if m.group("key").lower() != key:
+            continue
+        try:
+            val = float(m.group("val"))
+        except Exception:
+            continue
+        if math.isclose(val, float(target), rel_tol=rel_tol, abs_tol=abs_tol):
+            err = abs(val - float(target))
+            if (best is None) or (err < best_err):
+                best, best_err = d, err
+    return best
+
+def _first_existing(path_candidates):
+    for p in path_candidates:
+        if p is not None and Path(p).exists():
+            return Path(p)
+    return None
+
+# --------------- Núcleo estatístico p0->ordem ----------------
+def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
+    per_order_pt, per_order_nt = {}, {}
+    any_seen = False
+    processed_here = set()
+
+    for jf in files:
+        # marca para process_names.txt
+        if parse_p0_from_filename(jf) is not None:
+            processed_here.add(os.path.basename(jf))
+        try:
+            entries = read_orders_one_file(jf)
+        except Exception as e:
+            if verbose: print(f"[WARN] falha lendo {os.path.basename(jf)}: {e}")
+            continue
+        if entries:
+            any_seen = True
+
+        for order, p_arr, n_arr in entries:
+            n = len(p_arr)
+            if n < 3: 
+                continue
+            start = int(burn_in_frac * n)
+            p_stationary = p_arr[start:]
+            if p_stationary.size < 1:
+                continue
+            mean_p, _, _, _ = sem_acf(p_stationary)
+            per_order_pt.setdefault(order, []).append(mean_p)
+
+            if n_arr is not None:
+                n_stationary = n_arr[start:]
+                if n_stationary.size > 0:
+                    mean_n, _, _, _ = sem_acf(n_stationary)
+                    per_order_nt.setdefault(order, []).append(mean_n)
+
+    if not any_seen and not per_order_pt and not per_order_nt:
+        return {}, True, processed_here
+
+    summary = {}
+    orders = sorted(set(list(per_order_pt.keys()) + list(per_order_nt.keys())))
+    for order in orders:
+        mp = np.asarray(per_order_pt.get(order, []), float)
+        Sp = len(mp)
+        pt_mean = float(mp.mean()) if Sp > 0 else np.nan
+        pt_sem  = float(mp.std(ddof=1)/np.sqrt(Sp)) if Sp > 1 else (0.0 if Sp==1 else np.nan)
+
+        mn = np.asarray(per_order_nt.get(order, []), float)
+        Sn = len(mn)
+        nt_mean = float(mn.mean()) if Sn > 0 else np.nan
+        nt_sem  = float(mn.std(ddof=1)/np.sqrt(Sn)) if Sn > 1 else (0.0 if Sn==1 else np.nan)
+
+        n_contrib = Sp if Sp > 0 else Sn
+        summary[order] = {
+            "n_seeds_contributed": int(n_contrib),
+            "pt_mean": pt_mean,
+            "pt_sem_between": pt_sem,
+            "nt_mean": nt_mean,
+            "nt_sem_between": nt_sem,
+        }
+    return summary, False, processed_here
+
+# 3) build_dataframe_by_p0
 def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint: str = None):
     meta_source = path_hint or (all_files[0] if all_files else "")
     meta = parse_params_from_path(meta_source) or \
@@ -224,12 +324,35 @@ def process_with_guard(all_files,
                        path_hint: str = None,
                        force_recompute: bool = False):
     """
+    Robusto a formatações 'rho_%.1e' vs 'rho_%.4e':
+    - Se all_files vier vazio, tenta buscar *.json no diretório 'data' inferido.
+    - Alinha (snap) out_dat_path/out_txt_path para dentro do diretório real 'data/' dos JSONs.
     - NÃO toca no process_names.txt se nada mudou.
     - Só recalcula o .dat quando:
         * force_recompute=True, ou
         * o conjunto esperado de JSONs difere do que está no .txt, ou
         * o .dat não existe.
     """
+    # --- Determina o data_dir real ---
+    data_dir = None
+    if all_files:
+        data_dir = Path(all_files[0]).parent
+    else:
+        # tenta inferir a partir do out_dat_path (arquivo ou pasta)
+        p = Path(out_dat_path)
+        data_dir = p.parent if p.suffix.lower() == ".dat" else p
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Realinha os caminhos de saída para dentro do data_dir real ---
+    out_dat_path = data_dir / Path(out_dat_path).name
+    out_txt_path = data_dir / Path(out_txt_path).name
+
+    # --- Se não recebi lista, busco os jsons no data_dir ---
+    if not all_files:
+        all_files = [str(x) for x in sorted(data_dir.glob("*.json"))]
+
+    # Agora posso criar a pasta do .dat com segurança
     out_dat_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Conjunto esperado com base no diretório (arquivos atuais)
@@ -265,7 +388,6 @@ def process_with_guard(all_files,
         print("[INFO] .dat salvo em:", out_dat_path.resolve())
 
     # Conjunto final para o TXT: exatamente o que esperamos no diretório atual
-    # (idempotente e evita duplicar/“colar de novo” os mesmos nomes)
     new_set = expected_set if expected_set else _normalize_names(processed_set)
 
     # Só reescreve o TXT se houver alteração
@@ -280,7 +402,6 @@ def process_with_guard(all_files,
             print(f"[INFO] {out_txt_path.name} já estava atualizado; não mexi.")
 
     return df, new_set
-
 
 def saving_data(all_data,
                 output_data: Path,
@@ -298,7 +419,6 @@ def saving_data(all_data,
         path_hint=path_hint,
         force_recompute=force_recompute,
     )
-
 
 def list_rho_values(
     type_perc: str,
@@ -358,49 +478,69 @@ def list_rho_values(
     rhos = sorted(set(rhos))
     return rhos
 
-
-# colunas fixas do novo schema
-# 4) join_all_data permanece igual, só garante o novo schema:
+# colunas fixas do schema
 BASE_COLS = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order",
              "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
              "perc_rate","perc_ci_low","perc_ci_high",
              "pt_mean_uncond","pt_erro_uncond","nt_mean_uncond","nt_erro_uncond"]
 
-
-def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data"):
+def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
+                  rel_tol: float = 1e-12, abs_tol: float = 1e-15):
+    """
+    Junta todos os all_data*.dat de cada rho (pastas rho_* em qualquer formatação).
+    Também encontra a pasta k_* por aproximação numérica.
+    """
     rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root=base_root)
     if not rho_values:
         print("[WARN] Nenhum rho encontrado.")
         return pd.DataFrame(columns=BASE_COLS)
 
-    base_k = (Path(base_root)
-              / f"{type_perc}_percolation"
-              / f"num_colors_{num_colors}"
-              / f"dim_{dim}"
-              / f"L_{L}"
-              / "NT_constant"
-              / f"NT_{Nt}"
-              / f"k_{k:.1e}")
+    base_nt = (Path(base_root)
+               / f"{type_perc}_percolation"
+               / f"num_colors_{num_colors}"
+               / f"dim_{dim}"
+               / f"L_{L}"
+               / "NT_constant"
+               / f"NT_{Nt}")
+
+    # localiza a pasta k_* que corresponde ao 'k' informado
+    k_dir = _find_numeric_subdir(base_nt, "k", k, rel_tol=rel_tol, abs_tol=abs_tol)
+    if k_dir is None:
+        print(f"[WARN] Pasta k_... não encontrada (k≈{k}):", base_nt)
+        return pd.DataFrame(columns=BASE_COLS)
 
     dfs = []
     for rho in sorted(rho_values):
-        fpath = base_k / f"rho_{rho:.1e}" / "data" / f"all_data.dat"
-        if not fpath.exists():
-            print(f"[WARN] Não encontrei: {fpath}")
+        rho_dir = _find_numeric_subdir(k_dir, "rho", rho, rel_tol=rel_tol, abs_tol=abs_tol)
+        if rho_dir is None:
+            print(f"[WARN] Pasta rho_... não encontrada (rho≈{rho}) em {k_dir}")
             continue
+        data_dir = rho_dir / "data"
+
+        # aceitar tanto 'all_data.dat' quanto 'all_data_{dim}D.dat'
+        candidates = [
+            data_dir / "all_data.dat",
+            data_dir / f"all_data_{dim}D.dat",
+        ]
+        fpath = _first_existing(candidates)
+        if fpath is None:
+            print(f"[WARN] Não encontrei all_data*.dat em {data_dir}")
+            continue
+
         try:
             df_rho = pd.read_csv(fpath, sep="\t", na_values=["Null"])
         except Exception as e:
             print(f"[WARN] Falha lendo {fpath}: {e}")
             continue
-        # cria colunas faltantes (compatibilidade)
+
+        # completa colunas faltantes
         for c in BASE_COLS:
             if c not in df_rho.columns:
                 df_rho[c] = np.nan
         dfs.append(df_rho[BASE_COLS])
 
     if not dfs:
-        print(f"[WARN] Nenhum all_data_{dim}D.dat válido encontrado.")
+        print(f"[WARN] Nenhum all_data*.dat válido encontrado.")
         return pd.DataFrame(columns=BASE_COLS)
 
     big = pd.concat(dfs, ignore_index=True, sort=False)
@@ -425,12 +565,6 @@ def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data"):
     print("Salvo em:", out_path.resolve())
 
     return big
-
-# regex para extrair p0 do nome do arquivo
-FNAME_RE = re.compile(
-    r"P0_(?P<P0>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)_p0_(?P<p0>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)_seed_(?P<seed>\d+)\.json$",
-    re.IGNORECASE,
-)
 
 def delete_json_with_p0(type_perc, num_colors, dim, L, Nt, k,
                         p0_target=0.30, base_root="../Data",
@@ -482,86 +616,7 @@ def delete_json_with_p0(type_perc, num_colors, dim, L, Nt, k,
           f"| ação: {'listar' if dry_run else 'apagar'}")
     return total, matched
 
-
-# 2) summarize_multi_seed_by_order: devolve n_contrib por ORDEM (para num_sample_perc)
-def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
-    per_order_pt, per_order_nt = {}, {}
-    any_seen = False
-    processed_here = set()
-
-    for jf in files:
-        # marca para process_names.txt
-        if parse_p0_from_filename(jf) is not None:
-            processed_here.add(os.path.basename(jf))
-        try:
-            entries = read_orders_one_file(jf)
-        except Exception as e:
-            if verbose: print(f"[WARN] falha lendo {os.path.basename(jf)}: {e}")
-            continue
-        if entries:
-            any_seen = True
-
-        for order, p_arr, n_arr in entries:
-            n = len(p_arr)
-            if n < 3: 
-                continue
-            start = int(burn_in_frac * n)
-            p_stationary = p_arr[start:]
-            if p_stationary.size < 1:
-                continue
-            mean_p, _, _, _ = sem_acf(p_stationary)
-            per_order_pt.setdefault(order, []).append(mean_p)
-
-            if n_arr is not None:
-                n_stationary = n_arr[start:]
-                if n_stationary.size > 0:
-                    mean_n, _, _, _ = sem_acf(n_stationary)
-                    per_order_nt.setdefault(order, []).append(mean_n)
-
-    if not any_seen and not per_order_pt and not per_order_nt:
-        return {}, True, processed_here
-
-    summary = {}
-    orders = sorted(set(list(per_order_pt.keys()) + list(per_order_nt.keys())))
-    for order in orders:
-        mp = np.asarray(per_order_pt.get(order, []), float)
-        Sp = len(mp)
-        pt_mean = float(mp.mean()) if Sp > 0 else np.nan
-        pt_sem  = float(mp.std(ddof=1)/np.sqrt(Sp)) if Sp > 1 else (0.0 if Sp==1 else np.nan)
-
-        mn = np.asarray(per_order_nt.get(order, []), float)
-        Sn = len(mn)
-        nt_mean = float(mn.mean()) if Sn > 0 else np.nan
-        nt_sem  = float(mn.std(ddof=1)/np.sqrt(Sn)) if Sn > 1 else (0.0 if Sn==1 else np.nan)
-
-        n_contrib = Sp if Sp > 0 else Sn
-        summary[order] = {
-            "n_seeds_contributed": int(n_contrib),
-            "pt_mean": pt_mean,
-            "pt_sem_between": pt_sem,
-            "nt_mean": nt_mean,
-            "nt_sem_between": nt_sem,
-        }
-    return summary, False, processed_here
-
-
-def data_single_sample(type_perc, num_colors, dim, L, Nt, k, rho, p0, seed):
-    path = f"/home/junior/Documents/self_organization_percolation/Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.1e}/data/"
-    filename = f"P0_0.10_p0_{p0:.2f}_seed_{seed}.json"
-    file_path = path + filename
-    data = read_orders_one_file(file_path)
-    try:
-        dict_data = {"t":list(range(len(data[0][1])))}
-        dict_data.update({f"p_{i+1}":[float(j) for j in data[i][1]] for i in range(0,4)})
-        dict_data.update({f"N_{i+1}":[int(j) for j in data[i][2]] for i in range(0,4)})
-        return dict_data
-    
-    except IndexError as e:
-        print("file empty, no percolation occurred, please, enter with other seed or p0:", e)
-    except FileNotFoundError as e:
-        print("File not found, enter with other parameters:", e)
-
-# ---------- helpers ----------
+# ---------- helpers de análise temporal usados nos seus plots ----------
 def tail_mean(x, tail_frac=0.30):
     """Média nos últimos tail_frac da série x (ignora NaN)."""
     x = np.asarray(x, float)
@@ -586,7 +641,6 @@ def bootstrap_mean_scalar(vals, n_boot=20000, ci=0.95, rng=None):
     if rng is None:
         rng = np.random.default_rng()
     if m == 1:
-        # com 1 curva, SEM entre-curvas é 0 (ou NaN se preferir)
         return (float(vals[0]), 0.0, (float(vals[0]), float(vals[0])))
     idx = rng.integers(0, m, size=(n_boot, m))
     boot_means = vals[idx].mean(axis=1)
@@ -595,3 +649,49 @@ def bootstrap_mean_scalar(vals, n_boot=20000, ci=0.95, rng=None):
     alpha = 0.5*(1-ci)
     lo, hi = np.quantile(boot_means, [alpha, 1-alpha])
     return mean_point, se_boot, (float(lo), float(hi))
+
+# ---------- função utilitária: carregar uma única amostra robustamente ----------
+def data_single_sample(type_perc, num_colors, dim, L, Nt, k, rho, p0, seed,
+                       base_root="/home/junior/Documents/self_organization_percolation/Data",
+                       rel_tol: float = 1e-12, abs_tol: float = 1e-15):
+    """
+    Localiza a pasta k_* e rho_* por aproximação numérica e abre um JSON específico
+    'P0_0.10_p0_{p0:.2f}_seed_{seed}.json'.
+    """
+    base_nt = (Path(base_root)
+               / f"{type_perc}_percolation"
+               / f"num_colors_{num_colors}"
+               / f"dim_{dim}"
+               / f"L_{L}"
+               / "NT_constant"
+               / f"NT_{Nt}")
+
+    k_dir = _find_numeric_subdir(base_nt, "k", k, rel_tol=rel_tol, abs_tol=abs_tol)
+    if k_dir is None:
+        raise FileNotFoundError(f"Não encontrei pasta k≈{k} em {base_nt}")
+
+    rho_dir = _find_numeric_subdir(k_dir, "rho", rho, rel_tol=rel_tol, abs_tol=abs_tol)
+    if rho_dir is None:
+        raise FileNotFoundError(f"Não encontrei pasta rho≈{rho} em {k_dir}")
+
+    data_dir = rho_dir / "data"
+    filename = f"P0_0.10_p0_{p0:.2f}_seed_{seed}.json"
+    file_path = data_dir / filename
+
+    entries = read_orders_one_file(str(file_path))
+    try:
+        # monta dicionário com t, p_1..p_4 e N_1..N_4 (se existirem)
+        t_len = len(entries[0][1]) if entries else 0
+        dct = {"t": list(range(t_len))}
+        for i in range(num_colors):
+            # entries[i] pode não existir se não houve percolação daquela cor
+            if i < len(entries):
+                dct[f"p_{i+1}"] = [float(v) for v in entries[i][1]]
+                if entries[i][2] is not None:
+                    dct[f"N_{i+1}"] = [int(v) for v in entries[i][2]]
+            else:
+                dct[f"p_{i+1}"] = [np.nan]*t_len
+                dct[f"N_{i+1}"] = [np.nan]*t_len
+        return dct
+    except IndexError as e:
+        raise IndexError("Arquivo vazio: não houve percolação nesta seed/p0") from e
