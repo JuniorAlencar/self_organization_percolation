@@ -479,22 +479,57 @@ def list_rho_values(
     return rhos
 
 # colunas fixas do schema
-BASE_COLS = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order",
-             "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
-             "perc_rate","perc_ci_low","perc_ci_high",
-             "pt_mean_uncond","pt_erro_uncond","nt_mean_uncond","nt_erro_uncond"]
+from pathlib import Path
+import numpy as np
+import pandas as pd
+
+# Columns to guarantee across all partial and accumulated datasets
+BASE_COLS = [
+    "type_perc","num_colors","dim","L","Nt","k","rho","p0","order",
+    "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro"
+]
+
+# Composite key that uniquely identifies a measurement row
+KEY_COLS = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
+
+
+def _align_columns(df: pd.DataFrame, columns: list) -> pd.DataFrame:
+    """
+    Ensure 'df' has all 'columns'; add missing ones with NaN and return a view
+    with exactly 'columns' in that order (copy for safety).
+    """
+    for c in columns:
+        if c not in df.columns:
+            df[c] = np.nan
+    return df[columns].copy()
+
 
 def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
                   rel_tol: float = 1e-12, abs_tol: float = 1e-15):
     """
-    Junta todos os all_data*.dat de cada rho (pastas rho_* em qualquer formatação).
-    Também encontra a pasta k_* por aproximação numérica.
+    Aggregate all 'all_data*.dat' files for each rho under the given parameter set
+    (type_perc, num_colors, dim, L, Nt, k), and UPDATE the global accumulated file:
+
+        {base_root}/{type_perc}_percolation/all_data_{dim}D.dat
+
+    Behavior:
+      - Reads the existing accumulated file if present.
+      - Merges the newly collected block (for the current L, Nt, k, ...) into it.
+      - Removes duplicates using KEY_COLS; the newest rows overwrite old ones.
+      - Harmonizes columns using BASE_COLS (and any extra columns found).
+      - Saves back to the same accumulated path (single file for all L/Nt/k/rho/p0).
+
+    Returns:
+      The full accumulated DataFrame after the merge (no duplicates).
     """
+    # Discover rho candidates from folder structure (user-provided helper)
     rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root=base_root)
     if not rho_values:
-        print("[WARN] Nenhum rho encontrado.")
+        print("[WARN] No rho values found.")
+        # Return empty frame with BASE_COLS to preserve schema
         return pd.DataFrame(columns=BASE_COLS)
 
+    # Base path for NT level
     base_nt = (Path(base_root)
                / f"{type_perc}_percolation"
                / f"num_colors_{num_colors}"
@@ -503,68 +538,106 @@ def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
                / "NT_constant"
                / f"NT_{Nt}")
 
-    # localiza a pasta k_* que corresponde ao 'k' informado
+    # Find k_* directory numerically close to 'k' (user-provided helper)
     k_dir = _find_numeric_subdir(base_nt, "k", k, rel_tol=rel_tol, abs_tol=abs_tol)
     if k_dir is None:
-        print(f"[WARN] Pasta k_... não encontrada (k≈{k}):", base_nt)
+        print(f"[WARN] k_* folder not found (k≈{k}):", base_nt)
         return pd.DataFrame(columns=BASE_COLS)
 
+    # Collect one small frame per rho and stack them
     dfs = []
     for rho in sorted(rho_values):
+        # Find rho_* directory numerically close to 'rho' (user-provided helper)
         rho_dir = _find_numeric_subdir(k_dir, "rho", rho, rel_tol=rel_tol, abs_tol=abs_tol)
         if rho_dir is None:
-            print(f"[WARN] Pasta rho_... não encontrada (rho≈{rho}) em {k_dir}")
+            print(f"[WARN] rho_* folder not found (rho≈{rho}) under {k_dir}")
             continue
+
         data_dir = rho_dir / "data"
 
-        # aceitar tanto 'all_data.dat' quanto 'all_data_{dim}D.dat'
+        # Accept both naming conventions
         candidates = [
             data_dir / "all_data.dat",
             data_dir / f"all_data_{dim}D.dat",
         ]
         fpath = _first_existing(candidates)
         if fpath is None:
-            print(f"[WARN] Não encontrei all_data*.dat em {data_dir}")
+            print(f"[WARN] No all_data*.dat found in {data_dir}")
             continue
 
         try:
             df_rho = pd.read_csv(fpath, sep="\t", na_values=["Null"])
         except Exception as e:
-            print(f"[WARN] Falha lendo {fpath}: {e}")
+            print(f"[WARN] Failed to read {fpath}: {e}")
             continue
 
-        # completa colunas faltantes
-        for c in BASE_COLS:
-            if c not in df_rho.columns:
-                df_rho[c] = np.nan
-        dfs.append(df_rho[BASE_COLS])
+        # Ensure BASE_COLS presence (add missing as NaN) and keep only BASE_COLS
+        df_rho = _align_columns(df_rho, BASE_COLS)
+        dfs.append(df_rho)
 
     if not dfs:
-        print(f"[WARN] Nenhum all_data*.dat válido encontrado.")
+        print("[WARN] No valid all_data*.dat found to merge.")
         return pd.DataFrame(columns=BASE_COLS)
 
-    big = pd.concat(dfs, ignore_index=True, sort=False)
+    # Newly collected block for this (type_perc, num_colors, dim, L, Nt, k)
+    new_block = pd.concat(dfs, ignore_index=True, sort=False)
 
-    # tipos & arredondamento
+    # Coerce numeric columns (robust to missing columns)
     num_cols = ["num_colors","dim","L","Nt","k","rho","p0","order",
                 "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro"]
     for c in num_cols:
-        if c in big.columns:
-            big[c] = pd.to_numeric(big[c], errors="coerce")
-    if "p0" in big.columns:
-        big["p0"] = big["p0"].round(1)
+        if c in new_block.columns:
+            new_block[c] = pd.to_numeric(new_block[c], errors="coerce")
 
-    # remove duplicatas por chave lógica
-    key = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
-    big = big.drop_duplicates(subset=key, keep="last")
+    # Round p0 to a consistent resolution to normalize keys (adjust if needed)
+    if "p0" in new_block.columns:
+        new_block["p0"] = new_block["p0"].round(1)
 
+    # Drop duplicates within the new block to keep its newest entries
+    new_block = new_block.drop_duplicates(subset=KEY_COLS, keep="last")
+
+    # Path to the global accumulated file (per type_perc and dim)
     out_dir = Path(base_root) / f"{type_perc}_percolation"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"all_data_{dim}D.dat"
-    big.to_csv(out_path, sep="\t", index=False, na_rep="Null")
-    print("Salvo em:", out_path.resolve())
 
-    return big
+    # Read accumulated file if present; otherwise start fresh
+    if out_path.exists():
+        try:
+            acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+        except Exception as e:
+            print(f"[WARN] Failed to read accumulated file {out_path}: {e}")
+            acc = pd.DataFrame(columns=BASE_COLS)
+    else:
+        acc = pd.DataFrame(columns=BASE_COLS)
+
+    # Build the union of columns (BASE_COLS + any extras found in acc/new_block)
+    all_cols = list(dict.fromkeys(list(BASE_COLS) + list(acc.columns) + list(new_block.columns)))
+
+    # Align both frames to the same schema/order
+    acc_aligned = _align_columns(acc, all_cols)
+    new_aligned = _align_columns(new_block, all_cols)
+
+    # Concatenate and remove duplicates by KEY_COLS; keep 'last' to overwrite old rows
+    merged = pd.concat([acc_aligned, new_aligned], ignore_index=True, sort=False)
+
+    # Normalize key dtypes before dropping duplicates (string for 'type_perc')
+    if "type_perc" in merged.columns:
+        merged["type_perc"] = merged["type_perc"].astype(str)
+
+    merged = merged.drop_duplicates(subset=KEY_COLS, keep="last")
+
+    # Optional: sort for human-friendly reading
+    sort_cols = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
+    sort_cols = [c for c in sort_cols if c in merged.columns]
+    merged = merged.sort_values(sort_cols).reset_index(drop=True)
+
+    # Persist the updated accumulated dataset
+    merged.to_csv(out_path, sep="\t", index=False, na_rep="Null")
+    print("Updated:", out_path.resolve())
+
+    return merged
+
 
 def delete_json_with_p0(type_perc, num_colors, dim, L, Nt, k,
                         p0_target=0.30, base_root="../Data",

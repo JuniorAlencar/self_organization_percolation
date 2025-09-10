@@ -4,8 +4,8 @@ from src.process_data import *
 type_perc = 'bond'
 num_colors = 4
 dim = 3
-L = 128
-Nt = 205
+L = 256
+Nt = 820
 k = 1.0e-05
 
 # ===========================

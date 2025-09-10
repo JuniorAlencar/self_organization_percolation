@@ -4,6 +4,7 @@ import pandas as pd
 from pathlib import Path
 from collections import Counter
 import math
+from collections.abc import Iterable
 
 # --- regex para extrair params do caminho ---
 # Aceita k/rho em float normal ou notação científica (ex.: 1.0e-04, 8.9e-02)
@@ -174,7 +175,7 @@ def list_rho_values(
     return rhos
 
 def data_single_sample(type_perc, num_colors, dim, L, Nt, k, rho, p0, seed):
-    path = f"/home/junior/Documents/self_organization_percolation/Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.1e}/data/"
+    path = f"/home/junior/Documents/self_organization_percolation/Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.4e}/data/"
     filename = f"P0_0.10_p0_{p0:.2f}_seed_{seed}.json"
     file_path = path + filename
     data = read_orders_one_file(file_path)
@@ -282,25 +283,3 @@ def fmt_pm_N(mean, se, n_used, dec=1, thresh=None):
 
     return rf"$\langle N \rangle = {mean:.{dec}f}\ \pm\ {se:.{dec}f}$"
 
-
-# # ---- helpers (use os mesmos de antes se já tiver) ----
-# def tail_mean(x, tail_frac=0.30):
-#     x = np.asarray(x, float); n = len(x)
-#     if n == 0: return np.nan
-#     start = max(0, min(int((1.0 - tail_frac) * n), n-1))
-#     seg = x[start:]
-#     return np.nan if seg.size == 0 else np.nanmean(seg)
-
-# def bootstrap_mean_scalar(vals, n_boot=20000, ci=0.95, rng=None):
-#     vals = np.asarray(vals, float); vals = vals[np.isfinite(vals)]
-#     m = vals.size
-#     if m == 0: return (np.nan, np.nan, (np.nan, np.nan))
-#     if rng is None: rng = np.random.default_rng()
-#     if m == 1: return (float(vals[0]), 0.0, (float(vals[0]), float(vals[0])))
-#     idx = rng.integers(0, m, size=(n_boot, m))
-#     boot_means = vals[idx].mean(axis=1)
-#     mean_point = float(vals.mean())
-#     se_boot = float(boot_means.std(ddof=1))
-#     alpha = 0.5*(1-ci)
-#     lo, hi = np.quantile(boot_means, [alpha, 1-alpha])
-#     return mean_point, se_boot, (float(lo), float(hi))
