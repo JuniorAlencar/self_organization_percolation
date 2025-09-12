@@ -144,8 +144,7 @@ int main(int argc, char* argv[]){
           << "order=" << ps.percolation_order.size()
           << ", color=" << ps.color_percolation.size()
           << ", time="  << ps.time_percolation.size()
-          << ", rho="   << ps.rho.size()
-          << ", pho="   << ps.pho.size() << "\n";
+          << ", rho="   << ps.rho.size();
 
     std::cerr << "[DBG] ts sizes -> "
             << "num_colors=" << ts.num_colors

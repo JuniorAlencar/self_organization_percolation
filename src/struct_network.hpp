@@ -140,6 +140,7 @@ struct NetworkPattern {
 // Struct to load (t, pt_i) and (t, Nt_i)
 struct TimeSeries{
     int num_colors;
+    vector<int> M_size;
     vector<vector<double>> p_t;
     vector<int> t;
     vector<vector<int>> Nt;
@@ -150,7 +151,6 @@ struct PercolationSeries{
     vector<int> time_percolation;   // Time when it percolated
     vector<int> percolation_order; // Moment when it percolated
     vector<double> rho; // Density for each color for all network (all inactive sites)
-    vector<double> pho;  // Initial fraction of active sites
 };
 
 #endif // network_hpp

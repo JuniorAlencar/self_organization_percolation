@@ -13,6 +13,7 @@
 #include <chrono>   // para fallback de seed, opcional
 #include <queue>
 #include <map>
+#include <cstddef>
 #include <iomanip>
 
 #include <unordered_set>
@@ -63,11 +64,21 @@ class network{
         
         void print_initial_site_fractions(const NetworkPattern& net);
         
+        // Create a net for animate 
         NetworkPattern animate_network(const int dim, const int lenght_network, const int num_of_samples,
                                        const double k, const double N_t, const int seed, const int type_N_t,
                                        const std::vector<double> p0, const double P0, const double a, const double alpha,
                                        const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
                                        TimeSeries& ts_out);
+        
+        // Calculate the bigger cluster for each color
+        void compute_max_cluster_per_color(
+            const NetworkPattern& net,
+            int dim,
+            const std::vector<int>& shape,
+            int grow_axis,
+            int num_colors,
+            std::vector<int>& M_size_out);
 };
 
 
