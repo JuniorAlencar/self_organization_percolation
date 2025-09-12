@@ -18,6 +18,128 @@ double network::generate_p(const int type_N_t, const double p_t, const int t_i, 
     return p_next;
 }
 
+// Calcula o MAIOR cluster conectado por cor.
+// - Contorno: aberto no eixo de crescimento (grow_axis) e periódico nos demais.
+// - Vizinhança: 2d (±1 em cada eixo).
+void network::compute_max_cluster_per_color(
+    const NetworkPattern& net,
+    int dim,
+    const std::vector<int>& shape,
+    int grow_axis,
+    int num_colors,
+    std::vector<int>& M_size_out)
+{
+    const int SX = shape[0];
+    const int SY = (dim >= 2 ? shape[1] : 1);
+    const int SZ = (dim == 3 ? shape[2] : 1);
+    const size_t TOT = static_cast<size_t>(SX) * SY * SZ;
+
+    auto lin_index = [&](int x, int y, int z) -> size_t {
+        return static_cast<size_t>(x)
+             + static_cast<size_t>(SX) * (static_cast<size_t>(y)
+             + static_cast<size_t>(SY) * static_cast<size_t>(z));
+    };
+
+    auto for_each_neighbor = [&](const std::vector<int>& pos, auto&& f) {
+        for (int ax = 0; ax < dim; ++ax) {
+            for (int d : {-1, 1}) {
+                std::vector<int> v = pos;
+                v[ax] += d;
+
+                bool valid = true;
+                for (int j = 0; j < dim; ++j) {
+                    if (j == grow_axis) {
+                        if (v[j] < 0 || v[j] >= shape[j]) { valid = false; break; }
+                    } else {
+                        if (v[j] < 0) v[j] = shape[j] - 1;
+                        else if (v[j] >= shape[j]) v[j] = 0;
+                    }
+                }
+                if (valid) f(v);
+            }
+        }
+    };
+
+    auto active_value_for = [&](int color_idx)->int {
+        return (num_colors == 1) ? 1 : (color_idx + 2); // 0-based → valores {1} ou {2,3,...}
+    };
+
+    M_size_out.assign(num_colors, 0);
+
+    std::vector<int> coords(dim, 0);
+    std::vector<char> visited(TOT, 0);
+
+    for (int c = 0; c < num_colors; ++c) {
+        std::fill(visited.begin(), visited.end(), 0);
+        const int target = active_value_for(c);
+        int best = 0;
+
+        if (dim == 2) {
+            for (int x = 0; x < SX; ++x) {
+                for (int y = 0; y < SY; ++y) {
+                    coords[0] = x; coords[1] = y;
+                    if (net.get(coords) != target) continue;
+
+                    const size_t id0 = lin_index(x,y,0);
+                    if (visited[id0]) continue;
+
+                    int comp = 0;
+                    std::queue<std::vector<int>> q;
+                    q.push(coords);
+                    visited[id0] = 1;
+
+                    while (!q.empty()) {
+                        auto u = q.front(); q.pop();
+                        ++comp;
+
+                        for_each_neighbor(u, [&](const std::vector<int>& v){
+                            const size_t vid = lin_index(v[0],v[1],0);
+                            if (!visited[vid] && net.get(v) == target) {
+                                visited[vid] = 1;
+                                q.push(v);
+                            }
+                        });
+                    }
+                    if (comp > best) best = comp;
+                }
+            }
+        } else { // dim == 3
+            for (int x = 0; x < SX; ++x) {
+                for (int y = 0; y < SY; ++y) {
+                    for (int z = 0; z < SZ; ++z) {
+                        coords[0] = x; coords[1] = y; coords[2] = z;
+                        if (net.get(coords) != target) continue;
+
+                        const size_t id0 = lin_index(x,y,z);
+                        if (visited[id0]) continue;
+
+                        int comp = 0;
+                        std::queue<std::vector<int>> q;
+                        q.push(coords);
+                        visited[id0] = 1;
+
+                        while (!q.empty()) {
+                            auto u = q.front(); q.pop();
+                            ++comp;
+
+                            for_each_neighbor(u, [&](const std::vector<int>& v){
+                                const size_t vid = lin_index(v[0],v[1],v[2]);
+                                if (!visited[vid] && net.get(v) == target) {
+                                    visited[vid] = 1;
+                                    q.push(v);
+                                }
+                            });
+                        }
+                        if (comp > best) best = comp;
+                    }
+                }
+            }
+        }
+
+        M_size_out[c] = best;
+    }
+}
+
 // Code to create network in 2D or 3D with num_colors >= 1
 NetworkPattern network::create_network(
     const int dim, const int lenght_network, const int num_of_samples,
@@ -260,17 +382,16 @@ NetworkPattern network::create_network(
     ts_out.p_t = std::move(p_series);
     ts_out.Nt  = std::move(Nt_series);
     ts_out.t   = std::move(t_list);
-
+    
+    compute_max_cluster_per_color(net, dim, shape, grow_axis, num_colors, ts_out.M_size);
     // guarda parâmetros em ps_out (por cor; usados no JSON)
-    ps_out.pho.clear(); ps_out.rho.clear();
+    ps_out.rho.clear();
     for (int i = 0; i < num_colors; ++i) {
-        if (i < (int)p0.size())  ps_out.pho.push_back(p0[i]);
         if (i < (int)rho.size()) ps_out.rho.push_back(rho[i]);
     }
-
+    
     return net;
 }
-
 
 
 NetworkPattern network::animate_network(

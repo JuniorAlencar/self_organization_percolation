@@ -187,8 +187,8 @@ void save_data::save_info_percolation(const PercolationSeries& ps,
             { ps.time_percolation[i], ps.percolation_order[i] };
     }
 
-    // Número de cores conhecido pelos vetores rho/pho
-    const size_t C = std::max(ps.rho.size(), ps.pho.size());
+    // Número de cores conhecido pelos vetores rho
+    const size_t C = ps.rho.size();
 
     std::ofstream file_info(filename_info);
     if (!file_info.is_open()) {
@@ -201,16 +201,14 @@ void save_data::save_info_percolation(const PercolationSeries& ps,
     // Escreve 1 linha por cor conhecida (1..C)
     for (size_t c = 1; c <= C; ++c) {
         const double rho_val = (c-1 < ps.rho.size()) ? ps.rho[c-1] : 0.0;
-        const double pho_val = (c-1 < ps.pho.size()) ? ps.pho[c-1] : 0.0;
+    
 
         auto it = perc_by_color.find(static_cast<int>(c));
         if (it != perc_by_color.end()) {
-            file_info << c << ' ' << rho_val << ' ' << pho_val << ' '
-                      << it->second.first  << ' '  // time_percolation
+            file_info << c << ' ' << rho_val << ' ' <<  it->second.first  << ' '  // time_percolation
                       << it->second.second << '\n'; // percolation_order
         } else {
-            file_info << c << ' ' << rho_val << ' ' << pho_val << ' '
-                      << -1 << ' ' << -1 << '\n';
+            file_info << c << ' ' << rho_val << ' ' <<  -1 << ' ' << -1 << '\n';
         }
     }
 
@@ -221,10 +219,7 @@ void save_data::save_info_percolation(const PercolationSeries& ps,
         if (color < 1 || static_cast<size_t>(color) > C) {
             const double rho_val = (static_cast<size_t>(color-1) < ps.rho.size())
                                    ? ps.rho[color-1] : 0.0;
-            const double pho_val = (static_cast<size_t>(color-1) < ps.pho.size())
-                                   ? ps.pho[color-1] : 0.0;
-            file_info << color << ' ' << rho_val << ' ' << pho_val << ' '
-                      << ps.time_percolation[i] << ' '
+            file_info << color << ' ' << rho_val << ' ' << ps.time_percolation[i] << ' '
                       << ps.percolation_order[i] << '\n';
         }
     }
@@ -293,7 +288,6 @@ void check_ts_consistency(const TimeSeries& ts) {
 
 } // namespace
 // =======================================================================
-
 void save_data::save_percolation_json(const PercolationSeries& ps,
                                       const TimeSeries& ts,
                                       const std::string& filename_json,
@@ -332,20 +326,21 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         const int order_i   = ps.percolation_order[i];
         const int color_1b  = ps.color_percolation[i];     // armazenado 1-based no ps
         const int tperc_i   = ps.time_percolation[i];
-
+        
+        
         const double rho_i  = get_by_color_or_fallback(ps.rho, color_1b);
-        const double pho_i  = get_by_color_or_fallback(ps.pho, color_1b);
+        
 
         const int color_row = std::max(0, color_1b - 1);   // converter para acessar ts.p_t/Nt
-
+        const int M_i       = (color_row < (int)ts.M_size.size()) ? ts.M_size[color_row] : 0;
+        
         ofs << "    {\n";
         ofs << "      \"order_percolation\": " << order_i << ",\n";
         ofs << "      \"data\": {\n";
         ofs << "        \"color\": " << color_1b << ",\n";
         ofs << "        \"rho\": "   << std::setprecision(17) << rho_i << ",\n";
-        ofs << "        \"pho\": "   << std::setprecision(17) << pho_i << ",\n";
         ofs << "        \"time_percolation\": " << tperc_i << ",\n";
-
+        ofs << "        \"M_size\": " << M_i << ",\n";
         ofs << "        \"time\": ";
         write_json_array(ofs, ts.t);
         ofs << ",\n";
