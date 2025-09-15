@@ -214,3 +214,60 @@ def load_t_pt(filepath):
     t = data[:, 0]
     p_t = data[:, 1]
     return t, p_t
+
+
+import os, json
+import numpy as np
+
+def read_orders_one_file(file_path):
+    """
+    Lê o JSON e retorna lista de tuplas (order, pt_array, nt_array_ou_None).
+    Aceita arquivos com 1..N ordens.
+    """
+    with open(file_path, "r") as f:
+        obj = json.load(f)
+
+    out = []
+    results = obj.get("results", []) if isinstance(obj, dict) else []
+    for item in results:
+        order = item.get("order_percolation")
+        d = item.get("data", {}) or {}
+        if order is None or "pt" not in d:
+            continue
+        p = np.asarray(d["pt"], dtype=float)
+        if p.size == 0:
+            continue
+        n_arr = np.asarray(d["nt"], dtype=float) if "nt" in d else None
+        if n_arr is not None:
+            n = min(len(p), len(n_arr))
+            p = p[:n]
+            n_arr = n_arr[:n]
+        out.append((int(order), p, n_arr))
+    return out
+def data_single_sample(type_perc, num_colors, dim, L, Nt, k, rho, p0, seed):
+    """
+    Retorna dict com 't' e chaves 'p_i'/'N_i' APENAS para as ordens existentes no arquivo.
+    Não assume que existem 4 ordens.
+    """
+    path = (f"/home/junior/Documents/self_organization_percolation/Data/"
+            f"{type_perc}_percolation/num_colors_{int(num_colors)}/dim_{dim}/L_{L}/"
+            f"NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.4e}/data/")
+    filename = f"P0_0.10_p0_{p0:.2f}_seed_{seed}.json"
+    file_path = os.path.join(path, filename)
+
+    data_list = read_orders_one_file(file_path)
+    if not data_list:
+        raise ValueError(f"Nenhuma ordem encontrada em: {file_path}")
+
+    # ordena por ordem e usa o comprimento da primeira série para o 't'
+    data_list.sort(key=lambda x: x[0])
+    T = len(data_list[0][1])
+    out = {"t": list(range(T))}
+
+    for order, p_arr, n_arr in data_list:
+        out[f"p_{order}"] = [float(x) for x in p_arr[:T]]
+        if n_arr is not None:
+            # 'nt' pode vir como float; converta com segurança
+            out[f"N_{order}"] = [int(x) for x in np.asarray(n_arr[:T]).round()]
+
+    return out
