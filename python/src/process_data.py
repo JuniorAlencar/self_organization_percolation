@@ -70,7 +70,11 @@ def parse_p0_from_filename(path):
 
 def read_orders_one_file(file_path):
     """
-    Retorna lista de (order, pt_array, nt_array_ou_None) para um .json com 'results'.
+    Parse one JSON with the "results" list and return a list of tuples
+    (order, pt_array, nt_array_or_None, M_size_or_None).
+
+    - pt/nt are full time series (floats)
+    - M_size is a single scalar stored in each result's "data"
     """
     with open(file_path, "r") as f:
         obj = json.load(f)
@@ -82,16 +86,28 @@ def read_orders_one_file(file_path):
             d = item.get("data", {})
             if order is None or "time" not in d or "pt" not in d:
                 continue
+
+            # time series
             p = np.asarray(d["pt"], float)
             n_arr = np.asarray(d["nt"], float) if "nt" in d else None
-            # alinhar comprimentos (caso raro de listas de tamanhos distintos)
+
+            # align lengths if needed
             n = min(len(p), len(n_arr)) if n_arr is not None else len(p)
             if n <= 0:
                 continue
             p = p[:n]
             n_arr = n_arr[:n] if n_arr is not None else None
-            out.append((int(order), p, n_arr))
-    return out  # pode ser []
+
+            # scalar M_size (may be missing)
+            m_size = d.get("M_size", None)
+            try:
+                m_size = float(m_size) if m_size is not None else None
+            except Exception:
+                m_size = None
+
+            out.append((int(order), p, n_arr, m_size))
+    return out  # may be []
+
 
 def sem_acf(x, max_lag=None):
     x = np.asarray(x, float)
@@ -156,30 +172,43 @@ def _first_existing(path_candidates):
 
 # --------------- Núcleo estatístico p0->ordem ----------------
 def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
-    per_order_pt, per_order_nt = {}, {}
+    """
+    Aggregate multiple seed JSON files by percolation order.
+
+    For each order k we compute:
+      - pt_mean, pt_sem_between (mean/SEM of stationary pt across seeds)
+      - nt_mean, nt_sem_between (idem for nt, if available)
+      - M_size_mean, M_size_sem_between (mean/SEM across seeds for scalar M_size)
+      - n_seeds_contributed (how many seeds actually contributed for that order)
+    """
+    per_order_pt, per_order_nt, per_order_msize = {}, {}, {}
     any_seen = False
     processed_here = set()
 
     for jf in files:
-        # marca para process_names.txt
+        # track processed basenames
         if parse_p0_from_filename(jf) is not None:
             processed_here.add(os.path.basename(jf))
         try:
             entries = read_orders_one_file(jf)
         except Exception as e:
-            if verbose: print(f"[WARN] falha lendo {os.path.basename(jf)}: {e}")
+            if verbose:
+                print(f"[WARN] failed to read {os.path.basename(jf)}: {e}")
             continue
         if entries:
             any_seen = True
 
-        for order, p_arr, n_arr in entries:
+        for order, p_arr, n_arr, m_size in entries:
             n = len(p_arr)
-            if n < 3: 
+            if n < 3:
                 continue
+
+            # use tail after burn-in for pt/nt
             start = int(burn_in_frac * n)
             p_stationary = p_arr[start:]
             if p_stationary.size < 1:
                 continue
+
             mean_p, _, _, _ = sem_acf(p_stationary)
             per_order_pt.setdefault(order, []).append(mean_p)
 
@@ -189,54 +218,81 @@ def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
                     mean_n, _, _, _ = sem_acf(n_stationary)
                     per_order_nt.setdefault(order, []).append(mean_n)
 
-    if not any_seen and not per_order_pt and not per_order_nt:
+            # scalar M_size (no burn-in; it's a single number)
+            if m_size is not None and np.isfinite(m_size):
+                per_order_msize.setdefault(order, []).append(float(m_size))
+
+    if not any_seen and not per_order_pt and not per_order_nt and not per_order_msize:
         return {}, True, processed_here
 
     summary = {}
-    orders = sorted(set(list(per_order_pt.keys()) + list(per_order_nt.keys())))
+    orders = sorted(set(list(per_order_pt.keys()) +
+                        list(per_order_nt.keys()) +
+                        list(per_order_msize.keys())))
     for order in orders:
+        # pt
         mp = np.asarray(per_order_pt.get(order, []), float)
         Sp = len(mp)
         pt_mean = float(mp.mean()) if Sp > 0 else np.nan
-        pt_sem  = float(mp.std(ddof=1)/np.sqrt(Sp)) if Sp > 1 else (0.0 if Sp==1 else np.nan)
+        pt_sem  = float(mp.std(ddof=1)/np.sqrt(Sp)) if Sp > 1 else (0.0 if Sp == 1 else np.nan)
 
+        # nt
         mn = np.asarray(per_order_nt.get(order, []), float)
         Sn = len(mn)
         nt_mean = float(mn.mean()) if Sn > 0 else np.nan
-        nt_sem  = float(mn.std(ddof=1)/np.sqrt(Sn)) if Sn > 1 else (0.0 if Sn==1 else np.nan)
+        nt_sem  = float(mn.std(ddof=1)/np.sqrt(Sn)) if Sn > 1 else (0.0 if Sn == 1 else np.nan)
 
-        n_contrib = Sp if Sp > 0 else Sn
+        # M_size (between seeds)
+        ms = np.asarray(per_order_msize.get(order, []), float)
+        Sm = len(ms)
+        msize_mean = float(ms.mean()) if Sm > 0 else np.nan
+        msize_sem  = float(ms.std(ddof=1)/np.sqrt(Sm)) if Sm > 1 else (0.0 if Sm == 1 else np.nan)
+
+        # prefer pt count as "contributed"; fallback to others if needed
+        n_contrib = Sp or Sn or Sm
+
         summary[order] = {
             "n_seeds_contributed": int(n_contrib),
             "pt_mean": pt_mean,
             "pt_sem_between": pt_sem,
             "nt_mean": nt_mean,
             "nt_sem_between": nt_sem,
+            "M_size_mean": msize_mean,
+            "M_size_sem_between": msize_sem,
         }
     return summary, False, processed_here
 
+
 # 3) build_dataframe_by_p0
 def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint: str = None):
+    """
+    Build the per-(p0, order) summary DataFrame for a given parameter set.
+    Produces only: pt_mean/pt_erro, nt_mean/nt_erro, M_size_mean/M_size_erro, perc_rate.
+    """
     meta_source = path_hint or (all_files[0] if all_files else "")
     meta = parse_params_from_path(meta_source) or \
            (parse_params_from_path(all_files[0]) if all_files else None) or \
            {"type_perc": None, "num_colors": None, "dim": None, "L": None, "Nt": None, "k": None, "rho": None}
     n_orders = meta.get("num_colors") or 3
 
-    # agrupar por p0 arredondado
+    # group by rounded p0
     groups = {}
     for f in all_files:
         p0_raw = parse_p0_from_filename(f)
         if p0_raw is None:
-            if verbose: print(f"[WARN] nome inesperado, ignorando: {os.path.basename(f)}")
+            if verbose:
+                print(f"[WARN] unexpected filename, skipping: {os.path.basename(f)}")
             continue
         p0_key = round(float(p0_raw), 1)
         groups.setdefault(p0_key, []).append(f)
 
-    cols = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order",
-            "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
-            "perc_rate","perc_ci_low","perc_ci_high",
-            "pt_mean_uncond","pt_erro_uncond","nt_mean_uncond","nt_erro_uncond"]
+    cols = [
+        "type_perc","num_colors","dim","L","Nt","k","rho","p0","order",
+        "num_samples","num_sample_perc",
+        "pt_mean","pt_erro","nt_mean","nt_erro",
+        "M_size_mean","M_size_erro",
+        "perc_rate",
+    ]
     rows, processed = [], set()
 
     if not groups:
@@ -248,19 +304,11 @@ def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint:
             groups[p0_val], burn_in_frac=burn_in_frac, verbose=verbose
         )
         processed |= set(processed_here)
-        N = int(len(processed_here))  # num_samples
+        N = int(len(processed_here))  # number of seeds for this (p0, params)
 
-        def append_row(order, M, pt_m, pt_e, nt_m, nt_e):
-            # incidência e IC
-            q, lo, hi = wilson_ci(M, N) if N > 0 else (np.nan, np.nan, np.nan)
-            # incondicionais (delta)
-            var_q = q*(1-q)/N if N > 0 else np.nan
-            pt_mu_un = q * (pt_m if pd.notna(pt_m) else 0.0)
-            pt_se_un = math.sqrt((0 if pd.isna(pt_m) else pt_m**2)* (0 if pd.isna(var_q) else var_q) +
-                                 (0 if pd.isna(pt_e) else (q**2)*(pt_e**2))) if (N>0 and pd.notna(q)) else np.nan
-            nt_mu_un = q * (nt_m if pd.notna(nt_m) else 0.0)
-            nt_se_un = math.sqrt((0 if pd.isna(nt_m) else nt_m**2)* (0 if pd.isna(var_q) else var_q) +
-                                 (0 if pd.isna(nt_e) else (q**2)*(nt_e**2))) if (N>0 and pd.notna(q)) else np.nan
+        def append_row(order, M, pt_m, pt_e, nt_m, nt_e, msz_m, msz_e):
+            # percolation rate (no CI; just M/N)
+            q = (float(M) / float(N)) if N > 0 else np.nan
 
             rows.append({
                 "type_perc": meta["type_perc"], "num_colors": meta["num_colors"], "dim": meta["dim"],
@@ -268,35 +316,53 @@ def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint:
                 "p0": p0_fmt, "order": order,
                 "num_samples": N, "num_sample_perc": int(M),
                 "pt_mean": pt_m, "pt_erro": pt_e, "nt_mean": nt_m, "nt_erro": nt_e,
-                "perc_rate": q, "perc_ci_low": lo, "perc_ci_high": hi,
-                "pt_mean_uncond": pt_mu_un, "pt_erro_uncond": pt_se_un,
-                "nt_mean_uncond": nt_mu_un, "nt_erro_uncond": nt_se_un,
+                "M_size_mean": msz_m, "M_size_erro": msz_e,
+                "perc_rate": q,
             })
 
         if all_empty or not summary:
-            for order in range(1, int(n_orders)+1):
-                append_row(order, 0, np.nan, np.nan, np.nan, np.nan)
+            for order in range(1, int(n_orders) + 1):
+                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
             continue
 
-        for order in range(1, int(n_orders)+1):
+        for order in range(1, int(n_orders) + 1):
             if order in summary:
                 s = summary[order]
                 append_row(order, s["n_seeds_contributed"],
                            s["pt_mean"], s["pt_sem_between"],
-                           s["nt_mean"], s["nt_sem_between"])
+                           s["nt_mean"], s["nt_sem_between"],
+                           s["M_size_mean"], s["M_size_sem_between"])
             else:
-                append_row(order, 0, np.nan, np.nan, np.nan, np.nan)
+                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
 
     df = pd.DataFrame(rows, columns=cols)
-    df = df.drop_duplicates(subset=["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"], keep="last")
-    for c in ["num_colors","dim","L","Nt","k","rho","p0","order","num_samples","num_sample_perc",
-              "pt_mean","pt_erro","nt_mean","nt_erro","perc_rate","perc_ci_low","perc_ci_high",
-              "pt_mean_uncond","pt_erro_uncond","nt_mean_uncond","nt_erro_uncond"]:
+
+    # drop logical duplicates
+    df = df.drop_duplicates(
+        subset=["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"],
+        keep="last"
+    )
+
+    # numeric coercion
+    num_cols = [
+        "num_colors","dim","L","Nt","k","rho","p0","order",
+        "num_samples","num_sample_perc",
+        "pt_mean","pt_erro","nt_mean","nt_erro",
+        "M_size_mean","M_size_erro",
+        "perc_rate",
+    ]
+    for c in num_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     if "p0" in df.columns:
         df["p0"] = df["p0"].round(1)
+
+    # ensure deprecated columns are not present (guard if old code wrote them)
+    df = df.drop(columns=[c for c in DEPRECATED_COLS if c in df.columns], errors="ignore")
+
     return df, processed
+
+
 
 def _normalize_names(iterable):
     """Basenames sem espaços/vazios -> set único."""
@@ -478,16 +544,23 @@ def list_rho_values(
     rhos = sorted(set(rhos))
     return rhos
 
-# colunas fixas do schema
-from pathlib import Path
-import numpy as np
-import pandas as pd
-
 # Columns to guarantee across all partial and accumulated datasets
+# --- schema we want to preserve in .dat and DataFrames ---
 BASE_COLS = [
     "type_perc","num_colors","dim","L","Nt","k","rho","p0","order",
-    "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro"
+    "num_samples","num_sample_perc",
+    "pt_mean","pt_erro","nt_mean","nt_erro",
+    "M_size_mean","M_size_erro",
+    "perc_rate",
 ]
+
+# --- columns we want to drop forever (deprecated) ---
+DEPRECATED_COLS = [
+    "perc_ci_low","perc_ci_high",
+    "pt_mean_uncond","pt_erro_uncond",
+    "nt_mean_uncond","nt_erro_uncond",
+]
+
 
 # Composite key that uniquely identifies a measurement row
 KEY_COLS = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
@@ -503,33 +576,50 @@ def _align_columns(df: pd.DataFrame, columns: list) -> pd.DataFrame:
             df[c] = np.nan
     return df[columns].copy()
 
+# keep your existing BASE_COLS / KEY_COLS / DEPRECATED_COLS
+# BASE_COLS = [...]
+# KEY_COLS  = [...]
+# DEPRECATED_COLS = [...]
+
+def _align_to_union(df: pd.DataFrame, union_cols: list) -> pd.DataFrame:
+    """Ensure df has exactly the columns in 'union_cols' (adding missing as NaN, preserving order)."""
+    for c in union_cols:
+        if c not in df.columns:
+            df[c] = np.nan
+    return df[union_cols].copy()
 
 def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
                   rel_tol: float = 1e-12, abs_tol: float = 1e-15):
     """
-    Aggregate all 'all_data*.dat' files for each rho under the given parameter set
-    (type_perc, num_colors, dim, L, Nt, k), and UPDATE the global accumulated file:
+    Aggregate all 'all_data*.dat' across rho under (type_perc, num_colors, dim, L, Nt, k),
+    and UPDATE the global accumulated file:
 
         {base_root}/{type_perc}_percolation/all_data_{dim}D.dat
 
-    Behavior:
-      - Reads the existing accumulated file if present.
-      - Merges the newly collected block (for the current L, Nt, k, ...) into it.
-      - Removes duplicates using KEY_COLS; the newest rows overwrite old ones.
-      - Harmonizes columns using BASE_COLS (and any extra columns found).
-      - Saves back to the same accumulated path (single file for all L/Nt/k/rho/p0).
-
-    Returns:
-      The full accumulated DataFrame after the merge (no duplicates).
+    - Defines out_dir/out_path at the top (avoids UnboundLocalError).
+    - Keeps any extra columns (e.g., M_size_mean/M_size_erro) and drops deprecated ones.
+    - De-duplicates by KEY_COLS, keeping the newest rows.
     """
-    # Discover rho candidates from folder structure (user-provided helper)
+
+    # --- define output targets FIRST (so they exist in any code path) ---
+    out_dir = Path(base_root) / f"{type_perc}_percolation"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"all_data_{dim}D.dat"
+
+    # discover rho values
     rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root=base_root)
     if not rho_values:
         print("[WARN] No rho values found.")
-        # Return empty frame with BASE_COLS to preserve schema
+        # If nothing to add, return current accumulated (if any) to avoid surprises
+        if out_path.exists():
+            try:
+                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
+                return acc
+            except Exception:
+                pass
         return pd.DataFrame(columns=BASE_COLS)
 
-    # Base path for NT level
     base_nt = (Path(base_root)
                / f"{type_perc}_percolation"
                / f"num_colors_{num_colors}"
@@ -538,31 +628,33 @@ def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
                / "NT_constant"
                / f"NT_{Nt}")
 
-    # Find k_* directory numerically close to 'k' (user-provided helper)
+    # find k_* numerically close to given k
     k_dir = _find_numeric_subdir(base_nt, "k", k, rel_tol=rel_tol, abs_tol=abs_tol)
     if k_dir is None:
         print(f"[WARN] k_* folder not found (k≈{k}):", base_nt)
+        # same behavior: return existing accumulated, if any
+        if out_path.exists():
+            try:
+                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
+                return acc
+            except Exception:
+                pass
         return pd.DataFrame(columns=BASE_COLS)
 
-    # Collect one small frame per rho and stack them
     dfs = []
     for rho in sorted(rho_values):
-        # Find rho_* directory numerically close to 'rho' (user-provided helper)
         rho_dir = _find_numeric_subdir(k_dir, "rho", rho, rel_tol=rel_tol, abs_tol=abs_tol)
         if rho_dir is None:
             print(f"[WARN] rho_* folder not found (rho≈{rho}) under {k_dir}")
             continue
 
         data_dir = rho_dir / "data"
-
-        # Accept both naming conventions
-        candidates = [
-            data_dir / "all_data.dat",
-            data_dir / f"all_data_{dim}D.dat",
-        ]
+        # accept both file names
+        candidates = [data_dir / "all_data.dat", data_dir / f"all_data_{dim}D.dat"]
         fpath = _first_existing(candidates)
         if fpath is None:
-            print(f"[WARN] No all_data*.dat found in {data_dir}")
+            print(f"[WARN] No all_data*.dat in {data_dir}")
             continue
 
         try:
@@ -571,72 +663,79 @@ def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
             print(f"[WARN] Failed to read {fpath}: {e}")
             continue
 
-        # Ensure BASE_COLS presence (add missing as NaN) and keep only BASE_COLS
-        df_rho = _align_columns(df_rho, BASE_COLS)
+        # drop deprecated columns if they exist
+        df_rho = df_rho.drop(columns=[c for c in DEPRECATED_COLS if c in df_rho.columns], errors="ignore")
+
+        # ensure BASE_COLS exist, but DO NOT drop extra columns (keep new fields like M_size_*)
+        for c in BASE_COLS:
+            if c not in df_rho.columns:
+                df_rho[c] = np.nan
+
         dfs.append(df_rho)
 
+    # If no valid partials found, return accumulated (if exists) else empty
     if not dfs:
         print("[WARN] No valid all_data*.dat found to merge.")
+        if out_path.exists():
+            try:
+                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
+                return acc
+            except Exception:
+                pass
         return pd.DataFrame(columns=BASE_COLS)
 
-    # Newly collected block for this (type_perc, num_colors, dim, L, Nt, k)
+    # new block for this parameter set
     new_block = pd.concat(dfs, ignore_index=True, sort=False)
 
-    # Coerce numeric columns (robust to missing columns)
+    # numeric coercion & rounding
     num_cols = ["num_colors","dim","L","Nt","k","rho","p0","order",
-                "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro"]
+                "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
+                "M_size_mean","M_size_erro","perc_rate"]
     for c in num_cols:
         if c in new_block.columns:
             new_block[c] = pd.to_numeric(new_block[c], errors="coerce")
-
-    # Round p0 to a consistent resolution to normalize keys (adjust if needed)
     if "p0" in new_block.columns:
         new_block["p0"] = new_block["p0"].round(1)
 
-    # Drop duplicates within the new block to keep its newest entries
+    # drop duplicates within the new block
     new_block = new_block.drop_duplicates(subset=KEY_COLS, keep="last")
 
-    # Path to the global accumulated file (per type_perc and dim)
-    out_dir = Path(base_root) / f"{type_perc}_percolation"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"all_data_{dim}D.dat"
-
-    # Read accumulated file if present; otherwise start fresh
+    # read accumulated file (if any) and clean deprecated cols
     if out_path.exists():
         try:
             acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+            acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
         except Exception as e:
             print(f"[WARN] Failed to read accumulated file {out_path}: {e}")
             acc = pd.DataFrame(columns=BASE_COLS)
     else:
         acc = pd.DataFrame(columns=BASE_COLS)
 
-    # Build the union of columns (BASE_COLS + any extras found in acc/new_block)
-    all_cols = list(dict.fromkeys(list(BASE_COLS) + list(acc.columns) + list(new_block.columns)))
+    # union schema: BASE_COLS + any extra columns present in either side
+    union_cols = list(dict.fromkeys(list(BASE_COLS) + list(acc.columns) + list(new_block.columns)))
 
-    # Align both frames to the same schema/order
-    acc_aligned = _align_columns(acc, all_cols)
-    new_aligned = _align_columns(new_block, all_cols)
+    acc_aligned = _align_to_union(acc, union_cols)
+    new_aligned = _align_to_union(new_block, union_cols)
 
-    # Concatenate and remove duplicates by KEY_COLS; keep 'last' to overwrite old rows
     merged = pd.concat([acc_aligned, new_aligned], ignore_index=True, sort=False)
 
-    # Normalize key dtypes before dropping duplicates (string for 'type_perc')
+    # normalize dtypes for key and drop duplicates (newest wins)
     if "type_perc" in merged.columns:
         merged["type_perc"] = merged["type_perc"].astype(str)
-
     merged = merged.drop_duplicates(subset=KEY_COLS, keep="last")
 
-    # Optional: sort for human-friendly reading
+    # sort for readability
     sort_cols = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
     sort_cols = [c for c in sort_cols if c in merged.columns]
     merged = merged.sort_values(sort_cols).reset_index(drop=True)
 
-    # Persist the updated accumulated dataset
+    # persist
     merged.to_csv(out_path, sep="\t", index=False, na_rep="Null")
     print("Updated:", out_path.resolve())
 
     return merged
+
 
 
 def delete_json_with_p0(type_perc, num_colors, dim, L, Nt, k,

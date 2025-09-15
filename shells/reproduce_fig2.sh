@@ -17,7 +17,7 @@ for i in "${!type_percolation[@]}"; do
 
   # Inner loop over the corresponding p0 values
   for p0 in "${p0_list[@]}"; do
-    echo "./build/SOP 2000 9000 $p0 -1 $tipo 1.0e-04 200 1 1.0"
-    ./build/SOP 2000 9000 "$p0" -1 "$tipo" 1.0e-04 200 2 1 1.0
+    echo "./build/SOP 2000 $p0 -1 $tipo 1.0e-04 200 1 1.0"
+    ./build/SOP 2000 "$p0" -1 "$tipo" 1.0e-04 200 2 1 1.0
   done
 done

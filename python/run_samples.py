@@ -1,8 +1,8 @@
 from src.run_samples_functions import *
 
-num_runs = 300   # number of external repetitions
-#stop = 0.25
-#start = 0.0001
+num_runs = 50   # number of external repetitions
+# stop = 0.25
+# start = 0.0001
 stop = 0.23
 start = 0.21
 n_points = 50
@@ -15,9 +15,9 @@ rho = custom_range(start, stop, n_points)
 type_perc = 'bond'
 num_colors = 4
 dim = 3
-L = 128
-NT = 200
-k = 1.0e-04
+L = 512
+NT = 3500
+k = 1.0e-06
 p0 = 1.0
 seed = -1
 exec_name = f"data_{dim}D_L_{L}.sh"
