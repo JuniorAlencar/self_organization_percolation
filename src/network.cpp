@@ -311,11 +311,12 @@ NetworkPattern network::create_network(
                             net.set(viz, 0); // checado e não ativado
                         }
                     } else if (type_percolation == "bond") {
-                        // placeholder simples (como node). Se desejar, implemente ligações explícitas.
+                        // bond percolation: fecha APENAS a aresta tentada; NÃO marque o vizinho como 0.
                         if (r < p_curr[cor_idx]) {
                             try_activate();
                         } else {
-                            net.set(viz, 0);
+                            // edge closed: não ativa agora; deixa o vizinho como está (permite tentativas por outras arestas)
+                            // NÃO faça: net.set(viz, 0);
                         }
                     }
                 }
