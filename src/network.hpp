@@ -22,6 +22,14 @@
 
 using namespace std;
 
+// Helpers to decide the activates for new nodes/bonds
+inline bool is_active(int v)        { return v > 0; }
+inline bool is_gray(int v)          { return v == -1; }
+inline bool is_inactive_color(int v, int c) { return v == -(c + 2); }
+inline int  color_index_from_val(int v, int num_colors) {
+    return (num_colors == 1) ? 0 : (std::abs(v) - 2); // válido para v≠-1,0
+}
+
 class network{
     private:
         int lenght_network;         // Length of Network - L

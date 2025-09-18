@@ -177,7 +177,7 @@ int main(int argc, char* argv[]){
     // Saving files
     save_data saver;
     // Network
-    saver.save_network_as_npz(net, net_filename);
+    // saver.save_network_as_npz(net, net_filename);
     
     // Results
     saver.save_percolation_json(ps, ts, json_filename, true);
