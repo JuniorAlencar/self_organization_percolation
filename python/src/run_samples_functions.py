@@ -2,7 +2,6 @@ import os
 import stat
 import textwrap
 import numpy as np
-import stat
 
 def shell_data(L:int, type_perc:str, p0:float, 
                seed:int, k:float, NT:int, dim:int, num_colors:int, 
