@@ -6,6 +6,19 @@ from collections import Counter
 import math
 from collections.abc import Iterable
 
+def create_folder(folder_path):
+    """
+    Creates the folder if it does not already exist.
+
+    Args:
+        folder_path (str): Path to the folder to be created.
+    """
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder created: {folder_path}")
+    else:
+        print(f"Folder already exists: {folder_path}")
+
 # Aceita k/rho em float normal ou notação científica (ex.: 1.0e-04, 8.9e-02)
 PARAMS_RE = re.compile(r"""
     (?P<type_perc>[A-Za-z]+)_percolation
