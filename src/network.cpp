@@ -420,7 +420,7 @@ NetworkPattern network::animate_network(
 
     all_random rng(seed);
 
-    NetworkPattern net(dim, shape, num_colors, rho, rng);          // estados
+    NetworkPattern net(dim, shape, num_colors, rho, rng);          // estados (propagação)
     NetworkPattern net_animation(dim, shape, num_colors, rho, rng);// tempos de ativação
     std::fill(net_animation.data.begin(), net_animation.data.end(), -1);
 
@@ -433,10 +433,10 @@ NetworkPattern network::animate_network(
     }
     std::vector<int> t_list = {0};
 
-    // ===== SEEDS NA BORDA grow_axis == 0 =====
+    // ===== SEEDS NA BORDA (grow_axis = 0), P0 dividida igualmente =====
     int base_size = 1;
     for (int ax = 0; ax < dim - 1; ++ax) base_size *= shape[ax];
-    const int seeds_per_color = static_cast<int>(std::round(P0 * base_size));
+    const int seeds_per_color = static_cast<int>(std::llround( (num_colors>0) ? (P0 * base_size / static_cast<double>(num_colors)) : 0.0 ));
 
     std::queue<std::vector<int>> borderland;
     std::vector<int> N_current(num_colors, 0);
@@ -445,39 +445,38 @@ NetworkPattern network::animate_network(
         int activated = 0, tries = 0;
         const int max_tries = base_size * 20;
 
+        const int prefer_neg = (num_colors == 1) ? -1 : -(c + 2);
+        const int new_val    = (num_colors == 1) ?  1 :  (c + 2);
+
         while (activated < seeds_per_color && tries < max_tries) {
             std::vector<int> coords(dim, 0);
             for (int ax = 0; ax < dim - 1; ++ax)
                 coords[ax] = rng.uniform_int(0, shape[ax] - 1);
             coords[grow_axis] = 0;
 
-            const int target_val = (num_colors == 1) ? -1 : -(c + 2);
-            const int new_val    = (num_colors == 1) ?  1 :  (c + 2);
-
-            if (net.get(coords) == target_val) {
+            const int v = net.get(coords);
+            if (v == prefer_neg || v == -1) {
                 net.set(coords, new_val);
                 borderland.push(coords);
-                net_animation.set(coords, 0);
+                net_animation.set(coords, 0); // grava tempo
                 Nt_t[c][0]++; N_current[c]++; activated++;
             }
-            tries++;
+            ++tries;
         }
     }
 
-    // ===== Novos: tracking de percolação por cor =====
+    // Tracking de percolação por cor
     std::vector<bool> percolated(num_colors, false);
     std::vector<int>  t_percolated(num_colors, -1);
 
     std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
-
-    bool reached_top = false;   // parar na primeira cor que toca o topo
 
     // ===== EVOLUÇÃO =====
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
         std::queue<std::vector<int>> new_borderland;
 
-        while (!borderland.empty() && !reached_top) {
+        while (!borderland.empty()) {
             const std::vector<int> pos = borderland.front();
             borderland.pop();
 
@@ -487,7 +486,7 @@ NetworkPattern network::animate_network(
             const int cor_idx = (num_colors == 1) ? 0 : (std::abs(active_val) - 2);
 
             int v_idx = 0;
-            for (int ax = 0; ax < dim && !reached_top; ++ax) {
+            for (int ax = 0; ax < dim; ++ax) {
                 for (int delta : {-1, 1}) {
                     std::vector<int>& viz = neighbor_buffer[v_idx++];
                     viz = pos;
@@ -517,10 +516,9 @@ NetworkPattern network::animate_network(
                         const int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
                         net.set(viz, new_val);
                         new_borderland.push(viz);
-                        net_animation.set(viz, t);
+                        net_animation.set(viz, t);  // grava tempo de ativação
                         N_current[cor_idx]++;
 
-                        // ===== Quando a cor alcança o topo =====
                         if (viz[grow_axis] == L - 1 && !percolated[cor_idx]) {
                             percolated[cor_idx]   = true;
                             t_percolated[cor_idx] = t;
@@ -529,32 +527,20 @@ NetworkPattern network::animate_network(
                                       << "  (p=" << p_t[cor_idx].back()
                                       << ", N_t=" << N_current[cor_idx] << ")"
                                       << std::endl;
-
-                            reached_top = true;  // << comentar esta linha se quiser parar só quando TODAS percolarem
                         }
                     } else {
-                        net.set(viz, 0);
+                        if (type_percolation == "node") {
+                            net.set(viz, 0);  // node: marca checado
+                        } else {
+                            // bond: não marca 0; permanece elegível
+                        }
                     }
-                    if (reached_top) break;
                 }
             }
         }
 
         const int grown_total = std::accumulate(N_current.begin(), N_current.end(), 0);
         if (grown_total == 0) break;
-
-        // ===== Se optar por "todas as cores", imprime e para aqui =====
-        if (std::all_of(percolated.begin(), percolated.end(), [](bool x){ return x; })) {
-            std::cout << "[ANIMATION] Todas as cores percolaram em t=" << t << "  (";
-            for (int c = 0; c < num_colors; ++c) {
-                std::cout << "c" << (c+1) << "=" << t_percolated[c];
-                if (c+1 < num_colors) std::cout << ", ";
-            }
-            std::cout << ")" << std::endl;
-            break;
-        }
-
-        if (reached_top) break;  // parar ao detectar a primeira cor (comportamento atual)
 
         borderland = std::move(new_borderland);
 
@@ -573,15 +559,28 @@ NetworkPattern network::animate_network(
                           << "  N" << (c+1) << "(" << t << ")=" << Nt_t[c].back();
             std::cout << std::endl;
         }
+
+        // (Opcional) parar quando TODAS percolarem
+        if (std::all_of(percolated.begin(), percolated.end(), [](bool x){ return x; })) {
+            std::cout << "[ANIMATION] Todas as cores percolaram em t=" << t << "  (";
+            for (int c = 0; c < num_colors; ++c) {
+                std::cout << "c" << (c+1) << "=" << t_percolated[c];
+                if (c+1 < num_colors) std::cout << ", ";
+            }
+            std::cout << ")" << std::endl;
+            break;
+        }
     }
 
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_t);
     ts_out.Nt  = std::move(Nt_t);
     ts_out.t   = std::move(t_list);
-    
+
+    // net_animation contém apenas tempos de ativação (>=0), -1 onde nunca ativou
     return net_animation;
 }
+
 
 // Ativa a base conforme P0 (total) e p0 (fração por cor na base)
 NetworkPattern network::initialize_network(int dim, int length_network, int num_colors,
