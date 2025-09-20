@@ -86,7 +86,7 @@ int main(int argc, char* argv[]){
         std::cerr << "[ERROR] type_percolation must be 'bond' or 'node'.\n";
         print_help(argv[0]);
         return 1;
-    }
+    
     if (num_colors < 1){
         std::cerr << "[ERROR] num_colors must be >= 1.\n";
         print_help(argv[0]);
