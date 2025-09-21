@@ -1,11 +1,11 @@
 from src.run_samples_functions import *
 
 num_runs = 200   # number of external repetitions
-stop = 0.25
-start = 0.0001
+stop = 1
+start = 1
 #stop = 0.23
 #start = 0.21
-n_points = 50
+n_points = 1
 rho = custom_range(start, stop, n_points)
 
 # Range 1 -> 0.0001, 0.25 OK
@@ -15,8 +15,8 @@ rho = custom_range(start, stop, n_points)
 type_perc = 'bond'
 num_colors = 4
 dim = 2
-L = 4096
-NT = 400
+L = 2000
+NT = 200
 k = 1.0e-05
 p0 = 1.0
 seed = -1
