@@ -180,7 +180,7 @@ int main(int argc, char* argv[]){
     // saver.save_network_as_npz(net, net_filename);
     
     // Results
-    // saver.save_percolation_json(ps, ts, json_filename, true);
+    saver.save_percolation_json(ps, ts, json_filename, true);
     cout << "file save with name:\t" <<  oss_name.str() << endl;
     return 0;
 }
