@@ -2,11 +2,11 @@ from src.process_data import *
 
 # ====== Simulation parameters ======
 type_perc = 'bond'
-num_colors = 4
+num_colors = 8
 dim = 3
-L = 256
-Nt = 800
-k = 1.0e-05
+L = 128
+Nt = 200
+k = 1.0e-04
 
 # L = 128
 # Nt = 200
@@ -22,10 +22,10 @@ rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root="..
 
 # Creating file with all data processing
 for rho in rho_values:
-    path_data = f"../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.4e}/data"
+    path_data = f"../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k:.1e}/rho_{rho:.4e}/data/"
 
-    all_data = glob.glob(os.path.join(path_data, "*.json"))
-
+    all_data = glob.glob(os.path.join(path_data, "*.dat"))
+    
     out_dir = Path(path_data)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -44,11 +44,15 @@ for rho in rho_values:
 
     print("Salvo em:", out_dat.resolve())
     print("Processados:", len(processed))
+
 print("All files processing")
 
 # ----------------------
 print("CREATING DATAFRAME...")
 
-df_all = join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data")
+#df_all = join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data")
 
 print("DataFrame Create!")
+
+
+
