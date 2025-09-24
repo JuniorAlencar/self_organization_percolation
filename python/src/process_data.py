@@ -390,24 +390,124 @@ def process_with_guard(all_files,
                        path_hint: str = None,
                        force_recompute: bool = False):
     """
-    Robusto a formatações 'rho_%.1e' vs 'rho_%.4e':
-    - Se all_files vier vazio, tenta buscar *.json no diretório 'data' inferido.
-    - Alinha (snap) out_dat_path/out_txt_path para dentro do diretório real 'data/' dos JSONs.
-    - NÃO toca no process_names.txt se nada mudou.
-    - Só recalcula o .dat quando:
-        * force_recompute=True, ou
-        * o conjunto esperado de JSONs difere do que está no .txt, ou
-        * o .dat não existe.
+    Versão estendida: mantém o .dat agregado e transforma o process_names.txt em TSV
+    com header 'filename' + colunas das propriedades calculadas por ARQUIVO (seed) e ORDEM.
     """
+    # ----------------------- utilidades locais -----------------------
+    def _read_prev_names_first_column(path: Path) -> set[str]:
+        """Lê o TXT/TSV anterior e retorna apenas a primeira coluna (filenames)."""
+        if not path.exists():
+            return set()
+        lines = path.read_text().splitlines()
+        if not lines:
+            return set()
+        first = lines[0]
+        # TSV moderno com header 'filename'
+        if "\t" in first and first.split("\t", 1)[0].strip().lower() == "filename":
+            out = set()
+            for ln in lines[1:]:
+                if not ln.strip():
+                    continue
+                out.add(os.path.basename(ln.split("\t", 1)[0].strip()))
+            return out
+        # Modo legado: 1 nome por linha
+        return _normalize_names(lines)
+
+    def _per_file_rows(file_path: str, meta: dict, n_orders: int, burn_in_frac=0.2):
+        """
+        Calcula estatísticas por arquivo/ordem.
+        Retorna lista de dicts com: filename + BASE_COLS.
+        num_samples=1; num_sample_perc=1 se a ordem existe no arquivo, senão 0.
+        perc_rate = 1.0 quando a ordem existe; 0.0 quando não.
+        """
+        rows = []
+        base = {
+            "type_perc": meta.get("type_perc"),
+            "num_colors": meta.get("num_colors"),
+            "dim": meta.get("dim"),
+            "L": meta.get("L"),
+            "Nt": meta.get("Nt"),
+            "k": meta.get("k"),
+            "rho": meta.get("rho"),
+        }
+        p0_val = parse_p0_from_filename(file_path)
+        try:
+            entries = read_orders_one_file(file_path)
+        except Exception:
+            entries = []
+
+        # index por ordem
+        by_order = {}
+        for order, p_arr, n_arr, m_size in entries:
+            by_order[int(order)] = (
+                np.asarray(p_arr, float) if p_arr is not None else np.array([], float),
+                None if n_arr is None else np.asarray(n_arr, float),
+                m_size if (m_size is None or np.isfinite(m_size)) else None
+            )
+
+        for order in range(1, int(n_orders) + 1):
+            if order in by_order:
+                p_arr, n_arr, m_size = by_order[order]
+                n = len(p_arr)
+                start = int(burn_in_frac * n) if n > 0 else 0
+                # pt
+                if n > 0 and start < n:
+                    m_pt, _, _, _ = sem_acf(p_arr[start:])
+                    pt_mean, pt_sem = float(m_pt), 0.0  # 1 arquivo => erro entre seeds = 0
+                else:
+                    pt_mean = np.nan
+                    pt_sem  = np.nan
+                # nt
+                if n_arr is not None and n_arr.size > 0:
+                    ns = n_arr[start:] if start < n_arr.size else np.array([], float)
+                    if ns.size > 0:
+                        m_nt, _, _, _ = sem_acf(ns)
+                        nt_mean, nt_sem = float(m_nt), 0.0
+                    else:
+                        nt_mean, nt_sem = (np.nan, np.nan)
+                else:
+                    nt_mean, nt_sem = (np.nan, np.nan)
+                # M_size
+                if m_size is not None and np.isfinite(m_size):
+                    msize_mean, msize_sem = float(m_size), 0.0
+                else:
+                    msize_mean, msize_sem = (np.nan, np.nan)
+
+                rows.append({
+                    "filename": os.path.basename(file_path),
+                    **base,
+                    "p0": None if p0_val is None else round(float(p0_val), 1),
+                    "order": int(order),
+                    "num_samples": 1,
+                    "num_sample_perc": 1,
+                    "pt_mean": pt_mean, "pt_erro": pt_sem,
+                    "nt_mean": nt_mean, "nt_erro": nt_sem,
+                    "M_size_mean": msize_mean, "M_size_erro": msize_sem,
+                    "perc_rate": 1.0,
+                })
+            else:
+                rows.append({
+                    "filename": os.path.basename(file_path),
+                    **base,
+                    "p0": None if p0_val is None else round(float(p0_val), 1),
+                    "order": int(order),
+                    "num_samples": 1,
+                    "num_sample_perc": 0,
+                    "pt_mean": np.nan, "pt_erro": np.nan,
+                    "nt_mean": np.nan, "nt_erro": np.nan,
+                    "M_size_mean": np.nan, "M_size_erro": np.nan,
+                    "perc_rate": 0.0,
+                })
+        return rows
+    # ----------------------- /utilidades locais -----------------------
+
     # --- Determina o data_dir real ---
     data_dir = None
     if all_files:
         data_dir = Path(all_files[0]).parent
     else:
-        # tenta inferir a partir do out_dat_path (arquivo ou pasta)
         p = Path(out_dat_path)
         data_dir = p.parent if p.suffix.lower() == ".dat" else p
-
     data_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Realinha os caminhos de saída para dentro do data_dir real ---
@@ -418,15 +518,12 @@ def process_with_guard(all_files,
     if not all_files:
         all_files = [str(x) for x in sorted(data_dir.glob("*.json"))]
 
-    # Agora posso criar a pasta do .dat com segurança
     out_dat_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Conjunto esperado com base no diretório (arquivos atuais)
+    # Conjunto esperado (basenames) e anterior (do TXT/TSV)
     expected_set = _expected_json_basenames(all_files)
-
-    # Conjunto previamente salvo no TXT (se existir)
     if out_txt_path.exists():
-        prev_set = _normalize_names(out_txt_path.read_text().splitlines())
+        prev_set = _read_prev_names_first_column(out_txt_path)
     else:
         prev_set = set()
 
@@ -438,36 +535,62 @@ def process_with_guard(all_files,
         df = pd.read_csv(out_dat_path, sep="\t", na_values=["Null"])
         return df, prev_set
 
-    # (Re)processa
+    # (Re)processa .dat
     if verbose:
-        print(f"[INFO] Reprocessando: force={force_recompute}, "
-              f"expected={len(expected_set)}, prev={len(prev_set)}, "
-              f"dat_existe={out_dat_path.exists()}")
-
+        print(f"[INFO] Reprocessando: force={force_recompute}, expected={len(expected_set)}, "
+              f"prev={len(prev_set)}, dat_existe={out_dat_path.exists()}")
     df, processed_set = build_dataframe_by_p0(
         all_files, burn_in_frac=burn_in_frac, verbose=verbose, path_hint=path_hint
     )
-
-    # Salva .dat (sempre que reprocessar)
     df.to_csv(out_dat_path, sep="\t", index=False, na_rep="Null")
     if verbose:
         print("[INFO] .dat salvo em:", out_dat_path.resolve())
 
-    # Conjunto final para o TXT: exatamente o que esperamos no diretório atual
+    # Conjunto final esperado para o TXT
     new_set = expected_set if expected_set else _normalize_names(processed_set)
 
-    # Só reescreve o TXT se houver alteração
+    # --------- Construção do TSV detalhado por arquivo/ordem ----------
+    meta = parse_params_from_path(path_hint or (all_files[0] if all_files else str(out_dat_path.parent)))
+    if meta is None:
+        meta = {"type_perc": None, "num_colors": None, "dim": None, "L": None, "Nt": None, "k": None, "rho": None}
+    n_orders = meta.get("num_colors") or 1
+
+    # mapear basename -> caminho completo
+    by_basename = {os.path.basename(p): p for p in all_files}
+    names_rows = []
+    for bname in sorted(new_set):
+        full = by_basename.get(bname)
+        if not full or not Path(full).exists():
+            names_rows.append({
+                "filename": bname,
+                "type_perc": meta["type_perc"], "num_colors": meta["num_colors"], "dim": meta["dim"],
+                "L": meta["L"], "Nt": meta["Nt"], "k": meta["k"], "rho": meta["rho"],
+                "p0": np.nan, "order": np.nan,
+                "num_samples": np.nan, "num_sample_perc": np.nan,
+                "pt_mean": np.nan, "pt_erro": np.nan, "nt_mean": np.nan, "nt_erro": np.nan,
+                "M_size_mean": np.nan, "M_size_erro": np.nan, "perc_rate": np.nan,
+            })
+            continue
+        names_rows.extend(_per_file_rows(full, meta, n_orders, burn_in_frac=burn_in_frac))
+
+    names_cols = (["filename"] + BASE_COLS)
+    names_df = pd.DataFrame(names_rows, columns=names_cols)
+
+    # Escreve o TSV apenas se houver alteração no conjunto
     if new_set != prev_set:
         tmp = out_txt_path.with_suffix(".tmp")
-        tmp.write_text("\n".join(sorted(new_set)) + ("\n" if new_set else ""))
-        tmp.replace(out_txt_path)  # escrita atômica
+        names_df.to_csv(tmp, sep="\t", index=False, na_rep="Null")
+        tmp.replace(out_txt_path)
         if verbose:
-            print(f"[INFO] {out_txt_path.name} atualizado ({len(prev_set)} -> {len(new_set)} nomes).")
+            print(f"[INFO] {out_txt_path.name} atualizado (formato TSV) com {len(names_df)} linhas.")
     else:
+        # Mesmo conjunto: ainda assim garante o formato novo
+        names_df.to_csv(out_txt_path, sep="\t", index=False, na_rep="Null")
         if verbose:
-            print(f"[INFO] {out_txt_path.name} já estava atualizado; não mexi.")
+            print(f"[INFO] {out_txt_path.name} recriado no formato TSV (mesmo conjunto).")
 
     return df, new_set
+
 
 def saving_data(all_data,
                 output_data: Path,
@@ -485,6 +608,109 @@ def saving_data(all_data,
         path_hint=path_hint,
         force_recompute=force_recompute,
     )
+
+# ### NEW: leitura robusta do process_names(.txt|.tsv) para extrair só os filenames
+def _read_prev_names_first_column(path: Path) -> set[str]:
+    """
+    Lê o arquivo de nomes (pode ser lista simples ou TSV com header 'filename')
+    e retorna um set com os basenames (primeira coluna).
+    """
+    if not path.exists():
+        return set()
+    txt = path.read_text().splitlines()
+    if not txt:
+        return set()
+    # Se for TSV com header começando por 'filename'
+    if "\t" in txt[0] and txt[0].split("\t", 1)[0].strip().lower() == "filename":
+        out = set()
+        for line in txt[1:]:
+            if not line.strip():
+                continue
+            first = line.split("\t", 1)[0].strip()
+            if first:
+                out.add(os.path.basename(first))
+        return out
+    # Caso antigo: lista simples de nomes
+    return _normalize_names(txt)
+
+
+# ### NEW: computar estatísticas por ARQUIVO (seed) e por ORDEM
+def _per_file_rows(file_path: str, meta: dict, n_orders: int, burn_in_frac=0.2):
+    """
+    Retorna uma lista de dicionários (linhas) com:
+      filename + BASE_COLS (preenchidos por arquivo/ordem).
+    num_samples=1 sempre; num_sample_perc=1 se a ordem existir no JSON, senão 0.
+    perc_rate = 1.0 quando a ordem existe, senão 0.0.
+    """
+    rows = []
+    base = {  # meta fixa desse arquivo
+        "type_perc": meta["type_perc"], "num_colors": meta["num_colors"],
+        "dim": meta["dim"], "L": meta["L"], "Nt": meta["Nt"],
+        "k": meta["k"], "rho": meta["rho"],
+    }
+    p0_val = parse_p0_from_filename(file_path)
+    try:
+        entries = read_orders_one_file(file_path)
+    except Exception:
+        entries = []
+
+    # indexar entries por ordem
+    by_order = {}
+    for order, p_arr, n_arr, m_size in entries:
+        by_order[int(order)] = (np.asarray(p_arr, float),
+                                None if n_arr is None else np.asarray(n_arr, float),
+                                m_size if (m_size is None or np.isfinite(m_size)) else None)
+
+    for order in range(1, int(n_orders) + 1):
+        if order in by_order:
+            p_arr, n_arr, m_size = by_order[order]
+            n = len(p_arr)
+            start = int(burn_in_frac * n)
+            p_stationary = p_arr[start:] if n > 0 else np.array([], float)
+            pt_mean, pt_sem, = (np.nan, np.nan)
+            if p_stationary.size > 0:
+                m, _, se, _ = sem_acf(p_stationary)
+                pt_mean, pt_sem = float(m), 0.0  # erro entre sementes = 0 para um arquivo
+
+            nt_mean, nt_sem = (np.nan, np.nan)
+            if n_arr is not None and n_arr.size > 0:
+                n_stationary = n_arr[start:] if n_arr.size > start else np.array([], float)
+                if n_stationary.size > 0:
+                    m, _, se, _ = sem_acf(n_stationary)
+                    nt_mean, nt_sem = float(m), 0.0  # idem
+
+            msize_mean, msize_sem = (np.nan, np.nan)
+            if m_size is not None and np.isfinite(m_size):
+                msize_mean, msize_sem = float(m_size), 0.0
+
+            rows.append({
+                "filename": os.path.basename(file_path),
+                **base,
+                "p0": None if p0_val is None else round(float(p0_val), 1),
+                "order": int(order),
+                "num_samples": 1,
+                "num_sample_perc": 1,
+                "pt_mean": pt_mean, "pt_erro": pt_sem,
+                "nt_mean": nt_mean, "nt_erro": nt_sem,
+                "M_size_mean": msize_mean, "M_size_erro": msize_sem,
+                "perc_rate": 1.0,
+            })
+        else:
+            # ordem ausente neste arquivo
+            rows.append({
+                "filename": os.path.basename(file_path),
+                **base,
+                "p0": None if p0_val is None else round(float(p0_val), 1),
+                "order": int(order),
+                "num_samples": 1,
+                "num_sample_perc": 0,
+                "pt_mean": np.nan, "pt_erro": np.nan,
+                "nt_mean": np.nan, "nt_erro": np.nan,
+                "M_size_mean": np.nan, "M_size_erro": np.nan,
+                "perc_rate": 0.0,
+            })
+    return rows
+
 
 def list_rho_values(
     type_perc: str,
