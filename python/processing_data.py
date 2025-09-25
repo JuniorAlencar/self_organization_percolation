@@ -2,11 +2,11 @@ from src.process_data import *
 
 # ====== Simulation parameters ======
 type_perc = 'bond'
-num_colors = 8
-dim = 3
-L = 128
-Nt = 200
-k = 1.0e-04
+num_colors = 4
+dim = 2
+L = 4096
+Nt = 400
+k = 1.0e-05
 
 # L = 128
 # Nt = 200

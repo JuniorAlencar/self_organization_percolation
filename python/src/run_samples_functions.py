@@ -133,8 +133,14 @@ echo "All runs completed."
     os.chmod(path, st.st_mode | stat.S_IEXEC)
     print(f"✅ Shell script created at {path}")
 
+def custom_range(start: float, stop: float, n_points: int, ndigits: int = 8):
+    if n_points <= 0:
+        return []
+    if n_points == 1:
+        return [round(start, ndigits)]
 
-
-
-def custom_range(start: float, stop: float, n_points: int):
-    return [round(i, 8) for i in np.linspace(start, stop, n_points)]
+    xs = np.linspace(start, stop, n_points, endpoint=True, dtype=float)
+    xs = np.round(xs, ndigits)         # arredonda tudo
+    xs[0]  = round(start, ndigits)     # força extremos exatos
+    xs[-1] = round(stop, ndigits)
+    return xs.tolist()
