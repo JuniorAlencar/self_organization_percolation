@@ -148,6 +148,7 @@ NetworkPattern network::create_network(
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
     TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
 {
+    // alvo por passo (mesmo N_t para todas as cores)
     this->N_t = N_t;
 
     // ----- shape somente espacial -----
@@ -164,7 +165,7 @@ NetworkPattern network::create_network(
         return coord;
     };
 
-    //all_random rng(seed);
+    // all_random rng(seed);
     NetworkPattern net(dim, shape, num_colors, rho, rng);
 
     // ----- séries por cor (cor-major) -----
@@ -177,8 +178,8 @@ NetworkPattern network::create_network(
 
     // lambda para commitar um passo (garante consistência)
     auto commit_step = [&](int t_k,
-                           const std::vector<double>& p_vec,
-                           const std::vector<int>& Nt_vec)
+                        const std::vector<double>& p_vec,
+                        const std::vector<int>& Nt_vec)
     {
         t_list.push_back(t_k);
         for (int c = 0; c < num_colors; ++c) {
@@ -187,20 +188,27 @@ NetworkPattern network::create_network(
         }
     };
 
-    // ===== borda (grow_axis = 0) =====
-    int base_size = 1;
-    for (int ax = 0; ax < dim - 1; ++ax) base_size *= shape[ax];
+    // ===== medida da frente (L^{d-1}) =====
+    long long base_size = 1; // mantém o nome para compatibilidade com o restante do código
+    for (int ax = 0; ax < dim - 1; ++ax)
+        base_size *= static_cast<long long>(shape[ax]);
 
-    // quotas de seeds por cor a partir de P0 e p0
+    // quotas de seeds por cor a partir de P0 (fração s) e N_t (mesmo para todas as cores)
     std::vector<int> seeds_quota(num_colors, 0);
     {
-        double s = std::accumulate(p0.begin(), p0.end(), 0.0);
-        std::vector<double> p0_use = p0;
-        if (s > 0.0) for (double& x : p0_use) x /= s; // normaliza só para repartir P0
+        const double Nt_target = static_cast<double>(this->N_t); // alvo por cor (mesmo para todas)
+
         for (int c = 0; c < num_colors; ++c) {
-            seeds_quota[c] = (int)std::llround(P0 * base_size * p0_use[c]);
+            long long q = std::llround(P0 * Nt_target); // P0 = fração s do alvo N_t
+
+            // (opcional) limitar pela medida da frente para evitar laços excessivos
+            if (q < 0) q = 0;
+            if (q > base_size) q = base_size;
+
+            seeds_quota[c] = static_cast<int>(q);
         }
     }
+
 
     std::queue<std::vector<int>> borderland;
     std::vector<int> N_current(num_colors, 0);
