@@ -135,22 +135,26 @@ struct NetworkPattern {
 };
 
 
-
-
 // Struct to load (t, pt_i) and (t, Nt_i)
-struct TimeSeries{
+struct TimeSeries {
     int num_colors;
-    vector<int> M_size;
-    vector<vector<double>> p_t;
-    vector<int> t;
-    vector<vector<int>> Nt;
+    std::vector<std::vector<double>> p_t;   // [cor][t]
+    std::vector<std::vector<int>>    Nt;    // [cor][t]
+    std::vector<std::vector<int>>    M_t;   // [cor][t]
+    std::vector<int>                 t;     // [t]
+    std::vector<int>                 M_size;// [cor] maior cluster final da cor
 };
 
-struct PercolationSeries{
-    vector<int> color_percolation;  // Color
-    vector<int> time_percolation;   // Time when it percolated
-    vector<int> percolation_order; // Moment when it percolated
-    vector<double> rho; // Density for each color for all network (all inactive sites)
+struct PercolationSeries {
+    std::vector<int> color_percolation;   // 1-based
+    std::vector<int> time_percolation;
+    std::vector<int> percolation_order;
+    std::vector<double> rho;              // por cor (0-based)
+    std::vector<int> M_size_at_perc;      // por evento
+
+    // SP armazenado internamente (opcional no writer)
+    std::vector<int>              sp_len;       // [cor] = #nós no caminho (ou -1)
+    std::vector<std::vector<int>> sp_path_lin;  // [cor] ids lineares (não será escrito)
 };
 
 #endif // network_hpp

@@ -21,20 +21,15 @@
 
 class save_data {
     public:
-        // Save a binary matrix (NetworkPattern) into a compressed .npz file
-        void save_network_as_npz(const NetworkPattern& net, 
-                                 const std::string& filename) const;
-        void save_time_series_as_csv(const TimeSeries& ts, 
-                                    const std::string& filename_pt, 
-                                    const std::string& filename_Nt);
-        void save_info_percolation(const PercolationSeries& ps,
-                                   const std::string& filename_info);       
-        
+        // Salva o campo "net" em arquivo .npy (int32, C-order).
+        // Mantém o nome da API anterior por compatibilidade.
+        void save_network_as_npz(const NetworkPattern& net, const std::string& filename) const;
+
+        // Salva tudo em JSON (inclui séries p_t, Nt, M_t, M_t_total; eventos de percolação; SP).
         void save_percolation_json(const PercolationSeries& ps,
-                                   const TimeSeries& ts,
-                                   const std::string& filename_json,
-                                   bool sort_by_order = true);     
-        
+                                const TimeSeries& ts,
+                                const std::string& filename_json,
+                                bool sort_by_order = true) const;
 };
 
 #endif // write_save_hpp
