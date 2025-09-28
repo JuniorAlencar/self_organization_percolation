@@ -1,13 +1,17 @@
+// main.cpp (atualizado para o novo write do JSON)
+
 #include "network.hpp"
 #include "rand_utils.hpp"
 #include "write_save.hpp"
 #include "create_folders.hpp"
+
 #include <iomanip>
 #include <cstdlib>
 #include <sstream>
+#include <cstring>
+#include <iostream>
+#include <utility>   // para structured bindings (C++17)
 
-
-// --- imprime help/versão ---
 static void print_help(const char* prog){
     std::cout <<
 R"(To run:
@@ -47,7 +51,6 @@ static void print_version(){
 #endif
 }
 
-
 int main(int argc, char* argv[]){
     // ajuda/versão sem exigir todos os argumentos
     if (argc >= 2) {
@@ -59,128 +62,128 @@ int main(int argc, char* argv[]){
         print_help(argv[0]);
         return 1;
     }
-    
-    int L = stoi(argv[1]);
-    //int N_samples = stoi(argv[2]);
-    int N_samples = 50000;
-    double pp0 = stod(argv[2]);
-    int seed = stoi(argv[3]);
-    string type_percolation = argv[4];
-    double k = stod(argv[5]); // 1.0e-04
-    int N_t = stoi(argv[6]); // 200
-    int dim = stoi(argv[7]); // 2
-    int num_colors = stoi(argv[8]);
-    double rho_val = stod(argv[9]);
-    int type_N_t = 0; // if ==0 (Nt = constant), if==1 (Nt = at^{\alpha})
-    double a = 0;
-    double alpha = 0;
-    double P0 = 0.1;
 
-    // validações amigáveis
-    if (dim != 2 && dim != 3){
-        std::cerr << "[ERROR] dim must be 2 or 3.\n";
-        print_help(argv[0]);
-        return 1;
+    try {
+        int L = std::stoi(argv[1]);
+        //int N_samples = stoi(argv[2]);
+        int N_samples = 50000;
+        double pp0 = std::stod(argv[2]);
+        int seed = std::stoi(argv[3]);
+        std::string type_percolation = argv[4];
+        double k = std::stod(argv[5]);    // 1.0e-04
+        int N_t = std::stoi(argv[6]);     // 200
+        int dim = std::stoi(argv[7]);     // 2
+        int num_colors = std::stoi(argv[8]);
+        double rho_val = std::stod(argv[9]);
+
+        int type_N_t = 0;   // 0 => Nt constante; 1 => Nt = a * t^alpha
+        double a = 0.0;
+        double alpha = 0.0;
+        double P0 = 0.1;
+
+        // validações amigáveis
+        if (dim != 2 && dim != 3){
+            std::cerr << "[ERROR] dim must be 2 or 3.\n";
+            print_help(argv[0]);
+            return 1;
+        }
+        if (type_percolation != "bond" && type_percolation != "node"){
+            std::cerr << "[ERROR] type_percolation must be 'bond' or 'node'.\n";
+            print_help(argv[0]);
+            return 1;
+        }
+        if (num_colors < 1){
+            std::cerr << "[ERROR] num_colors must be >= 1.\n";
+            print_help(argv[0]);
+            return 1;
+        }
+        if (num_colors * rho_val > 1.0 + 1e-12){
+            std::cerr << "[ERROR] Constraint violated: num_colors * rho_val <= 1.0.\n"
+                         "        You passed: num_colors=" << num_colors
+                      << " and rho_val=" << rho_val << " (product=" << num_colors*rho_val << ")\n";
+            print_help(argv[0]);
+            return 1;
+        }
+
+        // seed automática se < 0
+        if (seed == -1) {
+            seed = all_random::generate_random_seed();
+        }
+
+        // gerador
+        all_random rng(seed);
+
+        // cria pastas Data
+        FolderCreator creator("./Data");
+        auto [network_dir, data_dir] = creator.create_structure(
+            dim, type_N_t, N_t, k, L, num_colors, a, alpha,
+            type_percolation, pp0, P0, rho_val
+        );
+
+        // estruturas de saída
+        TimeSeries ts;
+        PercolationSeries ps;
+
+        // densidades por cor
+        std::vector<double> rho(num_colors, rho_val);
+        // prob. inicial por cor
+        std::vector<double> p0(num_colors, pp0);
+
+        network net_generator(N_samples, num_colors);
+
+        // gera rede e séries
+        NetworkPattern net = net_generator.create_network(
+            dim, L, N_samples, k, N_t, type_N_t,
+            p0, P0, a, alpha, type_percolation,
+            num_colors, rho, ts, ps, rng
+        );
+
+        std::cerr << "[DBG] ps sizes -> "
+                  << "order=" << ps.percolation_order.size()
+                  << ", color=" << ps.color_percolation.size()
+                  << ", time="  << ps.time_percolation.size()
+                  << ", rho="   << ps.rho.size() << "\n";
+
+        std::cerr << "[DBG] ts sizes -> "
+                  << "num_colors=" << ts.num_colors
+                  << ", t="  << ts.t.size()
+                  << ", p_t="<< ts.p_t.size()
+                  << ", Nt=" << ts.Nt.size()
+                  << ", M_t="<< ts.M_t.size() << "\n";
+
+        // nomes dos arquivos
+        std::ostringstream oss_name;
+        oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0
+                 << "_p0_" << std::fixed << std::setprecision(2) << pp0
+                 << "_seed_" << seed << ".json";
+
+        std::ostringstream oss_net;
+        oss_net << network_dir << "/P0_" << std::fixed << std::setprecision(2) << P0
+                << "_p0_" << std::fixed << std::setprecision(2) << pp0
+                << "_seed_" << seed << ".npy"; // writer grava .npy
+
+        std::string json_filename = data_dir + oss_name.str();
+        std::string net_filename  = oss_net.str();
+
+        // salvar (novo writer JSON)
+        save_data saver;
+
+        // 1) rede (Numpy .npy)
+        // saver.save_network_as_npz(net, net_filename);
+
+        // 2) resultados (JSON novo)
+        //    sort_by_order = true para ordenar por percolation_order
+        saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
+
+        std::cout << "file save with name:\t" << oss_name.str() << std::endl;
+        return 0;
     }
-    if (type_percolation != "bond" && type_percolation != "node"){
-        std::cerr << "[ERROR] type_percolation must be 'bond' or 'node'.\n";
-        print_help(argv[0]);
-        return 1;
+    catch (const std::exception& e){
+        std::cerr << "[FATAL] Exception: " << e.what() << "\n";
+        return 2;
     }
-    if (num_colors < 1){
-        std::cerr << "[ERROR] num_colors must be >= 1.\n";
-        print_help(argv[0]);
-        return 1;
+    catch (...){
+        std::cerr << "[FATAL] Unknown exception.\n";
+        return 3;
     }
-    if (num_colors * rho_val > 1.0 + 1e-12){
-        std::cerr << "[ERROR] Constraint violated: num_colors * rho_val <= 1.0.\n"
-                     "        You passed: num_colors=" << num_colors
-                  << " and rho_val=" << rho_val << " (product=" << num_colors*rho_val << ")\n";
-        print_help(argv[0]);
-        return 1;
-    }
-    // If seed < 0, return random seed 
-    if (seed == -1) {
-        seed = all_random::generate_random_seed();  // da sua rand_utils
-    }
-    
-    // The generator
-    all_random rng(seed);
-    
-    // Create folder Data
-    FolderCreator creator("./Data");
-    
-    // 👇 Atualizado para receber os 2 caminhos
-    auto [network_dir, data_dir] = creator.create_structure(
-        dim,
-        type_N_t,
-        N_t,
-        k,
-        L,
-        num_colors,
-        a,
-        alpha,
-        type_percolation,
-        pp0,
-        P0,
-        rho_val
-    );
-    // Struct to allocate TimeSeries
-    TimeSeries ts;
-    // Struct to allocate Percolation Informations
-    PercolationSeries ps;
-    
-    // Density of network for each color
-    vector<double> rho(num_colors, rho_val);
-    // Initial probability for each color
-    vector<double> p0(num_colors, pp0);
-
-    network net_generator(N_samples, num_colors);
-    
-    // Network
-    NetworkPattern net = net_generator.create_network(dim, L, N_samples, k, N_t, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts, ps, rng);
-    
-    std::cerr << "[DBG] ps sizes -> "
-          << "order=" << ps.percolation_order.size()
-          << ", color=" << ps.color_percolation.size()
-          << ", time="  << ps.time_percolation.size()
-          << ", rho="   << ps.rho.size();
-
-    std::cerr << "[DBG] ts sizes -> "
-            << "num_colors=" << ts.num_colors
-            << ", t=" << ts.t.size()
-            << ", p_t=" << ts.p_t.size()
-            << ", Nt=" << ts.Nt.size() << "\n";
-
-
-    // Check initial ratio between types of nodes
-//    NetworkPattern net = net_generator.initialize_network(dim, L, num_colors, P0, rho, p0, seed);
-    //net_generator.print_initial_site_fractions(net);
-    
-    // Create name of files
-    std::ostringstream oss_name;
-    oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0
-             << "_p0_" << std::fixed << std::setprecision(2) << pp0
-             << "_seed_" << seed << ".json";
-
-    std::ostringstream oss_net;
-    oss_net << network_dir << "/P0_" << std::fixed << std::setprecision(2) << P0
-            << "_p0_" << std::fixed << std::setprecision(2) << pp0
-            << "_seed_" << seed << ".npy";
-    
-    std::string json_filename = data_dir + oss_name.str();
-    std::string net_filename = oss_net.str();
-    
-    // Animation network
-    // NetworkPattern net = net_generator.animate_network(dim, L, N_samples, k, N_t, seed, type_N_t, p0, P0, a, alpha, type_percolation, num_colors, rho, ts);
-    
-    // Saving files
-    save_data saver;
-    // Network
-    saver.save_network_as_npz(net, net_filename);
-    
-    // Results
-    saver.save_percolation_json(ps, ts, json_filename, true);
-    cout << "file save with name:\t" <<  oss_name.str() << endl;
-    return 0;
 }
