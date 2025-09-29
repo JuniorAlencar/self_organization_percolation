@@ -74,14 +74,24 @@ NetworkPattern network::create_network(
     // ===== séries =====
     std::vector<std::vector<double>> p_series(num_colors);
     std::vector<std::vector<int>>    Nt_series(num_colors);
+    std::vector<std::vector<double>> chi_series(num_colors);
+    std::vector<std::vector<int>>   Smax_series(num_colors);
+    std::vector<std::vector<int>>   Ni_series(num_colors);
     std::vector<int>                 t_list; t_list.reserve(num_of_samples);
     std::vector<double>              p_curr = p0;
     std::vector<int>                 M_curr(num_colors, 0);
 
-    auto commit_step = [&](int t_k, const std::vector<double>& p_vec, const std::vector<int>& Nt_vec)
+
+      auto commit_step = [&](int t_k, const std::vector<double>& p_vec, const std::vector<int>& Nt_vec)
     {
         t_list.push_back(t_k);
         for (int c=0;c<num_colors;++c){ p_series[c].push_back(p_vec[c]); Nt_series[c].push_back(Nt_vec[c]); }
+
+        // estatísticas por espécie (usa DSU já atualizado neste passo)
+        for (int c=0; c<num_colors; ++c) {
+            dsu[c].append_stats_row(Smax_series[c], Ni_series[c], chi_series[c]);
+        }
+
         if (ts_out.M_t.empty()) ts_out.M_t.assign(num_colors,{});
         int gmax=0; for (int c=0;c<num_colors;++c){ ts_out.M_t[c].push_back(M_curr[c]); gmax = std::max(gmax, M_curr[c]); }
     };
@@ -154,7 +164,7 @@ NetworkPattern network::create_network(
 
     ps_out.sp_len.assign(num_colors, -1);
     ps_out.sp_path_lin.assign(num_colors, {});
-    ps_out.M_size_at_perc.clear();
+    //ps_out.M_size_at_perc.clear();
 
     // commit t=0
     commit_step(0, p_curr, N_current);
@@ -242,7 +252,7 @@ NetworkPattern network::create_network(
                             ps_out.color_percolation.push_back(cor_idx + 1);
                             ps_out.time_percolation.push_back(t);
                             ps_out.percolation_order.push_back(order_counter);
-                            ps_out.M_size_at_perc.push_back(M_at_perc);
+//                            ps_out.M_size_at_perc.push_back(M_at_perc);
 
                             std::cout << "[CREATE] Cor " << (cor_idx + 1)
                                       << " percolou em t=" << t
@@ -306,15 +316,10 @@ NetworkPattern network::create_network(
     ts_out.p_t = std::move(p_series);
     ts_out.Nt  = std::move(Nt_series);
     ts_out.t   = std::move(t_list);
+    ts_out.Smax = std::move(Smax_series);
+    ts_out.Ni   = std::move(Ni_series);
+    ts_out.chi  = std::move(chi_series);
 
-    // maior cluster final por cor via DSU
-    ts_out.M_size.assign(num_colors, 0);
-    for (int c=0;c<num_colors;++c){
-        int best=0;
-        for (size_t i=0;i<dsu[c].parent.size();++i)
-            if (dsu[c].parent[i] == (int)i) best = std::max(best, dsu[c].sz[i]);
-        ts_out.M_size[c] = best;
-    }
 
     // copia rho
     ps_out.rho.clear();

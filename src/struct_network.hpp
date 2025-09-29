@@ -138,23 +138,26 @@ struct NetworkPattern {
 // Struct to load (t, pt_i) and (t, Nt_i)
 struct TimeSeries {
     int num_colors;
-    std::vector<std::vector<double>> p_t;   // [cor][t]
-    std::vector<std::vector<int>>    Nt;    // [cor][t]
-    std::vector<std::vector<int>>    M_t;   // [cor][t]
-    std::vector<int>                 t;     // [t]
-    std::vector<int>                 M_size;// [cor] maior cluster final da cor
+    vector<vector<double>> p_t;   // [cor][t]
+    vector<vector<int>>    Nt;    // [cor][t]
+    vector<vector<int>>    M_t;   // [cor][t]
+    vector<int>            t;     // [t]
+    
+    vector<vector<double>> chi;  // chi[i][t] = segundo momento da espécie i
+    vector<vector<int>>    Smax; // opcional: maior cluster da espécie i ao tempo t
+    vector<vector<int>>    Ni;   // opcional: total de sítios da espécie i ao tempo t
 };
 
 struct PercolationSeries {
-    std::vector<int> color_percolation;   // 1-based
-    std::vector<int> time_percolation;
-    std::vector<int> percolation_order;
-    std::vector<double> rho;              // por cor (0-based)
-    std::vector<int> M_size_at_perc;      // por evento
+    vector<int> color_percolation;   // 1-based
+    vector<int> time_percolation;
+    vector<int> percolation_order;
+    vector<double> rho;              // por cor (0-based)
+    vector<int> M_size_at_perc;      // por evento
 
     // SP armazenado internamente (opcional no writer)
-    std::vector<int>              sp_len;       // [cor] = #nós no caminho (ou -1)
-    std::vector<std::vector<int>> sp_path_lin;  // [cor] ids lineares (não será escrito)
+    vector<int>              sp_len;       // [cor] = #nós no caminho (ou -1)
+    vector<vector<int>> sp_path_lin;  // [cor] ids lineares (não será escrito)
 };
 
 #endif // network_hpp

@@ -183,3 +183,38 @@ std::vector<int> DSU::shortest_path_base_to_top(int root, PercolationMode mode) 
     std::reverse(path.begin(), path.end());
     return path;
 }
+
+DSU::StatsSnapshot DSU::compute_snapshot_stats() const {
+    long long sum_sizes = 0, sum_sizes_sq = 0;
+    int Smax = 0;
+
+    for (std::int64_t i = 0; i < TOT; ++i) {
+        if (!active[i]) continue;
+        if (parent[i] != i) continue; // raiz
+
+        int s = sz[i];
+        if (s <= 0) continue;
+
+        sum_sizes    += s;
+        sum_sizes_sq += 1LL * s * s;
+        if (s > Smax) Smax = s;
+    }
+
+    StatsSnapshot out;
+    out.Smax = Smax;
+    out.Ntot = static_cast<int>(sum_sizes);
+    
+
+    if (sum_sizes > 0) {
+        long long numer = sum_sizes_sq - 1LL * Smax * Smax;
+        if (TOT > 0) {
+            long long numer = sum_sizes_sq - 1LL * Smax * Smax;
+            out.chi = static_cast<double>(numer) / static_cast<double>(TOT);
+            if (out.chi < 0.0) out.chi = 0.0;
+        } else {
+            out.chi = 0.0;
+        }
+    }
+    return out;
+}
+
