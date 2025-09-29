@@ -8,26 +8,30 @@
 #include <cstdint>
 #include <algorithm>
 
+
+using namespace std;
+
 enum class PercolationMode {
     Site,  // adjacência por vizinhos ativos
     Bond   // adjacência restrita a arestas abertas
 };
 
+
 struct DSU {
     // ---- parâmetros geométricos / contorno ----
     int dim{2}, Lx{1}, Ly{1}, Lz{1}, grow_axis{1};
-    std::int64_t TOT{0};
+    int64_t TOT{0};
 
     // ---- Union-Find ----
-    std::vector<int>  parent;      // pai (índice linear) ou -1 se inativo
-    std::vector<int>  sz;          // tamanho do componente (válido na raiz)
-    std::vector<char> active;      // 1 se o nó está ativo
-    std::vector<char> touch_base;  // (por raiz) componente toca a base
-    std::vector<char> touch_top;   // (por raiz) componente toca o topo
+    vector<int>  parent;      // pai (índice linear) ou -1 se inativo
+    vector<int>  sz;          // tamanho do componente (válido na raiz)
+    vector<char> active;      // 1 se o nó está ativo
+    vector<char> touch_base;  // (por raiz) componente toca a base
+    vector<char> touch_top;   // (por raiz) componente toca o topo
 
     // ---- Arestas abertas (bond) ----
     // Representamos cada aresta não-direcionada por uma chave uint64_t (min,max).
-    std::unordered_set<std::uint64_t> open_edges;
+    unordered_set<uint64_t> open_edges;
 
     // ---- construção ----
     DSU(int dim_, int Lx_, int Ly_, int Lz_, int grow_axis_);
@@ -66,6 +70,27 @@ struct DSU {
     inline bool spans(int root) {
         int r = find(root);
         return (touch_base[r] && touch_top[r]);
+    }
+    struct StatsSnapshot {
+    int    Smax = 0;    // maior componente
+    int    Ntot = 0;    // total de nós ativos desta espécie
+    double chi  = 0.0;  // (sum s^2 - Smax^2) / Ntot   (0 se Ntot==0)
+};
+
+    StatsSnapshot compute_snapshot_stats() const;
+
+    /**
+     * @brief Variante utilitária: preenche vetores de séries (uma amostra por chamada).
+     *        Útil para ser chamado no loop temporal (t) e fazer push_back nos vetores.
+     */
+    void append_stats_row(std::vector<int>&   Smax_series,
+                                std::vector<int>&   Ni_series,
+                                std::vector<double>& chi_series) const
+    {
+        StatsSnapshot st = compute_snapshot_stats();
+        Smax_series.push_back(st.Smax);
+        Ni_series.push_back(st.Ntot);
+        chi_series.push_back(st.chi);
     }
 
 private:

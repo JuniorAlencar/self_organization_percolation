@@ -2,19 +2,23 @@ from src.process_data import *
 
 # ====== Simulation parameters ======
 type_perc = 'bond'
-num_colors = 4
+num_colors = 2
 dim = 2
-L = 4096
-Nt = 400
-k = 1.0e-05
-
-# L = 128
-# Nt = 200
-# k = 1.0e-04
-
 # L = 512
-# Nt = 3500
-# k = 1.0e-06
+# Nt = 50
+# k = 4.0e-04
+
+# L = 1024
+# Nt = 100
+# k = 2.0e-04
+
+L = 2048
+Nt = 200
+k = 9.0e-05
+
+# L = 4096
+# Nt = 400
+# k = 5.0e-05
 # ===========================
 
 # List all values of rho inside folder with parameters above

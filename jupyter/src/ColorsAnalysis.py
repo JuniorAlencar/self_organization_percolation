@@ -31,94 +31,85 @@ PARAMS_RE = re.compile(r"""
     /data
 """, re.X)
 
-def mean_nc_by_rho(df, num_colors=4, p0_filter=None, L_filter=None, k_filter=None):
+# ---------- utilidades ----------
+def read_table_auto(path: Path) -> pd.DataFrame:
+    """Lê tabela auto-separada, tratando 'Null' como NaN."""
+    try:
+        return pd.read_csv(path, sep=None, engine="python", na_values=["Null"])
+    except Exception:
+        return pd.read_csv(path, sep=r"\t+", engine="python", na_values=["Null"])
+
+def compute_nc_from_df(df: pd.DataFrame):
     """
-    Compute <n_c> (mean number of percolated colors per seed) as a function of rho,
-    optionally filtering by p0, L, and k.
-
-    k_filter supports:
-      - scalar: exact match with np.isclose
-      - 2-tuple/list: interval [k_min, k_max]
-      - iterable of scalars: union of np.isclose matches
-    Returns columns: ['L','rho','N','nc_mean','nc_sem'].
+    n_c: média da qtde de pt_mean não-NaN por filename,
+    n_c_err: erro padrão da média (SEM),
+    Nsamples: nº de filenames.
     """
-    d = df.copy()
+    req = {"filename", "order", "pt_mean"}
+    if not req.issubset(df.columns):
+        missing = req - set(df.columns)
+        raise ValueError(f"Colunas ausentes: {missing}")
 
-    # Ensure numeric types (robust if some columns are absent)
-    for c in ["L","rho","order","num_samples","num_sample_perc","p0","k"]:
-        if c in d.columns:
-            d[c] = pd.to_numeric(d[c], errors="coerce")
+    df = df.copy()
+    df["pt_mean"] = pd.to_numeric(df["pt_mean"], errors="coerce")
 
-    # p0 filter (keep original rounding-by-2-decimals behavior)
-    if p0_filter is not None and "p0" in d.columns:
-        d = d[d["p0"].round(2).eq(round(float(p0_filter), 2))]
+    counts = (
+        df.groupby("filename")["pt_mean"]
+          .apply(lambda s: int(s.notna().sum()))
+          .astype(int)
+    )
+    vals = counts.to_numpy()
+    N = len(vals)
+    if N == 0:
+        return float("nan"), float("nan"), 0
+    n_c = float(np.mean(vals))
+    n_c_err = 0.0 if N == 1 else float(np.std(vals, ddof=1) / np.sqrt(N))
+    return n_c, n_c_err, N
 
-    # L filter
-    if L_filter is not None and "L" in d.columns:
-        d = d[d["L"].eq(L_filter)]
+def upsert_summary(summary_path: Path, rows: list[dict]) -> pd.DataFrame:
+    """
+    Upsert por chave (L, n_colors, NT, k, rho).
+    Salva sem a coluna 'source' (mudança 2).
+    """
+    key_cols = ["L", "n_colors", "NT", "k", "rho"]
+    cols_all = key_cols + ["n_c", "n_c_err", "Nsamples"]  # <- sem 'source'
+    new_df = pd.DataFrame(rows, columns=cols_all)
 
-    # k filter (scalar / interval / list)
-    if k_filter is not None and "k" in d.columns:
-        kseries = d["k"].astype(float).values
-        if np.isscalar(k_filter):
-            mask = np.isclose(kseries, float(k_filter), rtol=0.0, atol=1e-12)
-        elif isinstance(k_filter, (list, tuple, np.ndarray)) and len(k_filter) == 2 and np.all(np.isfinite(k_filter)):
-            kmin, kmax = float(min(k_filter)), float(max(k_filter))
-            mask = (kseries >= kmin) & (kseries <= kmax)
-        elif isinstance(k_filter, Iterable):
-            vals = np.array(list(k_filter), dtype=float)
-            mask = np.zeros(len(d), dtype=bool)
-            for kv in vals:
-                mask |= np.isclose(kseries, float(kv), rtol=0.0, atol=1e-12)
-        else:
-            raise ValueError("k_filter must be a scalar, a 2-tuple/list (range), or an iterable of scalars.")
-        d = d[mask]
+    if summary_path.exists():
+        old_df = pd.read_csv(summary_path)
+        # Garante colunas esperadas (se faltar, cria vazias)
+        for c in cols_all:
+            if c not in old_df.columns:
+                old_df[c] = np.nan
+        # Remove 'source' se por acaso existir de versões antigas:
+        if "source" in old_df.columns:
+            old_df = old_df.drop(columns=["source"])
+        # Reordena
+        old_df = old_df[cols_all]
+    else:
+        old_df = pd.DataFrame(columns=cols_all)
 
-    # If nothing left, return empty frame with the expected schema (avoid KeyError on sort)
-    if d.empty:
-        # Optional: helpful hint about available k's
-        if "k" in df.columns and k_filter is not None:
-            avail_k = np.sort(pd.to_numeric(df["k"], errors="coerce").dropna().unique())
-            print(f"[WARN] No rows after k_filter={k_filter}. Available k values (first 10): {avail_k[:10]}")
-        return pd.DataFrame(columns=["L","rho","N","nc_mean","nc_sem"])
+    # Tipos consistentes
+    for c in ["L", "n_colors", "NT"]:
+        new_df[c] = pd.to_numeric(new_df[c], errors="coerce").astype("Int64")
+        old_df[c] = pd.to_numeric(old_df[c], errors="coerce").astype("Int64")
+    for c in ["k", "rho", "n_c", "n_c_err"]:
+        new_df[c] = pd.to_numeric(new_df[c], errors="coerce")
+        old_df[c] = pd.to_numeric(old_df[c], errors="coerce")
+    old_df["Nsamples"] = pd.to_numeric(old_df["Nsamples"], errors="coerce").astype("Int64")
+    new_df["Nsamples"] = pd.to_numeric(new_df["Nsamples"], errors="coerce").astype("Int64")
 
-    rows = []
-    # Group by rho and aggregate
-    for rho, grp in d.groupby("rho", dropna=True):
-        # N = total number of seeds; keep your original (max) logic
-        N = int(np.nanmax(grp["num_samples"])) if len(grp) else 0
-        if N <= 0:
-            rows.append({"L": (L_filter if L_filter is not None else np.nan),
-                         "rho": rho, "N": 0, "nc_mean": np.nan, "nc_sem": np.nan})
-            continue
+    # Upsert por índice composto
+    old_idx = old_df.set_index(key_cols)
+    new_idx = new_df.set_index(key_cols)
+    old_idx.update(new_idx)
+    merged = pd.concat([old_idx[~old_idx.index.isin(new_idx.index)], new_idx]).reset_index()
 
-        # Build M_k: seeds with >= k colors percolated
-        M = np.zeros(num_colors + 2, dtype=float)  # indices 1..num_colors; M[C+1]=0
-        for _, r in grp.iterrows():
-            k = int(r["order"])
-            if 1 <= k <= num_colors:
-                M[k] = float(r["num_sample_perc"])
-        M = np.clip(M, 0, N)
-
-        # Tail-sum mean
-        nc_mean = np.sum(M[1:num_colors+1]) / N
-
-        # Exact variance from x_k = M_k - M_{k+1}
-        X = np.zeros(num_colors + 1, dtype=float)
-        for k in range(1, num_colors + 1):
-            X[k] = max(M[k] - M[k + 1], 0.0)
-        p = X[1:num_colors + 1] / N
-        ks = np.arange(1, num_colors + 1, dtype=float)
-        var_nc = np.sum((ks - nc_mean) ** 2 * p)
-        nc_sem = np.sqrt(var_nc / N) if N > 0 else np.nan
-
-        rows.append({"L": (L_filter if L_filter is not None else np.nan),
-                     "rho": rho, "N": N, "nc_mean": nc_mean, "nc_sem": nc_sem})
-
-    out = pd.DataFrame(rows)
-    if not out.empty and "rho" in out.columns:
-        out = out.sort_values("rho").reset_index(drop=True)
-    return out
+    # Ordena e salva
+    merged = merged[["L","n_colors","NT","n_c","n_c_err","rho","k","Nsamples"]]
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(summary_path, index=False)
+    return merged
 
 def find_drop_interval(res_df, num_colors=None, frac_hi=0.98, frac_lo=0.02,
                        smooth_window=5, pad=0.002):
@@ -254,3 +245,50 @@ def list_rho_values(
     # Deixar únicos e ordenados
     rhos = sorted(set(rhos))
     return rhos
+
+def processing_data_nc(L_lst, Nt_lst, k_lst, num_colors, dim, type_perc):
+    base_root  = "../Data"
+    output_dir = "../Data/bond_percolation/"   # <- mudança 1
+    out_csv    = None  # definido abaixo com base no dim
+
+    # ---------- processamento principal ----------
+    rows = []
+    root = Path(base_root)
+
+    for L in L_lst:
+        for NT in Nt_lst:
+            for k in k_lst:
+                # Lista rhos existentes para este (L, NT, k)
+                rho_values = list_rho_values(type_perc, num_colors, dim, L, NT, k, base_root=base_root)
+                for rho in rho_values:
+                    p = root / f"{type_perc}_percolation" / f"num_colors_{num_colors}" / f"dim_{dim}" / \
+                        f"L_{L}" / "NT_constant" / f"NT_{NT}" / f"k_{k:.1e}" / f"rho_{rho:.4e}" / "data" / "process_names.txt"
+                    if not p.exists():
+                        continue
+                    try:
+                        df = read_table_auto(p)
+                        n_c, n_c_err, N = compute_nc_from_df(df)
+                        rows.append({
+                            "L": L,
+                            "n_colors": num_colors,
+                            "NT": NT,
+                            "k": k,
+                            "rho": float(rho),
+                            "n_c": n_c,
+                            "n_c_err": n_c_err,
+                            "Nsamples": N
+                        })
+                    except Exception as e:
+                        print(f"[WARN] Falha em {p}: {e}")
+
+    # Define caminho final conforme solicitado
+    out_dir_path = Path(output_dir)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+    out_csv_path = out_dir_path / f"nc_dim_{dim}.csv"   # <- mudança 1
+
+    merged = upsert_summary(out_csv_path, rows)
+
+    # Log curto
+    print("\nResumo atualizado:")
+    print(merged.sort_values(["L","NT","k","rho"]).to_string(index=False))
+    print(f"\nArquivo salvo/atualizado: {out_csv_path}")

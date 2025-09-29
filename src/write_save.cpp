@@ -90,6 +90,16 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     // checagens básicas
     if ((int)ts.p_t.size()!=ts.num_colors || (int)ts.Nt.size()!=ts.num_colors || (int)ts.M_t.size()!=ts.num_colors)
         throw std::runtime_error("[save_percolation_json] TimeSeries inconsistente com num_colors.");
+
+    // >>> NOVO: se existirem, Smax/Ni/chi também devem bater com num_colors
+    if (!ts.Smax.empty() && (int)ts.Smax.size()!=ts.num_colors)
+        throw std::runtime_error("[save_percolation_json] Smax.size != num_colors.");
+    if (!ts.Ni.empty()   && (int)ts.Ni.size()!=ts.num_colors)
+        throw std::runtime_error("[save_percolation_json] Ni.size != num_colors.");
+    if (!ts.chi.empty()  && (int)ts.chi.size()!=ts.num_colors)
+        throw std::runtime_error("[save_percolation_json] chi.size != num_colors.");
+    // <<< NOVO
+
     if (!ps.percolation_order.empty()) {
         const size_t m = ps.percolation_order.size();
         if (ps.color_percolation.size()!=m || ps.time_percolation.size()!=m)
@@ -122,17 +132,12 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         const int crow = std::max(0, color_1b - 1);
         const int order_i = ps.percolation_order[i];
         const int tperc   = ps.time_percolation[i];
-        const int M_final = (crow<(int)ts.M_size.size()? ts.M_size[crow] : 0);
-        const int M_atp   = (!ps.M_size_at_perc.empty() && (int)i<(int)ps.M_size_at_perc.size())
-                            ? ps.M_size_at_perc[i] : -1;
         const double rho  = rho_by_color_1b(ps.rho, color_1b);
 
         // menor caminho (em nº de ARESTAS) = (#nós - 1)
         int shortest_path_lin_value = -1;
         if (crow<(int)ps.sp_len.size() && ps.sp_len[crow] > 0)
             shortest_path_lin_value = ps.sp_len[crow] - 1;
-        // Se preferir em nº de NÓS, troque a linha acima por:
-        // shortest_path_lin_value = ps.sp_len[crow];
 
         ofs << "    {\n";
         ofs << "      \"order_percolation\": " << order_i << ",\n";
@@ -140,12 +145,17 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"color\": " << color_1b << ",\n";
         ofs << "        \"rho\": " << std::setprecision(17) << rho << ",\n";
         ofs << "        \"time_percolation\": " << tperc << ",\n";
-        ofs << "        \"M_size_final\": " << M_final << ",\n";
-        ofs << "        \"M_size_at_perc\": " << M_atp << ",\n";
         ofs << "        \"time\": "; write_json_array(ofs, ts.t); ofs << ",\n";
         ofs << "        \"pt\": "; write_json_row(ofs, ts.p_t, crow); ofs << ",\n";
         ofs << "        \"nt\": "; write_json_row(ofs, ts.Nt, crow); ofs << ",\n";
         ofs << "        \"Mt\": "; write_json_row(ofs, ts.M_t, crow); ofs << ",\n";
+
+        // >>> NOVO: séries por espécie (se vazias, write_json_row deve imprimir [] conforme seu helper)
+        ofs << "        \"Smax\": "; write_json_row(ofs, ts.Smax, crow); ofs << ",\n";
+        ofs << "        \"Ni\": ";   write_json_row(ofs, ts.Ni,   crow); ofs << ",\n";
+        ofs << "        \"chi\": ";  write_json_row(ofs, ts.chi,  crow); ofs << ",\n";
+        // <<< NOVO
+
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << "\n";
         ofs << "      }\n";
         ofs << "    }";
