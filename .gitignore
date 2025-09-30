@@ -1,6 +1,9 @@
 /Data
+/Data_2
 /build
 /results_paper_SOP
 *.pyc
 /animation/frames_*
 /shells/data_*
+*.zip
+
