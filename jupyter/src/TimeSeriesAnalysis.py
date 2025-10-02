@@ -14,10 +14,10 @@ import glob
 import math
 from datetime import datetime
 from pathlib import Path
-
-import numpy as np
 from scipy.interpolate import interp1d
-
+import numpy as np
+from collections import defaultdict
+from typing import Dict, List, Any, Tuple
 
 # ============================================================
 # Paths / Regex helpers
@@ -585,170 +585,185 @@ def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
 
     return stats_p, stats_N
 
+# --------- helpers ---------
+FNAME_RE = re.compile(r"P0_(?P<P0>\d+\.\d+)_p0_(?P<p0>\d+\.\d+)_seed_(?P<seed>\d+)\.json$")
 
-# ------------------------ (B) bundle cache (many p0) ------------------------
+def parse_fname(fname: str) -> Tuple[float, float, int] | None:
+    m = FNAME_RE.search(os.path.basename(fname))
+    if not m:
+        return None
+    return float(m.group("P0")), float(m.group("p0")), int(m.group("seed"))
 
-def _compute_stats_for_p0(path_files: str, p0: float) -> tuple[dict, dict, dict]:
-    """Compute ensemble stats for a single p0 reading all matching raw JSON files.
-       Returns (stats_p, stats_N, counts_dict)."""
-    times_list_p, p_values_list = [], []
-    times_list_N, N_values_list = [], []
-    files_used = 0
+def load_orders(path: str) -> Dict[int, Dict[str, Any]]:
+    with open(path, "r") as f:
+        obj = json.load(f)
 
-    for file in glob.glob(os.path.join(path_files, "*.json")):
-        if not _filename_matches_p0(file, p0):
-            continue
-        recs = read_orders_one_file(file)
-        if not recs:
-            continue
-
-        order, p, nt = recs[0]
-        p = np.asarray(p, float)
-        if p.size == 0:
-            continue
-
-        # build time vector
-        if order is None:
-            t = np.arange(p.shape[0], dtype=float)
+    # detectar a lista de blocos
+    if isinstance(obj, list):
+        blocks = obj
+    elif isinstance(obj, dict):
+        if "orders" in obj and isinstance(obj["orders"], list):
+            blocks = obj["orders"]
+        elif "blocks" in obj and isinstance(obj["blocks"], list):
+            blocks = obj["blocks"]
         else:
-            t = np.asarray(order)
-            if t.ndim == 0 or t.size <= 1:
-                t = np.arange(p.shape[0], dtype=float)
-
-        used_any = False
-
-        # p(t)
-        m_p = min(t.size, p.size)
-        if m_p > 0:
-            t_p = t[:m_p].astype(float, copy=False)
-            p_p = p[:m_p]
-            if m_p > 1 and not np.all(np.diff(t_p) >= 0):
-                idx = np.argsort(t_p)
-                t_p, p_p = t_p[idx], p_p[idx]
-            times_list_p.append(t_p)
-            p_values_list.append(p_p)
-            used_any = True
-
-        # N(t)
-        if nt is not None:
-            nt = np.asarray(nt, float)
-            m_n = min(t.size, nt.size)
-            if m_n > 0:
-                t_n = t[:m_n].astype(float, copy=False)
-                nt_n = nt[:m_n]
-                if m_n > 1 and not np.all(np.diff(t_n) >= 0):
-                    idx = np.argsort(t_n)
-                    t_n, nt_n = t_n[idx], nt_n[idx]
-                times_list_N.append(t_n)
-                N_values_list.append(nt_n)
-                used_any = True
-
-        if used_any:
-            files_used += 1
-
-    stats_p = ensemble_stats(times_list_p, p_values_list)
-    stats_N = ensemble_stats(times_list_N, N_values_list)
-    counts = {
-        "files_used": int(files_used),
-        "runs_p": int(len(times_list_p)),
-        "runs_N": int(len(times_list_N)),
-    }
-    return stats_p, stats_N, counts
-
-
-def mean_properties_bundle(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
-                           k: float, rho: float, p0_list: list[float],
-                           force_recompute: bool = False,
-                           with_counts: bool = False
-                           ) -> tuple[dict[float, dict], dict[float, dict]] | tuple[dict[float, dict], dict[float, dict], dict[float, dict]]:
-    """
-    Read (or create/update) a single JSON cache one level above /data with:
-      {
-        "meta": {...},
-        "p_stats": { "<p0_tag>": <stats> },
-        "N_stats": { "<p0_tag>": <stats> },
-        "samples": { "<p0_tag>": {"files_used": int, "runs_p": int, "runs_N": int} }
-      }
-
-    Returns:
-      p_stats_by_p0, N_stats_by_p0   (and optionally counts_by_p0 if with_counts=True)
-    """
-    base_path  = _cache_dir(type_perc, num_colors, dim, L, NT, k, rho)
-    path_files = os.path.join(base_path, "data")
-    bundle_fp  = _bundle_file_path(type_perc, num_colors, dim, L, NT, k, rho)
-
-    os.makedirs(base_path, exist_ok=True)
-
-    # try to load existing bundle
-    bundle = None
-    if os.path.exists(bundle_fp) and not force_recompute:
-        try:
-            with open(bundle_fp, "r") as f:
-                bundle = json.load(f)
-        except Exception:
-            bundle = None
-
-    data_mtime   = _latest_mtime(path_files)
-    bundle_mtime = os.path.getmtime(bundle_fp) if bundle and os.path.exists(bundle_fp) else 0.0
-
-    need_recompute_all = force_recompute or (bundle is None) or (bundle_mtime < data_mtime)
-    if need_recompute_all:
-        bundle = {
-            "meta": {
-                "version": _CACHE_VERSION,
-                "type_perc": type_perc,
-                "num_colors": num_colors,
-                "dim": dim,
-                "L": L,
-                "NT": NT,
-                "k": float(k),
-                "rho": float(rho),
-                "generated_at": datetime.utcnow().isoformat() + "Z",
-                "source_dir": path_files,
-            },
-            "p_stats": {},
-            "N_stats": {},
-            "samples": {},   # <-- new block
-        }
+            # fallback: pegar a primeira lista de dicts que tenha 'order_percolation'
+            blocks = []
+            for v in obj.values():
+                if isinstance(v, list) and v and isinstance(v[0], dict) and "order_percolation" in v[0]:
+                    blocks = v
+                    break
     else:
-        # ensure 'samples' exists for older bundles
-        if "samples" not in bundle:
-            bundle["samples"] = {}
+        blocks = []
 
-    # ensure every requested p0 is present
+    out: Dict[int, Dict[str, Any]] = {}
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        ordk = b.get("order_percolation")
+        if ordk is None:
+            continue
+        data = b.get("data", {})
+        if not data:
+            data = {k: v for k, v in b.items() if k not in ("order_percolation",)}
+        out[int(ordk)] = data
+    return out
+
+def _mean_series(list_of_lists: List[List[float]]) -> List[float]:
+    if not list_of_lists:
+        return []
+    min_len = min(len(x) for x in list_of_lists)
+    if min_len == 0:
+        return []
+    arr = np.vstack([np.asarray(x[:min_len], dtype=float) for x in list_of_lists])
+    return arr.mean(axis=0).tolist()
+
+def _mean_sem(vals: List[float]) -> Dict[str, float]:
+    """média e erro-padrão da média (SEM = s/√n, com ddof=1 se n>1)."""
+    n = len(vals)
+    if n == 0:
+        return {"mean": float("nan"), "sem": float("nan")}
+    if n == 1:
+        return {"mean": float(vals[0]), "sem": 0.0}
+    arr = np.asarray(vals, dtype=float)
+    return {"mean": float(arr.mean()), "sem": float(arr.std(ddof=1) / np.sqrt(n))}
+
+def average_by_order(dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    keys_series = ("time", "pt", "nt", "Mt", "Smax", "Ni", "chi")
+    # escalares para reportar média + SEM
+    keys_scalar_sem = ("time_percolation", "shortest_path_lin")
+
+    out: Dict[str, Any] = {}
+
+    # séries (média elemento-a-elemento)
+    for k in keys_series:
+        series = [d.get(k) for d in dicts if isinstance(d.get(k), list)]
+        out[k] = _mean_series(series)
+
+    # escalares com média + SEM
+    stats = {}
+    for k in keys_scalar_sem:
+        vals = [d.get(k) for d in dicts if isinstance(d.get(k), (int, float))]
+        if vals:
+            stats[k] = _mean_sem(vals)
+    if stats:
+        out["stats"] = stats
+
+    # NADA de 'color' e 'rho' no bloco data
+    return out
+
+
+# --------- pipeline principal ---------
+def compute_means_for_folder(
+    type_perc: str,
+    num_colors: int,
+    dim: int,
+    L: int,
+    NT: int,
+    k: float,
+    rho: float,
+    p0_list: List[float],
+) -> str:
+    """
+    Agrega todas as seeds para cada p0 em p0_list, alinha por order_percolation,
+    calcula médias e SEM (para time_percolation e shortest_path_lin),
+    e salva UM arquivo final 'properties_mean_bundle.json' uma pasta acima de 'data/'.
+    Retorna o caminho do JSON salvo.
+    """
+    base_dir = "/home/junior/Documents/self_organization_percolation/Data"
+    data_dir = os.path.join(
+        base_dir,
+        f"{type_perc}_percolation",
+        f"num_colors_{num_colors}",
+        f"dim_{dim}",
+        f"L_{L}",
+        "NT_constant",
+        f"NT_{NT}",
+        f"k_{k:.1e}",
+        f"rho_{rho:.4e}",
+        "data",
+    )
+    if not os.path.isdir(data_dir):
+        raise FileNotFoundError(f"Pasta de dados não encontrada: {data_dir}")
+
+    bundle = {
+        "meta": {
+            "type_perc": type_perc,
+            "num_colors": num_colors,
+            "dim": dim,
+            "L": L,
+            "NT": NT,
+            "k": float(k),
+            "rho": float(rho),
+            "base_dir": os.path.dirname(data_dir),  # uma pasta acima de 'data'
+        },
+        "p0_groups": []
+    }
+
     for p0 in p0_list:
-        key = _safe_p0_tag(p0)
-        need_this = (
-            need_recompute_all
-            or (key not in bundle.get("p_stats", {}))
-            or (key not in bundle.get("N_stats", {}))
-            or (key not in bundle.get("samples", {}))
-        )
-        if need_this:
-            stats_p, stats_N, counts = _compute_stats_for_p0(path_files, p0)
-            bundle["p_stats"][key]  = _stats_to_jsonable(stats_p)
-            bundle["N_stats"][key]  = _stats_to_jsonable(stats_N)
-            bundle["samples"][key]  = counts
+        pattern = os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")
+        files = sorted(glob.glob(pattern))
+        if not files:
+            print(f"[aviso] Sem arquivos para p0={p0:.2f} em {data_dir}")
+            continue
 
-    # save (updated) bundle
-    try:
-        with open(bundle_fp, "w") as f:
-            json.dump(bundle, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[WARN] Could not save bundle at {bundle_fp}: {e}")
+        per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        seeds = []
 
-    # return unpacked dicts keyed by *float* p0
-    p_stats_by_p0, N_stats_by_p0 = {}, {}
-    counts_by_p0 = {}
-    for p0 in p0_list:
-        key = _safe_p0_tag(p0)
-        p_stats_by_p0[float(p0)] = _stats_from_json(bundle["p_stats"][key])
-        N_stats_by_p0[float(p0)] = _stats_from_json(bundle["N_stats"][key])
-        c = bundle["samples"].get(key, {"files_used": 0, "runs_p": 0, "runs_N": 0})
-        counts_by_p0[float(p0)] = {"files_used": int(c.get("files_used", 0)),
-                                   "runs_p": int(c.get("runs_p", 0)),
-                                   "runs_N": int(c.get("runs_N", 0))}
+        for fp in files:
+            parsed = parse_fname(fp)
+            if not parsed:
+                continue
+            _, p0_val, seed = parsed
+            seeds.append(seed)
 
-    if with_counts:
-        return p_stats_by_p0, N_stats_by_p0, counts_by_p0
-    return p_stats_by_p0, N_stats_by_p0
+            orders = load_orders(fp)
+            for ordk, data in orders.items():
+                per_order[ordk].append(data)
+
+        # calcula médias por ordem
+        mean_by_order: Dict[int, Dict[str, Any]] = {}
+        for ordk, lst in per_order.items():
+            mean_by_order[ordk] = average_by_order(lst)
+
+        # montar bloco do p0
+        orders_blocks = [
+            {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
+            for ordk in sorted(mean_by_order.keys())
+        ]
+        bundle["p0_groups"].append({
+            "p0_value": float(p0),
+            "num_seeds": len(set(seeds)),
+            "seeds": sorted(set(seeds)),
+            "orders": orders_blocks
+        })
+
+        print(f"[ok] p0={p0:.2f}: {len(files)} arquivos agregados")
+
+    # salvar UMA pasta acima de 'data/'
+    out_dir = os.path.dirname(data_dir)
+    out_path = os.path.join(out_dir, "properties_mean_bundle.json")
+    with open(out_path, "w") as f:
+        json.dump(bundle, f, ensure_ascii=False, indent=2)
+    print(f"[salvo] {out_path}")
+    return out_path
