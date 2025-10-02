@@ -1,103 +1,106 @@
-#ifndef DSU_hpp
-#define DSU_hpp
+#ifndef DSU_HPP
+#define DSU_HPP
 
-#pragma once
 #include <vector>
-#include <queue>
-#include <unordered_set>
 #include <cstdint>
-#include <algorithm>
+#include <queue>
 
-
-using namespace std;
-
+// Modo de adjacência para rotas/caminhos
 enum class PercolationMode {
-    Site,  // adjacência por vizinhos ativos
-    Bond   // adjacência restrita a arestas abertas
+    Site,
+    Bond
 };
 
+class DSU {
+public:
+    // ---------- Parâmetros geométricos ----------
+    int dim {2};
+    int Lx {1}, Ly {1}, Lz {1};
+    int grow_axis {1};              // eixo "vertical": y(=1) em 2D, z(=2) em 3D
+    std::int64_t TOT {0};           // número total de sítios
 
-struct DSU {
-    // ---- parâmetros geométricos / contorno ----
-    int dim{2}, Lx{1}, Ly{1}, Lz{1}, grow_axis{1};
-    int64_t TOT{0};
+    // ---------- Estruturas compactas ----------
+    // parent[i] < 0 => raiz; tamanho = -parent[i]
+    // parent[i] >= 0 => pai
+    std::vector<int>        parent;
+    std::vector<unsigned char> active;     // 0/1 por sítio
+    std::vector<unsigned char> touch_base; // 0/1 por índice (válido no root)
+    std::vector<unsigned char> touch_top;  // 0/1 por índice (válido no root)
 
-    // ---- Union-Find ----
-    vector<int>  parent;      // pai (índice linear) ou -1 se inativo
-    vector<int>  sz;          // tamanho do componente (válido na raiz)
-    vector<char> active;      // 1 se o nó está ativo
-    vector<char> touch_base;  // (por raiz) componente toca a base
-    vector<char> touch_top;   // (por raiz) componente toca o topo
+    // 3 bits por nó (X+, Y+, Z+) para percolação por ligação
+    std::vector<std::uint8_t> bond_flags;
 
-    // ---- Arestas abertas (bond) ----
-    // Representamos cada aresta não-direcionada por uma chave uint64_t (min,max).
-    unordered_set<uint64_t> open_edges;
+    // ---------- “View” compatível com o antigo dsu.sz[ root ] ----------
+    struct SizeView {
+        const DSU* d {nullptr};
+        // devolve tamanho do componente cujo representante é r
+        int operator[](int r) const {
+            if (!d || r < 0 || r >= (int)d->parent.size()) return 0;
+            if (d->parent[r] >= 0) {
+                // se não for raiz, interpreta como 0 (rede antiga sempre passava root)
+                return 0;
+            }
+            return -d->parent[r];
+        }
+    } sz;
 
-    // ---- construção ----
+public:
+    // ---------- Ctor ----------
     DSU(int dim_, int Lx_, int Ly_, int Lz_, int grow_axis_);
 
-    // ---- helpers de indexação ----
-    inline int id(int x,int y,int z) const;
-    inline void unid(int id, int& x, int& y, int& z) const;
+    // ---------- Index helpers ----------
+    int  id(int x, int y, int z) const;
+    void unid(int id0, int& x, int& y, int& z) const;
 
-    // ---- operações básicas UF ----
-    int  find(int a);
+    // ---------- UF básico ----------
+    int  find(int a);             // com path compression
+    int  find(int a) const;       // versão const (sem compressão)
     void make_active(int a, int coord_grow, int L);
-    int  unite(int a, int b);
+    int  unite(int a, int b);     // union by size, mescla flags
 
-    inline bool is_active(int a) const { return (a>=0 && a < (int)active.size() && active[a]); }
+    bool is_active(int a) const { return (a>=0 && a<(int)active.size() && active[a]); }
 
-    // ---- contorno (aberto no grow_axis; periódico nas demais) ----
+    // ---------- Contorno ----------
+    // aberto no grow_axis; periódico nos demais
     bool wrap_and_validate(std::vector<int>& v) const;
 
-    // ---- bond handling ----
-    // abre uma aresta (não-direcionada) entre 'a' e 'b' e faz unite, se ambos ativos
+    // ---------- Bonds ----------
     void open_bond(int a, int b);
     bool is_bond_open(int a, int b) const;
 
-    // ---- site adjacency (para percolação por sítio) ----
-    // une se ambos ativos (não verifica cor; isso é responsabilidade de nível superior)
+    // a e b são vizinhos cartesianos imediatos? se sim, retorna pivot+dir_bit
+    bool bond_adjacent(int a, int b, int& pivot, int& dir_bit) const;
+
+    // ---------- Adjacência de sítio ----------
     void connect_if_site_adjacent(int a, int b);
 
-    // ---- vizinhos de um id (±1 em cada eixo) com contorno apropriado ----
+    // ---------- Vizinhança cartesiana (±1 em cada eixo) ----------
     void neighbors(int id0, std::vector<int>& out_ids) const;
 
-    // ---- shortest path (base -> topo) dentro do componente 'root' ----
-    // Retorna ids lineares do caminho mínimo. Vazio se não encontrar.
+    // ---------- Checagens base/topo ----------
+    bool is_base(int id0) const;
+    bool is_top (int id0) const;
+
+    // ---------- Pertence ao root ----------
+    bool belongs_to_root(int id0, int root) const;
+
+    // ---------- Spanning (compatível com network.spans(root)) ----------
+    bool spans(int root) const;   // toca base e topo?
+
+    // ---------- Caminho mínimo base->topo dentro do componente ----------
     std::vector<int> shortest_path_base_to_top(int root, PercolationMode mode) const;
 
-    // ---- flags base/top para uma raiz ----
-    inline bool spans(int root) {
-        int r = find(root);
-        return (touch_base[r] && touch_top[r]);
-    }
+    // ---------- Estatísticas ----------
     struct StatsSnapshot {
-    int    Smax = 0;    // maior componente
-    int    Ntot = 0;    // total de nós ativos desta espécie
-    double chi  = 0.0;  // (sum s^2 - Smax^2) / Ntot   (0 se Ntot==0)
-};
-
+        int    Smax = 0;
+        int    Ntot = 0;
+        double chi  = 0.0; // (sum s^2 - Smax^2)/Ntot
+    };
     StatsSnapshot compute_snapshot_stats() const;
 
-    /**
-     * @brief Variante utilitária: preenche vetores de séries (uma amostra por chamada).
-     *        Útil para ser chamado no loop temporal (t) e fazer push_back nos vetores.
-     */
     void append_stats_row(std::vector<int>&   Smax_series,
-                                std::vector<int>&   Ni_series,
-                                std::vector<double>& chi_series) const
-    {
-        StatsSnapshot st = compute_snapshot_stats();
-        Smax_series.push_back(st.Smax);
-        Ni_series.push_back(st.Ntot);
-        chi_series.push_back(st.chi);
-    }
-
-private:
-    // chave de aresta não-direcionada (min,max) em 64 bits
-    static inline std::uint64_t edge_key(int a, int b);
+                          std::vector<int>&   Ni_series,
+                          std::vector<double>& chi_series) const;
 };
 
-
-
-#endif // DSU_hpp
+#endif // DSU_HPP
