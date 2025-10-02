@@ -1,38 +1,69 @@
 #include "DSU.hpp"
+#include <algorithm>
+#include <limits>
+#include <cmath>
 
 DSU::DSU(int dim_, int Lx_, int Ly_, int Lz_, int grow_axis_)
-: dim(dim_), Lx(Lx_), Ly(Ly_>0?Ly_:1), Lz(Lz_>0?Lz_:1), grow_axis(grow_axis_) {
+: dim(dim_), Lx(Lx_), Ly(Ly_>0?Ly_:1), Lz(Lz_>0?Lz_:1), grow_axis(grow_axis_)
+{
     TOT = static_cast<std::int64_t>(Lx) * static_cast<std::int64_t>(Ly) * static_cast<std::int64_t>(Lz);
-    parent.assign(TOT, -1);
-    sz.assign(TOT, 0);
+    parent.assign(TOT, 0);            // válido quando active=1
     active.assign(TOT, 0);
     touch_base.assign(TOT, 0);
     touch_top.assign(TOT, 0);
-    open_edges.reserve(static_cast<size_t>(TOT)); // heurística
+    bond_flags.assign(TOT, std::uint8_t(0));
+
+    // ligar view
+    sz.d = this;
 }
 
-inline int DSU::id(int x,int y,int z) const {
+// ---------- Index helpers ----------
+int DSU::id(int x,int y,int z) const {
     return x + Lx * (y + Ly * z);
 }
 
-inline void DSU::unid(int idv, int& x, int& y, int& z) const {
-    z = (dim==3 ? idv / (Lx*Ly) : 0);
-    int r = (dim==3 ? idv - z*(Lx*Ly) : idv);
-    y = (dim>=2 ? r / Lx : 0);
-    x = (dim>=1 ? r - y*Lx : 0);
+void DSU::unid(int id0, int& x, int& y, int& z) const {
+    if (dim == 2) {
+        x = id0 % Lx;
+        y = id0 / Lx;
+        z = 0;
+    } else {
+        x = id0 % Lx;
+        int t = id0 / Lx;
+        y = t % Ly;
+        z = t / Ly;
+    }
 }
 
+// ---------- UF básico ----------
 int DSU::find(int a){
     if (a < 0 || a >= (int)parent.size()) return a;
-    return (parent[a]==a ? a : parent[a] = find(parent[a]));
+    if (!is_active(a)) return a; // inativo → devolve ele mesmo
+    int r = a;
+    while (parent[r] >= 0) r = parent[r];
+    // compressão de caminho
+    while (a != r) {
+        int p = parent[a];
+        parent[a] = r;
+        a = p;
+    }
+    return r;
+}
+
+// versão const: não faz compressão (para uso em métodos const)
+int DSU::find(int a) const {
+    if (a < 0 || a >= (int)parent.size()) return a;
+    if (!is_active(a)) return a;
+    int r = a;
+    while (parent[r] >= 0) r = parent[r];
+    return r;
 }
 
 void DSU::make_active(int a, int coord_grow, int L){
     if (a < 0 || a >= (int)active.size()) return;
     if (active[a]) return;
     active[a] = 1;
-    parent[a] = a;
-    sz[a]     = 1;
+    parent[a] = -1; // tamanho 1
     touch_base[a] = (coord_grow == 0);
     touch_top[a]  = (coord_grow == L-1);
 }
@@ -40,121 +71,159 @@ void DSU::make_active(int a, int coord_grow, int L){
 int DSU::unite(int a, int b){
     a = find(a); b = find(b);
     if (a == b) return a;
-    if (sz[a] < sz[b]) std::swap(a,b);
-    parent[b] = a;
-    sz[a] += sz[b];
+    // union-by-size
+    if (-parent[a] < -parent[b]) std::swap(a,b);
+    parent[a] += parent[b];   // soma tamanhos (negativos)
+    parent[b]  = a;           // b aponta para a
+
+    // mescla flags
     touch_base[a] = (touch_base[a] || touch_base[b]);
     touch_top[a]  = (touch_top[a]  || touch_top[b]);
     return a;
 }
 
+// ---------- Contorno ----------
 bool DSU::wrap_and_validate(std::vector<int>& v) const {
-    // aberto no grow_axis; periódico nos demais
     for (int j=0;j<dim;++j){
         int Lax = (j==0?Lx:(j==1?Ly:Lz));
         if (j == grow_axis) {
-            if (v[j] < 0 || v[j] >= Lax) return false;
+            if (v[j] < 0 || v[j] >= Lax) return false; // aberto
         } else {
-            if (v[j] < 0) v[j] = Lax-1;
-            else if (v[j] >= Lax) v[j] = 0;
+            // periódico
+            if      (v[j] < 0)     v[j] += Lax;
+            else if (v[j] >= Lax)  v[j] -= Lax;
         }
     }
     return true;
 }
 
-std::uint64_t DSU::edge_key(int a, int b){
-    if (a > b) std::swap(a,b);
-    // chave 64-bit combinando 2 inteiros 32-bit
-    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(a)) << 32)
-         ^  static_cast<std::uint64_t>(static_cast<std::uint32_t>(b));
+// ---------- Bonds ----------
+bool DSU::bond_adjacent(int a, int b, int& pivot, int& dir_bit) const {
+    if (a < 0 || b < 0 || a == b) return false;
+    int xa,ya,za, xb,yb,zb;
+    unid(a, xa,ya,za);
+    unid(b, xb,yb,zb);
+
+    if (ya==yb && za==zb && std::abs(xa-xb)==1) {
+        dir_bit = 0; // X
+        pivot = (xa < xb) ? a : b; // aresta positiva no menor x
+        return true;
+    }
+    if (xa==xb && za==zb && std::abs(ya-yb)==1) {
+        dir_bit = 1; // Y
+        pivot = (ya < yb) ? a : b;
+        return true;
+    }
+    if (dim==3 && xa==xb && ya==yb && std::abs(za-zb)==1) {
+        dir_bit = 2; // Z
+        pivot = (za < zb) ? a : b;
+        return true;
+    }
+    return false;
 }
 
 void DSU::open_bond(int a, int b){
     if (a<0 || b<0) return;
     if (!is_active(a) || !is_active(b)) return;
-    open_edges.insert(edge_key(a,b));
-    // ao abrir a aresta, os componentes passam a estar conectados
+
+    int pivot=-1, dir=-1;
+    if (!bond_adjacent(a,b,pivot,dir)) return;
+
+    bond_flags[pivot] = static_cast<std::uint8_t>(bond_flags[pivot] | (1u << dir));
     unite(a,b);
 }
 
 bool DSU::is_bond_open(int a, int b) const {
     if (a<0 || b<0) return false;
-    auto key = edge_key(a,b);
-    return (open_edges.find(key) != open_edges.end());
+    int pivot=-1, dir=-1;
+    if (!bond_adjacent(a,b,pivot,dir)) return false;
+    return (bond_flags[pivot] & (1u << dir)) != 0;
 }
 
+// ---------- Adjacência de sítio ----------
 void DSU::connect_if_site_adjacent(int a, int b){
     if (is_active(a) && is_active(b)) unite(a,b);
 }
 
+// ---------- Vizinhança cartesiana ----------
 void DSU::neighbors(int id0, std::vector<int>& out_ids) const {
     out_ids.clear();
     out_ids.reserve(2*dim);
     int x,y,z;
     unid(id0,x,y,z);
     for (int ax=0; ax<dim; ++ax){
-        for (int d : {-1,1}){
-            std::vector<int> v = {x, (dim>=2?y:0), (dim==3?z:0)};
-            v[ax] += d;
+        for (int sgn=-1; sgn<=1; sgn+=2){
+            std::vector<int> v(3);
+            v[0]=x; v[1]=y; v[2]=z;
+            v[ax] += sgn;
             if (!wrap_and_validate(v)) continue;
-            int nid = id(v[0], (dim>=2?v[1]:0), (dim==3?v[2]:0));
+            int nid = id(v[0],v[1],v[2]);
             out_ids.push_back(nid);
         }
     }
 }
 
+// ---------- Base/Topo ----------
+bool DSU::is_base(int id0) const {
+    int x,y,z; unid(id0,x,y,z);
+    if (dim==2) return (y==0);
+    return (z==0);
+}
+bool DSU::is_top(int id0) const {
+    int x,y,z; unid(id0,x,y,z);
+    if (dim==2) return (y==Ly-1);
+    return (z==Lz-1);
+}
+
+// ---------- Pertence ao root ----------
+bool DSU::belongs_to_root(int id0, int root) const {
+    if (!is_active(id0)) return false;
+    return find(id0) == root;   // usa find const
+}
+
+// ---------- Spanning ----------
+bool DSU::spans(int root) const {
+    root = find(root); // seguro mesmo se não for root
+    if (root < 0 || root >= (int)parent.size()) return false;
+    return (touch_base[root] && touch_top[root]);
+}
+
+// ---------- Caminho mínimo base->topo ----------
 std::vector<int> DSU::shortest_path_base_to_top(int root, PercolationMode mode) const {
     std::vector<int> path;
-    if (root < 0 || root >= (int)parent.size()) return path;
+    root = find(root); // versão const
 
-    // Coletar fontes na BASE (coord_grow == 0) pertencentes ao componente 'root'
+    if (root < 0 || root >= (int)TOT) return path;
+
+    auto belongs = [&](int u)->bool{ return belongs_to_root(u, root); };
+
+    // fontes: nós do root na base
     std::vector<int> sources;
-    sources.reserve((Lx*Ly + Lx*Lz + Ly*Lz)); // heurística
-
-    auto belongs = [&](int idn)->bool{
-        if (!is_active(idn)) return false;
-        return (const_cast<DSU*>(this)->find(idn) == const_cast<DSU*>(this)->find(root));
-    };
-
-    auto is_top = [&](int idn)->bool{
-        int x,y,z; unid(idn,x,y,z);
-        int cg = (grow_axis==0? x : (grow_axis==1? y : z));
-        return (cg == ((grow_axis==0?Lx:(grow_axis==1?Ly:Lz)) - 1));
-    };
-
-    // fontes na base
-    if (grow_axis == 0){
-        for (int z=0; z<(dim==3?Lz:1); ++z)
-            for (int y=0; y<(dim>=2?Ly:1); ++y){
-                int id0 = id(0,y,z);
-                if (belongs(id0)) sources.push_back(id0);
-            }
-    } else if (grow_axis == 1){
-        for (int z=0; z<(dim==3?Lz:1); ++z)
-            for (int x=0; x<Lx; ++x){
-                int id0 = id(x,0,z);
-                if (belongs(id0)) sources.push_back(id0);
-            }
-    } else { // grow_axis == 2
-        for (int y=0; y<Ly; ++y)
-            for (int x=0; x<Lx; ++x){
+    if (grow_axis == 1 && dim == 2) {
+        for (int x=0; x<Lx; ++x) {
+            int id0 = id(x,0,0);
+            if (belongs(id0)) sources.push_back(id0);
+        }
+    } else if (grow_axis == 2 && dim == 3) {
+        for (int x=0; x<Lx; ++x)
+            for (int y=0; y<Ly; ++y) {
                 int id0 = id(x,y,0);
                 if (belongs(id0)) sources.push_back(id0);
             }
+    } else {
+        for (int u=0; u<(int)TOT; ++u) {
+            if (belongs(u) && is_base(u)) sources.push_back(u);
+        }
     }
-
     if (sources.empty()) return path;
 
-    // BFS multi-origem
     const int N = static_cast<int>(TOT);
-    std::vector<char> vis(N, 0);
-    std::vector<int>  prev(N, -1);
+    std::vector<unsigned char> vis(N, 0);
+    std::vector<int> prev(N, -1);
     std::queue<int> q;
     for (int s : sources) { vis[s]=1; q.push(s); }
 
-    std::vector<int> neigh;
-    neigh.reserve(2*dim);
-
+    std::vector<int> neigh; neigh.reserve(2*dim);
     int target = -1;
 
     while(!q.empty()){
@@ -166,55 +235,61 @@ std::vector<int> DSU::shortest_path_base_to_top(int root, PercolationMode mode) 
             if (!belongs(v)) continue;
 
             if (mode == PercolationMode::Bond){
-                // exige que a aresta (u,v) esteja aberta
                 if (!is_bond_open(u,v)) continue;
-            } else {
-                // Site: apenas requer ambos ativos (belongs já garante ativo+mesmo componente)
             }
-
-            if (vis[v]) continue;
-            vis[v] = 1; prev[v] = u; q.push(v);
+            if (!vis[v]) {
+                vis[v] = 1;
+                prev[v] = u;
+                q.push(v);
+            }
         }
     }
 
-    if (target == -1) return path; // não achou caminho até o topo (inconsistente se spans==true)
-
-    for (int cur = target; cur != -1; cur = prev[cur]) path.push_back(cur);
+    if (target < 0) return path;
+    for (int cur = target; cur >= 0; cur = prev[cur]) {
+        path.push_back(cur);
+        if (prev[cur] < 0) break;
+    }
     std::reverse(path.begin(), path.end());
     return path;
 }
 
+// ---------- Estatísticas ----------
 DSU::StatsSnapshot DSU::compute_snapshot_stats() const {
-    long long sum_sizes = 0, sum_sizes_sq = 0;
+    StatsSnapshot out;
+    long long sum_sizes = 0;
+    long long sum_sizes_sq = 0;
     int Smax = 0;
 
-    for (std::int64_t i = 0; i < TOT; ++i) {
-        if (!active[i]) continue;
-        if (parent[i] != i) continue; // raiz
-
-        int s = sz[i];
-        if (s <= 0) continue;
-
-        sum_sizes    += s;
-        sum_sizes_sq += 1LL * s * s;
-        if (s > Smax) Smax = s;
+    const int N = static_cast<int>(TOT);
+    for (int i=0;i<N;++i){
+        if (!is_active(i)) continue;
+        if (parent[i] < 0) {          // raiz
+            int sz_i = -parent[i];
+            if (sz_i <= 0) continue;
+            sum_sizes += sz_i;
+            sum_sizes_sq += 1LL * sz_i * sz_i;
+            if (sz_i > Smax) Smax = sz_i;
+        }
     }
-
-    StatsSnapshot out;
     out.Smax = Smax;
     out.Ntot = static_cast<int>(sum_sizes);
-    
-
     if (sum_sizes > 0) {
         long long numer = sum_sizes_sq - 1LL * Smax * Smax;
-        if (TOT > 0) {
-            long long numer = sum_sizes_sq - 1LL * Smax * Smax;
-            out.chi = static_cast<double>(numer) / static_cast<double>(TOT);
-            if (out.chi < 0.0) out.chi = 0.0;
-        } else {
-            out.chi = 0.0;
-        }
+        out.chi = static_cast<double>(numer) / static_cast<double>(sum_sizes);
+        if (out.chi < 0.0) out.chi = 0.0;
+    } else {
+        out.chi = 0.0;
     }
     return out;
 }
 
+void DSU::append_stats_row(std::vector<int>&   Smax_series,
+                           std::vector<int>&   Ni_series,
+                           std::vector<double>& chi_series) const
+{
+    StatsSnapshot st = compute_snapshot_stats();
+    Smax_series.push_back(st.Smax);
+    Ni_series.push_back(st.Ntot);
+    chi_series.push_back(st.chi);
+}
