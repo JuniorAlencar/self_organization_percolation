@@ -284,11 +284,14 @@ DSU::StatsSnapshot DSU::compute_snapshot_stats() const {
     return out;
 }
 
-void DSU::append_stats_row(std::vector<int>&   Smax_series,
-                           std::vector<int>&   Ni_series,
+void DSU::append_stats_row(std::vector<int>& Smax_series,
+                           std::vector<int>& Ni_series,
                            std::vector<double>& chi_series) const
 {
     StatsSnapshot st = compute_snapshot_stats();
+    if (st.Smax > st.Ntot) {
+        std::cerr << "[WARN] Smax > Ntot: Smax=" << st.Smax << " Ntot=" << st.Ntot << "\n";
+    }
     Smax_series.push_back(st.Smax);
     Ni_series.push_back(st.Ntot);
     chi_series.push_back(st.chi);
