@@ -23,6 +23,19 @@ from typing import Dict, List, Any, Tuple
 # Paths / Regex helpers
 # ============================================================
 
+def create_folder(folder_path):
+    """
+    Creates the folder if it does not already exist.
+
+    Args:
+        folder_path (str): Path to the folder to be created.
+    """
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder created: {folder_path}")
+    else:
+        print(f"Folder already exists: {folder_path}")
+
 # Accepts k/rho in normal float or scientific notation (e.g., 1.0e-04)
 PARAMS_RE = re.compile(
     r"""

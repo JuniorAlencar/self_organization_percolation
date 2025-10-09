@@ -292,3 +292,16 @@ def processing_data_nc(L_lst, Nt_lst, k_lst, num_colors, dim, type_perc):
     print("\nResumo atualizado:")
     print(merged.sort_values(["L","NT","k","rho"]).to_string(index=False))
     print(f"\nArquivo salvo/atualizado: {out_csv_path}")
+
+def create_folder(folder_path):
+    """
+    Creates the folder if it does not already exist.
+
+    Args:
+        folder_path (str): Path to the folder to be created.
+    """
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder created: {folder_path}")
+    else:
+        print(f"Folder already exists: {folder_path}")
