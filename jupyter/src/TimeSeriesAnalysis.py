@@ -703,7 +703,7 @@ def compute_means_for_folder(
     e salva UM arquivo final 'properties_mean_bundle.json' uma pasta acima de 'data/'.
     Retorna o caminho do JSON salvo.
     """
-    base_dir = "/home/junior/Documents/self_organization_percolation/Data"
+    base_dir = "../Data"
     data_dir = os.path.join(
         base_dir,
         f"{type_perc}_percolation",
