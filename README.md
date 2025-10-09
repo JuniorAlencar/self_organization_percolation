@@ -1,5 +1,4 @@
 # self_organization_percolation
-
 required libraries
 
 * cnpy.h
@@ -7,6 +6,14 @@ required libraries
 * zlib.h
 * boost.h
 * openMP.h
+
+required program
+* cmake
+
+# To install *cmake* (linux ubuntu)
+```bash
+sudo apt install cmake
+```
 
 # To install *cnpy.h*
 
@@ -25,6 +32,11 @@ sudo make install
 sudo apt install zlib1g-dev
 ```
 
+# To install *zip* (linux ubuntu)
+```bash
+sudo apt install libzip-dev
+```
+
 # To install *boost* (linux ubuntu)
 ```bash
 sudo apt install libboost-all-dev
@@ -34,7 +46,6 @@ sudo apt install libboost-all-dev
 ```bash
 sudo apt update
 sudo apt install build-essential
-
 ```
 
 
