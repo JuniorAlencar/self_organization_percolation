@@ -51,13 +51,21 @@ static void print_version(){
 #endif
 }
 
+bool parse_bool(const std::string& s) {
+    std::string x = s;
+    std::transform(x.begin(), x.end(), x.begin(), ::tolower);
+    if (x=="1"||x=="true"||x=="t"||x=="yes"||x=="y") return true;
+    if (x=="0"||x=="false"||x=="f"||x=="no" ||x=="n") return false;
+    throw std::runtime_error("bool inválido: " + s);
+}
+
 int main(int argc, char* argv[]){
     // ajuda/versão sem exigir todos os argumentos
     if (argc >= 2) {
         if (is_help_token(argv[1])) { print_help(argv[0]); return 0; }
         if (std::strcmp(argv[1],"--version")==0) { print_version(); return 0; }
     }
-    if (argc != 10) {
+    if (argc != 11) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc-1 << ").\n";
         print_help(argv[0]);
         return 1;
@@ -75,6 +83,7 @@ int main(int argc, char* argv[]){
         int dim = std::stoi(argv[7]);     // 2
         int num_colors = std::stoi(argv[8]);
         double rho_val = std::stod(argv[9]);
+        bool DSU_calculate = parse_bool(argv[10]);
 
         int type_N_t = 0;   // 0 => Nt constante; 1 => Nt = a * t^alpha
         double a = 0.0;
@@ -135,7 +144,7 @@ int main(int argc, char* argv[]){
         NetworkPattern net = net_generator.create_network(
             dim, L, N_samples, k, N_t, type_N_t,
             p0, P0, a, alpha, type_percolation,
-            num_colors, rho, ts, ps, rng
+            num_colors, rho, ts, ps, rng, DSU_calculate
         );
 
         std::cerr << "[DBG] ps sizes -> "
@@ -169,11 +178,11 @@ int main(int argc, char* argv[]){
         save_data saver;
 
         // 1) rede (Numpy .npy)
-        saver.save_network_as_npz(net, net_filename);
+        //saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //    sort_by_order = true para ordenar por percolation_order
-        saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
+        saver.save_percolation_json(ps, ts, json_filename, DSU_calculate, /*sort_by_order=*/true);
 
         std::cout << "file save with name:\t" << oss_name.str() << std::endl;
         return 0;

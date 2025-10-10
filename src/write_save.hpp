@@ -29,6 +29,7 @@ class save_data {
         void save_percolation_json(const PercolationSeries& ps,
                                 const TimeSeries& ts,
                                 const std::string& filename_json,
+                                bool& DSU_calculate_,
                                 bool sort_by_order = true) const;
 };
 

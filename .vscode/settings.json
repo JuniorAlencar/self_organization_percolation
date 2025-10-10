@@ -69,6 +69,9 @@
         "__threading_support": "cpp",
         "__hash_table": "cpp",
         "__node_handle": "cpp",
-        "queue": "cpp"
+        "queue": "cpp",
+        "semaphore": "cpp",
+        "stop_token": "cpp",
+        "thread": "cpp"
     }
 }

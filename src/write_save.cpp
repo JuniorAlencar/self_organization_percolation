@@ -82,23 +82,24 @@ inline double rho_by_color_1b(const std::vector<double>& rho, int color_1b){
 } // anon
 
 // ========== writer JSON (layout solicitado) ==========
+// ========== writer JSON (layout solicitado) ==========
 void save_data::save_percolation_json(const PercolationSeries& ps,
                                       const TimeSeries& ts,
                                       const std::string& filename_json,
+                                      bool& DSU_calculate_,
                                       bool sort_by_order) const
 {
     // checagens básicas
     if ((int)ts.p_t.size()!=ts.num_colors || (int)ts.Nt.size()!=ts.num_colors || (int)ts.M_t.size()!=ts.num_colors)
         throw std::runtime_error("[save_percolation_json] TimeSeries inconsistente com num_colors.");
 
-    // >>> NOVO: se existirem, Smax/Ni/chi também devem bater com num_colors
+    // se existirem, Smax/Ni/chi também devem bater com num_colors
     if (!ts.Smax.empty() && (int)ts.Smax.size()!=ts.num_colors)
         throw std::runtime_error("[save_percolation_json] Smax.size != num_colors.");
     if (!ts.Ni.empty()   && (int)ts.Ni.size()!=ts.num_colors)
         throw std::runtime_error("[save_percolation_json] Ni.size != num_colors.");
     if (!ts.chi.empty()  && (int)ts.chi.size()!=ts.num_colors)
         throw std::runtime_error("[save_percolation_json] chi.size != num_colors.");
-    // <<< NOVO
 
     if (!ps.percolation_order.empty()) {
         const size_t m = ps.percolation_order.size();
@@ -148,13 +149,18 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"time\": "; write_json_array(ofs, ts.t); ofs << ",\n";
         ofs << "        \"pt\": "; write_json_row(ofs, ts.p_t, crow); ofs << ",\n";
         ofs << "        \"nt\": "; write_json_row(ofs, ts.Nt, crow); ofs << ",\n";
-        ofs << "        \"Mt\": "; write_json_row(ofs, ts.M_t, crow); ofs << ",\n";
+        ofs << "        \"Mt\": "; write_json_row(ofs, ts.M_t, crow);
 
-        // >>> NOVO: séries por espécie (se vazias, write_json_row deve imprimir [] conforme seu helper)
-        ofs << "        \"Smax\": "; write_json_row(ofs, ts.Smax, crow); ofs << ",\n";
-        ofs << "        \"Ni\": ";   write_json_row(ofs, ts.Ni,   crow); ofs << ",\n";
-        ofs << "        \"chi\": ";  write_json_row(ofs, ts.chi,  crow); ofs << ",\n";
-        // <<< NOVO
+        // --- salvar Smax/Ni/chi somente se DSU_calculate_ == true ---
+        if (DSU_calculate_) {
+            ofs << ",\n";
+            ofs << "        \"Smax\": "; write_json_row(ofs, ts.Smax, crow); ofs << ",\n";
+            ofs << "        \"Ni\": ";   write_json_row(ofs, ts.Ni,   crow); ofs << ",\n";
+            ofs << "        \"chi\": ";  write_json_row(ofs, ts.chi,  crow); ofs << ",\n";
+        } else {
+            ofs << ",\n"; // apenas separador antes do próximo campo
+        }
+        // ------------------------------------------------------------
 
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << "\n";
         ofs << "      }\n";
@@ -165,3 +171,4 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "  ]\n";
     ofs << "}\n";
 }
+
