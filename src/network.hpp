@@ -48,6 +48,7 @@ class network{
         int num_colors;             // Number of colors of network
         vector<double> rho;         // Allocate initial density colors of network
         vector<double> p;           // Allocate p(t)-values
+        bool DSU_calculate_;
 
     public:
         // Constructor to p
@@ -63,7 +64,7 @@ class network{
                                        const double k, const double N_t, const int type_N_t,
                                        const std::vector<double> p0, const double P0, const double a, const double alpha,
                                        const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-                                       TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng);
+                                       TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng, bool &DSU_calculate_);
         
         NetworkPattern initialize_network(int dim, int length_network, int num_colors,
                                            double P0,

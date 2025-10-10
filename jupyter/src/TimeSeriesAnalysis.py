@@ -780,3 +780,63 @@ def compute_means_for_folder(
         json.dump(bundle, f, ensure_ascii=False, indent=2)
     print(f"[salvo] {out_path}")
     return out_path
+
+    # LOAD ONE FILE JSON
+
+    def _safe_series(d: dict) -> dict:
+        """Garante presença de chaves opcionais como listas vazias."""
+        out = dict(d)
+        out.setdefault("Smax", [])
+        out.setdefault("Ni",   [])
+        out.setdefault("chi",  [])
+        return out
+
+def load_perc_json(path_json: str | Path) -> Tuple[dict, Dict[int, dict]]:
+    """
+    Lê o JSON gerado pelo save_percolation_json.
+    Retorna:
+      - bundle: dict completo lido
+      - orders: dict {order_percolation:int -> data:dict} com séries normalizadas
+    Suporta:
+      - layout 'flat' com "results"
+      - layout antigo com "p0_groups"
+    """
+    path_json = Path(path_json)
+    with path_json.open("r") as f:
+        bundle = json.load(f)
+
+    orders: Dict[int, dict] = {}
+
+    if "results" in bundle:  # layout atual (um arquivo por execução)
+        for item in bundle["results"]:
+            order = int(item["order_percolation"])
+            data  = _safe_series(item["data"])
+            orders[order] = data
+
+    elif "p0_groups" in bundle:  # layout antigo (vários p0 em um arquivo)
+        # achata todos os grupos em um único índice por ordem
+        for grp in bundle["p0_groups"]:
+            for o in grp.get("orders", []):
+                order = int(o["order_percolation"])
+                data  = _safe_series(o["data"])
+                orders[order] = data
+    else:
+        raise ValueError("JSON não possui 'results' nem 'p0_groups'.")
+
+    return bundle, orders
+
+# (opcional) helper para inferir p0 do nome do arquivo, se você quiser
+def infer_p0_from_filename(path_json: str | Path) -> float | None:
+    """
+    Tenta extrair 'p0' do nome do arquivo (ex.: '..._p0_0.30_...').
+    Retorna float ou None se não encontrar.
+    """
+    m = re.search(r"_p0_([0-9]*\.?[0-9]+)", Path(path_json).name)
+    return float(m.group(1)) if m else None
+
+# HOW TO USE
+# bundle_path = f"../Data/bond_percolation/num_colors_{NUM_COLORS}/dim_{DIM}/L_{L}/NT_constant/NT_{NT}/k_{K:.1e}/rho_{RHO:.4e}/data/"
+# filename = ex: "P0_0.10_p0_0.30_seed_27324716.json"
+# bundle, p0_index_like = load_perc_json(bundle_path + filename)
+# orders = sorted(p0_index_like.keys())  # ex.: [1,2,3,4]
+# p0_index[int(p0_value)][int(order)]

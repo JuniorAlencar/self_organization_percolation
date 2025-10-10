@@ -24,7 +24,7 @@ NetworkPattern network::create_network(
     const double k, const double N_t, const int type_N_t,
     const std::vector<double> p0, const double P0, const double a, const double alpha,
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-    TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
+    TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng, bool &DSU_calculate_)
 {
     // ===== parâmetros e shape =====
     this->N_t = N_t;
@@ -34,12 +34,6 @@ NetworkPattern network::create_network(
 
     const int L = lenght_network;
     const int grow_axis = dim - 1;
-
-    auto wrap = [&](int coord, int Lax) {
-        if (coord < 0) return Lax - 1;
-        if (coord >= Lax) return 0;
-        return coord;
-    };
 
     auto valid_coord = [&](std::vector<int>& v)->bool {
         for (int j=0;j<dim;++j) {
@@ -63,10 +57,12 @@ NetworkPattern network::create_network(
     // ===== rede e DSUs =====
     NetworkPattern net(dim, shape, num_colors, rho, rng);
 
-    std::vector<DSU> dsu;
-    dsu.reserve(num_colors);
-    for (int c = 0; c < num_colors; ++c)
-        dsu.emplace_back(dim, SX, SY, SZ, grow_axis);
+    std::vector<DSU> dsu;                           // opcional
+    if (DSU_calculate_) {
+        dsu.reserve(num_colors);
+        for (int c = 0; c < num_colors; ++c)
+            dsu.emplace_back(dim, SX, SY, SZ, grow_axis);
+    }
 
     const bool is_bond = (type_percolation == "bond");
     const PercolationMode sp_mode = (is_bond ? PercolationMode::Bond : PercolationMode::Site);
@@ -81,17 +77,20 @@ NetworkPattern network::create_network(
     std::vector<double>              p_curr = p0;
     std::vector<int>                 M_curr(num_colors, 0);
 
+    // ---- parents para shortest_path mesmo sem DSU ---- // <<<
+    const int GRID_N = SX*SY*SZ;
+    std::vector<std::vector<int>> parent(num_colors, std::vector<int>(GRID_N, -2)); // -2: nunca visto; -1: raiz/seed  // <<<
 
-      auto commit_step = [&](int t_k, const std::vector<double>& p_vec, const std::vector<int>& Nt_vec)
+    auto commit_step = [&](int t_k, const std::vector<double>& p_vec, const std::vector<int>& Nt_vec)
     {
         t_list.push_back(t_k);
         for (int c=0;c<num_colors;++c){ p_series[c].push_back(p_vec[c]); Nt_series[c].push_back(Nt_vec[c]); }
 
-        // estatísticas por espécie (usa DSU já atualizado neste passo)
-        for (int c=0; c<num_colors; ++c) {
-            dsu[c].append_stats_row(Smax_series[c], Ni_series[c], chi_series[c]);
+        if (DSU_calculate_) {
+            for (int c=0; c<num_colors; ++c) {
+                dsu[c].append_stats_row(Smax_series[c], Ni_series[c], chi_series[c]);
+            }
         }
-
         if (ts_out.M_t.empty()) ts_out.M_t.assign(num_colors,{});
         int gmax=0; for (int c=0;c<num_colors;++c){ ts_out.M_t[c].push_back(M_curr[c]); gmax = std::max(gmax, M_curr[c]); }
     };
@@ -135,23 +134,13 @@ NetworkPattern network::create_network(
 
                 int x=(dim>=1?coords[0]:0), y=(dim>=2?coords[1]:0), z=(dim==3?coords[2]:0);
                 int id0 = lin_index(x,y,z);
-                dsu[c].make_active(id0, get_gcoord(coords), L);
 
-                // Para site: já conecta com vizinhos ativos da mesma cor
-                if (!is_bond){
-                    for (int ax=0; ax<dim; ++ax){
-                        for(int dlt : {-1,1}){
-                            std::vector<int> vv = coords; vv[ax]+=dlt;
-                            if (!valid_coord(vv)) continue;
-                            if (net.get(vv) == active_val){
-                                int nx=(dim>=1?vv[0]:0), ny=(dim>=2?vv[1]:0), nz=(dim==3?vv[2]:0);
-                                int nid = lin_index(nx,ny,nz);
-                                if (dsu[c].is_active(nid)) dsu[c].connect_if_site_adjacent(id0, nid);
-                            }
-                        }
-                    }
+                if (DSU_calculate_) {
+                    dsu[c].make_active(id0, get_gcoord(coords), L);
+                    M_curr[c] = std::max(M_curr[c], dsu[c].sz[ dsu[c].find(id0) ]);
                 }
-                M_curr[c] = std::max(M_curr[c], dsu[c].sz[ dsu[c].find(id0) ]);
+
+                parent[c][id0] = -1; // seed/root para shortest_path sem DSU  // <<<
             }
             ++tries;
         }
@@ -164,13 +153,24 @@ NetworkPattern network::create_network(
 
     ps_out.sp_len.assign(num_colors, -1);
     ps_out.sp_path_lin.assign(num_colors, {});
-    //ps_out.M_size_at_perc.clear();
+    // ps_out.M_size_at_perc.clear();
 
     // commit t=0
     commit_step(0, p_curr, N_current);
 
     // buffer vizinhos
     std::vector<std::vector<int>> neighbor_buffer(2*dim, std::vector<int>(dim));
+
+    auto rebuild_path_from_parent = [&](int c, int id_end)->std::vector<int> {         // <<<
+        std::vector<int> path;
+        int cur = id_end;
+        while (cur != -1 && cur >= 0) {
+            path.push_back(cur);
+            cur = parent[c][cur];
+        }
+        std::reverse(path.begin(), path.end());
+        return path;
+    };                                                                                  // <<<
 
     // ===== evolução =====
     for (int t=1; t<num_of_samples; ++t){
@@ -208,58 +208,77 @@ NetworkPattern network::create_network(
 
                         int x=(dim>=1?viz[0]:0), y=(dim>=2?viz[1]:0), z=(dim==3?viz[2]:0);
                         int id_new = lin_index(x,y,z);
-                        dsu[cor_idx].make_active(id_new, get_gcoord(viz), L);
 
-                        // id do "pos" (nó que expandiu)
                         int px=(dim>=1?pos[0]:0), py=(dim>=2?pos[1]:0), pz=(dim==3?pos[2]:0);
                         int id_pos = lin_index(px,py,pz);
 
-                        if (is_bond){
-                            // abre a ARESTA (pos <-> viz) e une componentes
-                            dsu[cor_idx].open_bond(id_pos, id_new);
-                        } else {
-                            // site: une com TODOS vizinhos ativos da mesma cor
-                            for (int ax2=0; ax2<dim; ++ax2){
-                                for (int dlt : {-1,1}){
-                                    std::vector<int> vv2 = viz; vv2[ax2]+=dlt;
-                                    if (!valid_coord(vv2)) continue;
-                                    if (net.get(vv2) == new_val){
-                                        int nx=(dim>=1?vv2[0]:0), ny=(dim>=2?vv2[1]:0), nz=(dim==3?vv2[2]:0);
-                                        int nid = lin_index(nx,ny,nz);
-                                        if (dsu[cor_idx].is_active(nid)) dsu[cor_idx].connect_if_site_adjacent(id_new, nid);
+                        // registra pai SEMPRE (serve para bond/site)                              // <<<
+                        parent[cor_idx][id_new] = id_pos;                                          // <<<
+
+                        if (DSU_calculate_){
+                            dsu[cor_idx].make_active(id_new, get_gcoord(viz), L);
+
+                            if (is_bond){
+                                dsu[cor_idx].open_bond(id_pos, id_new);
+                            } else {
+                                for (int ax2=0; ax2<dim; ++ax2){
+                                    for (int dlt : {-1,1}){
+                                        std::vector<int> vv2 = viz; vv2[ax2]+=dlt;
+                                        if (!valid_coord(vv2)) continue;
+                                        if (net.get(vv2) == new_val){
+                                            int nx=(dim>=1?vv2[0]:0), ny=(dim>=2?vv2[1]:0), nz=(dim==3?vv2[2]:0);
+                                            int nid = lin_index(nx,ny,nz);
+                                            if (dsu[cor_idx].is_active(nid)) dsu[cor_idx].connect_if_site_adjacent(id_new, nid);
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        // atualiza maior componente
-                        M_curr[cor_idx] = std::max(M_curr[cor_idx], dsu[cor_idx].sz[ dsu[cor_idx].find(id_new) ]);
+                            // maior componente
+                            M_curr[cor_idx] = std::max(M_curr[cor_idx], dsu[cor_idx].sz[ dsu[cor_idx].find(id_new) ]);
 
-                        // checa percolação
-                        int rroot = dsu[cor_idx].find(id_new);
-                        if (dsu[cor_idx].spans(rroot) && !percolated[cor_idx]) {
-                            percolated[cor_idx]   = true;
-                            t_percolated[cor_idx] = t;
-                            ++order_counter;
+                            // percolação via DSU (como antes)
+                            int rroot = dsu[cor_idx].find(id_new);
+                            if (dsu[cor_idx].spans(rroot) && !percolated[cor_idx]) {
+                                percolated[cor_idx]   = true;
+                                t_percolated[cor_idx] = t;
+                                ++order_counter;
 
-                            int M_at_perc = dsu[cor_idx].sz[rroot];
+                                auto path = dsu[cor_idx].shortest_path_base_to_top(rroot, sp_mode);
+                                ps_out.sp_len[cor_idx] = (int)path.size();
+                                ps_out.sp_path_lin[cor_idx] = std::move(path);
 
-                            // shortest path real (Site vs Bond)
-                            auto path = dsu[cor_idx].shortest_path_base_to_top(rroot, sp_mode);
-                            ps_out.sp_len[cor_idx] = (int)path.size();
-                            ps_out.sp_path_lin[cor_idx] = std::move(path);
+                                ps_out.color_percolation.push_back(cor_idx + 1);
+                                ps_out.time_percolation.push_back(t);
+                                ps_out.percolation_order.push_back(order_counter);
 
-                            ps_out.color_percolation.push_back(cor_idx + 1);
-                            ps_out.time_percolation.push_back(t);
-                            ps_out.percolation_order.push_back(order_counter);
-//                            ps_out.M_size_at_perc.push_back(M_at_perc);
+                                std::cout << "[CREATE] Cor " << (cor_idx + 1)
+                                          << " percolou em t=" << t
+                                          << "  (ordem=" << order_counter
+                                          << ", shortest_path_len=" << ps_out.sp_len[cor_idx]
+                                          << ")\n";
+                            }
+                        } else {
+                            // ---- Sem DSU: detectar chegada ao topo e reconstruir caminho ---- // <<<
+                            if (!percolated[cor_idx] && get_gcoord(viz) == (L-1)) {
+                                percolated[cor_idx]   = true;
+                                t_percolated[cor_idx] = t;
+                                ++order_counter;
 
-                            std::cout << "[CREATE] Cor " << (cor_idx + 1)
-                                      << " percolou em t=" << t
-                                      << "  (ordem=" << order_counter
-                                      << ", M=" << M_at_perc
-                                      << ", shortest_path_len=" << ps_out.sp_len[cor_idx]
-                                      << ")\n";
+                                auto path = rebuild_path_from_parent(cor_idx, id_new);
+                                ps_out.sp_len[cor_idx] = (int)path.size();
+                                ps_out.sp_path_lin[cor_idx] = std::move(path);
+
+                                ps_out.color_percolation.push_back(cor_idx + 1);
+                                ps_out.time_percolation.push_back(t);
+                                ps_out.percolation_order.push_back(order_counter);
+
+                                std::cout << "[CREATE-noDSU] Cor " << (cor_idx + 1)
+                                          << " alcançou topo em t=" << t
+                                          << "  (ordem=" << order_counter
+                                          << ", shortest_path_len=" << ps_out.sp_len[cor_idx]
+                                          << ")\n";
+                            }                                                                             // <<<
                         }
                     };
 
@@ -267,11 +286,9 @@ NetworkPattern network::create_network(
                         if (r < p_curr[cor_idx]) { try_activate(); }
                         else { net.set(viz, 0); } // checado e falhou
                     } else {        // BOND real
-                        // Só ativa viz e abre a aresta se a ligação for aceita
                         if (r < p_curr[cor_idx]) { try_activate(); }
                         else {
-                            // ligação fechada: NÃO ativa viz e NÃO abre/une
-                            // (permanece tentável por outras fronteiras)
+                            // ligação fechada: não ativa
                         }
                     }
                 }
@@ -316,10 +333,17 @@ NetworkPattern network::create_network(
     ts_out.p_t = std::move(p_series);
     ts_out.Nt  = std::move(Nt_series);
     ts_out.t   = std::move(t_list);
-    ts_out.Smax = std::move(Smax_series);
-    ts_out.Ni   = std::move(Ni_series);
-    ts_out.chi  = std::move(chi_series);
 
+    if (DSU_calculate_) {
+        ts_out.Smax = std::move(Smax_series);
+        ts_out.Ni   = std::move(Ni_series);
+        ts_out.chi  = std::move(chi_series);
+    } else {
+        // sem DSU: manter vetores vazios (ou dimensões corretas vazias), como combinado
+        ts_out.Smax.assign(num_colors, {});
+        ts_out.Ni.assign(num_colors,   {});
+        ts_out.chi.assign(num_colors,  {});
+    }
 
     // copia rho
     ps_out.rho.clear();
@@ -327,6 +351,7 @@ NetworkPattern network::create_network(
 
     return net;
 }
+
 
 
 
