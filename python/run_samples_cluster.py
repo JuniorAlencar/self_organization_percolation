@@ -1,4 +1,4 @@
-from src.run_samples_cluster import *
+from src.run_samples_cluster_functions import *
 
 start = 0.001
 stop = 0.25
