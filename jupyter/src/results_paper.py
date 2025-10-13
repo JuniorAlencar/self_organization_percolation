@@ -32,6 +32,10 @@ def create_folder(folder_path):
     else:
         print(f"Folder already exists: {folder_path}")
 
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+
 def plot_bond_network(
     filepath,
     num_colors: int,
@@ -54,17 +58,64 @@ def plot_bond_network(
     if num_colors < 1:
         raise ValueError("num_colors deve ser >= 1")
 
-    # Define o conjunto de valores ativos conforme a regra solicitada
+    # --------- valores ativos (positivos) ---------
     if num_colors == 1:
         active_values = (1,)
     else:
         active_values = tuple(range(2, 2 + num_colors))
 
-    data = np.load(filepath)
-    network = data["network"].T  # “em pé”
+    # --------- carregar arquivo ---------
+    def _load_network_2d(path):
+        """
+        Retorna matriz 2D (nrows, ncols) de ints.
+        Aceita:
+          - .npz com chaves: data(1D), shape(1D), dim(esc.)   [novo formato]
+          - .npz com 'network' 2D (legado)
+          - .npy 2D
+        """
+        with np.load(path, allow_pickle=False) as z:
+            keys = set(z.files)
+            # Novo formato (.npz) com {data, shape, dim}
+            if {"data", "shape", "dim"} <= keys:
+                dim = int(np.array(z["dim"]).item())
+                if dim != 2:
+                    raise ValueError(f"plot_bond_network: dim={dim} não suportado para este plot (apenas 2D).")
+                shape = np.asarray(z["shape"]).astype(int)
+                if shape.ndim != 1 or shape.size != 2:
+                    raise ValueError(f"shape inválido: {shape}")
+                data = np.asarray(z["data"]).astype(np.int32, copy=False)
+                if data.size != int(shape[0]) * int(shape[1]):
+                    raise ValueError("Tamanho de 'data' inconsistente com 'shape'.")
+                net = data.reshape(int(shape[0]), int(shape[1]))  # C-order
+                return net  # já em (nrows, ncols)
+
+            # Legado: .npz com 'network' 2D
+            if "network" in keys:
+                net = np.array(z["network"])
+                if net.ndim != 2:
+                    raise ValueError("network não é 2D.")
+                # Seu código antigo transpunha: network = data["network"].T
+                # Mantemos o mesmo comportamento para compatibilidade:
+                return net.T
+
+            # Caso peculiar: .npz com um único array não padronizado
+            if len(keys) == 1:
+                arr = np.array(z[list(keys)[0]])
+                if arr.ndim == 2:
+                    return arr
+                raise ValueError("Arquivo .npz não possui chaves esperadas (data/shape/dim ou network).")
+
+        # Se for .npy (np.load em caminho .npy não retorna dict, cai fora do with)
+        # Tenta como .npy:
+        arr = np.load(path, allow_pickle=False)
+        if arr.ndim != 2:
+            raise ValueError("Arquivo .npy precisa ser 2D para este plot.")
+        return arr
+
+    network = _load_network_2d(filepath)
     nrows, ncols = network.shape
 
-    # Paleta padrão
+    # --------- paleta ---------
     if color_map is None:
         if num_colors == 1:
             color_map = {1: "0.4"}  # cinza
@@ -76,35 +127,40 @@ def plot_bond_network(
     segments_by_color = {val: [] for val in active_values}
     density_per_row = np.zeros(nrows, dtype=int)
 
-    # Varre e cria segmentos apenas se vizinho tem o MESMO valor ativo
+    # --------- varredura e criação de segmentos (apenas ligações MESMA cor ativa) ---------
+    # Observação: ligações horizontais e verticais (4-vizinhança)
     for i in range(nrows):
+        row = network[i]
         for j in range(ncols):
-            v = network[i, j]
+            v = row[j]
             if v in active_values:
                 # horizontal (direita)
-                if j + 1 < ncols and network[i, j + 1] == v:
+                if j + 1 < ncols and row[j + 1] == v:
                     segments_by_color[v].append([(j, i), (j + 1, i)])
                     density_per_row[i] += 1
-                # vertical (cima)
+                # vertical (baixo)
                 if i + 1 < nrows and network[i + 1, j] == v:
                     segments_by_color[v].append([(j, i), (j, i + 1)])
                     density_per_row[i] += 1
 
+    # --------- recorte por densidade mínima ---------
     active_rows = np.where(density_per_row >= min_density)[0]
     if active_rows.size == 0:
         print("[!] No row found with minimum density.")
         return
     row_start, row_end = active_rows[0], active_rows[-1]
 
-    # Recorte vertical
+    # filtra segmentos dentro do recorte vertical
     for val in active_values:
-        segments_by_color[val] = [
-            [(x0, y0), (x1, y1)]
-            for (x0, y0), (x1, y1) in segments_by_color[val]
-            if row_start <= y0 <= row_end and row_start <= y1 <= row_end
-        ]
+        segs = segments_by_color[val]
+        if segs:
+            segments_by_color[val] = [
+                [(x0, y0), (x1, y1)]
+                for (x0, y0), (x1, y1) in segs
+                if row_start <= y0 <= row_end and row_start <= y1 <= row_end
+            ]
 
-    # Plot
+    # --------- plot ---------
     fig, ax = plt.subplots(figsize=figsize)
     handles, labels = [], []
     for val in active_values:
@@ -112,10 +168,10 @@ def plot_bond_network(
         if not segs:
             continue
         lc = LineCollection(segs, colors=color_map.get(val, "black"),
-                            linewidths=linewidth, label=f"+{val}")
+                            linewidths=linewidth, label=f"{val:+d}")
         ax.add_collection(lc)
         handles.append(lc)
-        labels.append(f"+{val}")
+        labels.append(f"{val:+d}")
 
     ax.set_xlim(0, ncols)
     ax.set_ylim(row_end, row_start)
@@ -132,88 +188,6 @@ def plot_bond_network(
         print(f"[✔] Image saved to: {savepath}")
     else:
         plt.show()
-
-def plot_N_vs_t(npy_path, savepath=None):
-    """
-    Plota N(t) versus t a partir de um arquivo .npy contendo duas colunas: [t, N_t]
-    
-    Parâmetros:
-        npy_path (str): caminho do arquivo .npy
-        savepath (str, opcional): caminho para salvar a figura (formato .png, .pdf, etc.)
-    """
-    try:
-        data = np.load(npy_path)
-        
-        if data.ndim != 2 or data.shape[1] != 2:
-            raise ValueError(f"Formato inválido: esperado array (n, 2), recebido {data.shape}")
-        
-        t = data[:, 0]
-        N_t = data[:, 1]
-        
-        plt.figure(figsize=(6, 4))
-        plt.plot(t, N_t, '-o', markersize=2, linewidth=1, color='black')
-        plt.xlabel("t")
-        plt.ylabel("N(t)")
-        plt.title("Crescimento do número de sítios ativos")
-        plt.grid(True)
-        plt.tight_layout()
-
-        if savepath:
-            plt.savefig(savepath, dpi=300)
-            print(f"Figura salva em: {savepath}")
-        else:
-            plt.show()
-    
-    except Exception as e:
-        print(f"[Erro] Falha ao processar o arquivo '{npy_path}':\n{e}")
-
-def list_npy_files(type_percolation:str, dim:int, L:int, N_samples:int, type_Nt:int, Nt:int, k:float, prop:str):
-    """
-    Lists all '.npy' files in the specified directory.
-    Returns:
-        List of filenames ending with '.npy'
-    Raises:
-        FileNotFoundError: If the target directory does not exist.
-    """
-    if type_Nt == 0:
-        typeNt = "constant"
-    elif type_Nt == 1:
-        typeNt = "variable"
-    
-    if prop == "Nt":
-        folder_prop = "N_versus_t"
-    elif prop == "Pt":
-        folder_prop = "p_t"
-    else:
-        raise ValueError(f"[prop] must be 'Nt' or 'Pt'. Received: '{prop}'")
-    
-    folder = f"../Data/{type_percolation}_percolation/num_colors_1/dim_{dim}/L_{L}/NT_{typeNt}/NT_{Nt}/k_{k:.1e}/{folder_prop}/"
-
-    if not os.path.exists(folder):
-        raise FileNotFoundError(f"Folder not found: {folder}")
-    
-    npy_files = [folder + f for f in os.listdir(folder) if f.endswith('.csv')]
-    return npy_files
-
-def load_t_pt(filepath):
-    """
-    Carrega um arquivo .npy contendo duas colunas: t e p_t.
-
-    Parâmetros:
-        filepath (str): Caminho para o arquivo .npy.
-
-    Retorna:
-        t (np.ndarray): Vetor de tempos.
-        p_t (np.ndarray): Vetor de probabilidades p(t).
-    """
-    data = np.load(filepath)
-    
-    if data.shape[1] != 2:
-        raise ValueError(f"Esperado 2 colunas (t, p_t), mas encontrado {data.shape[1]}")
-    
-    t = data[:, 0]
-    p_t = data[:, 1]
-    return t, p_t
 
 
 import os, json
@@ -244,6 +218,7 @@ def read_orders_one_file(file_path):
             n_arr = n_arr[:n]
         out.append((int(order), p, n_arr))
     return out
+
 def data_single_sample(type_perc, num_colors, dim, L, Nt, k, rho, p0, seed):
     """
     Retorna dict com 't' e chaves 'p_i'/'N_i' APENAS para as ordens existentes no arquivo.
