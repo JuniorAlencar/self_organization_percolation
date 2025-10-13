@@ -170,7 +170,7 @@ int main(int argc, char* argv[]){
         std::ostringstream oss_net;
         oss_net << network_dir << "/P0_" << std::fixed << std::setprecision(2) << P0
                 << "_p0_" << std::fixed << std::setprecision(2) << pp0
-                << "_seed_" << seed << ".npy"; // writer grava .npy
+                << "_seed_" << seed << ".npz"; // writer grava .npy
 
         std::string json_filename = data_dir + oss_name.str();
         std::string net_filename  = oss_net.str();
@@ -179,7 +179,7 @@ int main(int argc, char* argv[]){
         save_data saver;
 
         // 1) rede (Numpy .npy)
-        //saver.save_network_as_npz(net, net_filename);
+        saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //    sort_by_order = true para ordenar por percolation_order

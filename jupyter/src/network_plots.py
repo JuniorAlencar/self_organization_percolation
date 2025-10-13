@@ -297,3 +297,162 @@ def plot_bond_network(
         print(f"[✔] Image saved to: {savepath}")
     else:
         plt.show()
+
+
+    
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+
+def plot_bond_network(
+    filepath,
+    num_colors: int,
+    savepath=None,
+    dpi=600,
+    min_density=1,
+    color_map=None,          # dict[int,str] opcional: {valor_ativo: cor}
+    linewidth=0.25,
+    figsize=(8, 10),
+    show_legend=True,
+    rotate_ccw90: bool = True,   # <<< novo: rotaciona 90° para a esquerda
+):
+    if num_colors < 1:
+        raise ValueError("num_colors deve ser >= 1")
+
+    # valores ativos (positivos)
+    active_values = (1,) if num_colors == 1 else tuple(range(2, 2 + num_colors))
+
+    # --- carregar arquivo (novo .npz, legado .npz com 'network', ou .npy 2D) ---
+    def _load_network_2d(path):
+        try:
+            with np.load(path, allow_pickle=False) as z:
+                keys = set(z.files)
+                if {"data", "shape", "dim"} <= keys:
+                    dim = int(np.array(z["dim"]).item())
+                    if dim != 2:
+                        raise ValueError(f"dim={dim} não suportado (apenas 2D).")
+                    shape = np.asarray(z["shape"]).astype(int)
+                    data  = np.asarray(z["data"]).astype(np.int32, copy=False)
+                    net   = data.reshape(int(shape[0]), int(shape[1]))  # C-order
+                    return net
+                if "network" in keys:
+                    # compatibilidade antiga
+                    return np.array(z["network"]).T
+                if len(keys) == 1:
+                    arr = np.array(z[list(keys)[0]])
+                    if arr.ndim == 2:
+                        return arr
+        except Exception:
+            # tenta .npy 2D
+            arr = np.load(path, allow_pickle=False)
+            if arr.ndim == 2:
+                return arr
+            raise
+        raise ValueError("Arquivo não possui chaves esperadas (data/shape/dim ou network).")
+
+    network = _load_network_2d(filepath)
+
+    # --- rotação solicitada: 90° para a esquerda (CCW) ---
+    if rotate_ccw90:
+        network = np.rot90(network, k=1)  # CCW
+
+    nrows, ncols = network.shape
+
+    # paleta
+    if color_map is None:
+        if num_colors == 1:
+            color_map = {1: "0.4"}
+        else:
+            base = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple",
+                    "tab:brown","tab:pink","tab:gray","tab:olive","tab:cyan"]
+            color_map = {val: base[(i % len(base))] for i, val in enumerate(active_values)}
+
+    segments_by_color = {val: [] for val in active_values}
+    density_per_row = np.zeros(nrows, dtype=int)
+
+    # varredura 4-vizinhança (mesma cor)
+    for i in range(nrows):
+        row = network[i]
+        for j in range(ncols):
+            v = row[j]
+            if v in active_values:
+                if j + 1 < ncols and row[j + 1] == v:            # horizontal
+                    segments_by_color[v].append([(j, i), (j + 1, i)])
+                    density_per_row[i] += 1
+                if i + 1 < nrows and network[i + 1, j] == v:      # vertical
+                    segments_by_color[v].append([(j, i), (j, i + 1)])
+                    density_per_row[i] += 1
+
+    # recorte por densidade mínima
+    active_rows = np.where(density_per_row >= min_density)[0]
+    if active_rows.size == 0:
+        print("[!] No row found with minimum density.")
+        return
+    row_start, row_end = active_rows[0], active_rows[-1]
+
+    for val in active_values:
+        segs = segments_by_color[val]
+        if segs:
+            segments_by_color[val] = [
+                [(x0, y0), (x1, y1)]
+                for (x0, y0), (x1, y1) in segs
+                if row_start <= y0 <= row_end and row_start <= y1 <= row_end
+            ]
+
+    # plot
+    fig, ax = plt.subplots(figsize=figsize)
+    handles, labels = [], []
+    for val in active_values:
+        segs = segments_by_color[val]
+        if not segs: 
+            continue
+        lc = LineCollection(segs, colors=color_map.get(val, "black"),
+                            linewidths=linewidth, label=f"{val:+d}")
+        ax.add_collection(lc)
+        handles.append(lc)
+        labels.append(f"{val:+d}")
+
+    ax.set_xlim(0, ncols)
+    ax.set_ylim(nrows, 0)   # linha 0 no topo; nada de invert_yaxis()
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    # if show_legend and handles:
+    #     ax.legend(handles=handles, labels=labels, loc="upper right",
+    #               frameon=False, fontsize=8)
+
+    plt.tight_layout(pad=0)
+    if savepath:
+        plt.savefig(savepath, dpi=dpi, bbox_inches="tight", pad_inches=0)
+        print(f"[✔] Image saved to: {savepath}")
+    else:
+        plt.show()
+
+
+def list_npz_files(folder):
+    """
+    Lists all '.npz' files in the specified directory.
+    Returns:
+        List of filenames ending with '.npz'
+    Raises:
+        FileNotFoundError: If the target directory does not exist.
+    """
+    
+    if not os.path.exists(folder):
+        raise FileNotFoundError(f"Folder not found: {folder}")
+    
+    npz_files = [f for f in os.listdir(folder) if f.endswith('.npz')]
+    return npz_files
+
+def create_folder(folder_path):
+    """
+    Creates the folder if it does not already exist.
+
+    Args:
+        folder_path (str): Path to the folder to be created.
+    """
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder created: {folder_path}")
+    else:
+        print(f"Folder already exists: {folder_path}")
