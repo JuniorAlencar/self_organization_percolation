@@ -840,3 +840,16 @@ def infer_p0_from_filename(path_json: str | Path) -> float | None:
 # bundle, p0_index_like = load_perc_json(bundle_path + filename)
 # orders = sorted(p0_index_like.keys())  # ex.: [1,2,3,4]
 # p0_index[int(p0_value)][int(order)]
+
+def load_bundle(path_json: str | Path):
+    path_json = Path(path_json)
+    with path_json.open("r") as f:
+        bundle = json.load(f)
+
+    # índice rápido: p0_value -> (order -> data_dict)
+    p0_index = {}
+    for g in bundle["p0_groups"]:
+        p0 = float(g["p0_value"])
+        orders = { int(o["order_percolation"]): o["data"] for o in g["orders"] }
+        p0_index[p0] = orders
+    return bundle, p0_index

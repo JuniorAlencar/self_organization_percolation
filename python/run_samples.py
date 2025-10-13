@@ -1,14 +1,14 @@
 from src.run_samples_functions import *
 
 num_runs = 50
-stop = 0.00001
-start = 0.001
+stop = 0.25
+start = 0.0001
 n_points = 200
 rho = custom_range(start, stop, n_points)
 
 
 type_perc = 'bond'
-num_colors = 2
+num_colors = 4
 dim = 3
 L = 512 
 NT = 26000
