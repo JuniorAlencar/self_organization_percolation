@@ -17,7 +17,8 @@ from pathlib import Path
 from scipy.interpolate import interp1d
 import numpy as np
 from collections import defaultdict
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
+import pandas as pd
 
 # ============================================================
 # Paths / Regex helpers
@@ -781,15 +782,15 @@ def compute_means_for_folder(
     print(f"[salvo] {out_path}")
     return out_path
 
-    # LOAD ONE FILE JSON
+# LOAD ONE FILE JSON
 
-    def _safe_series(d: dict) -> dict:
-        """Garante presença de chaves opcionais como listas vazias."""
-        out = dict(d)
-        out.setdefault("Smax", [])
-        out.setdefault("Ni",   [])
-        out.setdefault("chi",  [])
-        return out
+def _safe_series(d: dict) -> dict:
+    """Garante presença de chaves opcionais como listas vazias."""
+    out = dict(d)
+    out.setdefault("Smax", [])
+    out.setdefault("Ni",   [])
+    out.setdefault("chi",  [])
+    return out
 
 def load_perc_json(path_json: str | Path) -> Tuple[dict, Dict[int, dict]]:
     """
@@ -853,3 +854,351 @@ def load_bundle(path_json: str | Path):
         orders = { int(o["order_percolation"]): o["data"] for o in g["orders"] }
         p0_index[p0] = orders
     return bundle, p0_index
+
+
+def load_bundle_old(
+    filepath: str | Path,
+    *,
+    include_nt: bool = True
+) -> Tuple[List[Dict[str, Any]], pd.DataFrame]:
+    """
+    Lê um arquivo .json de simulação e retorna:
+      - metas: lista de dicts com metadados por 'order_percolation'
+      - df: DataFrame longo com colunas ['order','t','pt','nt'] (nt pode vir NaN)
+
+    Parâmetros
+    ----------
+    filepath : str | Path
+        Caminho do arquivo JSON.
+    include_nt : bool
+        Se True, tenta carregar a série 'nt' quando existir; caso contrário, preenche NaN.
+
+    Retorno
+    -------
+    metas : list[dict]
+        Para cada entrada em 'results', inclui:
+        {'order', 'color', 'rho', 'M_size', 'time_percolation', 'n_time', 'has_nt'}.
+    df : pandas.DataFrame
+        Linhas por tempo: colunas ['order','t','pt','nt'] (nt pode ser NaN).
+    """
+    filepath = Path(filepath)
+    with filepath.open("r", encoding="utf-8") as f:
+        obj = json.load(f)
+
+    if not isinstance(obj, dict) or "results" not in obj or not isinstance(obj["results"], list):
+        raise ValueError("JSON inesperado: não achei lista 'results'.")
+
+    metas: List[Dict[str, Any]] = []
+    rows = []
+
+    for item in obj["results"]:
+        order = item.get("order_percolation")
+        d = item.get("data", {})
+        if order is None or not isinstance(d, dict):
+            continue
+
+        time = d.get("time", None)
+        pt   = d.get("pt", None)
+        nt   = d.get("nt", None) if include_nt else None
+
+        # Converte para arrays, se existirem
+        time = np.asarray(time) if time is not None else None
+        pt   = np.asarray(pt)   if pt   is not None else None
+        nt   = np.asarray(nt)   if nt   is not None else None
+
+        # Valida tamanhos mínimos
+        if time is None or pt is None:
+            # sem séries, apenas meta
+            n_time = 0
+        else:
+            n_time = int(min(len(time), len(pt)))
+            if nt is not None:
+                n_time = int(min(n_time, len(nt)))
+            # recorta para o mesmo comprimento
+            time = time[:n_time]
+            pt   = pt[:n_time]
+            if nt is not None:
+                nt = nt[:n_time]
+
+            # Empilha linhas
+            if n_time > 0:
+                if nt is None:
+                    # sem nt: preenche NaN
+                    for t, p in zip(time, pt):
+                        rows.append((int(order), int(t), float(p), np.nan))
+                else:
+                    for t, p, n in zip(time, pt, nt):
+                        rows.append((int(order), int(t), float(p), float(n)))
+
+        metas.append({
+            "order": int(order),
+            "color": d.get("color", None),
+            "rho": d.get("rho", None),
+            "M_size": d.get("M_size", None),
+            "time_percolation": d.get("time_percolation", None),
+            "n_time": n_time,
+            "has_nt": (nt is not None)
+        })
+
+    df = pd.DataFrame(rows, columns=["order", "t", "pt", "nt"]) if rows else \
+         pd.DataFrame(columns=["order", "t", "pt", "nt"])
+
+    return metas, df
+
+# AVARAGE TO OLD STRUCT JSON
+
+# -----------------------------
+# Helpers para parsing/carregamento
+# -----------------------------
+
+_FNAME_RE = re.compile(
+    r"P0_(?P<P0>[-+]?\d+(?:\.\d+)?)_p0_(?P<p0>[-+]?\d+(?:\.\d+)?)_seed_(?P<seed>\d+)\.json$",
+    re.IGNORECASE
+)
+
+def _parse_fname(filepath: str) -> Optional[Tuple[float, float, int]]:
+    """Extrai (P0, p0, seed) do nome do arquivo."""
+    m = _FNAME_RE.search(os.path.basename(filepath))
+    if not m:
+        return None
+    try:
+        P0 = float(m.group("P0"))
+        p0 = float(m.group("p0"))
+        seed = int(m.group("seed"))
+        return (P0, p0, seed)
+    except Exception:
+        return None
+
+
+def _load_orders_new(filepath: str) -> Dict[int, Dict[str, Any]]:
+    """
+    Lê um JSON no novo formato e devolve:
+       { order: {"time": [...], "pt":[...], "nt":[...]?, "M_size": escalar?, "time_percolation": escalar?} }
+    """
+    with open(filepath, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+
+    if not isinstance(obj, dict) or "results" not in obj or not isinstance(obj["results"], list):
+        raise ValueError(f"JSON inesperado (sem 'results'): {filepath}")
+
+    out: Dict[int, Dict[str, Any]] = {}
+    for item in obj["results"]:
+        ordk = item.get("order_percolation", None)
+        data = item.get("data", {})
+        if ordk is None or not isinstance(data, dict):
+            continue
+
+        # Normaliza campos
+        time = data.get("time", [])
+        pt   = data.get("pt", [])
+        nt   = data.get("nt", None)  # opcional
+        Msz  = data.get("M_size", None)
+        tperc= data.get("time_percolation", None)
+
+        out[int(ordk)] = {
+            "time": list(time) if time is not None else [],
+            "pt":   list(pt)   if pt   is not None else [],
+            "nt":   (list(nt)  if nt   is not None else None),
+            "M_size": Msz,
+            "time_percolation": tperc,
+        }
+    return out
+
+
+def _mean_sem_1d(values: List[float]) -> Tuple[float, float, int]:
+    """média e SEM de uma lista (ignora None/NaN)."""
+    arr = np.asarray([v for v in values if v is not None and np.isfinite(v)], dtype=float)
+    n = int(arr.size)
+    if n == 0:
+        return (float("nan"), float("nan"), 0)
+    if n == 1:
+        return (float(arr.mean()), 0.0, 1)
+    return (float(arr.mean()), float(arr.std(ddof=1) / np.sqrt(n)), n)
+
+
+def _avg_series_across_seeds(items: List[Dict[str, Any]], key: str) -> Dict[str, Any]:
+    """
+    Média/SEM ao longo das seeds para uma SÉRIE (pt ou nt).
+    Alinha por índice (usa comprimento mínimo comum).
+    Retorna dict com time, <key>_mean, <key>_sem.
+    """
+    series = []
+    times  = []
+    for d in items:
+        s = d.get(key, None)
+        t = d.get("time", None)
+        if s is None or t is None:
+            continue
+        s = np.asarray(s, dtype=float)
+        t = np.asarray(t, dtype=int)
+        n = min(len(s), len(t))
+        if n > 0:
+            series.append(s[:n])
+            times.append(t[:n])
+
+    if not series:
+        return {"time": [], f"{key}_mean": [], f"{key}_sem": [], "n_seeds_series": 0}
+
+    # comprimentos podem variar; usa o mínimo comum
+    min_n = min(s.shape[0] for s in series)
+    series = [s[:min_n] for s in series]
+    times  = [tt[:min_n] for tt in times]
+
+    # assume tempos coerentes; se não, escolhe a primeira sequência
+    time_ref = times[0]
+    mat = np.stack(series, axis=0)  # (S, T)
+    mean = np.nanmean(mat, axis=0)
+    if mat.shape[0] > 1:
+        sem  = np.nanstd(mat, axis=0, ddof=1) / np.sqrt(mat.shape[0])
+    else:
+        sem  = np.zeros_like(mean)
+
+    return {
+        "time": time_ref.tolist(),
+        f"{key}_mean": mean.astype(float).tolist(),
+        f"{key}_sem":  sem.astype(float).tolist(),
+        "n_seeds_series": int(mat.shape[0])
+    }
+
+
+def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Faz a média para um conjunto de dicionários (uma por seed) de UMA dada ordem.
+    - Séries: pt (sempre), nt (se existir).
+    - Escalares: time_percolation e M_size (média e SEM).
+    """
+    # séries
+    pt_blk = _avg_series_across_seeds(lst, "pt")
+    nt_blk = _avg_series_across_seeds([d for d in lst if d.get("nt", None) is not None], "nt")
+
+    # escalares
+    m_tp, sem_tp, n_tp = _mean_sem_1d([d.get("time_percolation", None) for d in lst])
+    m_ms, sem_ms, n_ms = _mean_sem_1d([d.get("M_size", None) for d in lst])
+
+    out = {
+        "time": pt_blk["time"],
+
+        "pt_mean": pt_blk["pt_mean"],
+        "pt_sem":  pt_blk["pt_sem"],
+        "n_seeds_pt": pt_blk["n_seeds_series"],
+
+        # nt pode não existir
+        "nt_mean": nt_blk.get("nt_mean", []),
+        "nt_sem":  nt_blk.get("nt_sem", []),
+        "n_seeds_nt": nt_blk.get("n_seeds_series", 0),
+
+        "time_percolation_mean": m_tp,
+        "time_percolation_sem":  sem_tp,
+        "n_seeds_time_perc":     n_tp,
+
+        "M_size_mean": m_ms,
+        "M_size_sem":  sem_ms,
+        "n_seeds_M_size": n_ms,
+    }
+    return out
+
+
+# -------------------------------------------------------
+# Função principal: versão análoga para o novo JSON
+# -------------------------------------------------------
+
+def compute_means_for_folder_new(
+    type_perc: str,
+    num_colors: int,
+    dim: int,
+    L: int,
+    NT: int,
+    k: float,
+    rho: float,
+    p0_list: List[float],
+) -> str:
+    """
+    Agrega todas as seeds para cada p0 em p0_list, alinha por order_percolation,
+    calcula médias e SEM:
+      - séries: pt (e nt se existir);
+      - escalares: time_percolation e M_size;
+    e salva UM arquivo 'properties_mean_bundle.json' uma pasta acima de 'data/'.
+    Retorna o caminho do JSON salvo.
+    """
+    base_dir = "../Data"
+    data_dir = os.path.join(
+        base_dir,
+        f"{type_perc}_percolation",
+        f"num_colors_{num_colors}",
+        f"dim_{dim}",
+        f"L_{L}",
+        "NT_constant",
+        f"NT_{NT}",
+        f"k_{k:.1e}",
+        f"rho_{rho:.4e}",
+        "data",
+    )
+    if not os.path.isdir(data_dir):
+        raise FileNotFoundError(f"Pasta de dados não encontrada: {data_dir}")
+
+    bundle = {
+        "meta": {
+            "type_perc": type_perc,
+            "num_colors": num_colors,
+            "dim": dim,
+            "L": L,
+            "NT": NT,
+            "k": float(k),
+            "rho": float(rho),
+            "base_dir": os.path.dirname(data_dir),  # uma pasta acima de 'data'
+        },
+        "p0_groups": []
+    }
+
+    for p0 in p0_list:
+        # padrão principal (2 casas decimais)
+        pattern = os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")
+        files = sorted(glob.glob(pattern))
+        if not files:
+            # fallback: 1 casa decimal
+            pattern2 = os.path.join(data_dir, f"P0_*_p0_{p0:.1f}_seed_*.json")
+            files = sorted(glob.glob(pattern2))
+
+        if not files:
+            print(f"[aviso] Sem arquivos para p0={p0:.2f} em {data_dir}")
+            continue
+
+        per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        seeds: List[int] = []
+
+        for fp in files:
+            parsed = _parse_fname(fp)
+            if not parsed:
+                continue
+            _, p0_val, seed = parsed
+            seeds.append(seed)
+
+            orders = _load_orders_new(fp)
+            for ordk, data in orders.items():
+                per_order[ordk].append(data)
+
+        # calcular médias por ordem
+        mean_by_order: Dict[int, Dict[str, Any]] = {}
+        for ordk, lst in per_order.items():
+            mean_by_order[ordk] = _average_by_order_new(lst)
+
+        orders_blocks = [
+            {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
+            for ordk in sorted(mean_by_order.keys())
+        ]
+        bundle["p0_groups"].append({
+            "p0_value": float(p0),
+            "num_seeds": len(set(seeds)),
+            "seeds": sorted(set(seeds)),
+            "orders": orders_blocks,
+        })
+
+        print(f"[ok] p0={p0:.2f}: {len(files)} arquivos agregados")
+
+    # salvar UMA pasta acima de 'data/'
+    out_dir = os.path.dirname(data_dir)
+    out_path = os.path.join(out_dir, "properties_mean_bundle.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(bundle, f, ensure_ascii=False, indent=2)
+    print(f"[salvo] {out_path}")
+    return out_path
