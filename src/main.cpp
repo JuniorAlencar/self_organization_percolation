@@ -74,7 +74,7 @@ int main(int argc, char* argv[]){
     try {
         int L = std::stoi(argv[1]);
         //int N_samples = stoi(argv[2]);
-        int N_samples = 50000;
+        int N_samples = 10000000;
         double pp0 = std::stod(argv[2]);
         int seed = std::stoi(argv[3]);
         std::string type_percolation = argv[4];
