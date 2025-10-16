@@ -19,14 +19,15 @@ num_colors=__NUM_COLORS__
 p0=__P0__
 rho_val=__RHO_VAL__
 num_execs=__NUM_EXECS__
-dsu_flag=__DSU_FLAG__
+dsu_flag=__DSU_FLAG__           # deve ser "True" ou "False" para o C++
 ram_limit_gb=__RAM_LIMIT_GB__
+seed_regex='__SEED_REGEX__'
+seed_group_idx=__SEED_GROUP_IDX__
 
 # ====== controle de threads (evita multiplicar consumo)
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 
 # ====== saída ======
-# Caminho ABSOLUTO baseado no diretório do próprio .sh
 OUTDIR="./RunningStatisticals"
 mkdir -p "$OUTDIR"
 
@@ -40,64 +41,112 @@ init_outfile() {
   [[ -f "$f" ]] || echo "Seed Rho MemoryUsed TimeRun" > "$f"
 }
 
-# HH:MM:SS[.m] -> segundos
-hms_to_seconds() {
-  awk -v t="$1" 'BEGIN{n=split(t,a,":"); s=0;
-    if(n==3) s=a[1]*3600+a[2]*60+a[3];
-    else if(n==2) s=a[1]*60+a[2];
-    else s=a[1];
-    printf "%.6f", s+0.0
-  }'
+detect_time_cmd() {
+  if command -v gtime >/dev/null 2>&1; then echo "gtime"; return; fi
+  if command -v /usr/bin/time >/dev/null 2>&1 && /usr/bin/time --version 2>&1 | grep -qi gnu; then echo "/usr/bin/time"; return; fi
+  if command -v time >/dev/null 2>&1 && time --version 2>&1 | grep -qi gnu; then echo "time"; return; fi
+  echo ""
 }
 
-# Extrai um inteiro de "seed" de um log arbitrário
+# tenta extrair seed do log com várias heurísticas
 extract_seed() {
-  local txt="$1"
-  local s
-  s="$(printf "%s" "$txt" | grep -Eoi 'seed[^0-9-]*(-?[0-9]+)' | tail -n1 | grep -Eo '(-?[0-9]+)' || true)"
-  if [[ -z "$s" ]]; then
-    s="$(printf "%s" "$txt" | grep -Eo '[0-9]{4,}' | head -n1 || true)"
+  local log="$1"
+  local rgx="$2"
+  local grp="$3"
+  local s=""
+
+  # 1) regex custom (se usuário passou)
+  if [[ -n "$rgx" ]]; then
+    s="$(printf "%s" "$log" | perl -0777 -ne 'print $& if m/'"$rgx"'/s' 2>/dev/null || true)"
+    if [[ -n "$s" ]]; then
+      s="$(printf "%s" "$s" | grep -Eo '(-?0x[0-9A-Fa-f]+|-?[0-9]+)' | head -n1 || true)"
+      [[ -n "$s" ]] && { printf "%s" "$s"; return; }
+    fi
   fi
+
+  # 2) padrões comuns próximos a "seed"
+  s="$(printf "%s" "$log" \
+      | grep -Eio '(seed|rng|random(_)?seed|mt19937)[^0-9A-Fa-f-]*(-?0x[0-9A-Fa-f]+|-?[0-9]+)' \
+      | head -n1 \
+      | grep -Eo '(-?0x[0-9A-Fa-f]+|-?[0-9]+)' || true)"
+  if [[ -n "$s" ]]; then printf "%s" "$s"; return; fi
+
+  s="$(printf "%s" "$log" \
+      | grep -Eio '(seed|rng|random(_)?seed)\s*[:=]\s*(-?0x[0-9A-Fa-f]+|-?[0-9]+)' \
+      | head -n1 \
+      | grep -Eo '(-?0x[0-9A-Fa-f]+|-?[0-9]+)' || true)"
+  if [[ -n "$s" ]]; then printf "%s" "$s"; return; fi
+
+  # 3) fallback: inteiro "grande"
+  s="$(printf "%s" "$log" | grep -Eo '(-?[0-9]{6,})' | head -n1 || true)"
   [[ -z "$s" ]] && s="UNKNOWN"
   printf "%s" "$s"
 }
 
-# Roda UMA realização (seed = -1) e grava: Seed Rho RAM(GB) Tempo(s)
+# Roda UMA realização e grava: Seed Rho RAM(GB) Tempo(s)
+# Args: L k Nt
 run_one() {
   local L="$1"
   local k="$2"
   local Nt="$3"
 
-  local out="$(outfile_for "$L")"
+  local out tf_time tf_log TIME_CMD EXIT_K secs mem_gb
+  out="$(outfile_for "$L")"
   init_outfile "$out"
 
-  # seed = -1 para gerar internamente
+  # seed = -1 (C++ gera internamente)
   cmd=("$BIN" "$L" "$p0" "-1" "$type_perc" "$k" "$Nt" "$dim" "$num_colors" "$rho_val" "$dsu_flag")
 
-  local tf_time tf_log
   tf_time="$(mktemp)"; tf_log="$(mktemp)"
   trap 'rm -f "$tf_time" "$tf_log"' RETURN
 
-  if command -v /usr/bin/time >/dev/null 2>&1; then
-    /usr/bin/time -f '%E %M %x' -o "$tf_time" "${cmd[@]}" >"$tf_log" 2>&1
-    read -r WALL_K RSS_K EXIT_K < "$tf_time"
-    secs="$(hms_to_seconds "$WALL_K")"
-    mem_gb="$(awk -v k="$RSS_K" 'BEGIN{printf "%.6f", k/1048576}')"
-    seed_detected="$(extract_seed "$(cat "$tf_log")")"
-    echo "$seed_detected $rho_val $mem_gb $secs" >> "$out"
+  TIME_CMD="$(detect_time_cmd)"
+
+  # mede wallclock manual também, para o caso do time não escrever nada
+  local start_ns end_ns
+  start_ns=$(date +%s%N)
+  if [[ -n "$TIME_CMD" ]]; then
+    LC_ALL=C "$TIME_CMD" -f '%e %M %x' -o "$tf_time" "${cmd[@]}" >"$tf_log" 2>&1 || true
   else
-    start_ns=$(date +%s%N)
-    "${cmd[@]}" >"$tf_log" 2>&1
-    end_ns=$(date +%s%N)
-    dt_ms=$(( (end_ns - start_ns)/1000000 ))
-    secs=$(awk -v ms="$dt_ms" 'BEGIN{printf "%.6f", ms/1000.0}')
-    seed_detected="$(extract_seed "$(cat "$tf_log")")"
-    echo "$seed_detected $rho_val NaN $secs" >> "$out"
+    "${cmd[@]}" >"$tf_log" 2>&1 || true
   fi
+  end_ns=$(date +%s%N)
+
+  secs=""
+  mem_gb=""
+
+  if [[ -s "$tf_time" ]]; then
+    read -r SECS_K RSS_K EXIT_K < "$tf_time" || true
+    : "${SECS_K:=0}"; : "${RSS_K:=0}"; : "${EXIT_K:=0}"
+    secs="$(awk -v s="$SECS_K" 'BEGIN{printf "%.6f", s+0.0}')"
+    mem_gb="$(awk -v k="$RSS_K" 'BEGIN{printf "%.6f", k/1048576}')"
+  fi
+
+  # Fallback se time não escreveu (ou escreveu lixo)
+  if [[ -z "${secs:-}" || "$secs" = "0" ]]; then
+    local dt_ms=$(( (end_ns - start_ns)/1000000 ))
+    secs=$(awk -v ms="$dt_ms" 'BEGIN{printf "%.6f", ms/1000.0}')
+  fi
+  if [[ -z "${mem_gb:-}" ]]; then
+    mem_gb="NaN"
+  fi
+
+  # tenta extrair seed do log
+  seed_detected="$(extract_seed "$(cat "$tf_log")" "$seed_regex" "$seed_group_idx")"
+
+  # se o binário retornou erro, marca FAIL:<seed>
+  if grep -qE 'Segmentation fault|Aborted|exception|usage:|invalid|erro|error' "$tf_log"; then
+    EXIT_K=1
+  fi
+  if [[ "${EXIT_K:-0}" != "0" ]]; then
+    seed_detected="FAIL:${seed_detected}"
+  fi
+
+  echo "$seed_detected $rho_val $mem_gb $secs" >> "$out"
 }
 
 # ====== Grupos por memória estimada ======
-# Cada linha do bloco abaixo: L k Nt mem_gb
+# Colunas: L k Nt mem_gb
 TMP_BASE="$(mktemp)"; trap 'rm -f "$TMP_BASE" $TMP_BASE.*' EXIT
 
 # Bloco JOBS (preenchido pelo Python):
@@ -107,9 +156,8 @@ __JOBS_BLOCK__
 nproc_sys=$(nproc)
 mem_keys=$(awk '{print $4}' "$TMP_BASE" | sort -u)
 
-# ====== exporta variáveis para ambientes filhos (parallel/xargs) ======
-export type_perc dim num_colors p0 rho_val num_execs dsu_flag ram_limit_gb OUTDIR
-export -f run_one hms_to_seconds extract_seed outfile_for init_outfile
+export type_perc dim num_colors p0 rho_val num_execs dsu_flag ram_limit_gb OUTDIR seed_regex seed_group_idx
+export -f run_one outfile_for init_outfile detect_time_cmd extract_seed
 
 for mem in $mem_keys; do
   grp="$TMP_BASE.$mem"
@@ -120,10 +168,13 @@ for mem in $mem_keys; do
   if [[ $jobs_calc -gt $nproc_sys ]]; then jobs_calc=$nproc_sys; fi
 
   echo ">> Rodando grupo mem≈${mem}GB com -j $jobs_calc (limite RAM ${ram_limit_gb}GB, nproc ${nproc_sys})"
+
   if command -v parallel >/dev/null 2>&1; then
     parallel --bar -j "$jobs_calc" --colsep ' ' run_one {1} {2} {3} :::: "$grp"
   else
-    xargs -P "$jobs_calc" -n 4 -a "$grp" bash -lc 'run_one "$0" "$1" "$2"'
+    # xargs: passa L k Nt (ignora a 4ª coluna mem)
+    awk '{print $1, $2, $3}' "$grp" \
+    | xargs -P "$jobs_calc" -n 3 -I{} bash -lc 'set -- {}; run_one "$1" "$2" "$3"'
   fi
 done
 
@@ -131,7 +182,6 @@ echo "Concluído."
 """
 
 def detect_total_ram_gb():
-    """Lê /proc/meminfo e retorna RAM total em GB (float)."""
     try:
         with open("/proc/meminfo","r") as f:
             txt = f.read()
@@ -143,32 +193,41 @@ def detect_total_ram_gb():
         pass
     return 0.0
 
+def to_bool_str_for_cpp_pascal(val: str) -> str:
+    s = str(val).strip().lower()
+    if s in ("true","1","yes","y","t"):
+        return "True"
+    if s in ("false","0","no","n","f"):
+        return "False"
+    raise ValueError(f"Valor inválido para DSU_calculate: {val} (use True/False)")
+
 def main():
     ap = argparse.ArgumentParser(
-        description="Gera *apenas* o .sh em ./shells/ para medir tempo/RAM do SOP (seed=-1) em paralelo, com k/Nt/mem por L."
+        description="Gera *apenas* o .sh em ./shells/ para medir tempo/RAM do SOP mantendo seed=-1 (extraída do log)."
     )
     ap.add_argument("--L", nargs="+", required=True, help="Lista de L (ex.: --L 128 256 512 1024)")
     ap.add_argument("--k_list", nargs="+", required=True, help="Lista de k por L (mesmo tamanho de --L)")
     ap.add_argument("--Nt_list", nargs="+", required=True, help="Lista de Nt por L (mesmo tamanho de --L)")
-    ap.add_argument("--mem_list", nargs="*", help="Memória estimada por L (GB), mesmo tamanho de --L")
+    ap.add_argument("--mem_list", nargs="*", help="Memória estimada por L (GB), mesmo tamanho de --L)")
     ap.add_argument("--mem_per_job_gb", type=float, default=None, help="Memória estimada uniforme por job (GB) se --mem_list não for fornecida")
-    ap.add_argument("--ram_limit_gb", type=float, default=None, help="Limite de RAM global (GB); default = 90% da RAM total")
+    ap.add_argument("--ram_limit_gb", type=float, default=None, help="Limite de RAM global (GB); default = 90%% da RAM total")
     ap.add_argument("--p0", type=float, required=True)
     ap.add_argument("--type_perc", choices=["bond", "node"], required=True)
     ap.add_argument("--dim", type=int, choices=[2,3], required=True)
     ap.add_argument("--num_colors", type=int, required=True)
     ap.add_argument("--rho_val", type=float, required=True)
-    ap.add_argument("--DSU_calculate", type=str, choices=["True","False","true","false","1","0"], default="False")
+    ap.add_argument("--DSU_calculate", type=str, required=True, help="True/False (vai virar exatamente True/False no C++)")
     ap.add_argument("--Num_execs", type=int, default=1)
-    ap.add_argument("--out", default="run_stats.sh", help="Nome do shell (será salvo em ./shells/)")
+    ap.add_argument("--out", default="run_stats.sh", help="Nome do shell (salvo em ./shells/)")
+    ap.add_argument("--seed_regex", type=str, default="", help="Regex custom para extrair seed do log (opcional). Ex.: 'SEED[:=]\\s*([0-9]+)'")
+    ap.add_argument("--seed_group_idx", type=int, default=1, help="Índice do grupo capturado na regex custom (se aplicável)")
     args = ap.parse_args()
 
-    # validações
     if not (len(args.L) == len(args.k_list) == len(args.Nt_list)):
         print("Erro: --L, --k_list e --Nt_list devem ter o MESMO tamanho.", file=sys.stderr)
         sys.exit(2)
 
-    # memória estimada por L
+    # mem_list
     if args.mem_list:
         if len(args.mem_list) != len(args.L):
             print("Erro: --mem_list deve ter o MESMO tamanho de --L.", file=sys.stderr)
@@ -178,16 +237,17 @@ def main():
         mem_per = 4.0 if args.mem_per_job_gb is None else float(args.mem_per_job_gb)
         mem_list = [mem_per] * len(args.L)
 
-    # limite de RAM global
+    # limite RAM
     if args.ram_limit_gb is None:
         total = detect_total_ram_gb()
-        ram_limit = max(1.0, 0.9 * total)  # 90% do total (mínimo 1GB)
+        ram_limit = max(1.0, 0.9 * total)
     else:
         ram_limit = float(args.ram_limit_gb)
 
-    dsu_flag = "1" if str(args.DSU_calculate).lower() in ("true","1") else "0"
+    # DSU flag → "True"/"False" (PascalCase), conforme seu C++
+    dsu_flag = to_bool_str_for_cpp_pascal(args.DSU_calculate)
 
-    # bloco de jobs: linhas "L k Nt mem_gb" repetidas Num_execs vezes
+    # bloco de jobs: linhas "L k Nt mem_gb"
     jobs_lines = []
     for L, k, Nt, mem_gb in zip(args.L, args.k_list, args.Nt_list, mem_list):
         for _ in range(int(args.Num_execs)):
@@ -196,7 +256,6 @@ def main():
             )
     jobs_block = "\n".join(jobs_lines)
 
-    # substituições seguras no template
     script = TEMPLATE
     script = script.replace("__TYPE_PERC__", shlex.quote(args.type_perc))
     script = script.replace("__DIM__", str(int(args.dim)))
@@ -204,11 +263,13 @@ def main():
     script = script.replace("__P0__", "{:.10g}".format(args.p0))
     script = script.replace("__RHO_VAL__", "{:.10g}".format(args.rho_val))
     script = script.replace("__NUM_EXECS__", str(int(args.Num_execs)))
-    script = script.replace("__DSU_FLAG__", "1" if dsu_flag == "1" else "0")
+    script = script.replace("__DSU_FLAG__", dsu_flag)  # exatamente "True"/"False"
     script = script.replace("__RAM_LIMIT_GB__", "{:.6g}".format(ram_limit))
+    seed_regex_escaped = args.seed_regex.replace("'", "'\"'\"'")
+    script = script.replace("__SEED_REGEX__", seed_regex_escaped)
+    script = script.replace("__SEED_GROUP_IDX__", str(int(args.seed_group_idx)))
     script = script.replace("__JOBS_BLOCK__", jobs_block)
 
-    # salva em ./shells/<out>
     out_name = args.out if args.out.endswith(".sh") else (args.out + ".sh")
     out_path = os.path.join("../shells", out_name)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -218,6 +279,9 @@ def main():
     os.chmod(out_path, os.stat(out_path).st_mode | stat.S_IEXEC)
     print(f"Shell gerado em: {out_path}")
     print(f"(limite de RAM configurado: {ram_limit:.2f} GB)")
+    print(f"(DSU flag -> C++): {dsu_flag}")
+    if args.seed_regex:
+        print(f"(Regex custom de seed): {args.seed_regex} (grupo {args.seed_group_idx})")
 
 if __name__ == "__main__":
     main()
