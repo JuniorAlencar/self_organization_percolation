@@ -1,14 +1,8 @@
 # Execute the code below
-python3 runner_time.py \
+python runner_time.py \
   --L 128 256 512 1024 \
   --k_list 1.0e-05 3.0e-06 8.0e-07 2.0e-07 \
   --Nt_list 1600 6500 26000 100000 \
-  --mem_list 0.5 1 3 12 \
-  --p0 0.10 \
-  --type_perc bond \
-  --dim 3 \
-  --num_colors 2 \
-  --rho_val 0.5 \
-  --DSU_calculate False \
-  --Num_execs 10 \
-  --out run_stats.sh
+  --mem_list 0.5 1.0 3.0 12.0 \
+  --p0 0.5 --type_perc node --dim 2 --num_colors 1 --rho_val 1.0 \
+  --DSU_calculate True --Num_execs 1 --out run_stats.sh

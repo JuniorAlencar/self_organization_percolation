@@ -1102,6 +1102,22 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
 # Função principal: versão análoga para o novo JSON
 # -------------------------------------------------------
 
+# --- helpers que você já tem em outro lugar ---
+# _parse_fname(fp) -> Optional[Tuple[float p0, float p0_val, int seed]]
+# _load_orders_new(fp) -> Dict[int, Dict[str, Any]]  # por ordem: {"t":..., "pt":..., "nt":...}
+# _average_by_order_new(lst) -> Dict[str, Any]       # média/SEM por ordem
+
+def _bootstrap_mean_across_samples(sample_means: np.ndarray, n_boot: int = 20000, rng_seed: int = 12345):
+    """Bootstrap ENTRE-SEEDS: amostra means com reposição e devolve (mu_boot, sd_boot)."""
+    sample_means = np.asarray(sample_means, dtype=float)
+    n = sample_means.size
+    if n == 0:
+        return np.nan, np.nan
+    rng = np.random.default_rng(rng_seed)
+    idx = rng.integers(0, n, size=(n_boot, n))
+    boot_means = sample_means[idx].mean(axis=1)
+    return float(boot_means.mean()), float(boot_means.std(ddof=1))
+
 def compute_means_for_folder_new(
     type_perc: str,
     num_colors: int,
@@ -1111,14 +1127,20 @@ def compute_means_for_folder_new(
     k: float,
     rho: float,
     p0_list: List[float],
+    *,
+    x_max: float | None = None,     # <- NOVO: limite temporal opcional (ex.: 5000)
+    n_boot: int = 20000,            # <- NOVO: iterações de bootstrap
+    rng_seed: int = 12345           # <- NOVO: semente do bootstrap
 ) -> str:
     """
     Agrega todas as seeds para cada p0 em p0_list, alinha por order_percolation,
     calcula médias e SEM:
       - séries: pt (e nt se existir);
       - escalares: time_percolation e M_size;
-    e salva UM arquivo 'properties_mean_bundle.json' uma pasta acima de 'data/'.
-    Retorna o caminho do JSON salvo.
+    Além disso, calcula e salva no JSON o p_{c,SOP} e seu desvio bootstrap ENTRE-SEEDS:
+      - Para cada seed, calcula a média temporal de pt (após concatenar todas as ordens);
+      - Faz bootstrap sobre esse conjunto de médias por seed.
+    Salva UM arquivo 'properties_mean_bundle.json' uma pasta acima de 'data/' e retorna o caminho.
     """
     base_dir = "../Data"
     data_dir = os.path.join(
@@ -1136,7 +1158,7 @@ def compute_means_for_folder_new(
     if not os.path.isdir(data_dir):
         raise FileNotFoundError(f"Pasta de dados não encontrada: {data_dir}")
 
-    bundle = {
+    bundle: Dict[str, Any] = {
         "meta": {
             "type_perc": type_perc,
             "num_colors": num_colors,
@@ -1146,18 +1168,18 @@ def compute_means_for_folder_new(
             "k": float(k),
             "rho": float(rho),
             "base_dir": os.path.dirname(data_dir),  # uma pasta acima de 'data'
+            "x_max_used": None if x_max is None else float(x_max),
+            "bootstrap": {"n_boot": int(n_boot), "rng_seed": int(rng_seed)},
         },
         "p0_groups": []
     }
 
     for p0 in p0_list:
-        # padrão principal (2 casas decimais)
+        # padrão principal (2 casas decimais) + fallback (1 casa decimal)
         pattern = os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")
-        files = sorted(glob.glob(pattern))
-        if not files:
-            # fallback: 1 casa decimal
-            pattern2 = os.path.join(data_dir, f"P0_*_p0_{p0:.1f}_seed_*.json")
-            files = sorted(glob.glob(pattern2))
+        files = sorted(glob.glob(pattern)) or sorted(
+            glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.1f}_seed_*.json"))
+        )
 
         if not files:
             print(f"[aviso] Sem arquivos para p0={p0:.2f} em {data_dir}")
@@ -1166,6 +1188,10 @@ def compute_means_for_folder_new(
         per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
         seeds: List[int] = []
 
+        # --- NOVO: acumular, por seed, todas as séries pt ao longo das ordens ---
+        pt_by_seed: Dict[int, list] = defaultdict(list)   # seed -> [pt_array, pt_array, ...]
+        t_by_seed: Dict[int, list]  = defaultdict(list)   # seed -> [t_array,  t_array,  ...]
+
         for fp in files:
             parsed = _parse_fname(fp)
             if not parsed:
@@ -1173,11 +1199,27 @@ def compute_means_for_folder_new(
             _, p0_val, seed = parsed
             seeds.append(seed)
 
-            orders = _load_orders_new(fp)
+            orders = _load_orders_new(fp)  # {ordk: {"t":..., "pt":..., "nt":...}}
             for ordk, data in orders.items():
                 per_order[ordk].append(data)
 
-        # calcular médias por ordem
+                # ---- acumular por seed para p_c,SOP ----
+                if "pt" in data:
+                    pt_arr = np.asarray(data["pt"], dtype=float)
+                    if "t" in data and data["t"] is not None:
+                        t_arr = np.asarray(data["t"], dtype=float)
+                    else:
+                        t_arr = np.arange(len(pt_arr), dtype=float)
+                    # aplicar x_max se fornecido
+                    if x_max is not None:
+                        msk = (t_arr <= x_max)
+                        pt_arr = pt_arr[msk]
+                        t_arr  = t_arr[msk]
+                    if pt_arr.size > 0:
+                        pt_by_seed[seed].append(pt_arr)
+                        t_by_seed[seed].append(t_arr)
+
+        # calcular médias por ordem (como antes)
         mean_by_order: Dict[int, Dict[str, Any]] = {}
         for ordk, lst in per_order.items():
             mean_by_order[ordk] = _average_by_order_new(lst)
@@ -1186,14 +1228,36 @@ def compute_means_for_folder_new(
             {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
             for ordk in sorted(mean_by_order.keys())
         ]
-        bundle["p0_groups"].append({
+
+        # -------- NOVO: p_{c,SOP} ENTRE-SEEDS (bootstrap) --------
+        # para cada seed: concatena todas as ordens e calcula <pt>_tempo (dessa seed)
+        seed_means: list[float] = []
+        for s in sorted(set(seeds)):
+            if s not in pt_by_seed or len(pt_by_seed[s]) == 0:
+                continue
+            pt_concat = np.concatenate(pt_by_seed[s])
+            if pt_concat.size > 0:
+                seed_means.append(float(np.mean(pt_concat)))
+
+        mu_boot, sd_boot = _bootstrap_mean_across_samples(np.array(seed_means, dtype=float),
+                                                          n_boot=n_boot, rng_seed=rng_seed)
+
+        p0_group = {
             "p0_value": float(p0),
             "num_seeds": len(set(seeds)),
             "seeds": sorted(set(seeds)),
             "orders": orders_blocks,
-        })
+            # bloco novo com p_{c,SOP}
+            "pc_sop": {
+                "mean": mu_boot,          # <pt> médio entre-seeds (bootstrap)
+                "std_boot": sd_boot,      # desvio dos meios bootstrap (incerteza entre-seeds)
+                "n_seeds": len(seed_means),
+                "n_boot": int(n_boot)
+            }
+        }
 
-        print(f"[ok] p0={p0:.2f}: {len(files)} arquivos agregados")
+        bundle["p0_groups"].append(p0_group)
+        print(f"[ok] p0={p0:.2f}: {len(files)} arquivos agregados | seeds={len(set(seeds))} | pc_SOP={mu_boot:.6f}±{sd_boot:.6f}")
 
     # salvar UMA pasta acima de 'data/'
     out_dir = os.path.dirname(data_dir)
@@ -1202,3 +1266,26 @@ def compute_means_for_folder_new(
         json.dump(bundle, f, ensure_ascii=False, indent=2)
     print(f"[salvo] {out_path}")
     return out_path
+
+
+# ---------- janela deslizante ----------
+def rolling_mean_std(t, y, window: int):
+    """
+    Retorna (t_centrado, media, desvio_padrao) para uma janela deslizante de tamanho 'window'.
+    A série resultante fica centrada na janela.
+    """
+    y = np.asarray(y, dtype=float)
+    t = np.asarray(t, dtype=float)
+    if window < 1 or window > len(y):
+        raise ValueError("window fora do intervalo válido")
+
+    c = np.cumsum(np.insert(y, 0, 0.0))
+    c2 = np.cumsum(np.insert(y*y, 0, 0.0))
+
+    mean = (c[window:] - c[:-window]) / window
+    var = (c2[window:] - c2[:-window]) / window - mean**2
+    std = np.sqrt(np.clip(var, 0, None))
+
+    # centraliza no tempo (para janela par funciona como 'centered' padrão)
+    t_center = t[(window-1)//2 : len(t) - window//2]
+    return t_center, mean, std
