@@ -174,3 +174,135 @@ def custom_range(start: float, stop: float, n_points: int, ndigits: int = 8):
     xs[0]  = round(start, ndigits)     # força extremos exatos
     xs[-1] = round(stop, ndigits)
     return xs.tolist()
+
+
+import math
+from dataclasses import dataclass
+
+@dataclass
+class SOPParams:
+    L: int
+    d: int
+    n_c: int
+    epsilon0: float
+    kappa0: float
+    beta: float
+    NT_raw: float
+    NT: int
+    k_raw: float
+    k: float
+    k_str: str
+    notes: str
+
+def _round_sig(x: float, sig: int = 2) -> float:
+    if x == 0 or not math.isfinite(x):
+        return x
+    e = math.floor(math.log10(abs(x)))
+    factor = 10 ** (e - sig + 1)
+    return round(x / factor) * factor
+
+def _k_round_and_format(x: float, mantissa_decimals: int = 0):
+    """
+    Arredonda 'x' para mantissa científica inteira e retorna (k_float, k_str).
+    Ex.: 1.22e-05 -> (1e-05, '1e-05')    [mantissa_decimals=0]
+         8.62e-06 -> (9e-06,  '9e-06')
+         9.6e-07  -> (1e-06,  '1e-06')
+    Se mantissa_decimals=2, string vira '1.00e-05', '9.00e-06', etc.
+    """
+    if x == 0 or not math.isfinite(x):
+        s = f"{x:.{mantissa_decimals}e}"
+        return x, s
+
+    sign = -1 if x < 0 else 1
+    a = abs(x)
+    exp = math.floor(math.log10(a))
+    mant = a / (10 ** exp)               # 1 <= mant < 10
+    mant_i = int(round(mant))            # inteiro mais próximo
+
+    # Ajuste do caso 9.5.. -> 10 -> 1e(exp+1)
+    if mant_i == 0:
+        exp -= 1; mant_i = 1
+    if mant_i == 10:
+        mant_i = 1; exp += 1
+
+    k_float = sign * mant_i * (10 ** exp)
+    if mantissa_decials := mantissa_decimals:  # só para nome curto
+        k_str = f"{sign*mant_i:.{mantissa_decials}f}e{exp:+d}".replace("+0", "+").replace("-0", "-")
+    else:
+        # sem casas na mantissa (“inteira”)
+        k_str = f"{sign*mant_i:d}e{exp:+d}".replace("+0", "+").replace("-0", "-")
+
+def sop_choose_params(L: int,
+                      n_c: int,
+                      d: int = 3,
+                      beta: float = 0.5,
+                      epsilon0: float = 0.05,
+                      kappa0: float = 0.010) -> SOPParams:
+    """
+    Calcula N_T e k para o modelo SOP multicolor com N_T fixo por L.
+
+    Definições:
+      - Frente total por passo (global, indep. de n_c):
+          N_T_raw = epsilon0 * L^(d-1)
+      - Arredondamento de N_T: 2 algarismos significativos (p.ex., 819->820, 3277->3300)
+      - Ganho:
+          k_raw = (kappa0 * n_c**beta) / N_T
+      - Arredondamento de k: mantissa científica inteira (p.ex., 1.22e-05->1.00e-05)
+
+    Recomendações usuais:
+      - epsilon0 ∈ [0.03, 0.06]  (fração da área da frente)
+      - kappa0   ∈ [0.007, 0.015] (ganho adimensional alvo κ = k·N_T)
+      - beta = 0.0 (sem compensação), 0.5 (**recomendado**, compensação parcial) ou 1.0 (compensação total)
+
+    Parâmetros:
+      L       : tamanho linear da rede
+      n_c     : número de cores
+      d       : dimensão (padrão 3, então N_T ∝ L^(d-1) = L^2)
+      beta    : expoente de compensação por número de cores (default 0.5)
+      epsilon0: fração da frente (default 0.05)
+      kappa0  : ganho adimensional alvo (default 0.010)
+
+    Retorna:
+      SOPParams dataclass com NT_raw, NT (arredondado), k_raw, k (arredondado) e string k_str.
+    """
+    NT_raw = float(epsilon0) * (L ** (d - 1))
+    NT = int(_round_sig(NT_raw, sig=2))  # arredonda para 2 sig figs
+
+    # Ganho bruto e seu arredondamento especial
+    k_raw = (float(kappa0) * (n_c ** float(beta))) / NT if NT > 0 else float('nan')
+    k, k_str = _round_k_scientific(k_raw)
+
+    notes = (
+        f"Recomendados: epsilon0 ∈ [0.03, 0.06], kappa0 ∈ [0.007, 0.015], "
+        f"beta ∈ {{0.0 (sem compensação), 0.5 (parcial, recomendado), 1.0 (total)}}. "
+        f"Usado: epsilon0={epsilon0}, kappa0={kappa0}, beta={beta}. "
+        f"N_T é global (não depende de n_c); k cresce com n_c^beta."
+    )
+    return SOPParams(L=L, d=d, n_c=n_c,
+                     epsilon0=epsilon0, kappa0=kappa0, beta=beta,
+                     NT_raw=NT_raw, NT=NT,
+                     k_raw=k_raw, k=k, k_str=k_str,
+                     notes=notes)
+
+def sop_choose_NT_k(L: int,
+                    n_c: int,
+                    d: int = 3,
+                    beta: float = 0.5,
+                    epsilon0: float = 0.05,
+                    kappa0: float = 0.010,
+                    mantissa_decimals: int = 0):
+    """
+    Retorna (NT, k_float, k_str) com:
+      NT  = round_sig(epsilon0 * L^(d-1), 2)  # ex.: 819 -> 820; 3277 -> 3300
+      k   = (kappa0 * n_c**beta) / NT
+      k_str = k em notação científica com mantissa inteira ('3e-05' por padrão).
+    """
+    NT_raw = float(epsilon0) * (L ** (d - 1))
+    NT = int(_round_sig(NT_raw, sig=2))
+    k_raw = (float(kappa0) * (n_c ** float(beta))) / NT if NT > 0 else float('nan')
+    k_float, k_str = _k_round_and_format(k_raw, mantissa_decimals=mantissa_decimals)
+    return NT, k_float, k_str
+# -----------------------------
+# Exemplo de uso (comentado):
+# p = sop_choose_params(L=512, n_c=4)  # beta=0.5, epsilon0=0.05, kappa0=0.010
+# print(p.NT, p.k, p.k_str)

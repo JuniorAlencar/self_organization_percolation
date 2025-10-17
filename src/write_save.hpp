@@ -23,7 +23,7 @@ class save_data {
     public:
         // Salva o campo "net" em arquivo .npy (int32, C-order).
         // Mantém o nome da API anterior por compatibilidade.
-        void save_data::save_network_as_npz(const NetworkPattern& net,
+        void save_network_as_npz(const NetworkPattern& net,
                                     const std::string& filename) const;
 
         // Salva tudo em JSON (inclui séries p_t, Nt, M_t, M_t_total; eventos de percolação; SP).

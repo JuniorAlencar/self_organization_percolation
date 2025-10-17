@@ -73,8 +73,6 @@ int main(int argc, char* argv[]){
 
     try {
         int L = std::stoi(argv[1]);
-        //int N_samples = stoi(argv[2]);
-        int N_samples = 10000000;
         double pp0 = std::stod(argv[2]);
         int seed = std::stoi(argv[3]);
         std::string type_percolation = argv[4];
@@ -137,7 +135,7 @@ int main(int argc, char* argv[]){
         std::vector<double> rho(num_colors, rho_val);
         // prob. inicial por cor
         std::vector<double> p0(num_colors, pp0);
-
+        int N_samples = 10000000;
         network net_generator(N_samples, num_colors);
 
         // gera rede e séries
