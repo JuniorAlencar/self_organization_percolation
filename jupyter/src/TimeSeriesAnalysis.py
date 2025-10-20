@@ -855,7 +855,6 @@ def load_bundle(path_json: str | Path):
         p0_index[p0] = orders
     return bundle, p0_index
 
-
 def load_bundle_old(
     filepath: str | Path,
     *,
@@ -946,7 +945,6 @@ def load_bundle_old(
     return metas, df
 
 # AVARAGE TO OLD STRUCT JSON
-
 # -----------------------------
 # Helpers para parsing/carregamento
 # -----------------------------
@@ -1107,6 +1105,14 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
 # _load_orders_new(fp) -> Dict[int, Dict[str, Any]]  # por ordem: {"t":..., "pt":..., "nt":...}
 # _average_by_order_new(lst) -> Dict[str, Any]       # média/SEM por ordem
 
+import os, glob, json
+import numpy as np
+from collections import defaultdict
+from typing import List, Dict, Any
+
+# ----------------------------------------------------------
+# 1) helpers já existentes que você mencionou
+# ----------------------------------------------------------
 def _bootstrap_mean_across_samples(sample_means: np.ndarray, n_boot: int = 20000, rng_seed: int = 12345):
     """Bootstrap ENTRE-SEEDS: amostra means com reposição e devolve (mu_boot, sd_boot)."""
     sample_means = np.asarray(sample_means, dtype=float)
@@ -1118,6 +1124,167 @@ def _bootstrap_mean_across_samples(sample_means: np.ndarray, n_boot: int = 20000
     boot_means = sample_means[idx].mean(axis=1)
     return float(boot_means.mean()), float(boot_means.std(ddof=1))
 
+# ----------------------------------------------------------
+# 2) janela deslizante (como você forneceu)
+# ----------------------------------------------------------
+def rolling_mean_std(t, y, window: int):
+    """
+    Retorna (t_centrado, media, desvio_padrao) para uma janela deslizante de tamanho 'window'.
+    A série resultante fica centrada na janela.
+    """
+    y = np.asarray(y, dtype=float)
+    t = np.asarray(t, dtype=float)
+    if window < 1 or window > len(y):
+        raise ValueError("window fora do intervalo válido")
+
+    c  = np.cumsum(np.insert(y, 0, 0.0))
+    c2 = np.cumsum(np.insert(y*y, 0, 0.0))
+
+    mean = (c[window:] - c[:-window]) / window
+    var  = (c2[window:] - c2[:-window]) / window - mean**2
+    std  = np.sqrt(np.clip(var, 0, None))
+
+    # centraliza no tempo (para janela par funciona como 'centered' padrão)
+    t_center = t[(window-1)//2 : len(t) - window//2]
+    return t_center, mean, std
+
+# ----------------------------------------------------------
+# 3) novas rotinas auxiliares para o modo "entre-seeds (concatenado)"
+# ----------------------------------------------------------
+def _concat_seed_series_for_pc(pt_by_seed: Dict[int, List[np.ndarray]],
+                               t_by_seed: Dict[int, List[np.ndarray]],
+                               x_max: float | None) -> Dict[int, Dict[str, np.ndarray]]:
+    """
+    Concatena, por seed, as séries pt e t (já com x_max aplicado no loop de leitura),
+    retornando {seed: {"t": t_concat, "pt": pt_concat}} apenas para seeds com dados.
+    """
+    out = {}
+    for s, pts in pt_by_seed.items():
+        if len(pts) == 0: 
+            continue
+        ts = t_by_seed.get(s, [])
+        if len(ts) != len(pts):
+            # segurança extra
+            continue
+        t_concat  = np.concatenate(ts)
+        pt_concat = np.concatenate(pts)
+        if t_concat.size > 0 and pt_concat.size == t_concat.size:
+            out[s] = {"t": t_concat, "pt": pt_concat}
+    return out
+
+def _bootstrap_series_across_seeds(series_stack: np.ndarray,
+                                   n_boot: int,
+                                   rng_seed: int,
+                                   batch_size: int = 128,
+                                   use_float32: bool = True) -> (np.ndarray, np.ndarray):
+    """
+    Bootstrap ENTRE-SEEDS por ponto temporal, em streaming (sem alocar (n_boot, n_seeds, T)).
+    - series_stack: shape (n_seeds, T)
+    Retorna (mean_boot[T], std_boot[T]).
+    """
+    X = np.asarray(series_stack, dtype=np.float32 if use_float32 else np.float64)  # (n_seeds, T)
+    n_seeds, T = X.shape
+    rng = np.random.default_rng(rng_seed)
+
+    # estatísticas online (Welford) ao longo das réplicas de bootstrap
+    mean = np.zeros(T, dtype=np.float64)
+    M2   = np.zeros(T, dtype=np.float64)
+    count = 0
+
+    # probabilidades uniformes para a Multinomial (bootstrap clássico com reposição)
+    p = np.full(n_seeds, 1.0 / n_seeds, dtype=np.float64)
+
+    # processa em lotes pequenos para não estourar RAM
+    for start in range(0, n_boot, batch_size):
+        b = min(batch_size, n_boot - start)
+        # counts ~ Multinomial(n_seeds, p) para cada réplica (b, n_seeds)
+        counts = rng.multinomial(n_seeds, pvals=p, size=b)   # int32
+        # média bootstrap do tempo para cada réplica = (counts @ X) / n_seeds
+        # (b, n_seeds) @ (n_seeds, T) -> (b, T)
+        batch_means = (counts @ X) / float(n_seeds)
+
+        # atualiza estatísticas online por réplica
+        for i in range(b):
+            count += 1
+            delta = batch_means[i] - mean
+            mean += delta / count
+            M2   += delta * (batch_means[i] - mean)
+
+        # libera rápido memória temporária
+        del counts, batch_means
+
+    std = np.sqrt(M2 / (count - 1)) if count > 1 else np.zeros_like(mean)
+    return mean, std
+
+def _bootstrap_tail_mean_across_seeds(series_stack: np.ndarray,
+                                      t_center: np.ndarray,
+                                      *,
+                                      n_boot: int,
+                                      rng_seed: int,
+                                      tail_tmin: float | None = None,   # se dado, usa t >= tail_tmin
+                                      tail_frac: float | None = 0.2,    # senão, usa última fração (ex.: 20%)
+                                      batch_size: int = 128,
+                                      use_float32: bool = True) -> tuple[float, float, int]:
+    """
+    Bootstrap ENTRE-SEEDS para a MÉDIA DA CAUDA (escalar).
+    - series_stack: (n_seeds, T_comum) com as séries roladas por seed alinhadas
+    - t_center: (T_comum,) tempos centrais já alinhados
+    Retorna (mean_tail_boot, std_tail_boot, T_tail) onde T_tail é o nº de pontos usados na cauda.
+    """
+    X = np.asarray(series_stack, dtype=np.float32 if use_float32 else np.float64)
+    t_center = np.asarray(t_center, dtype=np.float64)
+    n_seeds, T = X.shape
+    assert t_center.shape[0] == T
+
+    # --- máscara de cauda ---
+    if tail_tmin is not None:
+        mask = (t_center >= float(tail_tmin))
+    else:
+        frac = 0.2 if tail_frac is None else float(tail_frac)
+        frac = min(max(frac, 0.0), 1.0)
+        start = int(round((1.0 - frac) * T))
+        mask = np.zeros(T, dtype=bool)
+        mask[start:] = True
+
+    T_tail = int(mask.sum())
+    if T_tail == 0:
+        return float('nan'), float('nan'), 0
+
+    rng = np.random.default_rng(rng_seed)
+    p = np.full(n_seeds, 1.0 / n_seeds, dtype=np.float64)
+
+    # estatísticas online (escalar por réplica)
+    mean = 0.0
+    M2 = 0.0
+    count = 0
+
+    for start in range(0, n_boot, batch_size):
+        b = min(batch_size, n_boot - start)
+        counts = rng.multinomial(n_seeds, pvals=p, size=b)  # (b, n_seeds)
+
+        # (b, n_seeds) @ (n_seeds, T) -> (b, T); média por seed
+        batch_means = (counts @ X) / float(n_seeds)
+
+        # média temporal RESTRITA à cauda -> vetor (b,)
+        tail_vals = batch_means[:, mask].mean(axis=1)
+
+        # Welford online
+        for v in tail_vals:
+            count += 1
+            delta = v - mean
+            mean += delta / count
+            M2   += delta * (v - mean)
+
+        del counts, batch_means, tail_vals
+
+    std = np.sqrt(M2 / (count - 1)) if count > 1 else 0.0
+    return float(mean), float(std), T_tail
+
+
+# ----------------------------------------------------------
+# 4) sua função principal, agora com suporte a janela deslizante
+#    - window_roll: int | None
+# ----------------------------------------------------------
 def compute_means_for_folder_new(
     type_perc: str,
     num_colors: int,
@@ -1128,19 +1295,21 @@ def compute_means_for_folder_new(
     rho: float,
     p0_list: List[float],
     *,
-    x_max: float | None = None,     # <- NOVO: limite temporal opcional (ex.: 5000)
-    n_boot: int = 20000,            # <- NOVO: iterações de bootstrap
-    rng_seed: int = 12345           # <- NOVO: semente do bootstrap
+    x_max: float | None = None,     # limite temporal opcional (ex.: 5000)
+    n_boot: int = 20000,            # iterações de bootstrap
+    rng_seed: int = 12345,          # semente do bootstrap
+    window_roll: int | None = None  # <- NOVO: tamanho da janela deslizante (ex.: 50). Se None, não calcula
 ) -> str:
     """
     Agrega todas as seeds para cada p0 em p0_list, alinha por order_percolation,
     calcula médias e SEM:
       - séries: pt (e nt se existir);
       - escalares: time_percolation e M_size;
-    Além disso, calcula e salva no JSON o p_{c,SOP} e seu desvio bootstrap ENTRE-SEEDS:
-      - Para cada seed, calcula a média temporal de pt (após concatenar todas as ordens);
-      - Faz bootstrap sobre esse conjunto de médias por seed.
-    Salva UM arquivo 'properties_mean_bundle.json' uma pasta acima de 'data/' e retorna o caminho.
+    Além disso, calcula e salva no JSON:
+      - p_{c,SOP} (bootstrap ENTRE-SEEDS, escalar)
+      - (NOVO) p_{c,SOP}^{roll}(t): série rolada com incerteza bootstrap ENTRE-SEEDS por ponto
+        em 'pc_sop_roll': {"t_center":[...], "mean":[...], "std_boot":[...], "n_seeds":..., "n_boot":..., "window":...}
+      - (NOVO) por ordem, 'orders -> data -> pt_mean_roll' calculado da série média da ordem.
     """
     base_dir = "../Data"
     data_dir = os.path.join(
@@ -1170,12 +1339,13 @@ def compute_means_for_folder_new(
             "base_dir": os.path.dirname(data_dir),  # uma pasta acima de 'data'
             "x_max_used": None if x_max is None else float(x_max),
             "bootstrap": {"n_boot": int(n_boot), "rng_seed": int(rng_seed)},
+            "rolling": {"window": None if window_roll is None else int(window_roll)}
         },
         "p0_groups": []
     }
 
     for p0 in p0_list:
-        # padrão principal (2 casas decimais) + fallback (1 casa decimal)
+        # padrão principal (2 casas) + fallback (1 casa)
         pattern = os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")
         files = sorted(glob.glob(pattern)) or sorted(
             glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.1f}_seed_*.json"))
@@ -1188,9 +1358,9 @@ def compute_means_for_folder_new(
         per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
         seeds: List[int] = []
 
-        # --- NOVO: acumular, por seed, todas as séries pt ao longo das ordens ---
-        pt_by_seed: Dict[int, list] = defaultdict(list)   # seed -> [pt_array, pt_array, ...]
-        t_by_seed: Dict[int, list]  = defaultdict(list)   # seed -> [t_array,  t_array,  ...]
+        # para p_c,SOP e p_c,SOP^roll (concatenado por seed)
+        pt_by_seed: Dict[int, List[np.ndarray]] = defaultdict(list)
+        t_by_seed:  Dict[int, List[np.ndarray]] = defaultdict(list)
 
         for fp in files:
             parsed = _parse_fname(fp)
@@ -1203,14 +1373,13 @@ def compute_means_for_folder_new(
             for ordk, data in orders.items():
                 per_order[ordk].append(data)
 
-                # ---- acumular por seed para p_c,SOP ----
+                # acumular por seed (para pc_sop e pc_sop_roll)
                 if "pt" in data:
                     pt_arr = np.asarray(data["pt"], dtype=float)
                     if "t" in data and data["t"] is not None:
                         t_arr = np.asarray(data["t"], dtype=float)
                     else:
                         t_arr = np.arange(len(pt_arr), dtype=float)
-                    # aplicar x_max se fornecido
                     if x_max is not None:
                         msk = (t_arr <= x_max)
                         pt_arr = pt_arr[msk]
@@ -1219,35 +1388,104 @@ def compute_means_for_folder_new(
                         pt_by_seed[seed].append(pt_arr)
                         t_by_seed[seed].append(t_arr)
 
-        # calcular médias por ordem (como antes)
+        # ---- médias por ordem (como antes) ----
         mean_by_order: Dict[int, Dict[str, Any]] = {}
         for ordk, lst in per_order.items():
             mean_by_order[ordk] = _average_by_order_new(lst)
+
+            # ---- NOVO: janela deslizante sobre a série média da ORDEM ----
+            if window_roll is not None:
+                data_ord = mean_by_order[ordk]
+                if "pt" in data_ord and "t" in data_ord and data_ord["pt"] is not None and data_ord["t"] is not None:
+                    t_ord = np.asarray(data_ord["t"], dtype=float)
+                    pt_ord_mean = np.asarray(data_ord["pt"], dtype=float)  # série média (já agregada entre arquivos)
+                    if len(pt_ord_mean) >= window_roll:
+                        t_c, mu_r, sd_r = rolling_mean_std(t_ord, pt_ord_mean, window_roll)
+                        # salva dentro do "data" da ordem
+                        mean_by_order[ordk]["pt_mean_roll"] = {
+                            "t_center": t_c.tolist(),
+                            "mean":     mu_r.tolist(),
+                            "std":      sd_r.tolist(),
+                            "window":   int(window_roll)
+                        }
 
         orders_blocks = [
             {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
             for ordk in sorted(mean_by_order.keys())
         ]
 
-        # -------- NOVO: p_{c,SOP} ENTRE-SEEDS (bootstrap) --------
-        # para cada seed: concatena todas as ordens e calcula <pt>_tempo (dessa seed)
+        # -------- p_{c,SOP} (igual ao seu) --------
+        # para cada seed: concatena ordens e calcula <pt>_tempo (seed)
         seed_means: list[float] = []
         for s in sorted(set(seeds)):
-            if s not in pt_by_seed or len(pt_by_seed[s]) == 0:
+            pts = pt_by_seed.get(s, [])
+            if len(pts) == 0: 
                 continue
-            pt_concat = np.concatenate(pt_by_seed[s])
+            pt_concat = np.concatenate(pts)
             if pt_concat.size > 0:
                 seed_means.append(float(np.mean(pt_concat)))
 
         mu_boot, sd_boot = _bootstrap_mean_across_samples(np.array(seed_means, dtype=float),
                                                           n_boot=n_boot, rng_seed=rng_seed)
 
+        # -------- NOVO: p_{c,SOP}^{roll}(t) ENTRE-SEEDS --------
+        pc_sop_roll_block = None
+        if window_roll is not None:
+            seed_series = _concat_seed_series_for_pc(pt_by_seed, t_by_seed, x_max)
+            # calcula série rolada por seed
+            rolled_means = []
+            rolled_times = []
+            for s in sorted(seed_series.keys()):
+                t_concat  = seed_series[s]["t"]
+                pt_concat = seed_series[s]["pt"]
+                if len(pt_concat) >= window_roll:
+                    t_c, mu_r, _ = rolling_mean_std(t_concat, pt_concat, window_roll)
+                    rolled_means.append(mu_r)    # (T_s,)
+                    rolled_times.append(t_c)     # (T_s,)
+
+            if len(rolled_means) > 0:
+                min_len = min(len(x) for x in rolled_means)
+                if min_len >= 1:
+                    M = np.stack([m[:min_len] for m in rolled_means], axis=0).astype(np.float32)   # (n_seeds_valid, T)
+                    Tstack   = np.stack([tc[:min_len] for tc in rolled_times], axis=0)
+                    t_center = np.median(Tstack, axis=0)
+
+                    mean_boot, std_boot_series = _bootstrap_series_across_seeds(
+                        M, n_boot=n_boot, rng_seed=rng_seed, batch_size=128, use_float32=True
+                    )
+
+                    # --- NOVO: média da cauda com erro bootstrap ENTRE-SEEDS (escalar) ---
+                    mean_tail, std_tail, T_tail = _bootstrap_tail_mean_across_seeds(
+                        M, t_center,
+                        n_boot=n_boot, rng_seed=rng_seed,
+                        tail_tmin=None,      # opcional: defina um t mínimo absoluto
+                        tail_frac=0.2,       # ex.: última 20% da série; ajuste a gosto
+                        batch_size=128, use_float32=True
+                    )
+
+                    pc_sop_roll_block = {
+                        "t_center": t_center.tolist(),
+                        "mean":     mean_boot.tolist(),
+                        "std_boot": std_boot_series.tolist(),
+                        "n_seeds":  int(M.shape[0]),
+                        "n_boot":   int(n_boot),
+                        "window":   int(window_roll),
+                        # ---- NOVO bloco resumido da cauda ----
+                        "tail_summary": {
+                            "mode": "frac",
+                            "tail_frac": 0.2,           # ou inclua "tail_tmin" se usar limite absoluto
+                            "T_used": T_tail,           # quantos pontos entraram na média da cauda
+                            "mean": mean_tail,          # média bootstrap ENTRE-SEEDS na cauda
+                            "std_boot": std_tail        # desvio bootstrap ENTRE-SEEDS dessa média
+                        }
+                    }
+
+
         p0_group = {
             "p0_value": float(p0),
             "num_seeds": len(set(seeds)),
             "seeds": sorted(set(seeds)),
             "orders": orders_blocks,
-            # bloco novo com p_{c,SOP}
             "pc_sop": {
                 "mean": mu_boot,          # <pt> médio entre-seeds (bootstrap)
                 "std_boot": sd_boot,      # desvio dos meios bootstrap (incerteza entre-seeds)
@@ -1255,9 +1493,14 @@ def compute_means_for_folder_new(
                 "n_boot": int(n_boot)
             }
         }
+        if pc_sop_roll_block is not None:
+            p0_group["pc_sop_roll"] = pc_sop_roll_block
 
         bundle["p0_groups"].append(p0_group)
-        print(f"[ok] p0={p0:.2f}: {len(files)} arquivos agregados | seeds={len(set(seeds))} | pc_SOP={mu_boot:.6f}±{sd_boot:.6f}")
+        msg_roll = ""
+        if pc_sop_roll_block is not None:
+            msg_roll = f" | pc_SOP^roll: T={len(pc_sop_roll_block['t_center'])}, seeds_valid={pc_sop_roll_block['n_seeds']}, win={pc_sop_roll_block['window']}"
+        print(f"[ok] p0={p0:.2f}: {len(files)} arquivos | seeds={len(set(seeds))} | pc_SOP={mu_boot:.6f}±{sd_boot:.6f}{msg_roll}")
 
     # salvar UMA pasta acima de 'data/'
     out_dir = os.path.dirname(data_dir)
@@ -1266,26 +1509,3 @@ def compute_means_for_folder_new(
         json.dump(bundle, f, ensure_ascii=False, indent=2)
     print(f"[salvo] {out_path}")
     return out_path
-
-
-# ---------- janela deslizante ----------
-def rolling_mean_std(t, y, window: int):
-    """
-    Retorna (t_centrado, media, desvio_padrao) para uma janela deslizante de tamanho 'window'.
-    A série resultante fica centrada na janela.
-    """
-    y = np.asarray(y, dtype=float)
-    t = np.asarray(t, dtype=float)
-    if window < 1 or window > len(y):
-        raise ValueError("window fora do intervalo válido")
-
-    c = np.cumsum(np.insert(y, 0, 0.0))
-    c2 = np.cumsum(np.insert(y*y, 0, 0.0))
-
-    mean = (c[window:] - c[:-window]) / window
-    var = (c2[window:] - c2[:-window]) / window - mean**2
-    std = np.sqrt(np.clip(var, 0, None))
-
-    # centraliza no tempo (para janela par funciona como 'centered' padrão)
-    t_center = t[(window-1)//2 : len(t) - window//2]
-    return t_center, mean, std
