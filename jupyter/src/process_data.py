@@ -1,3 +1,4 @@
+
 import re, os, json, glob, math
 import numpy as np
 import pandas as pd
@@ -88,7 +89,7 @@ def _first_existing(path_candidates):
 def read_orders_one_file(file_path):
     """
     Parse one JSON with a "results" list and return a list of tuples
-    (order, pt_array, nt_array_or_None, M_size_or_None).
+    (order, pt_array, nt_array_or_None, M_size_or_None, shortest_path_lin_or_None).
     """
     with open(file_path, "r") as f:
         obj = json.load(f)
@@ -103,12 +104,16 @@ def read_orders_one_file(file_path):
 
             p = np.asarray(d["pt"], float)
             n_arr = np.asarray(d["nt"], float) if "nt" in d else None
+            spl_arr = np.asarray(d.get("shortest_path_lin", []), float) if "shortest_path_lin" in d else None
 
             n = min(len(p), len(n_arr)) if n_arr is not None else len(p)
+            if spl_arr is not None and spl_arr.size > 0:
+                n = min(n, len(spl_arr))
             if n <= 0:
                 continue
             p = p[:n]
             n_arr = n_arr[:n] if n_arr is not None else None
+            spl_arr = spl_arr[:n] if (spl_arr is not None and spl_arr.size >= n) else spl_arr
 
             m_size = d.get("M_size", None)
             try:
@@ -116,7 +121,7 @@ def read_orders_one_file(file_path):
             except Exception:
                 m_size = None
 
-            out.append((int(order), p, n_arr, m_size))
+            out.append((int(order), p, n_arr, m_size, spl_arr))
     return out
 
 
@@ -152,6 +157,7 @@ BASE_COLS = [
     "num_samples","num_sample_perc",
     "pt_mean","pt_erro","nt_mean","nt_erro",
     "M_size_mean","M_size_erro",
+    "shortest_path_lin_mean","shortest_path_lin_erro",
     "perc_rate",
 ]
 
@@ -185,6 +191,7 @@ def parse_p0_from_filename(path):
 
 def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
     per_order_pt, per_order_nt, per_order_msize = {}, {}, {}
+    per_order_spl = {}
     any_seen = False
     processed_here = set()
 
@@ -200,7 +207,7 @@ def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
         if entries:
             any_seen = True
 
-        for order, p_arr, n_arr, m_size in entries:
+        for order, p_arr, n_arr, m_size, spl_arr in entries:
             n = len(p_arr)
             if n < 3:
                 continue
@@ -220,11 +227,17 @@ def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
             if m_size is not None and np.isfinite(m_size):
                 per_order_msize.setdefault(order, []).append(float(m_size))
 
-    if not any_seen and not per_order_pt and not per_order_nt and not per_order_msize:
+            if spl_arr is not None and np.size(spl_arr) > 0:
+                spl_stationary = spl_arr[start:]
+                if spl_stationary.size > 0:
+                    mean_spl, _, _, _ = sem_acf(spl_stationary)
+                    per_order_spl.setdefault(order, []).append(mean_spl)
+
+    if not any_seen and not per_order_pt and not per_order_nt and not per_order_msize and not per_order_spl:
         return {}, True, processed_here
 
     summary = {}
-    orders = sorted(set(list(per_order_pt.keys()) + list(per_order_nt.keys()) + list(per_order_msize.keys())))
+    orders = sorted(set(list(per_order_pt.keys()) + list(per_order_nt.keys()) + list(per_order_msize.keys()) + list(per_order_spl.keys())))
     for order in orders:
         mp = np.asarray(per_order_pt.get(order, []), float)
         Sp = len(mp)
@@ -241,7 +254,12 @@ def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
         msize_mean = float(ms.mean()) if Sm > 0 else np.nan
         msize_sem  = float(ms.std(ddof=1)/np.sqrt(Sm)) if Sm > 1 else (0.0 if Sm == 1 else np.nan)
 
-        n_contrib = Sp or Sn or Sm
+        spl = np.asarray(per_order_spl.get(order, []), float)
+        Ss = len(spl)
+        spl_mean = float(spl.mean()) if Ss > 0 else np.nan
+        spl_sem  = float(spl.std(ddof=1)/np.sqrt(Ss)) if Ss > 1 else (0.0 if Ss == 1 else np.nan)
+
+        n_contrib = Sp or Sn or Sm or Ss
         summary[order] = {
             "n_seeds_contributed": int(n_contrib),
             "pt_mean": pt_mean,
@@ -250,6 +268,8 @@ def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
             "nt_sem_between": nt_sem,
             "M_size_mean": msize_mean,
             "M_size_sem_between": msize_sem,
+            "shortest_path_lin_mean": spl_mean,
+            "shortest_path_lin_sem_between": spl_sem,
         }
     return summary, False, processed_here
 
@@ -286,7 +306,7 @@ def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint:
         processed |= set(processed_here)
         N = int(len(processed_here))
 
-        def append_row(order, M, pt_m, pt_e, nt_m, nt_e, msz_m, msz_e):
+        def append_row(order, M, pt_m, pt_e, nt_m, nt_e, msz_m, msz_e, spl_m, spl_e):
             q = (float(M) / float(N)) if N > 0 else np.nan
             rows.append({
                 "type_perc": meta["type_perc"], "num_colors": meta["num_colors"], "dim": meta["dim"],
@@ -295,21 +315,23 @@ def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint:
                 "num_samples": N, "num_sample_perc": int(M),
                 "pt_mean": pt_m, "pt_erro": pt_e, "nt_mean": nt_m, "nt_erro": nt_e,
                 "M_size_mean": msz_m, "M_size_erro": msz_e,
+                "shortest_path_lin_mean": spl_m, "shortest_path_lin_erro": spl_e,
                 "perc_rate": q,
             })
 
         if all_empty or not summary:
             for order in range(1, int(n_orders) + 1):
-                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
+                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
             continue
 
         for order in range(1, int(n_orders) + 1):
             if order in summary:
                 s = summary[order]
                 append_row(order, s["n_seeds_contributed"], s["pt_mean"], s["pt_sem_between"],
-                           s["nt_mean"], s["nt_sem_between"], s["M_size_mean"], s["M_size_sem_between"])
+                           s["nt_mean"], s["nt_sem_between"], s["M_size_mean"], s["M_size_sem_between"],
+                           s.get("shortest_path_lin_mean", np.nan), s.get("shortest_path_lin_sem_between", np.nan))
             else:
-                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
+                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
 
     df = pd.DataFrame(rows, columns=cols)
 
@@ -320,6 +342,7 @@ def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint:
         "num_samples","num_sample_perc",
         "pt_mean","pt_erro","nt_mean","nt_erro",
         "M_size_mean","M_size_erro",
+        "shortest_path_lin_mean","shortest_path_lin_erro",
         "perc_rate",
     ]
     for c in num_cols:
@@ -342,7 +365,8 @@ def process_with_guard(all_files,
                        burn_in_frac=0.2,
                        verbose=False,
                        path_hint: str | None = None,
-                       force_recompute: bool = False):
+                       force_recompute: bool = False,
+                       clean_outputs: bool = False):
     """Process a list of seed JSONs into a per-(p0,order) .dat and a TSV of per-file stats."""
     def _read_prev_names_first_column(path: Path) -> set[str]:
         if not path.exists():
@@ -377,15 +401,16 @@ def process_with_guard(all_files,
         except Exception:
             entries = []
         by_order = {}
-        for order, p_arr, n_arr, m_size in entries:
+        for order, p_arr, n_arr, m_size, spl_arr in entries:
             by_order[int(order)] = (
                 np.asarray(p_arr, float) if p_arr is not None else np.array([], float),
                 None if n_arr is None else np.asarray(n_arr, float),
                 m_size if (m_size is None or np.isfinite(m_size)) else None,
+                None if spl_arr is None else np.asarray(spl_arr, float),
             )
         for order in range(1, int(n_orders) + 1):
             if order in by_order:
-                p_arr, n_arr, m_size = by_order[order]
+                p_arr, n_arr, m_size, spl_arr = by_order[order]
                 n = len(p_arr)
                 start = int(burn_in_frac * n) if n > 0 else 0
                 if n > 0 and start < n:
@@ -406,6 +431,16 @@ def process_with_guard(all_files,
                     msize_mean, msize_sem = float(m_size), 0.0
                 else:
                     msize_mean, msize_sem = (np.nan, np.nan)
+                # shortest_path_lin per-file mean in stationary window
+                if spl_arr is not None and spl_arr.size > 0:
+                    ss = spl_arr[start:] if start < spl_arr.size else np.array([], float)
+                    if ss.size > 0:
+                        m_spl, _, _, _ = sem_acf(ss)
+                        spl_mean, spl_sem = float(m_spl), 0.0
+                    else:
+                        spl_mean, spl_sem = (np.nan, np.nan)
+                else:
+                    spl_mean, spl_sem = (np.nan, np.nan)
                 rows.append({
                     "filename": os.path.basename(file_path),
                     **base,
@@ -416,6 +451,7 @@ def process_with_guard(all_files,
                     "pt_mean": pt_mean, "pt_erro": pt_sem,
                     "nt_mean": nt_mean, "nt_erro": nt_sem,
                     "M_size_mean": msize_mean, "M_size_erro": msize_sem,
+                    "shortest_path_lin_mean": spl_mean, "shortest_path_lin_erro": spl_sem,
                     "perc_rate": 1.0,
                 })
             else:
@@ -429,6 +465,7 @@ def process_with_guard(all_files,
                     "pt_mean": np.nan, "pt_erro": np.nan,
                     "nt_mean": np.nan, "nt_erro": np.nan,
                     "M_size_mean": np.nan, "M_size_erro": np.nan,
+                    "shortest_path_lin_mean": np.nan, "shortest_path_lin_erro": np.nan,
                     "perc_rate": 0.0,
                 })
         return rows
@@ -444,6 +481,15 @@ def process_with_guard(all_files,
 
     out_dat_path = data_dir / Path(out_dat_path).name
     out_txt_path = data_dir / Path(out_txt_path).name
+
+    # Optional cleaning step to force full reprocessing and avoid stale outputs
+    if clean_outputs:
+        for candidate in {out_dat_path, out_txt_path, data_dir / 'all_data.dat', data_dir / 'process_names.txt', data_dir / 'process_name.txt'}:
+            try:
+                if candidate.exists():
+                    candidate.unlink()
+            except Exception:
+                pass
 
     if not all_files:
         all_files = [str(x) for x in sorted(data_dir.glob("*.json"))]
@@ -482,7 +528,9 @@ def process_with_guard(all_files,
                 "p0": np.nan, "order": np.nan,
                 "num_samples": np.nan, "num_sample_perc": np.nan,
                 "pt_mean": np.nan, "pt_erro": np.nan, "nt_mean": np.nan, "nt_erro": np.nan,
-                "M_size_mean": np.nan, "M_size_erro": np.nan, "perc_rate": np.nan,
+                "M_size_mean": np.nan, "M_size_erro": np.nan,
+                "shortest_path_lin_mean": np.nan, "shortest_path_lin_erro": np.nan,
+                "perc_rate": np.nan,
             })
             continue
         names_rows.extend(_per_file_rows(full, meta, n_orders, burn_in_frac=burn_in_frac))
@@ -500,7 +548,8 @@ def saving_data(all_data,
                 burn_in_frac=0.20,
                 verbose=False,
                 path_hint: str | None = None,
-                force_recompute: bool = False):
+                force_recompute: bool = False,
+                clean_outputs: bool = False):
     return process_with_guard(
         all_files=all_data,
         out_dat_path=output_data,
@@ -509,6 +558,7 @@ def saving_data(all_data,
         verbose=verbose,
         path_hint=path_hint,
         force_recompute=force_recompute,
+        clean_outputs=clean_outputs,
     )
 
 # =============================================================
@@ -632,7 +682,7 @@ def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
 
     num_cols = ["num_colors","dim","L","Nt","k","rho","p0","order",
                 "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
-                "M_size_mean","M_size_erro","perc_rate"]
+                "M_size_mean","M_size_erro","shortest_path_lin_mean","shortest_path_lin_erro","perc_rate"]
     for c in num_cols:
         if c in new_block.columns:
             new_block[c] = pd.to_numeric(new_block[c], errors="coerce")
@@ -685,7 +735,7 @@ def _latest_mtime_json(data_dir: Path) -> float:
 
 def crawl_and_process(base_root: str = "../Data", burn_in_frac: float = 0.20,
                       verbose: bool = True, force_recompute: bool = False,
-                      workers: int | None = None):
+                      workers: int | None = None, clean_outputs: bool = False):
     """
     1) Recursively find EVERY '.../data' folder under base_root;
     2) Run saving_data() inside it (produces all_data.dat + process_names.txt (TSV style));
@@ -714,7 +764,7 @@ def crawl_and_process(base_root: str = "../Data", burn_in_frac: float = 0.20,
                 except Exception:
                     out_mtime = 0.0
                 # If output newer than all inputs and names file exists -> fast skip
-                if out_mtime >= latest_json and out_txt.exists():
+                if out_mtime >= latest_json and out_txt.exists() and not clean_outputs:
                     if verbose:
                         print(f"[SKIP] Up-to-date by mtime: {data_dir}")
                     return (meta["type_perc"], meta["num_colors"], meta["dim"], meta["L"], meta["Nt"], meta["k"])  # still register tuple
@@ -730,6 +780,7 @@ def crawl_and_process(base_root: str = "../Data", burn_in_frac: float = 0.20,
                 verbose=verbose,
                 path_hint=str(data_dir),
                 force_recompute=force_recompute,
+                clean_outputs=clean_outputs,
             )
             return (meta["type_perc"], meta["num_colors"], meta["dim"], meta["L"], meta["Nt"], meta["k"])  # no rho
         except Exception as e:
@@ -820,11 +871,11 @@ def crawl_join_all_data(base_root: str = "../Data", verbose: bool = True,
 # =============================================================
 
 def run_processing_data(base_root: str = "../Data", *, force_recompute: bool = True,
-                        burn_in: float = 0.20, verbose: bool = True):
+                        burn_in: float = 0.20, verbose: bool = True, clean_outputs: bool = False):
     """Programmatic entry point (safe for notebooks)."""
     print("=== STEP 1: per-folder processing ===")
     _ = crawl_and_process(base_root=base_root, burn_in_frac=burn_in,
-                          verbose=verbose, force_recompute=force_recompute)
+                          verbose=verbose, force_recompute=force_recompute, clean_outputs=clean_outputs)
 
     print("=== STEP 2: global joins per (type,dim) ===")
     crawl_join_all_data(base_root=base_root, verbose=verbose)
@@ -840,6 +891,7 @@ def run_processing_data_cli(argv: list[str] | None = None):
     ap.add_argument("--no_force", action="store_true", help="Do not force recompute (default: force)")
     ap.add_argument("--burn_in", type=float, default=0.20, help="Burn-in fraction for pt/nt")
     ap.add_argument("--quiet", action="store_true", help="Less verbose logs")
+    ap.add_argument("--clean", action="store_true", help="Delete outputs before processing")
     # In notebooks, Jupyter passes its own args; use parse_known_args to avoid crashes
     if argv is None:
         args, _unknown = ap.parse_known_args()
@@ -849,7 +901,7 @@ def run_processing_data_cli(argv: list[str] | None = None):
     force = not args.no_force
     verbose = not args.quiet
     run_processing_data(base_root=args.base_root, force_recompute=force,
-                        burn_in=args.burn_in, verbose=verbose)
+                        burn_in=args.burn_in, verbose=verbose, clean_outputs=args.clean)
 
 
 # =============================================================

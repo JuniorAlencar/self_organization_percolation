@@ -102,6 +102,10 @@ public:
     void append_stats_row(std::vector<int>&   Smax_series,
                           std::vector<int>&   Ni_series,
                           std::vector<double>& chi_series) const;
+    
+    static PercolationMode percolation_mode_from_string(const std::string& s);
+    static const char*     to_string(PercolationMode m) noexcept;
+    int component_size_from_safe(int seed, PercolationMode mode, std::vector<int>* out_nodes = nullptr) const;
 };
 
 #endif // DSU_HPP

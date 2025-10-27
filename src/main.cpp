@@ -75,7 +75,7 @@ int main(int argc, char* argv[]){
         int L = std::stoi(argv[1]);
         double pp0 = std::stod(argv[2]);
         int seed = std::stoi(argv[3]);
-        std::string type_percolation = argv[4];
+        string type_percolation = argv[4];
         double k = std::stod(argv[5]);    // 1.0e-04
         int N_t = std::stoi(argv[6]);     // 200
         int dim = std::stoi(argv[7]);     // 2
@@ -148,7 +148,6 @@ int main(int argc, char* argv[]){
         std::cerr << "[DBG] ps sizes -> "
                   << "order=" << ps.percolation_order.size()
                   << ", color=" << ps.color_percolation.size()
-                  << ", time="  << ps.time_percolation.size()
                   << ", rho="   << ps.rho.size()
                   << ", rho_value=" << rho_val  << "\n";
 
@@ -158,7 +157,7 @@ int main(int argc, char* argv[]){
                   << ", p_t="<< ts.p_t.size()
                   << ", Nt=" << ts.Nt.size()
                   << ", M_t="<< ts.M_t.size() << "\n";
-
+        cout << "seed = " << seed << endl;
         // nomes dos arquivos
         std::ostringstream oss_name;
         oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0

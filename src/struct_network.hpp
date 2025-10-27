@@ -150,11 +150,9 @@ struct TimeSeries {
 
 struct PercolationSeries {
     vector<int> color_percolation;   // 1-based
-    vector<int> time_percolation;
     vector<int> percolation_order;
     vector<double> rho;              // por cor (0-based)
     vector<int> M_size_at_perc;      // por evento
-
     // SP armazenado internamente (opcional no writer)
     vector<int>              sp_len;       // [cor] = #nós no caminho (ou -1)
     vector<vector<int>> sp_path_lin;  // [cor] ids lineares (não será escrito)
