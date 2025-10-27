@@ -1,5 +1,8 @@
 #include "network.hpp"
 #include "rand_utils.hpp"
+#include <vector>
+#include <queue>
+#include <cassert>
 
 double network::type_Nt_create(const int type_N_t, const int t_i, const double a, const double alpha){
     if(type_N_t == 0) return N_t;
@@ -73,11 +76,15 @@ NetworkPattern network::create_network(
     std::vector<std::vector<double>> chi_series(num_colors);
     std::vector<std::vector<int>>   Smax_series(num_colors);
     std::vector<std::vector<int>>   Ni_series(num_colors);
-    std::vector<int>                 t_list; t_list.reserve(num_of_samples);
-    std::vector<double>              p_curr = p0;
-    std::vector<int>                 M_curr(num_colors, 0);
+    std::vector<int>                M_size_at_perc(num_colors, 0);
+    std::vector<int>                t_list; t_list.reserve(num_of_samples);
+    std::vector<double>             p_curr = p0;
+    std::vector<int>                M_curr(num_colors, 0);
+    
+    // Defina o modo uma vez:
+    PercolationMode mode = (type_percolation == "bond" ? PercolationMode::Bond
+                                                   : PercolationMode::Site);
 
-    // ---- parents para shortest_path mesmo sem DSU ---- // <<<
     const int GRID_N = SX*SY*SZ;
     std::vector<std::vector<int>> parent(num_colors, std::vector<int>(GRID_N, -2)); // -2: nunca visto; -1: raiz/seed  // <<<
 
@@ -112,6 +119,43 @@ NetworkPattern network::create_network(
 
     std::queue<std::vector<int>> borderland;
     std::vector<int> N_current(num_colors, 0);
+
+    // Conta o tamanho do componente conectado a partir de start_id,
+    // usando a API já existente do DSU (neighbors / is_active / is_bond_open).
+    auto component_size_from = [&](const DSU& d, int start_id, PercolationMode m)->int {
+        const int N = (int)d.TOT;                   // fonte da verdade do tamanho
+        if (start_id < 0 || start_id >= N) return 0;
+        if (!d.is_active(start_id)) return 0;
+
+        std::vector<unsigned char> visited((size_t)N, 0); // N bytes
+        std::vector<int> q;         q.reserve(1024);       // fila
+        std::vector<int> neigh;     neigh.reserve(2 * d.dim);
+
+        int comp = 0;
+        visited[start_id] = 1;
+        q.push_back(start_id);
+
+        for (size_t head = 0; head < q.size(); ++head) {
+            int u = q[head];
+            ++comp;
+
+            neigh.clear();          // IMPORTANTE: limpar antes de preencher
+            d.neighbors(u, neigh);  // até 2*dim vizinhos cartesianos
+
+            for (int v : neigh) {
+                if (v < 0 || v >= N) continue;
+                if (!d.is_active(v)) continue;
+                if (m == PercolationMode::Bond && !d.is_bond_open(u, v)) continue;
+
+                if (!visited[v]) {
+                    visited[v] = 1;
+                    q.push_back(v);
+                }
+            }
+        }
+        return comp;
+    };
+
 
     // ===== semeadura (t=0) =====
     for (int c=0;c<num_colors;++c){
@@ -249,7 +293,6 @@ NetworkPattern network::create_network(
                                 ps_out.sp_path_lin[cor_idx] = std::move(path);
 
                                 ps_out.color_percolation.push_back(cor_idx + 1);
-                                ps_out.time_percolation.push_back(t);
                                 ps_out.percolation_order.push_back(order_counter);
 
                                 std::cout << "[CREATE] Cor " << (cor_idx + 1)
@@ -257,6 +300,8 @@ NetworkPattern network::create_network(
                                           << "  (ordem=" << order_counter
                                           << ", shortest_path_len=" << ps_out.sp_len[cor_idx]
                                           << ")\n";
+                                                                // 1) get_val permanece igual
+                               
                             }
                         } else {
                             // ---- Sem DSU: detectar chegada ao topo e reconstruir caminho ---- // <<<
@@ -270,14 +315,47 @@ NetworkPattern network::create_network(
                                 ps_out.sp_path_lin[cor_idx] = std::move(path);
 
                                 ps_out.color_percolation.push_back(cor_idx + 1);
-                                ps_out.time_percolation.push_back(t);
                                 ps_out.percolation_order.push_back(order_counter);
-
+                                                    
                                 std::cout << "[CREATE-noDSU] Cor " << (cor_idx + 1)
-                                          << " alcançou topo em t=" << t
-                                          << "  (ordem=" << order_counter
+                                          << " Reached the top at t = " << t
+                                          << "  (order=" << order_counter
                                           << ", shortest_path_len=" << ps_out.sp_len[cor_idx]
-                                          << ")\n";
+                                            << ")\n";
+                                // Adaptadores para a sua malha (usam sua API existente):
+                                // 1) get_val permanece igual
+                                auto get_val = [&](int x, int y, int z) -> int {
+                                    if (dim == 2) return net.get({x, y});
+                                    else          return net.get({x, y, z});
+                                };
+
+                                // 2) valid_coord que WRAPA por referência (usa seu valid_coord(std::vector<int>&))
+                                auto valid_coord_wrap = [&](int& x, int& y, int& z) -> bool {
+                                    if (dim == 2) {
+                                        std::vector<int> v{ x, y };
+                                        bool ok = valid_coord(v);   // pode ajustar v[0], v[1]
+                                        if (ok) { x = v[0]; y = v[1]; }
+                                        return ok;
+                                    } else {
+                                        std::vector<int> v{ x, y, z };
+                                        bool ok = valid_coord(v);   // pode ajustar v[0], v[1], v[2]
+                                        if (ok) { x = v[0]; y = v[1]; z = v[2]; }
+                                        return ok;
+                                    }
+                                };
+
+                                // 3) Chame o BFS já com o novo tipo de valid_coord
+                                BiggestComponent bc;
+                                BFSResult comp = bc.find_largest_component_for_color(
+                                    dim, SX, SY, (dim==3 ? SZ : 1),
+                                    get_val,
+                                    valid_coord_wrap,     // <<<< passa o wrap por referência
+                                    new_val
+                                );
+
+                                int S_final = comp.size;
+                                M_size_at_perc[cor_idx] = S_final;
+
                             }                                                                             // <<<
                         }
                     };
@@ -308,15 +386,15 @@ NetworkPattern network::create_network(
         // commit
         commit_step(t, p_next, N_current);
 
-        // todas percolaram?
+        // All percolate?
         if (std::all_of(percolated.begin(), percolated.end(), [](bool x){ return x; })) {
-            std::cout << "[CREATE] Todas as cores percolaram em t=" << t << " (";
+            std::cout << "[CREATE] All colors percolated at t = " << t << " (";
             for (int c=0;c<num_colors;++c){ std::cout << "c" << (c+1) << "=" << t_percolated[c]; if (c+1<num_colors) std::cout << ", "; }
             std::cout << ")\n";
             break;
         }
 
-        // logging opcional
+        // Optional logging
         if (t < 10 || t % 100 == 0) {
             std::cout << "[" << type_percolation << "] t = " << t;
             for (int c=0;c<num_colors;++c)
@@ -328,32 +406,42 @@ NetworkPattern network::create_network(
         p_curr.swap(p_next);
     }
 
-    // ===== saída =====
+    // ===== output =====
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
     ts_out.Nt  = std::move(Nt_series);
     ts_out.t   = std::move(t_list);
 
     if (DSU_calculate_) {
+        // calcule ANTES do move
+        for (int c = 0; c < num_colors; ++c) {
+            const auto& v = Smax_series[c];
+            M_size_at_perc[c] = v.empty() ? 0 : *std::max_element(v.begin(), v.end());
+            // se quiser "último" em vez de "máximo":  M_size_at_perc[c] = v.empty() ? 0 : v.back();
+        }
+        ps_out.M_size_at_perc = std::move(M_size_at_perc);
+
+        // agora mova pros timeseries
         ts_out.Smax = std::move(Smax_series);
         ts_out.Ni   = std::move(Ni_series);
         ts_out.chi  = std::move(chi_series);
+
     } else {
-        // sem DSU: manter vetores vazios (ou dimensões corretas vazias), como combinado
         ts_out.Smax.assign(num_colors, {});
         ts_out.Ni.assign(num_colors,   {});
         ts_out.chi.assign(num_colors,  {});
+        ps_out.M_size_at_perc = std::move(M_size_at_perc); // zeros (ou já preenchido por outra lógica)
     }
 
+    
     // copia rho
     ps_out.rho.clear();
-    for (int i=0;i<num_colors;++i) if (i < (int)rho.size()) ps_out.rho.push_back(rho[i]);
-
+    for (int i=0;i<num_colors;++i){
+        
+        if (i < (int)rho.size()) ps_out.rho.push_back(rho[i]);
+    }
     return net;
 }
-
-
-
 
 NetworkPattern network::animate_network(
     const int dim, const int lenght_network, const int num_of_samples,
@@ -638,7 +726,8 @@ NetworkPattern network::initialize_network(int dim, int length_network, int num_
 
 
 // ===== print_initial_site_fractions (compatível com o struct atual) =====
-void network::print_initial_site_fractions(const NetworkPattern& net) {
+void network::print_initial_site_fractions(const NetworkPattern& net) 
+    {
     std::map<int, size_t> count;  // ordenado por chave (estado)
     const size_t total = net.data.size();
 

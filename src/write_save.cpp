@@ -229,14 +229,8 @@ void write_json_row(std::ostream& os, const std::vector<std::vector<T>>& m, int 
     if (row<0 || row>=(int)m.size()) { os << "[]"; return; }
     write_json_array(os, m[row]);
 }
-inline double rho_by_color_1b(const std::vector<double>& rho, int color_1b){
-    int idx = std::max(0, color_1b - 1);
-    return (idx<(int)rho.size() ? rho[idx] : 0.0);
 }
-} // anon
 
-// ========== writer JSON (layout solicitado) ==========
-// ========== writer JSON (layout solicitado) ==========
 void save_data::save_percolation_json(const PercolationSeries& ps,
                                       const TimeSeries& ts,
                                       const std::string& filename_json,
@@ -247,7 +241,6 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     if ((int)ts.p_t.size()!=ts.num_colors || (int)ts.Nt.size()!=ts.num_colors || (int)ts.M_t.size()!=ts.num_colors)
         throw std::runtime_error("[save_percolation_json] TimeSeries inconsistente com num_colors.");
 
-    // se existirem, Smax/Ni/chi também devem bater com num_colors
     if (!ts.Smax.empty() && (int)ts.Smax.size()!=ts.num_colors)
         throw std::runtime_error("[save_percolation_json] Smax.size != num_colors.");
     if (!ts.Ni.empty()   && (int)ts.Ni.size()!=ts.num_colors)
@@ -257,7 +250,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
 
     if (!ps.percolation_order.empty()) {
         const size_t m = ps.percolation_order.size();
-        if (ps.color_percolation.size()!=m || ps.time_percolation.size()!=m)
+        if (ps.color_percolation.size()!=m)
             throw std::runtime_error("[save_percolation_json] vetores de eventos com tamanhos diferentes.");
         if (!ps.M_size_at_perc.empty() && ps.M_size_at_perc.size()!=m)
             throw std::runtime_error("[save_percolation_json] M_size_at_perc.size != #events.");
@@ -266,7 +259,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     std::ofstream ofs(filename_json);
     if (!ofs) throw std::runtime_error(std::string("[save_percolation_json] não abriu: ")+filename_json);
 
-    // indices ordenados por percolation_order (se solicitado)
+    // índices ordenados por percolation_order (se solicitado)
     std::vector<size_t> idx(ps.percolation_order.size());
     for (size_t i=0;i<idx.size();++i) idx[i] = i;
     if (sort_by_order) {
@@ -275,54 +268,54 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         });
     }
 
-    ofs << "{\n";
-    ofs << "  \"meta\": {\n";
-    ofs << "    \"num_colors\": " << ts.num_colors << "\n";
-    ofs << "  },\n";
+    // ---- HEADER JSON ----
+    // ---- HEADER JSON ----
+ofs << "{\n";
+ofs << "  \"meta\": {\n";
+ofs << "    \"num_colors\": " << ts.num_colors << ",\n";
+const double rho_meta = (!ps.rho.empty() ? ps.rho[0] : 0.0);
+ofs << "    \"rho\": " << std::setprecision(17) << rho_meta << "\n";
+ofs << "  },\n";
 
-    ofs << "  \"results\": [\n";
-    for (size_t k=0;k<idx.size();++k){
-        const size_t i = idx[k];
-        const int color_1b = ps.color_percolation[i];
-        const int crow = std::max(0, color_1b - 1);
-        const int order_i = ps.percolation_order[i];
-        const int tperc   = ps.time_percolation[i];
-        const double rho  = rho_by_color_1b(ps.rho, color_1b);
+ofs << "  \"results\": {\n";
+for (size_t k = 0; k < idx.size(); ++k) {
+    const size_t i = idx[k];
+    const int order_i  = ps.percolation_order[i];
+    const int color_1b = ps.color_percolation[i];
+    const int crow     = std::max(0, color_1b - 1);
+    const int M_size   = ps.M_size_at_perc[i];
 
-        // menor caminho (em nº de ARESTAS) = (#nós - 1)
-        int shortest_path_lin_value = -1;
-        if (crow<(int)ps.sp_len.size() && ps.sp_len[crow] > 0)
-            shortest_path_lin_value = ps.sp_len[crow] - 1;
+    int shortest_path_lin_value = -1;
+    if (crow < (int)ps.sp_len.size() && ps.sp_len[crow] > 0)
+        shortest_path_lin_value = ps.sp_len[crow] - 1;
 
-        ofs << "    {\n";
-        ofs << "      \"order_percolation\": " << order_i << ",\n";
-        ofs << "      \"data\": {\n";
-        ofs << "        \"color\": " << color_1b << ",\n";
-        ofs << "        \"rho\": " << std::setprecision(17) << rho << ",\n";
-        ofs << "        \"time_percolation\": " << tperc << ",\n";
-        ofs << "        \"time\": "; write_json_array(ofs, ts.t); ofs << ",\n";
-        ofs << "        \"pt\": "; write_json_row(ofs, ts.p_t, crow); ofs << ",\n";
-        ofs << "        \"nt\": "; write_json_row(ofs, ts.Nt, crow); ofs << ",\n";
-        ofs << "        \"Mt\": "; write_json_row(ofs, ts.M_t, crow);
+    ofs << "    \"order_percolation " << order_i << "\": {\n";
+    ofs << "      \"data\": {\n";
+    ofs << "        \"color\": " << color_1b << ",\n";
+    ofs << "        \"time\": "; write_json_array(ofs, ts.t); ofs << ",\n";
+    ofs << "        \"pt\": ";   write_json_row(ofs, ts.p_t, crow); ofs << ",\n";
+    ofs << "        \"nt\": ";   write_json_row(ofs, ts.Nt, crow);
 
-        // --- salvar Smax/Ni/chi somente se DSU_calculate_ == true ---
-        if (DSU_calculate_) {
-            ofs << ",\n";
-            ofs << "        \"Smax\": "; write_json_row(ofs, ts.Smax, crow); ofs << ",\n";
-            ofs << "        \"Ni\": ";   write_json_row(ofs, ts.Ni,   crow); ofs << ",\n";
-            ofs << "        \"chi\": ";  write_json_row(ofs, ts.chi,  crow); ofs << ",\n";
-        } else {
-            ofs << ",\n"; // apenas separador antes do próximo campo
-        }
-        // ------------------------------------------------------------
-
-        ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << "\n";
-        ofs << "      }\n";
-        ofs << "    }";
-        if (k+1<idx.size()) ofs << ",";
-        ofs << "\n";
+    // ------ campos condicionais (apenas quando DSU_calculate_ == true) ------
+    if (DSU_calculate_) {
+        ofs << ",\n";
+        ofs << "        \"Smax\": "; write_json_row(ofs, ts.Smax, crow); ofs << ",\n";
+        ofs << "        \"Ni\": ";   write_json_row(ofs, ts.Ni,   crow); ofs << ",\n";
+        ofs << "        \"chi\": ";  write_json_row(ofs, ts.chi,  crow); ofs << ",\n";
+        ofs << "        \"Mt\": ";   write_json_row(ofs, ts.M_t,  crow); ofs << ",\n";
+    } else {
+        ofs << ",\n"; // vírgula separando do próximo campo obrigatório
     }
-    ofs << "  ]\n";
-    ofs << "}\n";
-}
+    // -----------------------------------------------------------------------
 
+    ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
+    ofs << "        \"M_size\": " << M_size << "\n";
+    ofs << "      }\n";
+    ofs << "    }";
+    if (k + 1 < idx.size()) ofs << ",";
+    ofs << "\n";
+}
+    ofs << "  }\n";   // fecha "results"
+    ofs << "}\n";     // fecha objeto raiz
+
+}

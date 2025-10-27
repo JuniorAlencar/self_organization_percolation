@@ -296,3 +296,81 @@ void DSU::append_stats_row(std::vector<int>& Smax_series,
     Ni_series.push_back(st.Ntot);
     chi_series.push_back(st.chi);
 }
+
+
+// ===== util: lower-case =====
+static std::string to_lower_copy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c){ return (unsigned char)std::tolower(c); });
+    return s;
+}
+
+// ===== conversores string <-> enum =====
+PercolationMode DSU::percolation_mode_from_string(const std::string& s) {
+    const std::string t = to_lower_copy(s);
+    if (t == "site") return PercolationMode::Site;
+    if (t == "bond") return PercolationMode::Bond;
+    throw std::invalid_argument("PercolationMode inválido: '" + s + "'. Use 'site' ou 'bond'.");
+}
+
+const char* DSU::to_string(PercolationMode m) noexcept {
+    switch (m) {
+        case PercolationMode::Site: return "site";
+        case PercolationMode::Bond: return "bond";
+    }
+    return "site";
+}
+
+
+// ===== versão enum (principal) =====
+int DSU::component_size_from_safe(int seed, PercolationMode mode, std::vector<int>* out_nodes) const
+{
+    if (seed < 0 || seed >= this->TOT) return 0;
+    if (!this->is_active(seed)) return 0;
+
+    const int N = this->TOT;
+
+    std::vector<unsigned char> visited((size_t)N, 0);
+    std::vector<int> q;        q.reserve(1024);
+    std::vector<int> neigh;    neigh.reserve((size_t)2 * (size_t)this->dim);
+
+    const int root_seed = this->find(seed);
+
+    visited[seed] = 1;
+    q.push_back(seed);
+
+    if (out_nodes) {
+        out_nodes->clear();
+        out_nodes->reserve(1024);
+    }
+
+    int size = 0;
+    const bool is_bond_mode = (mode == PercolationMode::Bond);
+
+    for (size_t head = 0; head < q.size(); ++head) {
+        const int u = q[head];
+        ++size;
+        if (out_nodes) out_nodes->push_back(u);
+
+        neigh.clear();
+        this->neighbors(u, neigh);
+
+        for (int v : neigh) {
+            if (v < 0 || v >= N) continue;
+            if (!this->is_active(v)) continue;
+            if (this->find(v) != root_seed) continue;
+
+            if (is_bond_mode) {
+#ifdef DSU_HAS_IS_BOND_OPEN
+                if (!this->is_bond_open(u, v)) continue;
+#endif
+            }
+
+            if (!visited[v]) {
+                visited[v] = 1;
+                q.push_back(v);
+            }
+        }
+    }
+    return size;
+}
