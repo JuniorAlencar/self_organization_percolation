@@ -6,29 +6,6 @@ from textwrap import dedent
 from pathlib import Path
 import subprocess
 
-def as_cli_bool(x, numeric=False) -> str:
-    """
-    Converte bool vindo do Python/usuário para um token aceito pelo C++ parse_bool.
-    numeric=True -> "1"/"0"; numeric=False -> "true"/"false".
-    """
-    # Python bool/int
-    if isinstance(x, bool):
-        return ("1" if x else "0") if numeric else ("true" if x else "false")
-    if isinstance(x, (int,)):
-        return ("1" if x != 0 else "0") if numeric else ("true" if x != 0 else "false")
-    # String
-    if isinstance(x, str):
-        s = x.strip().lower()
-        ok = {"1","0","true","false","t","f","yes","no","y","n"}
-        if s not in ok:
-            raise ValueError(f"Valor inválido para DCU_props: {x!r}")
-        # padroniza
-        if numeric:
-            return "1" if s in {"1","true","t","yes","y"} else "0"
-        else:
-            return "true" if s in {"1","true","t","yes","y"} else "false"
-    raise TypeError(f"Tipo não suportado para DCU_props: {type(x)}")
-
 def custom_range(start: float, stop: float, n_points: int, ndigits: int = 8):
     if n_points <= 0:
         return []
@@ -69,14 +46,13 @@ def create_cluster_cli_shell(exec_name="run_jobs.sh", folder_to_shell="../shells
 usage() {{
   cat <<USAGE
 Uso:
-  {exec_name} L P0 SEED TYPE_PERC K NT DIM NUM_COLORS RHO NUM_SAMPLES DCU
+  {exec_name} L P0 SEED TYPE_PERC K NT DIM NUM_COLORS RHO NUM_SAMPLES
 
 Exemplo:
-  {exec_name} 512 0.7 123 bond 1e-6 200 3 1 0.001 5 true
+  {exec_name} 512 0.7 123 bond 1e-6 200 3 1 0.001 5
 
 Notas:
   - TYPE_PERC: "bond" ou "node"
-  - DCU     : true/false/yes/no/1/0 (case-insensitive)
 USAGE
 }}
 
@@ -86,7 +62,7 @@ fi
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   usage; exit 0
 fi
-if [[ "$#" -ne 11 ]]; then
+if [[ "$#" -ne 10 ]]; then
   echo "[ERROR] Número inválido de argumentos ($#)."; usage; exit 2
 fi
 
@@ -101,7 +77,6 @@ DIM="$7"
 NUM_COLORS="$8"
 RHO="$9"
 NUM_SAMPLES="${{10}}"
-DCU="${{11}}"   # passa como string para o parse_bool do C++
 
 # --- volta à raiz do projeto ---
 cd ..
@@ -111,12 +86,12 @@ EXEC=./build/SOP
 echo "=== Received Parameters ==="
 echo "L=$L  P0=$P0  SEED=$SEED  TYPE_PERC=$TYPE_PERC"
 echo "K=$K  NT=$NT  DIM=$DIM  NUM_COLORS=$NUM_COLORS"
-echo "RHO=$RHO  NUM_SAMPLES=$NUM_SAMPLES  DCU=$DCU"
+echo "RHO=$RHO  NUM_SAMPLES=$NUM_SAMPLES"
 echo "============================"
 
 i=1
 while [[ "$i" -le "$NUM_SAMPLES" ]]; do
-  srun "$EXEC" "$L" "$P0" "$SEED" "$TYPE_PERC" "$K" "$NT" "$DIM" "$NUM_COLORS" "$RHO" "$DCU"
+  srun "$EXEC" "$L" "$P0" "$SEED" "$TYPE_PERC" "$K" "$NT" "$DIM" "$NUM_COLORS" "$RHO"
   i=$(( i + 1 ))
 done
 
@@ -147,7 +122,7 @@ def run_multi_rho(L, p0, seed, type_perc, k, NT, dim, num_colors, rho_lst, N_sam
         "sbatch", "run_jobs.sh",
         str(L), str(p0), str(seed), str(type_perc),
         str(k), str(NT), str(dim), str(num_colors),
-        str(rho), str(N_samples), DCU
+        str(rho), str(N_samples)
         ]
     # Execute the jobs -> 
     subprocess.run(cmd, check=True)

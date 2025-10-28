@@ -19,7 +19,6 @@
 #include <unordered_set>
 #include "rand_utils.hpp"
 #include "struct_network.hpp"
-#include "DSU.hpp"
 #include "LargestComponentBFS.hpp"
 
 using namespace std;
@@ -58,7 +57,7 @@ class network{
                                        const double k, const double N_t, const int type_N_t,
                                        const std::vector<double> p0, const double P0, const double a, const double alpha,
                                        const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-                                       TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng, bool &DSU_calculate_);
+                                       TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng);
         
         NetworkPattern initialize_network(int dim, int length_network, int num_colors,
                                            double P0,
@@ -74,6 +73,8 @@ class network{
                                        const std::vector<double> p0, const double P0, const double a, const double alpha,
                                        const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
                                        TimeSeries& ts_out);
+        
+        void colorize_base_by_rho(NetworkPattern& net, int grow_axis, all_random& rng);
 };
 
 
