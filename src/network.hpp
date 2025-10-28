@@ -15,8 +15,10 @@
 #include <map>
 #include <cstddef>
 #include <iomanip>
+#include <deque>
+#include <array>
 
-#include <unordered_set>
+
 #include "rand_utils.hpp"
 #include "struct_network.hpp"
 #include "LargestComponentBFS.hpp"
