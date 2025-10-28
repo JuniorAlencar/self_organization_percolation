@@ -3,38 +3,11 @@ import stat
 import textwrap
 import numpy as np
 
-# Helper to convert bool variable in python to C++
-def as_cli_bool(x, numeric=False) -> str:
-    """
-    Converte bool vindo do Python/usuário para um token aceito pelo C++ parse_bool.
-    numeric=True -> "1"/"0"; numeric=False -> "true"/"false".
-    """
-    # Python bool/int
-    if isinstance(x, bool):
-        return ("1" if x else "0") if numeric else ("true" if x else "false")
-    if isinstance(x, (int,)):
-        return ("1" if x != 0 else "0") if numeric else ("true" if x != 0 else "false")
-    # String
-    if isinstance(x, str):
-        s = x.strip().lower()
-        ok = {"1","0","true","false","t","f","yes","no","y","n"}
-        if s not in ok:
-            raise ValueError(f"Valor inválido para DCU_props: {x!r}")
-        # padroniza
-        if numeric:
-            return "1" if s in {"1","true","t","yes","y"} else "0"
-        else:
-            return "true" if s in {"1","true","t","yes","y"} else "false"
-    raise TypeError(f"Tipo não suportado para DCU_props: {type(x)}")
-
 def shell_data(L:int, type_perc:str, p0:float, 
                seed:int, k:float, NT:int, dim:int, num_colors:int, 
                num_runs:int, rho:list, exec_name:str,
-               DCU_props: str = 'false',
                num_threads: int = 4,
                multi: bool = False):
-    
-    DCU_token = as_cli_bool(DCU_props, numeric=False)  # ou numeric=True para "1"/"0"
     
     """
     Generate a shell script to run SOP multiple times.
@@ -69,7 +42,6 @@ k={k}
 NT={NT}
 dim={dim}
 num_colors={num_colors}
-DCU={DCU_token}
 
 # --- fixed number of workers (baked into the script) ---
 JOBS={num_threads}
@@ -86,7 +58,7 @@ export L p0 seed type k NT dim num_colors DCU
 parallel -j "$JOBS" --bar --halt soon,fail=1 '
   RHO={{1}}
   RUN={{2}}
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$DCU"
+  ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO"
 ' ::: "${{rho[@]}}" ::: $(seq 1 "$num_runs")
 """
     else:
@@ -109,7 +81,7 @@ k={k}
 NT={NT}
 dim={dim}
 num_colors={num_colors}
-DCU={DCU_token}
+
 
 # --- pretty progress bar (single-line) ---
 progress_bar() {{
@@ -141,9 +113,9 @@ for ((run=1; run<=num_runs; run++)); do
     if [[ "$VERBOSE" -eq 1 ]]; then
       echo
       echo "./build/SOP $L $p0 $seed $type $k $NT $dim $num_colors $RHO"
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$DCU"
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO"
     else
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$DCU" >/dev/null
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" >/dev/null
     fi
   done
 done

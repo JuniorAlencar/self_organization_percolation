@@ -4,6 +4,7 @@
 #include "rand_utils.hpp"
 #include "write_save.hpp"
 #include "create_folders.hpp"
+#include "helpers_print.hpp"
 
 #include <iomanip>
 #include <cstdlib>
@@ -65,7 +66,7 @@ int main(int argc, char* argv[]){
         if (is_help_token(argv[1])) { print_help(argv[0]); return 0; }
         if (std::strcmp(argv[1],"--version")==0) { print_version(); return 0; }
     }
-    if (argc != 11) {
+    if (argc != 10) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc-1 << ").\n";
         print_help(argv[0]);
         return 1;
@@ -81,7 +82,7 @@ int main(int argc, char* argv[]){
         int dim = std::stoi(argv[7]);     // 2
         int num_colors = std::stoi(argv[8]);
         double rho_val = std::stod(argv[9]);
-        bool DSU_calculate = parse_bool(argv[10]);
+        
 
         int type_N_t = 0;   // 0 => Nt constante; 1 => Nt = a * t^alpha
         double a = 0.0;
@@ -142,9 +143,28 @@ int main(int argc, char* argv[]){
         NetworkPattern net = net_generator.create_network(
             dim, L, N_samples, k, N_t, type_N_t,
             p0, P0, a, alpha, type_percolation,
-            num_colors, rho, ts, ps, rng, DSU_calculate
+            num_colors, rho, ts, ps, rng
         );
+        
+        // UNCOMENT BELOW TO CHECK INITIAL NETWORK===============
+        // NetworkPattern net = net_generator.initialize_network(
+        //                 dim,               // dimensão (2D/3D)
+        //                 L,                 // length_network
+        //                 num_colors,        // número de cores
+        //                 P0,                // fração a ativar na BASE
+        //                 rho,               // densidade por cor na BASE
+        //                 p0,                // fração de ativação por cor (na BASE)
+        //                 rng.get_seed()     // seed para o gerador
+        //             );
+        
+        // helpers prints;
+        // // Resumo da BASE (contagens)
+        // prints.print_base_summary(net);
 
+        // // Visual (fatia do nível 0 — a base)
+        // prints.print_slice(net, /*g_level=*/0);
+        // ========================================================
+        
         std::cerr << "[DBG] ps sizes -> "
                   << "order=" << ps.percolation_order.size()
                   << ", color=" << ps.color_percolation.size()
@@ -155,8 +175,7 @@ int main(int argc, char* argv[]){
                   << "num_colors=" << ts.num_colors
                   << ", t="  << ts.t.size()
                   << ", p_t="<< ts.p_t.size()
-                  << ", Nt=" << ts.Nt.size()
-                  << ", M_t="<< ts.M_t.size() << "\n";
+                  << ", Nt=" << ts.Nt.size() << "\n";
         cout << "seed = " << seed << endl;
         // nomes dos arquivos
         std::ostringstream oss_name;
@@ -180,7 +199,7 @@ int main(int argc, char* argv[]){
 
         // 2) resultados (JSON novo)
         //    sort_by_order = true para ordenar por percolation_order
-        saver.save_percolation_json(ps, ts, json_filename, DSU_calculate, /*sort_by_order=*/true);
+        saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
 
         std::cout << "file save with name:\t" << oss_name.str() << std::endl;
         return 0;
