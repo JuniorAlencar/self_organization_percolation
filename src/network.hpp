@@ -76,7 +76,6 @@ class network{
                                        const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
                                        TimeSeries& ts_out);
         
-        void colorize_base_by_rho(NetworkPattern& net, int grow_axis, all_random& rng);
 };
 
 

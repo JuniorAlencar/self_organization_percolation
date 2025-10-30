@@ -12,10 +12,13 @@ void helpers::print_base_summary(const NetworkPattern& net) {
     const int Lx = net.shape[0];
     const int Ly = (dim >= 2 ? net.shape[1] : 1);
     const int Lz = (dim == 3 ? net.shape[2] : 1);
-
+    
+    auto lin_index = [&](int x, int y, int z)->int { 
+        return x + Lx*(y + Ly*z); 
+    };
     auto get = [&](int x, int y, int z)->int {
-        if (dim==2) return net.get({x,y});
-        return net.get({x,y,z});
+        if (dim == 2) return net.get(lin_index(x, y, 0));  // Convertendo coordenadas 2D para índice linear
+        return net.get(lin_index(x, y, z));  // Convertendo coordenadas 3D para índice linear
     };
 
     // Tamanho da base (eixo de crescimento = 0)
@@ -32,7 +35,7 @@ void helpers::print_base_summary(const NetworkPattern& net) {
         if (grow_axis == 1) {
             int y = 0;
             for (int x = 0; x < Lx; ++x) {
-                int v = get(x,y,0);
+                int v = get(x, y, 0);  // Acessando o valor da rede com índice linear
                 if (v == -1) ++gray_count;
                 else if (v > 0) {
                     if (net.num_colors == 1) ++pos_single_color;
@@ -50,7 +53,7 @@ void helpers::print_base_summary(const NetworkPattern& net) {
         } else { // grow_axis == 0
             int x = 0;
             for (int y = 0; y < Ly; ++y) {
-                int v = get(x,y,0);
+                int v = get(x, y, 0);  // Acessando o valor da rede com índice linear
                 if (v == -1) ++gray_count;
                 else if (v > 0) {
                     if (net.num_colors == 1) ++pos_single_color;
@@ -70,7 +73,7 @@ void helpers::print_base_summary(const NetworkPattern& net) {
         if (grow_axis == 2) {
             int z = 0;
             for (int y = 0; y < Ly; ++y) for (int x = 0; x < Lx; ++x) {
-                int v = get(x,y,z);
+                int v = get(x, y, z);  // Acessando o valor da rede com índice linear
                 if (v == -1) ++gray_count;
                 else if (v > 0) {
                     if (net.num_colors == 1) ++pos_single_color;
@@ -88,7 +91,7 @@ void helpers::print_base_summary(const NetworkPattern& net) {
         } else if (grow_axis == 1) {
             int y = 0;
             for (int z = 0; z < Lz; ++z) for (int x = 0; x < Lx; ++x) {
-                int v = get(x,y,z);
+                int v = get(x, y, z);  // Acessando o valor da rede com índice linear
                 if (v == -1) ++gray_count;
                 else if (v > 0) {
                     if (net.num_colors == 1) ++pos_single_color;
@@ -106,7 +109,7 @@ void helpers::print_base_summary(const NetworkPattern& net) {
         } else { // grow_axis == 0
             int x = 0;
             for (int z = 0; z < Lz; ++z) for (int y = 0; y < Ly; ++y) {
-                int v = get(x,y,z);
+                int v = get(x, y, z);  // Acessando o valor da rede com índice linear
                 if (v == -1) ++gray_count;
                 else if (v > 0) {
                     if (net.num_colors == 1) ++pos_single_color;
@@ -126,8 +129,8 @@ void helpers::print_base_summary(const NetworkPattern& net) {
 
     std::cout << "\n=== Base summary ===\n";
     std::cout << "dim = " << dim << "  shape = {";
-    for (size_t i=0;i<net.shape.size();++i){
-        std::cout << net.shape[i] << (i+1<net.shape.size()? ", ":"");
+    for (size_t i = 0; i < net.shape.size(); ++i) {
+        std::cout << net.shape[i] << (i + 1 < net.shape.size() ? ", " : "");
     }
     std::cout << "}  grow_axis=" << grow_axis << "\n";
     std::cout << "base_size = " << base_size << "\n";
@@ -136,19 +139,20 @@ void helpers::print_base_summary(const NetworkPattern& net) {
         std::cout << "gray (-1) on base : " << gray_count << "\n";
         std::cout << "active (+1) on base: " << pos_single_color << "\n";
     } else {
-        for (int c=0;c<net.num_colors;++c) {
-            std::cout << "color c=" << c+1
-                      << "  neg label=-(c+2)=" << -(c+2)
+        for (int c = 0; c < net.num_colors; ++c) {
+            std::cout << "color c=" << c + 1
+                      << "  neg label=-(c+2)=" << -(c + 2)
                       << "  count(on base) = " << neg_color_counts[c] << "\n";
         }
         std::cout << "gray (-1) on base : " << gray_count << "\n";
-        for (int c=0;c<net.num_colors;++c) {
-            std::cout << "ACTIVE +(c+2)=" << (c+2)
+        for (int c = 0; c < net.num_colors; ++c) {
+            std::cout << "ACTIVE +(c+2)=" << (c + 2)
                       << " on base      : " << pos_color_counts[c] << "\n";
         }
     }
     std::cout << "====================\n";
 }
+
 
 void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
     // Mostra uma fatia 2D no nível g_level do eixo de crescimento (dim 2: imprime linha; dim 3: imprime matriz).
@@ -158,9 +162,13 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
     const int Ly = (dim >= 2 ? net.shape[1] : 1);
     const int Lz = (dim == 3 ? net.shape[2] : 1);
 
+    auto lin_index = [&](int x, int y, int z)->int { 
+        return x + Lx*(y + Ly*z); 
+    };
+
     auto get = [&](int x, int y, int z)->int {
-        if (dim==2) return net.get({x,y});
-        return net.get({x,y,z});
+        if (dim == 2) return net.get(lin_index(x, y, 0));  // Convertendo coordenadas 2D para índice linear
+        return net.get(lin_index(x, y, z));  // Convertendo coordenadas 3D para índice linear
     };
 
     std::cout << "\n=== Slice at grow_axis level " << g_level << " ===\n";
@@ -170,18 +178,18 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
         if (grow_axis == 1) {
             int y = g_level;
             for (int x = 0; x < Lx; ++x) {
-                int v = get(x,y,0);
-                char ch = (v==-1?'.' : (v==0?'o' : (v>0?'A':'a'))); // rótulo simples
+                int v = get(x, y, 0);  // Acessando o valor da rede com índice linear
+                char ch = (v == -1 ? '.' : (v == 0 ? 'o' : (v > 0 ? 'A' : 'a'))); // rótulo simples
                 std::cout << ch;
-                if (x+1>=max_w && Lx>max_w) { std::cout << " ..."; break; }
+                if (x + 1 >= max_w && Lx > max_w) { std::cout << " ..."; break; }
             }
         } else { // grow_axis == 0
             int x = g_level;
             for (int y = 0; y < Ly; ++y) {
-                int v = get(x,y,0);
-                char ch = (v==-1?'.' : (v==0?'o' : (v>0?'A':'a')));
+                int v = get(x, y, 0);  // Acessando o valor da rede com índice linear
+                char ch = (v == -1 ? '.' : (v == 0 ? 'o' : (v > 0 ? 'A' : 'a')));
                 std::cout << ch;
-                if (y+1>=max_w && Ly>max_w) { std::cout << " ..."; break; }
+                if (y + 1 >= max_w && Ly > max_w) { std::cout << " ..."; break; }
             }
         }
         std::cout << "\n";
@@ -191,10 +199,10 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
             int z = g_level;
             for (int y = 0; y < Ly; ++y) {
                 for (int x = 0; x < Lx; ++x) {
-                    int v = get(x,y,z);
-                    char ch = (v==-1?'.' : (v==0?'o' : (v>0?'A':'a')));
+                    int v = get(x, y, z);  // Acessando o valor da rede com índice linear
+                    char ch = (v == -1 ? '.' : (v == 0 ? 'o' : (v > 0 ? 'A' : 'a')));
                     std::cout << ch;
-                    if (x+1>=max_w && Lx>max_w) { std::cout << " ..."; break; }
+                    if (x + 1 >= max_w && Lx > max_w) { std::cout << " ..."; break; }
                 }
                 std::cout << "\n";
             }
@@ -202,10 +210,10 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
             int y = g_level;
             for (int z = 0; z < Lz; ++z) {
                 for (int x = 0; x < Lx; ++x) {
-                    int v = get(x,y,z);
-                    char ch = (v==-1?'.' : (v==0?'o' : (v>0?'A':'a')));
+                    int v = get(x, y, z);  // Acessando o valor da rede com índice linear
+                    char ch = (v == -1 ? '.' : (v == 0 ? 'o' : (v > 0 ? 'A' : 'a')));
                     std::cout << ch;
-                    if (x+1>=max_w && Lx>max_w) { std::cout << " ..."; break; }
+                    if (x + 1 >= max_w && Lx > max_w) { std::cout << " ..."; break; }
                 }
                 std::cout << "\n";
             }
@@ -213,10 +221,10 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
             int x = g_level;
             for (int z = 0; z < Lz; ++z) {
                 for (int y = 0; y < Ly; ++y) {
-                    int v = get(x,y,z);
-                    char ch = (v==-1?'.' : (v==0?'o' : (v>0?'A':'a')));
+                    int v = get(x, y, z);  // Acessando o valor da rede com índice linear
+                    char ch = (v == -1 ? '.' : (v == 0 ? 'o' : (v > 0 ? 'A' : 'a')));
                     std::cout << ch;
-                    if (y+1>=max_w && Ly>max_w) { std::cout << " ..."; break; }
+                    if (y + 1 >= max_w && Ly > max_w) { std::cout << " ..."; break; }
                 }
                 std::cout << "\n";
             }
