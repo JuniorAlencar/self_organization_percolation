@@ -289,7 +289,311 @@ NetworkPattern network::create_network(
     return net;
 }
 
+// NetworkPattern network::animate_network(
+//     const int dim, const int lenght_network, const int num_of_samples,
+//     const double k, const double N_t, const int seed, const int type_N_t,
+//     const std::vector<double> p0, const double P0, const double a, const double alpha,
+//     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
+//     TimeSeries& ts_out)
+// {
+//     this->N_t = N_t;
+
+//     // ===== SHAPE SOMENTE ESPACIAL =====
+//     std::vector<int> shape = (dim == 2)
+//         ? std::vector<int>{lenght_network, lenght_network}
+//         : std::vector<int>{lenght_network, lenght_network, lenght_network};
+
+//     const int L = lenght_network;
+//     const int grow_axis = dim - 1;
+
+//     auto wrap = [&](int coord, int Lax) {
+//         if (coord < 0) return Lax - 1;
+//         if (coord >= Lax) return 0;
+//         return coord;
+//     };
+
+//     all_random rng(seed);
+
+//     NetworkPattern net(dim, shape, num_colors, rho, rng);          // estados (propagação)
+//     NetworkPattern net_animation(dim, shape, num_colors, rho, rng);// tempos de ativação
+//     std::fill(net_animation.data.begin(), net_animation.data.end(), -1);
+
+//     // Séries temporais
+//     std::vector<std::vector<double>> p_t(num_colors);
+//     std::vector<std::vector<int>>    Nt_t(num_colors);
+//     for (int c = 0; c < num_colors; ++c) {
+//         p_t[c].push_back(p0[c]);
+//         Nt_t[c].push_back(0);
+//     }
+//     std::vector<int> t_list = {0};
+
+//     // ===== SEEDS NA BORDA (grow_axis = 0), P0 dividida igualmente =====
+//     int base_size = 1;
+//     for (int ax = 0; ax < dim - 1; ++ax) base_size *= shape[ax];
+//     const int seeds_per_color = static_cast<int>(std::llround( (num_colors>0) ? (P0 * base_size / static_cast<double>(num_colors)) : 0.0 ));
+
+//     std::queue<std::vector<int>> borderland;
+//     std::vector<int> N_current(num_colors, 0);
+
+//     for (int c = 0; c < num_colors; ++c) {
+//         int activated = 0, tries = 0;
+//         const int max_tries = base_size * 20;
+
+//         const int prefer_neg = (num_colors == 1) ? -1 : -(c + 2);
+//         const int new_val    = (num_colors == 1) ?  1 :  (c + 2);
+
+//         while (activated < seeds_per_color && tries < max_tries) {
+//             std::vector<int> coords(dim, 0);
+//             for (int ax = 0; ax < dim - 1; ++ax)
+//                 coords[ax] = rng.uniform_int(0, shape[ax] - 1);
+//             coords[grow_axis] = 0;
+
+//             const int v = net.get(coords);
+//             if (v == prefer_neg || v == -1) {
+//                 net.set(coords, new_val);
+//                 borderland.push(coords);
+//                 net_animation.set(coords, 0); // grava tempo
+//                 Nt_t[c][0]++; N_current[c]++; activated++;
+//             }
+//             ++tries;
+//         }
+//     }
+
+//     // Tracking de percolação por cor
+//     std::vector<bool> percolated(num_colors, false);
+//     std::vector<int>  t_percolated(num_colors, -1);
+
+//     std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
+
+//     // ===== EVOLUÇÃO =====
+//     for (int t = 1; t < num_of_samples; ++t) {
+//         std::fill(N_current.begin(), N_current.end(), 0);
+//         std::queue<std::vector<int>> new_borderland;
+
+//         while (!borderland.empty()) {
+//             const std::vector<int> pos = borderland.front();
+//             borderland.pop();
+
+//             const int active_val = net.get(pos);
+//             if (active_val <= 0) continue;
+
+//             const int cor_idx = (num_colors == 1) ? 0 : (std::abs(active_val) - 2);
+
+//             int v_idx = 0;
+//             for (int ax = 0; ax < dim; ++ax) {
+//                 for (int delta : {-1, 1}) {
+//                     std::vector<int>& viz = neighbor_buffer[v_idx++];
+//                     viz = pos;
+//                     viz[ax] += delta;
+
+//                     // Contorno: eixo de crescimento aberto, laterais periódicas
+//                     bool valid = true;
+//                     for (int j = 0; j < dim; ++j) {
+//                         if (j == grow_axis) {
+//                             if (viz[j] < 0 || viz[j] >= shape[j]) { valid = false; break; }
+//                         } else {
+//                             viz[j] = wrap(viz[j], shape[j]);
+//                         }
+//                     }
+//                     if (!valid) continue;
+
+//                     const int val_viz = net.get(viz);
+//                     if (val_viz >= 0) continue;
+
+//                     const bool same_color = (num_colors == 1) || (val_viz == -(cor_idx + 2));
+//                     const bool no_color   = (val_viz == -1);
+//                     if (!same_color && !no_color) continue;
+
+//                     const double r = rng.uniform_real(0.0, 1.0);
+
+//                     if (r < p_t[cor_idx].back()) {
+//                         const int new_val = (num_colors == 1) ? 1 : (cor_idx + 2);
+//                         net.set(viz, new_val);
+//                         new_borderland.push(viz);
+//                         net_animation.set(viz, t);  // grava tempo de ativação
+//                         N_current[cor_idx]++;
+
+//                         if (viz[grow_axis] == L - 1 && !percolated[cor_idx]) {
+//                             percolated[cor_idx]   = true;
+//                             t_percolated[cor_idx] = t;
+//                             std::cout << "[ANIMATION] Cor " << (cor_idx + 1)
+//                                       << " percolou em t=" << t
+//                                       << "  (p=" << p_t[cor_idx].back()
+//                                       << ", N_t=" << N_current[cor_idx] << ")"
+//                                       << std::endl;
+//                         }
+//                     } else {
+//                         if (type_percolation == "node") {
+//                             net.set(viz, 0);  // node: marca checado
+//                         } else {
+//                             // bond: não marca 0; permanece elegível
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+
+//         const int grown_total = std::accumulate(N_current.begin(), N_current.end(), 0);
+//         if (grown_total == 0) break;
+
+//         borderland = std::move(new_borderland);
+
+//         // Atualiza p_i(t) e N_i(t)
+//         for (int c = 0; c < num_colors; ++c) {
+//             const double p_next = generate_p(type_N_t, p_t[c].back(), t, N_current[c], k, a, alpha);
+//             p_t[c].push_back(p_next);
+//             Nt_t[c].push_back(N_current[c]);
+//         }
+//         t_list.push_back(t);
+
+//         if (t < 10 || t % 100 == 0) {
+//             std::cout << "[ANIMATION] t=" << t;
+//             for (int c = 0; c < num_colors; ++c)
+//                 std::cout << "  p" << (c+1) << "(" << t << ")=" << p_t[c].back()
+//                           << "  N" << (c+1) << "(" << t << ")=" << Nt_t[c].back();
+//             std::cout << std::endl;
+//         }
+
+//         // (Opcional) parar quando TODAS percolarem
+//         if (std::all_of(percolated.begin(), percolated.end(), [](bool x){ return x; })) {
+//             std::cout << "[ANIMATION] Todas as cores percolaram em t=" << t << "  (";
+//             for (int c = 0; c < num_colors; ++c) {
+//                 std::cout << "c" << (c+1) << "=" << t_percolated[c];
+//                 if (c+1 < num_colors) std::cout << ", ";
+//             }
+//             std::cout << ")" << std::endl;
+//             break;
+//         }
+//     }
+
+//     ts_out.num_colors = num_colors;
+//     ts_out.p_t = std::move(p_t);
+//     ts_out.Nt  = std::move(Nt_t);
+//     ts_out.t   = std::move(t_list);
+
+//     // net_animation contém apenas tempos de ativação (>=0), -1 onde nunca ativou
+//     return net_animation;
+// }
+
+// // Ativa a base conforme P0 (total) e p0 (fração por cor na base)
+// NetworkPattern network::initialize_network(int dim, int length_network, int num_colors,
+//                                            double P0,
+//                                            const std::vector<double>& rho,
+//                                            const std::vector<double>& p0,
+//                                            int seed)
+// {
+//     std::vector<int> shape = (dim == 2)
+//         ? std::vector<int>{length_network, length_network}
+//         : std::vector<int>{length_network, length_network, length_network};
+
+//     all_random rng(seed);
+//     NetworkPattern net(dim, shape, num_colors, rho, rng);
+
+//     const int grow_axis = dim - 1;
+
+//     // Colore a BASE com -(c+2) segundo rho (sobra permanece -1)
+//     colorize_base_by_rho(net, grow_axis, rng);
+
+//     // Índices lineares da base (para ativação P0/p0)
+//     auto base_coords_from_idx = [&](int idx_linear) {
+//         std::vector<int> coords(dim, 0);
+//         int rem = idx_linear;
+//         for (int ax = dim - 2; ax >= 0; --ax) {
+//             coords[ax] = rem % shape[ax];
+//             rem /= shape[ax];
+//         }
+//         coords[grow_axis] = 0;
+//         return coords;
+//     };
+//     int base_size = 1;
+//     for (int ax = 0; ax < dim - 1; ++ax) base_size *= shape[ax];
+
+//     std::vector<size_t> base_indices;
+//     base_indices.reserve((size_t)base_size);
+//     for (int i = 0; i < base_size; ++i) {
+//         base_indices.push_back(net.to_index(base_coords_from_idx(i)));
+//     }
+
+//     // Normaliza p0
+//     std::vector<double> p0_use = p0;
+//     if ((int)p0_use.size() != num_colors) {
+//         p0_use.assign(std::max(1, num_colors), (num_colors > 0 ? 1.0 / num_colors : 1.0));
+//     } else {
+//         double s = std::accumulate(p0_use.begin(), p0_use.end(), 0.0);
+//         if (s <= 0.0) p0_use.assign(num_colors, (num_colors > 0 ? 1.0 / num_colors : 1.0));
+//         else for (double &x : p0_use) x /= s;
+//     }
+
+//     const int total_active_target = std::max(0, (int)std::llround(P0 * base_size));
+
+//     if (num_colors <= 1) {
+//         std::vector<size_t> candidates;
+//         candidates.reserve((size_t)base_size);
+//         for (size_t idx_lin : base_indices) {
+//             if (net.data[idx_lin] == -1) candidates.push_back(idx_lin);
+//         }
+//         std::shuffle(candidates.begin(), candidates.end(), rng.get_gen());
+//         int take = std::min<int>(total_active_target, (int)candidates.size());
+//         for (int k = 0; k < take; ++k) net.data[candidates[k]] = +1;
+//         return net;
+//     }
+
+//     for (int c = 0; c < num_colors; ++c) {
+//         int quota = std::max(0, (int)std::llround(p0_use[c] * total_active_target));
+//         if (quota == 0) continue;
+
+//         const int label_neg = -(c + 2);
+//         const int label_pos =  (c + 2);
+
+//         std::vector<size_t> preferred; preferred.reserve((size_t)quota);
+//         std::vector<size_t> fallback;  fallback.reserve((size_t)quota);
+
+//         for (size_t idx_lin : base_indices) {
+//             int v = net.data[idx_lin];
+//             if (v == label_neg) preferred.push_back(idx_lin);
+//             else if (v == -1)   fallback.push_back(idx_lin);
+//         }
+
+//         std::shuffle(preferred.begin(), preferred.end(), rng.get_gen());
+//         std::shuffle(fallback.begin(),  fallback.end(),  rng.get_gen());
+
+//         int need = quota;
+//         int take_pref = std::min<int>(need, (int)preferred.size());
+//         for (int k = 0; k < take_pref; ++k) net.data[preferred[k]] = label_pos;
+//         need -= take_pref;
+
+//         int take_fb = std::min<int>(need, (int)fallback.size());
+//         for (int k = 0; k < take_fb; ++k)  net.data[fallback[k]] = label_pos;
+//     }
+
+//     return net;
+// }
 
 
+// // ===== print_initial_site_fractions (compatível com o struct atual) =====
+// void network::print_initial_site_fractions(const NetworkPattern& net) 
+//     {
+//     std::map<int, size_t> count;  // ordenado por chave (estado)
+//     const size_t total = net.data.size();
 
+//     for (int v : net.data) count[v]++;
+
+//     std::cout << "\n[ Fração inicial dos sítios ]\n";
+//     std::cout.setf(std::ios::fixed); std::cout << std::setprecision(6);
+
+//     size_t check_sum = 0;
+//     for (const auto& kv : count) {
+//         int state = kv.first;
+//         size_t n  = kv.second;
+//         double frac = static_cast<double>(n) / static_cast<double>(total);
+//         std::cout << "estado = " << std::setw(3) << state
+//                   << " | contagem = " << std::setw(10) << n
+//                   << " | fração = " << frac << '\n';
+//         check_sum += n;
+//     }
+
+//     std::cout << "total sites = " << total
+//               << " | soma contagens = " << check_sum
+//               << (check_sum == total ? " (OK)\n" : " (INCONSISTENTE!)\n");
+// }
 
