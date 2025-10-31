@@ -3,43 +3,36 @@
 
 #pragma once
 #include <vector>
-#include <functional>
+#include <cstddef>
+#include <queue>
+#include <algorithm>
+#include <cstdlib>
+#include <cmath>
+#include "struct_network.hpp"
 
-struct BFSResult {
-    int size = 0;
-    std::vector<int> nodes;
-    bool touches_base = false;
-    bool touches_top  = false;
-    int zmin =  1e9;
-    int zmax = -1e9;
-};
+
+
 
 struct BiggestComponent {
-    // Agora valid_coord pode AJUSTAR (wrap) x,y,z por referência
-    BFSResult find_largest_component_for_color(
-        int dim, int SX, int SY, int SZ,
-        const std::function<int(int,int,int)>& get_val,
-        const std::function<bool(int&,int&,int&)>& valid_coord,  // <<<<< aqui
-        int active_val
+    public:
+        void compute_shortest_paths_to_base(
+        const NetworkPattern&                           net,
+        int                                             dim,
+        const std::vector<int>&                         shape,
+        int                                             grow_axis,    // normalmente dim-1
+        int                                             num_colors,
+        const std::vector<std::vector<int>>&            parent,       // [num_colors][GRID_N]
+        PercolationSeries&                              ps_out
     );
+    
+        std::vector<int> largest_cluster_sizes(  // agora: só clusters que percolam
+            const NetworkPattern&   net,
+            int                     dim,
+            const std::vector<int>& shape,
+            int                     grow_axis,
+            int                     num_colors
+        );
 
-private:
-    int  lin_index(int dim, int SX, int SY, int SZ, int x, int y, int z);
-    void unlin(int dim, int SX, int SY, int SZ, int id, int& x, int& y, int& z);
-    bool is_active_same_color(
-        int dim, int SX, int SY, int SZ,
-        int x, int y, int z,
-        const std::function<int(int,int,int)>& get_val,
-        int active_val
-    );
-
-    BFSResult bfs_component_from_seed(
-        int dim, int SX, int SY, int SZ,
-        int seed_id, int active_val,
-        const std::function<int(int,int,int)>& get_val,
-        const std::function<bool(int&,int&,int&)>& valid_coord,  // <<<<< aqui
-        std::vector<char>& visited
-    );
 };
 
 #endif // LargestComponentBFS_hpp

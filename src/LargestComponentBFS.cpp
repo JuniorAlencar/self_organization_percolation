@@ -1,118 +1,206 @@
 #include "LargestComponentBFS.hpp"
-#include <utility>
-#include <cstddef>
 
-int BiggestComponent::lin_index(int dim, int SX, int SY, int /*SZ*/,
-                                int x, int y, int z) {
-    if (dim == 2) return y * SX + x;
-    return (z * SY + y) * SX + x;
+// ===== Helpers =====
+static inline int sx(const std::vector<int>& shape) { return shape[0]; }
+static inline int sy(const std::vector<int>& shape, int dim) { return (dim >= 2 ? shape[1] : 1); }
+static inline int sz(const std::vector<int>& shape, int dim) { return (dim == 3 ? shape[2] : 1); }
+
+static inline int lin_index(const std::vector<int>& shape, int dim, int x, int y, int z) {
+    const int SX = sx(shape);
+    if (dim == 2) return x + SX * y;
+    const int SY = sy(shape, dim);
+    return x + SX * (y + SY * z);
 }
 
-void BiggestComponent::unlin(int dim, int SX, int SY, int /*SZ*/,
-                             int id, int& x, int& y, int& z) {
+static inline void unravel(const std::vector<int>& shape, int dim, int lin, int& x, int& y, int& z) {
+    const int SX = sx(shape);
+    const int SY = sy(shape, dim);
     if (dim == 2) {
-        x = id % SX; y = id / SX; z = 0;
-    } else {
-        x = id % SX; int t = id / SX; y = t % SY; z = t / SY;
+        z = 0;
+        y = lin / SX;
+        x = lin % SX;
+    } else { // dim == 3
+        const int plane = SX * SY;
+        z = lin / plane;
+        int rem = lin % plane;
+        y = rem / SX;
+        x = rem % SX;
     }
 }
 
-bool BiggestComponent::is_active_same_color(
-    int /*dim*/, int /*SX*/, int /*SY*/, int /*SZ*/,
-    int x, int y, int z,
-    const std::function<int(int,int,int)>& get_val,
-    int active_val
-) {
-    return get_val(x,y,z) == active_val;
+static inline bool apply_bc_and_validate(std::vector<int>& v, int dim, const std::vector<int>& shape, int grow_axis) {
+    for (int j = 0; j < dim; ++j) {
+        if (j == grow_axis) {
+            if (v[j] < 0 || v[j] >= shape[j]) return false; // aberto no grow_axis
+        } else {
+            if (v[j] < 0) v[j] = shape[j] - 1;
+            else if (v[j] >= shape[j]) v[j] = 0;            // periódico nos demais
+        }
+    }
+    return true;
 }
 
-BFSResult BiggestComponent::bfs_component_from_seed(
-    int dim, int SX, int SY, int SZ,
-    int seed_id, int active_val,
-    const std::function<int(int,int,int)>& get_val,
-    const std::function<bool(int&,int&,int&)>& valid_coord,  // <<<
-    std::vector<char>& visited
+static inline int color_index_from_val(int v, int num_colors) {
+    if (v <= 0) return -1;               // inativo/checado
+    if (num_colors == 1) return 0;       // ativo (1)
+    return std::abs(v) - 2;              // ativos {+2,+3,...} -> {0,1,...}
+}
+
+
+// ===== Shortest path base->topo =====
+void BiggestComponent::compute_shortest_paths_to_base(
+    const NetworkPattern&                           net,
+    int                                             dim,
+    const std::vector<int>&                         shape,
+    int                                             grow_axis,
+    int                                             num_colors,
+    const std::vector<std::vector<int>>&            parent,
+    PercolationSeries&                              ps_out
 ) {
-    BFSResult res;
-    const int N = SX * SY * (dim == 3 ? SZ : 1);
-    if (seed_id < 0 || seed_id >= N) return res;
+    const int SX = sx(shape);
+    const int SY = sy(shape, dim);
+    const int SZ = sz(shape, dim);
+    const int GRID_N = SX * SY * SZ;
 
-    int sx, sy, sz;
-    unlin(dim, SX, SY, SZ, seed_id, sx, sy, sz);
-    if (!is_active_same_color(dim, SX, SY, SZ, sx, sy, sz, get_val, active_val))
-        return res;
+    ps_out.sp_len.assign(num_colors, -1);
+    ps_out.sp_path_lin.assign(num_colors, {});
 
-    std::vector<int> q; q.reserve(1024);
-    visited[seed_id] = 1;
-    q.push_back(seed_id);
+    const int top_level = shape[grow_axis] - 1;
 
-    const int L = (dim == 3 ? SZ : SY);
+    for (int c = 0; c < num_colors; ++c) {
+        int top_lin = -1;
 
-    auto try_push = [&](int nx, int ny, int nz) {
-        // wrap + checagem via valid_coord (pode MODIFICAR nx,ny,nz)
-        if (!valid_coord(nx,ny,nz)) return;
-        // Agora nx,ny,nz já estão dentro dos limites
-        int nid = lin_index(dim, SX, SY, SZ, nx, ny, nz);
-        if (nid < 0 || nid >= N) return;
-        if (visited[nid]) return;
-        if (!is_active_same_color(dim, SX, SY, SZ, nx, ny, nz, get_val, active_val)) return;
+        // Varre camada do topo (grow_axis = L-1) procurando um nó ativo da cor c
+        if (dim == 2) {
+            for (int y = 0; y < SY; ++y)
+                for (int x = 0; x < SX; ++x) {
+                    int xx = x, yy = y;
+                    if (grow_axis == 0) xx = top_level;
+                    else                yy = top_level;
+                    int lin = lin_index(shape, dim, xx, yy, 0);
+                    if (color_index_from_val(net.get(lin), num_colors) == c) { top_lin = lin; break; }
+                }
+        } else {
+            for (int z = 0; z < SZ; ++z)
+                for (int y = 0; y < SY; ++y)
+                    for (int x = 0; x < SX; ++x) {
+                        int xx = x, yy = y, zz = z;
+                        if      (grow_axis == 0) xx = top_level;
+                        else if (grow_axis == 1) yy = top_level;
+                        else                     zz = top_level;
+                        int lin = lin_index(shape, dim, xx, yy, zz);
+                        if (color_index_from_val(net.get(lin), num_colors) == c) { top_lin = lin; goto found_top; }
+                    }
+        }
+found_top:
 
-        visited[nid] = 1;
-        q.push_back(nid);
+        if (top_lin == -1 || parent[c].empty()) { ps_out.sp_len[c] = -1; continue; }
+
+        // Backtracking topo -> base via parent[c]
+        std::vector<int> path;
+        int cur = top_lin;
+        const auto& P = parent[c];
+
+        if (cur < 0 || cur >= GRID_N) { ps_out.sp_len[c] = -1; continue; }
+
+        path.push_back(cur);
+        while (true) {
+            int par = P[cur];
+            if (par == -1) break;          // semente/base
+            if (par < 0)  { path.clear(); break; } // inconsistente
+            path.push_back(par);
+            cur = par;
+        }
+        if (path.empty()) { ps_out.sp_len[c] = -1; continue; }
+        std::reverse(path.begin(), path.end());
+
+        ps_out.sp_len[c] = static_cast<int>(path.size());
+        ps_out.sp_path_lin[c] = std::move(path);
+    }
+}
+
+// ===== Maior cluster QUE PERCOLA por cor =====
+std::vector<int> BiggestComponent::largest_cluster_sizes(
+    const NetworkPattern&   net,
+    int                     dim,
+    const std::vector<int>& shape,
+    int                     grow_axis,
+    int                     num_colors
+) {
+    const int SX = sx(shape);
+    const int SY = sy(shape, dim);
+    const int SZ = sz(shape, dim);
+    const int GRID_N = SX * SY * SZ;
+    const int L = shape[grow_axis];
+
+    std::vector<int> best(num_colors, 0);
+
+    auto level_of = [&](int lin)->int{
+        int x,y,z; unravel(shape, dim, lin, x, y, z);
+        return (grow_axis == 0 ? x : (grow_axis == 1 ? y : z));
     };
 
-    for (size_t head = 0; head < q.size(); ++head) {
-        int u = q[head];
-        res.nodes.push_back(u);
-        ++res.size;
-
-        int ux, uy, uz;
-        unlin(dim, SX, SY, SZ, u, ux, uy, uz);
-
-        int gc = (dim == 3 ? uz : uy);
-        if (gc < res.zmin) res.zmin = gc;
-        if (gc > res.zmax) res.zmax = gc;
-        if (gc == 0)     res.touches_base = true;
-        if (gc == L - 1) res.touches_top  = true;
-
-        // Vizinhos cartesianos (±1)
-        try_push(ux - 1, uy, uz);
-        try_push(ux + 1, uy, uz);
-
-        if (dim >= 2) {
-            try_push(ux, uy - 1, uz);
-            try_push(ux, uy + 1, uz);
+    auto neighbors = [&](int lin, std::vector<int>& out){
+        out.clear();
+        int x,y,z; unravel(shape, dim, lin, x, y, z);
+        for (int ax = 0; ax < dim; ++ax) {
+            for (int delta : {-1, 1}) {
+                std::vector<int> v = {x, y, z};
+                v[ax] += delta;
+                if (!apply_bc_and_validate(v, dim, shape, grow_axis)) continue;
+                out.push_back(lin_index(shape, dim, v[0], v[1], v[2]));
+            }
         }
-        if (dim == 3) {
-            try_push(ux, uy, uz - 1);
-            try_push(ux, uy, uz + 1);
+    };
+
+    std::vector<unsigned char> seen((size_t)GRID_N, 0);
+    std::vector<int> q; q.reserve(1024);
+    std::vector<int> neigh; neigh.reserve(2 * dim);
+
+    for (int c = 0; c < num_colors; ++c) {
+        std::fill(seen.begin(), seen.end(), 0);
+        int best_c = 0;
+
+        for (int lin = 0; lin < GRID_N; ++lin) {
+            if (seen[lin]) continue;
+            int v = net.get(lin);
+            if (color_index_from_val(v, num_colors) != c) continue;
+
+            // BFS da componente desta cor
+            q.clear();
+            q.push_back(lin);
+            seen[lin] = 1;
+
+            int comp_size = 0;
+            bool touches_base = false;
+            bool touches_top  = false;
+
+            while (!q.empty()) {
+                int u = q.back(); q.pop_back();
+                ++comp_size;
+
+                int h = level_of(u);
+                if (h == 0)     touches_base = true;
+                if (h == L - 1) touches_top  = true;
+
+                neighbors(u, neigh);
+                for (int w : neigh) {
+                    if (seen[w]) continue;
+                    int vw = net.get(w);
+                    if (color_index_from_val(vw, num_colors) != c) continue;
+                    seen[w] = 1;
+                    q.push_back(w);
+                }
+            }
+
+            // Só considera se a componente realmente percola (base & topo)
+            if (touches_base && touches_top)
+                best_c = std::max(best_c, comp_size);
         }
+
+        best[c] = best_c; // 0 se nenhuma componente percolar
     }
-    return res;
-}
 
-BFSResult BiggestComponent::find_largest_component_for_color(
-    int dim, int SX, int SY, int SZ,
-    const std::function<int(int,int,int)>& get_val,
-    const std::function<bool(int&,int&,int&)>& valid_coord,  // <<<
-    int active_val
-) {
-    BFSResult best;
-    const int N = SX * SY * (dim == 3 ? SZ : 1);
-    std::vector<char> visited((size_t)N, 0);
-
-    for (int id = 0; id < N; ++id) {
-        if (visited[id]) continue;
-
-        int x, y, z;
-        unlin(dim, SX, SY, SZ, id, x, y, z);
-        if (!is_active_same_color(dim, SX, SY, SZ, x, y, z, get_val, active_val))
-            continue;
-
-        BFSResult cur = bfs_component_from_seed(
-            dim, SX, SY, SZ, id, active_val, get_val, valid_coord, visited
-        );
-        if (cur.size > best.size) best = std::move(cur);
-    }
     return best;
 }
+
