@@ -52,7 +52,7 @@ if ! command -v parallel >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type k NT dim num_colors DCU
+export L p0 seed type k NT dim num_colors
 
 # --- run Cartesian product: rho × runs, with progress bar ---
 parallel -j "$JOBS" --bar --halt soon,fail=1 '

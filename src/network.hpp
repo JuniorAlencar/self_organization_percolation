@@ -17,11 +17,13 @@
 #include <iomanip>
 #include <deque>
 #include <array>
-
+#include <cassert>
 
 #include "rand_utils.hpp"
-#include "struct_network.hpp"
 #include "LargestComponentBFS.hpp"
+
+
+
 
 using namespace std;
 

@@ -8,50 +8,50 @@
 
 #include "write_save.hpp"
 
-// static void write_npy_int32(const std::string& filename,
-//                             const std::vector<int>& shape,
-//                             const std::vector<int>& data)
-// {
-//     if (shape.empty()) throw std::runtime_error("[save_network_as_npz] shape vazio");
-//     size_t n = 1;
-//     for (int s : shape) {
-//         if (s <= 0) throw std::runtime_error("[save_network_as_npz] dimensão <=0");
-//         n *= static_cast<size_t>(s);
-//     }
-//     if (n != data.size()) throw std::runtime_error("[save_network_as_npz] shape != data.size()");
+static void write_npy_int32(const std::string& filename,
+                            const std::vector<int>& shape,
+                            const std::vector<int>& data)
+{
+    if (shape.empty()) throw std::runtime_error("[save_network_as_npz] shape vazio");
+    size_t n = 1;
+    for (int s : shape) {
+        if (s <= 0) throw std::runtime_error("[save_network_as_npz] dimensão <=0");
+        n *= static_cast<size_t>(s);
+    }
+    if (n != data.size()) throw std::runtime_error("[save_network_as_npz] shape != data.size()");
 
-//     std::ofstream ofs(filename, std::ios::binary);
-//     if (!ofs) throw std::runtime_error(std::string("[save_network_as_npz] não abriu: ")+filename);
+    std::ofstream ofs(filename, std::ios::binary);
+    if (!ofs) throw std::runtime_error(std::string("[save_network_as_npz] não abriu: ")+filename);
 
-//     // magic + versão
-//     ofs.write("\x93NUMPY", 6);
-//     ofs.put(char(1)); ofs.put(char(0)); // v1.0
+    // magic + versão
+    ofs.write("\x93NUMPY", 6);
+    ofs.put(char(1)); ofs.put(char(0)); // v1.0
 
-//     // header dict
-//     std::ostringstream dict;
-//     dict << "{'descr': '|i4', 'fortran_order': False, 'shape': (";
-//     for (size_t i=0;i<shape.size();++i) {
-//         dict << shape[i];
-//         if (i+1<shape.size()) dict << ", ";
-//     }
-//     if (shape.size()==1) dict << ",";
-//     dict << "), }";
-//     std::string hdr = dict.str();
+    // header dict
+    std::ostringstream dict;
+    dict << "{'descr': '|i4', 'fortran_order': False, 'shape': (";
+    for (size_t i=0;i<shape.size();++i) {
+        dict << shape[i];
+        if (i+1<shape.size()) dict << ", ";
+    }
+    if (shape.size()==1) dict << ",";
+    dict << "), }";
+    std::string hdr = dict.str();
 
-//     // alinhamento 16B
-//     const size_t preamble = 10; // 6 magic + 2 ver + 2 header_len
-//     size_t pad = (16 - ((preamble + 2 + hdr.size()) % 16)) % 16;
-//     hdr.append(pad, ' ');
-//     hdr.push_back('\n');
+    // alinhamento 16B
+    const size_t preamble = 10; // 6 magic + 2 ver + 2 header_len
+    size_t pad = (16 - ((preamble + 2 + hdr.size()) % 16)) % 16;
+    hdr.append(pad, ' ');
+    hdr.push_back('\n');
 
-//     // header_len (LE uint16)
-//     unsigned short hl = static_cast<unsigned short>(hdr.size());
-//     ofs.put(static_cast<char>(hl & 0xFF));
-//     ofs.put(static_cast<char>((hl >> 8) & 0xFF));
+    // header_len (LE uint16)
+    unsigned short hl = static_cast<unsigned short>(hdr.size());
+    ofs.put(static_cast<char>(hl & 0xFF));
+    ofs.put(static_cast<char>((hl >> 8) & 0xFF));
 
-//     ofs.write(hdr.data(), hdr.size());
-//     ofs.write(reinterpret_cast<const char*>(data.data()), data.size()*sizeof(int));
-// }
+    ofs.write(hdr.data(), hdr.size());
+    ofs.write(reinterpret_cast<const char*>(data.data()), data.size()*sizeof(int));
+}
 
 
 
@@ -139,77 +139,76 @@ inline void zip_add_buffer(zip_t* za, const std::string& entry_name, const std::
 
 
 // =======================================================
-// NOVA implementação
-// void save_data::save_network_as_npz(const NetworkPattern& net,
-//                                     const std::string& filename) const
-// {
-//     // Retrocompatibilidade: se pedirem .npy, grava apenas os dados em i4
-//     if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npy") {
-//         write_npy_int32(filename, net.shape, net.data);
-//         return;
-//     }
+void save_data::save_network_as_npz(const NetworkPattern& net,
+                                    const std::string& filename) const
+{
+    // Retrocompatibilidade: se pedirem .npy, grava apenas os dados em i4
+    if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npy") {
+        write_npy_int32(filename, net.shape, net.data);
+        return;
+    }
 
-//     // Caso esperado: .npz
-//     if (!(filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")) {
-//         throw std::runtime_error("save_network_as_npz: filename deve terminar com .npz ou .npy");
-//     }
+    // Caso esperado: .npz
+    if (!(filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")) {
+        throw std::runtime_error("save_network_as_npz: filename deve terminar com .npz ou .npy");
+    }
 
-//     // Preparar blobs .npy
-//     // 1) dim, num_colors, seed (escalares)
-//     const int32_t dim_i = static_cast<int32_t>(net.dim);
-//     const int32_t nc_i  = static_cast<int32_t>(net.num_colors);
-//     const int32_t seed_i= static_cast<int32_t>(net.seed);
-//     const std::vector<size_t> shape_scalar{}; // escalar: ()
+    // Preparar blobs .npy
+    // 1) dim, num_colors, seed (escalares)
+    const int32_t dim_i = static_cast<int32_t>(net.dim);
+    const int32_t nc_i  = static_cast<int32_t>(net.num_colors);
+    const int32_t seed_i= static_cast<int32_t>(net.seed);
+    const std::vector<size_t> shape_scalar{}; // escalar: ()
 
-//     const std::string npy_dim  = make_npy_blob(&dim_i,  1, shape_scalar);
-//     const std::string npy_nc   = make_npy_blob(&nc_i,   1, shape_scalar);
-//     const std::string npy_seed = make_npy_blob(&seed_i, 1, shape_scalar);
+    const std::string npy_dim  = make_npy_blob(&dim_i,  1, shape_scalar);
+    const std::string npy_nc   = make_npy_blob(&nc_i,   1, shape_scalar);
+    const std::string npy_seed = make_npy_blob(&seed_i, 1, shape_scalar);
 
-//     // 2) shape (int32 1D)
-//     std::vector<int32_t> shape_i32;
-//     shape_i32.reserve(net.shape.size());
-//     for (int s : net.shape) {
-//         if (s <= 0) throw std::runtime_error("save_network_as_npz: shape inválido");
-//         shape_i32.push_back(static_cast<int32_t>(s));
-//     }
-//     const std::vector<size_t> shape_1d{ shape_i32.size() };
-//     const std::string npy_shape = make_npy_blob(shape_i32.data(), shape_i32.size(), shape_1d);
+    // 2) shape (int32 1D)
+    std::vector<int32_t> shape_i32;
+    shape_i32.reserve(net.shape.size());
+    for (int s : net.shape) {
+        if (s <= 0) throw std::runtime_error("save_network_as_npz: shape inválido");
+        shape_i32.push_back(static_cast<int32_t>(s));
+    }
+    const std::vector<size_t> shape_1d{ shape_i32.size() };
+    const std::string npy_shape = make_npy_blob(shape_i32.data(), shape_i32.size(), shape_1d);
 
-//     // 3) data (int32 1D, C-order flatten — mais portátil)
-//     const std::vector<size_t> data_shape_1d{ net.data.size() };
-//     const std::string npy_data = make_npy_blob(reinterpret_cast<const int32_t*>(net.data.data()),
-//                                                net.data.size(), data_shape_1d);
+    // 3) data (int32 1D, C-order flatten — mais portátil)
+    const std::vector<size_t> data_shape_1d{ net.data.size() };
+    const std::string npy_data = make_npy_blob(reinterpret_cast<const int32_t*>(net.data.data()),
+                                               net.data.size(), data_shape_1d);
 
-//     // 4) rho (float64 1D)
-//     std::vector<double> rho_f(net.rho.begin(), net.rho.end());
-//     const std::vector<size_t> rho_shape_1d{ rho_f.size() };
-//     const std::string npy_rho = make_npy_blob(rho_f.data(), rho_f.size(), rho_shape_1d);
+    // 4) rho (float64 1D)
+    std::vector<double> rho_f(net.rho.begin(), net.rho.end());
+    const std::vector<size_t> rho_shape_1d{ rho_f.size() };
+    const std::string npy_rho = make_npy_blob(rho_f.data(), rho_f.size(), rho_shape_1d);
 
-//     // Abrir zip e adicionar entradas
-//     int errcode = 0;
-//     zip_t* za = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errcode);
-//     if (!za) {
-//         std::ostringstream oss;
-//         oss << "save_network_as_npz: não abriu zip '" << filename << "' (err=" << errcode << ")";
-//         throw std::runtime_error(oss.str());
-//     }
+    // Abrir zip e adicionar entradas
+    int errcode = 0;
+    zip_t* za = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errcode);
+    if (!za) {
+        std::ostringstream oss;
+        oss << "save_network_as_npz: não abriu zip '" << filename << "' (err=" << errcode << ")";
+        throw std::runtime_error(oss.str());
+    }
 
-//     try {
-//         zip_add_buffer(za, "dim.npy",        npy_dim);
-//         zip_add_buffer(za, "num_colors.npy", npy_nc);
-//         zip_add_buffer(za, "seed.npy",       npy_seed);
-//         zip_add_buffer(za, "shape.npy",      npy_shape);
-//         zip_add_buffer(za, "data.npy",       npy_data);
-//         zip_add_buffer(za, "rho.npy",        npy_rho);
+    try {
+        zip_add_buffer(za, "dim.npy",        npy_dim);
+        zip_add_buffer(za, "num_colors.npy", npy_nc);
+        zip_add_buffer(za, "seed.npy",       npy_seed);
+        zip_add_buffer(za, "shape.npy",      npy_shape);
+        zip_add_buffer(za, "data.npy",       npy_data);
+        zip_add_buffer(za, "rho.npy",        npy_rho);
 
-//         if (zip_close(za) != 0) {
-//             throw std::runtime_error("save_network_as_npz: zip_close falhou");
-//         }
-//     } catch (...) {
-//         zip_discard(za);
-//         throw;
-//     }
-// }
+        if (zip_close(za) != 0) {
+            throw std::runtime_error("save_network_as_npz: zip_close falhou");
+        }
+    } catch (...) {
+        zip_discard(za);
+        throw;
+    }
+}
 
 
 // ========== helpers JSON ==========

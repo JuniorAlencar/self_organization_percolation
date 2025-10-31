@@ -1,14 +1,11 @@
-
-import re, os, json, glob, math
+import re, os, json, math
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from collections import Counter
 
 # =============================================================
 #  Regex helpers (stable)
 # =============================================================
-# Accepts k/rho in normal float or scientific notation (e.g., 1.0e-04)
 PARAMS_RE = re.compile(r"""
     (?P<type_perc>[A-Za-z]+)_percolation
     /num_colors_(?P<num_colors>\d+)
@@ -48,44 +45,6 @@ def parse_params_from_path(path: str):
         "rho": float(gd["rho"]),
     }
 
-
-def _find_numeric_subdir(base: Path, key: str, target: float,
-                         rel_tol: float = 1e-12, abs_tol: float = 1e-15) -> Path | None:
-    """Find subdir named '{key}_<number>' numerically close to target."""
-    key = key.lower()
-    best = None
-    best_err = None
-    if not base.exists():
-        return None
-    for d in base.iterdir():
-        if not d.is_dir():
-            continue
-        m = _FLOAT_DIR_RE.match(d.name)
-        if not m:
-            continue
-        if m.group("key").lower() != key:
-            continue
-        try:
-            val = float(m.group("val"))
-        except Exception:
-            continue
-        if math.isclose(val, float(target), rel_tol=rel_tol, abs_tol=abs_tol):
-            err = abs(val - float(target))
-            if (best is None) or (err < best_err):
-                best, best_err = d, err
-    return best
-
-
-def _first_existing(path_candidates):
-    for p in path_candidates:
-        if p is not None and Path(p).exists():
-            return Path(p)
-    return None
-
-# =============================================================
-#  I/O + statistics
-# =============================================================
-
 def read_orders_one_file(file_path):
     """
     Parse one JSON with a "results" list and return a list of tuples
@@ -95,11 +54,11 @@ def read_orders_one_file(file_path):
         obj = json.load(f)
 
     out = []
-    if isinstance(obj, dict) and isinstance(obj.get("results"), list):
-        for item in obj["results"]:
-            order = item.get("order_percolation", None)
+    if isinstance(obj, dict) and isinstance(obj.get("results"), dict):
+        for order_key, item in obj["results"].items():
+            order = int(order_key.split(" ")[-1])  # Extract order number from key
             d = item.get("data", {})
-            if order is None or "time" not in d or "pt" not in d:
+            if "time" not in d or "pt" not in d:
                 continue
 
             p = np.asarray(d["pt"], float)
@@ -121,7 +80,7 @@ def read_orders_one_file(file_path):
             except Exception:
                 m_size = None
 
-            out.append((int(order), p, n_arr, m_size, spl_arr))
+            out.append((order, p, n_arr, m_size, spl_arr))
     return out
 
 
@@ -169,16 +128,6 @@ DEPRECATED_COLS = [
 
 KEY_COLS = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
 
-
-def _normalize_names(iterable):
-    out = set()
-    for x in iterable:
-        b = os.path.basename(x).strip()
-        if b:
-            out.add(b)
-    return out
-
-
 def parse_p0_from_filename(path):
     m = FNAME_RE.search(os.path.basename(path))
     if not m:
@@ -187,7 +136,6 @@ def parse_p0_from_filename(path):
         return float(m.group("p0"))
     except Exception:
         return None
-
 
 def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
     per_order_pt, per_order_nt, per_order_msize = {}, {}, {}
@@ -354,15 +302,218 @@ def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint:
     df = df.drop(columns=[c for c in DEPRECATED_COLS if c in df.columns], errors="ignore")
     return df, processed
 
+def iter_all_data_dirs(base_root: str = "../Data"):
+    """Yield every directory matching .../data under base_root that fits our layout."""
+    root = Path(base_root)
+    if not root.exists():
+        return
+    for data_dir in root.rglob("data"):
+        if not data_dir.is_dir():
+            continue
+        meta = parse_params_from_path(str(data_dir))
+        if meta is None:
+            continue
+        yield data_dir, meta
 
-# =============================================================
-#  Public processing APIs
-# =============================================================
+
+def _latest_mtime_json(data_dir: Path) -> float:
+    latest = 0.0
+    for p in data_dir.glob("*.json"):
+        try:
+            ts = p.stat().st_mtime
+            if ts > latest:
+                latest = ts
+        except Exception:
+            pass
+    return latest
+
+def saving_data(all_data,
+                output_data: Path,
+                output_names: Path,
+                burn_in_frac=0.20,
+                verbose=False,
+                path_hint: str | None = None,
+                force_recompute: bool = False,
+                clean_outputs: bool = False):
+    return process_with_guard(
+        all_files=all_data,
+        out_dat_path=output_data,
+        out_txt_path=output_names,
+        burn_in_frac=burn_in_frac,
+        verbose=verbose,
+        path_hint=path_hint,
+        force_recompute=force_recompute,
+        clean_outputs=clean_outputs,
+    )
+def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
+                  rel_tol: float = 1e-12, abs_tol: float = 1e-15):
+    """
+    Aggregate all 'all_data*.dat' across rho under (type_perc, num_colors, dim, L, Nt, k),
+    and UPDATE the global accumulated file:
+        {base_root}/{type_perc}_percolation/all_data_{dim}D.dat
+    """
+    out_dir = Path(base_root) / f"{type_perc}_percolation"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"all_data_{dim}D.dat"
+
+    rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root=base_root)
+    if not rho_values:
+        if out_path.exists():
+            try:
+                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
+                return acc
+            except Exception:
+                pass
+        return pd.DataFrame(columns=BASE_COLS)
+
+    base_nt = (Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{num_colors}" /
+               f"dim_{dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}")
+
+    k_dir = _find_numeric_subdir(base_nt, "k", k, rel_tol=rel_tol, abs_tol=abs_tol)
+    if k_dir is None:
+        if out_path.exists():
+            try:
+                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
+                return acc
+            except Exception:
+                pass
+        return pd.DataFrame(columns=BASE_COLS)
+
+    dfs = []
+    for rho in sorted(rho_values):
+        rho_dir = _find_numeric_subdir(k_dir, "rho", rho, rel_tol=rel_tol, abs_tol=abs_tol)
+        if rho_dir is None:
+            continue
+        data_dir = rho_dir / "data"
+        candidates = [data_dir / "all_data.dat", data_dir / f"all_data_{dim}D.dat"]
+        fpath = _first_existing(candidates)
+        if fpath is None:
+            continue
+        try:
+            df_rho = pd.read_csv(fpath, sep="\t", na_values=["Null"])
+        except Exception:
+            continue
+        df_rho = df_rho.drop(columns=[c for c in DEPRECATED_COLS if c in df_rho.columns], errors="ignore")
+        for c in BASE_COLS:
+            if c not in df_rho.columns:
+                df_rho[c] = np.nan
+        dfs.append(df_rho)
+
+    if not dfs:
+        if out_path.exists():
+            try:
+                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
+                return acc
+            except Exception:
+                pass
+        return pd.DataFrame(columns=BASE_COLS)
+
+    new_block = pd.concat(dfs, ignore_index=True, sort=False)
+
+    num_cols = ["num_colors","dim","L","Nt","k","rho","p0","order",
+                "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
+                "M_size_mean","M_size_erro","shortest_path_lin_mean","shortest_path_lin_erro","perc_rate"]
+    for c in num_cols:
+        if c in new_block.columns:
+            new_block[c] = pd.to_numeric(new_block[c], errors="coerce")
+    if "p0" in new_block.columns:
+        new_block["p0"] = new_block["p0"].round(1)
+
+    new_block = new_block.drop_duplicates(subset=KEY_COLS, keep="last")
+
+    if out_path.exists():
+        try:
+            acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
+            acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
+        except Exception:
+            acc = pd.DataFrame(columns=BASE_COLS)
+    else:
+        acc = pd.DataFrame(columns=BASE_COLS)
+
+    union_cols = list(dict.fromkeys(list(BASE_COLS) + list(acc.columns) + list(new_block.columns)))
+    acc_aligned = _align_to_union(acc, union_cols)
+    new_aligned = _align_to_union(new_block, union_cols)
+
+    merged = pd.concat([acc_aligned, new_aligned], ignore_index=True, sort=False)
+    if "type_perc" in merged.columns:
+        merged["type_perc"] = merged["type_perc"].astype(str)
+    merged = merged.drop_duplicates(subset=KEY_COLS, keep="last")
+
+    sort_cols = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
+    sort_cols = [c for c in sort_cols if c in merged.columns]
+    merged = merged.sort_values(sort_cols).reset_index(drop=True)
+
+    merged.to_csv(out_path, sep="\t", index=False, na_rep="Null")
+    print("Updated:", out_path.resolve())
+    return merged
+
+def _find_numeric_subdir(base: Path, key: str, target: float,
+                         rel_tol: float = 1e-12, abs_tol: float = 1e-15) -> Path | None:
+    """Find subdir named '{key}_<number>' numerically close to target."""
+    key = key.lower()
+    best = None
+    best_err = None
+    if not base.exists():
+        return None
+    for d in base.iterdir():
+        if not d.is_dir():
+            continue
+        m = _FLOAT_DIR_RE.match(d.name)
+        if not m:
+            continue
+        if m.group("key").lower() != key:
+            continue
+        try:
+            val = float(m.group("val"))
+        except Exception:
+            continue
+        if math.isclose(val, float(target), rel_tol=rel_tol, abs_tol=abs_tol):
+            err = abs(val - float(target))
+            if (best is None) or (err < best_err):
+                best, best_err = d, err
+    return best
+
+def list_rho_values(type_perc: str, num_colors: int, dim: int, L: int, Nt: int, k: float, base_root: str = "../Data") -> list:
+    """
+    List all rho values for given parameters in base_root directory.
+    """
+    base_dir = Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{num_colors}" / f"dim_{dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}"
+    k_dir = _find_numeric_subdir(base_dir, "k", k)
+    if k_dir is None:
+        return []
+    rho_values = []
+    for rho_dir in k_dir.glob("rho_*"):
+        try:
+            rho_value = float(rho_dir.name.split("_")[1])
+            rho_values.append(rho_value)
+        except ValueError:
+            continue
+    return sorted(rho_values)
+
+def _first_existing(candidates: list[Path]) -> Path | None:
+    """Return the first existing file from the candidates list."""
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+def _normalize_names(lines: list[str]) -> set[str]:
+    """Normalize names list and remove duplicates."""
+    out = set()
+    for ln in lines:
+        if not ln.strip():
+            continue
+        out.add(ln.strip().lower())
+    return out
+
 
 def process_with_guard(all_files,
                        out_dat_path: Path,
                        out_txt_path: Path,
-                       burn_in_frac=0.2,
+                       burn_in_frac=0.20,
                        verbose=False,
                        path_hint: str | None = None,
                        force_recompute: bool = False,
@@ -517,7 +668,7 @@ def process_with_guard(all_files,
     n_orders = meta.get("num_colors") or 1
     by_basename = {os.path.basename(p): p for p in all_files}
     names_rows = []
-    new_set = expected_set if expected_set else _normalize_names(processed_set)
+    new_set = expected_set if expected_set else processed_set
     for bname in sorted(new_set):
         full = by_basename.get(bname)
         if not full or not Path(full).exists():
@@ -541,197 +692,37 @@ def process_with_guard(all_files,
 
     return df, new_set
 
+def _align_to_union(df, union_cols):
+    """Align DataFrame to union of columns, filling missing values with NaN."""
+    return df.reindex(columns=union_cols).fillna(np.nan)
 
-def saving_data(all_data,
-                output_data: Path,
-                output_names: Path,
-                burn_in_frac=0.20,
-                verbose=False,
-                path_hint: str | None = None,
-                force_recompute: bool = False,
-                clean_outputs: bool = False):
-    return process_with_guard(
-        all_files=all_data,
-        out_dat_path=output_data,
-        out_txt_path=output_names,
-        burn_in_frac=burn_in_frac,
-        verbose=verbose,
-        path_hint=path_hint,
-        force_recompute=force_recompute,
-        clean_outputs=clean_outputs,
-    )
-
-# =============================================================
-#  Discovery helpers (used by recursive crawlers)
-# =============================================================
-
-def iter_all_data_dirs(base_root: str = "../Data"):
-    """Yield every directory matching .../data under base_root that fits our layout."""
-    root = Path(base_root)
-    if not root.exists():
-        return
-    for data_dir in root.rglob("data"):
-        if not data_dir.is_dir():
+def _global_join_is_up_to_date(base_root: str, type_perc: str, dim: int, combos: list[tuple]) -> bool:
+    out_path = Path(base_root) / f"{type_perc}_percolation" / f"all_data_{dim}D.dat"
+    if not out_path.exists():
+        return False
+    try:
+        out_mtime = out_path.stat().st_mtime
+    except Exception:
+        return False
+    # If global is newer than every constituent all_data.dat, we can skip
+    latest_constituent = 0.0
+    for (_, _nc, _dim, L, Nt, k) in combos:
+        if _dim != dim:
             continue
-        meta = parse_params_from_path(str(data_dir))
-        if meta is None:
+        base = Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{_nc}" / f"dim_{_dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}"
+        k_dir = _find_numeric_subdir(base, "k", k)
+        if not k_dir:
             continue
-        yield data_dir, meta
-
-
-def list_rho_values(type_perc: str, num_colors: int, dim: int, L: int, Nt: int, k: float,
-                    base_root: str = "../Data", rel_tol: float = 1e-12, abs_tol: float = 1e-15):
-    base = (Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{num_colors}" / f"dim_{dim}" /
-            f"L_{L}" / "NT_constant" / f"NT_{Nt}")
-
-    if not base.exists():
-        return []
-
-    rhos = []
-    for data_dir in base.glob("k_*/rho_*/data"):
-        if not data_dir.is_dir():
-            continue
-        m = PARAMS_RE.search(str(data_dir.as_posix()))
-        if not m:
-            continue
-        gd = m.groupdict()
-        if gd["type_perc"] != type_perc or int(gd["num_colors"]) != num_colors or int(gd["dim"]) != dim or \
-           int(gd["L"]) != L or int(gd["Nt"]) != Nt:
-            continue
-        k_here = float(gd["k"])
-        if not math.isclose(k_here, float(k), rel_tol=rel_tol, abs_tol=abs_tol):
-            continue
-        rhos.append(float(gd["rho"]))
-    return sorted(set(rhos))
-
-
-def _align_to_union(df: pd.DataFrame, union_cols: list) -> pd.DataFrame:
-    for c in union_cols:
-        if c not in df.columns:
-            df[c] = np.nan
-    return df[union_cols].copy()
-
-
-def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
-                  rel_tol: float = 1e-12, abs_tol: float = 1e-15):
-    """
-    Aggregate all 'all_data*.dat' across rho under (type_perc, num_colors, dim, L, Nt, k),
-    and UPDATE the global accumulated file:
-        {base_root}/{type_perc}_percolation/all_data_{dim}D.dat
-    """
-    out_dir = Path(base_root) / f"{type_perc}_percolation"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"all_data_{dim}D.dat"
-
-    rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root=base_root)
-    if not rho_values:
-        if out_path.exists():
-            try:
-                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-                return acc
-            except Exception:
-                pass
-        return pd.DataFrame(columns=BASE_COLS)
-
-    base_nt = (Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{num_colors}" /
-               f"dim_{dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}")
-
-    k_dir = _find_numeric_subdir(base_nt, "k", k, rel_tol=rel_tol, abs_tol=abs_tol)
-    if k_dir is None:
-        if out_path.exists():
-            try:
-                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-                return acc
-            except Exception:
-                pass
-        return pd.DataFrame(columns=BASE_COLS)
-
-    dfs = []
-    for rho in sorted(rho_values):
-        rho_dir = _find_numeric_subdir(k_dir, "rho", rho, rel_tol=rel_tol, abs_tol=abs_tol)
-        if rho_dir is None:
-            continue
-        data_dir = rho_dir / "data"
-        candidates = [data_dir / "all_data.dat", data_dir / f"all_data_{dim}D.dat"]
-        fpath = _first_existing(candidates)
-        if fpath is None:
-            continue
-        try:
-            df_rho = pd.read_csv(fpath, sep="\t", na_values=["Null"])
-        except Exception:
-            continue
-        df_rho = df_rho.drop(columns=[c for c in DEPRECATED_COLS if c in df_rho.columns], errors="ignore")
-        for c in BASE_COLS:
-            if c not in df_rho.columns:
-                df_rho[c] = np.nan
-        dfs.append(df_rho)
-
-    if not dfs:
-        if out_path.exists():
-            try:
-                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-                return acc
-            except Exception:
-                pass
-        return pd.DataFrame(columns=BASE_COLS)
-
-    new_block = pd.concat(dfs, ignore_index=True, sort=False)
-
-    num_cols = ["num_colors","dim","L","Nt","k","rho","p0","order",
-                "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
-                "M_size_mean","M_size_erro","shortest_path_lin_mean","shortest_path_lin_erro","perc_rate"]
-    for c in num_cols:
-        if c in new_block.columns:
-            new_block[c] = pd.to_numeric(new_block[c], errors="coerce")
-    if "p0" in new_block.columns:
-        new_block["p0"] = new_block["p0"].round(1)
-
-    new_block = new_block.drop_duplicates(subset=KEY_COLS, keep="last")
-
-    if out_path.exists():
-        try:
-            acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-            acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-        except Exception:
-            acc = pd.DataFrame(columns=BASE_COLS)
-    else:
-        acc = pd.DataFrame(columns=BASE_COLS)
-
-    union_cols = list(dict.fromkeys(list(BASE_COLS) + list(acc.columns) + list(new_block.columns)))
-    acc_aligned = _align_to_union(acc, union_cols)
-    new_aligned = _align_to_union(new_block, union_cols)
-
-    merged = pd.concat([acc_aligned, new_aligned], ignore_index=True, sort=False)
-    if "type_perc" in merged.columns:
-        merged["type_perc"] = merged["type_perc"].astype(str)
-    merged = merged.drop_duplicates(subset=KEY_COLS, keep="last")
-
-    sort_cols = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
-    sort_cols = [c for c in sort_cols if c in merged.columns]
-    merged = merged.sort_values(sort_cols).reset_index(drop=True)
-
-    merged.to_csv(out_path, sep="\t", index=False, na_rep="Null")
-    print("Updated:", out_path.resolve())
-    return merged
-
-# =============================================================
-#  NEW: Recursive crawlers
-# =============================================================
-
-def _latest_mtime_json(data_dir: Path) -> float:
-    latest = 0.0
-    for p in data_dir.glob("*.json"):
-        try:
-            ts = p.stat().st_mtime
-            if ts > latest:
-                latest = ts
-        except Exception:
-            pass
-    return latest
-
+        for rho_dir in k_dir.glob("rho_*/data"):
+            f = rho_dir / "all_data.dat"
+            if f.exists():
+                try:
+                    mt = f.stat().st_mtime
+                    if mt > latest_constituent:
+                        latest_constituent = mt
+                except Exception:
+                    pass
+    return out_mtime >= latest_constituent and latest_constituent > 0.0
 
 def crawl_and_process(base_root: str = "../Data", burn_in_frac: float = 0.20,
                       verbose: bool = True, force_recompute: bool = False,
@@ -804,35 +795,6 @@ def crawl_and_process(base_root: str = "../Data", burn_in_frac: float = 0.20,
     return tuples
 
 
-def _global_join_is_up_to_date(base_root: str, type_perc: str, dim: int, combos: list[tuple]) -> bool:
-    out_path = Path(base_root) / f"{type_perc}_percolation" / f"all_data_{dim}D.dat"
-    if not out_path.exists():
-        return False
-    try:
-        out_mtime = out_path.stat().st_mtime
-    except Exception:
-        return False
-    # If global is newer than every constituent all_data.dat, we can skip
-    latest_constituent = 0.0
-    for (_, _nc, _dim, L, Nt, k) in combos:
-        if _dim != dim:
-            continue
-        base = Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{_nc}" / f"dim_{_dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}"
-        k_dir = _find_numeric_subdir(base, "k", k)
-        if not k_dir:
-            continue
-        for rho_dir in k_dir.glob("rho_*/data"):
-            f = rho_dir / "all_data.dat"
-            if f.exists():
-                try:
-                    mt = f.stat().st_mtime
-                    if mt > latest_constituent:
-                        latest_constituent = mt
-                except Exception:
-                    pass
-    return out_mtime >= latest_constituent and latest_constituent > 0.0
-
-
 def crawl_join_all_data(base_root: str = "../Data", verbose: bool = True,
                         rel_tol: float = 1e-12, abs_tol: float = 1e-15):
     """
@@ -867,7 +829,7 @@ def crawl_join_all_data(base_root: str = "../Data", verbose: bool = True,
                 print(f"[WARN] join failed for {(t, num_colors, d, L, Nt, k)}: {e}")
 
 # =============================================================
-#  CLI helpers + programmatic entry
+#  Public processing APIs
 # =============================================================
 
 def run_processing_data(base_root: str = "../Data", *, force_recompute: bool = True,
@@ -881,31 +843,3 @@ def run_processing_data(base_root: str = "../Data", *, force_recompute: bool = T
     crawl_join_all_data(base_root=base_root, verbose=verbose)
 
     print("Done.")
-
-
-def run_processing_data_cli(argv: list[str] | None = None):
-    """Command-line entry that plays nice with Jupyter if argv=[] is passed."""
-    import argparse
-    ap = argparse.ArgumentParser(description="Recursive processing for SOP outputs")
-    ap.add_argument("--base_root", default="../Data", help="Root folder with percolation outputs")
-    ap.add_argument("--no_force", action="store_true", help="Do not force recompute (default: force)")
-    ap.add_argument("--burn_in", type=float, default=0.20, help="Burn-in fraction for pt/nt")
-    ap.add_argument("--quiet", action="store_true", help="Less verbose logs")
-    ap.add_argument("--clean", action="store_true", help="Delete outputs before processing")
-    # In notebooks, Jupyter passes its own args; use parse_known_args to avoid crashes
-    if argv is None:
-        args, _unknown = ap.parse_known_args()
-    else:
-        args = ap.parse_args(argv)
-
-    force = not args.no_force
-    verbose = not args.quiet
-    run_processing_data(base_root=args.base_root, force_recompute=force,
-                        burn_in=args.burn_in, verbose=verbose, clean_outputs=args.clean)
-
-
-# =============================================================
-#  CLI entry (optional)
-# =============================================================
-if __name__ == "__main__":
-    run_processing_data_cli()
