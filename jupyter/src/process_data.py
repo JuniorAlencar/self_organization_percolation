@@ -1,845 +1,640 @@
-import re, os, json, math
-import numpy as np
-import pandas as pd
+import re
 from pathlib import Path
+import os, glob
+import pandas as pd
+from typing import Sequence, Optional, Literal, Dict, Any
+import numpy as np
+import math
+import json
 
-# =============================================================
-#  Regex helpers (stable)
-# =============================================================
-PARAMS_RE = re.compile(r"""
-    (?P<type_perc>[A-Za-z]+)_percolation
-    /num_colors_(?P<num_colors>\d+)
+
+FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+
+DIR_RE = re.compile(
+    rf"""
+    ^.*?bond_percolation
+    /num_colors_(?P<nc>\d+)
     /dim_(?P<dim>\d+)
     /L_(?P<L>\d+)
-    /NT_constant/NT_(?P<Nt>\d+)
-    /k_(?P<k>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)
-    /rho_(?P<rho>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)
-    /data
-""", re.X)
-
-FNAME_RE = re.compile(
-    r"P0_(?P<P0>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)_p0_(?P<p0>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)_seed_(?P<seed>\d+)\.json$",
-    re.IGNORECASE,
+    /NT_constant
+    /NT_(?P<Nt>\d+)
+    /k_(?P<k>{FLOAT})
+    /rho_(?P<rho>{FLOAT})
+    /data/?$
+    """,
+    re.X
 )
 
-_FLOAT_DIR_RE = re.compile(r"^(?P<key>k|rho)_(?P<val>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)$", re.I)
 
-# =============================================================
-#  Core parsing utilities
-# =============================================================
-
-def parse_params_from_path(path: str):
-    """Extract type_perc, num_colors, dim, L, Nt, k, rho from a '.../data' path."""
-    p = path.replace("\\", "/")
-    m = PARAMS_RE.search(p)
+def parse_data_dir(path: str):
+    """Extrai nc, dim, L, Nt, k, rho de um path de diretório '.../data'."""
+    m = DIR_RE.match(Path(path).as_posix())
     if not m:
         return None
-    gd = m.groupdict()
+    g = m.groupdict()
     return {
-        "type_perc": gd["type_perc"],
-        "num_colors": int(gd["num_colors"]),
-        "dim": int(gd["dim"]),
-        "L": int(gd["L"]),
-        "Nt": int(gd["Nt"]),
-        "k": float(gd["k"]),
-        "rho": float(gd["rho"]),
+        "nc": int(g["nc"]),
+        "dim": int(g["dim"]),
+        "L": int(g["L"]),
+        "Nt": int(g["Nt"]),
+        "k": float(g["k"]),
+        "rho": float(g["rho"]),
     }
 
-def read_orders_one_file(file_path):
-    """
-    Parse one JSON with a "results" list and return a list of tuples
-    (order, pt_array, nt_array_or_None, M_size_or_None, shortest_path_lin_or_None).
-    """
-    with open(file_path, "r") as f:
-        obj = json.load(f)
-
-    out = []
-    if isinstance(obj, dict) and isinstance(obj.get("results"), dict):
-        for order_key, item in obj["results"].items():
-            order = int(order_key.split(" ")[-1])  # Extract order number from key
-            d = item.get("data", {})
-            if "time" not in d or "pt" not in d:
-                continue
-
-            p = np.asarray(d["pt"], float)
-            n_arr = np.asarray(d["nt"], float) if "nt" in d else None
-            spl_arr = np.asarray(d.get("shortest_path_lin", []), float) if "shortest_path_lin" in d else None
-
-            n = min(len(p), len(n_arr)) if n_arr is not None else len(p)
-            if spl_arr is not None and spl_arr.size > 0:
-                n = min(n, len(spl_arr))
-            if n <= 0:
-                continue
-            p = p[:n]
-            n_arr = n_arr[:n] if n_arr is not None else None
-            spl_arr = spl_arr[:n] if (spl_arr is not None and spl_arr.size >= n) else spl_arr
-
-            m_size = d.get("M_size", None)
-            try:
-                m_size = float(m_size) if m_size is not None else None
-            except Exception:
-                m_size = None
-
-            out.append((order, p, n_arr, m_size, spl_arr))
-    return out
-
-
-def sem_acf(x, max_lag=None):
-    x = np.asarray(x, float)
-    x = x[np.isfinite(x)]
-    n = x.size
-    if n < 3:
-        return (np.nan, np.nan, np.nan, np.nan)
-    mean = x.mean()
-    y = x - mean
-    var = y.var(ddof=1)
-    if var == 0:
-        return (mean, 0.0, 0.0, float(n))
-    if max_lag is None:
-        max_lag = int(np.ceil(n**(1/3)))
-    acfs = []
-    for k in range(1, max_lag+1):
-        acf_k = np.dot(y[:-k], y[k:]) / ((n-k) * var)
-        acfs.append(acf_k)
-    tau_int = 1.0 + 2.0 * sum(a for a in acfs if a > 0)
-    n_eff = max(n / tau_int, 1.0)
-    std = np.sqrt(var)
-    sem = std / math.sqrt(n_eff)
-    return (mean, std, sem, n_eff)
-
-# =============================================================
-#  Dataset builders
-# =============================================================
-
-BASE_COLS = [
-    "type_perc","num_colors","dim","L","Nt","k","rho","p0","order",
-    "num_samples","num_sample_perc",
-    "pt_mean","pt_erro","nt_mean","nt_erro",
-    "M_size_mean","M_size_erro",
-    "shortest_path_lin_mean","shortest_path_lin_erro",
-    "perc_rate",
-]
-
-DEPRECATED_COLS = [
-    "perc_ci_low","perc_ci_high",
-    "pt_mean_uncond","pt_erro_uncond",
-    "nt_mean_uncond","nt_erro_uncond",
-]
-
-KEY_COLS = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
-
-def parse_p0_from_filename(path):
-    m = FNAME_RE.search(os.path.basename(path))
-    if not m:
-        return None
+def _scalar_or_last(x):
+    """Converte para escalar; se for lista/array, pega o último valor."""
+    if isinstance(x, (list, tuple, np.ndarray)):
+        return float(x[-1]) if len(x) > 0 else np.nan
     try:
-        return float(m.group("p0"))
+        return float(x)
     except Exception:
-        return None
+        return np.nan
 
-def summarize_multi_seed_by_order(files, burn_in_frac=0.2, verbose=False):
-    per_order_pt, per_order_nt, per_order_msize = {}, {}, {}
-    per_order_spl = {}
-    any_seen = False
-    processed_here = set()
+def read_experiment_json(path):
+    """
+    Lê um arquivo JSON do experimento e retorna um dicionário
+    com a mesma estrutura do JSON: {'meta': ..., 'results': ...}.
 
-    for jf in files:
-        if parse_p0_from_filename(jf) is not None:
-            processed_here.add(os.path.basename(jf))
+    - Mantém todos os tipos e listas como no arquivo original.
+    - Se 'meta' ou 'results' não existirem, retorna vazios compatíveis.
+
+    Parâmetros
+    ----------
+    path : str | Path
+        Caminho para o arquivo .json
+
+    Retorno
+    -------
+    data_dict : dict
+        {'meta': dict, 'results': dict[str, dict]}
+    """
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    meta = raw.get("meta", {}) or {}
+    results = raw.get("results", {}) or {}
+
+    # Garantia leve de formato: cada entrada em results deve ser um dict
+    # (não altera conteúdo interno, apenas evita valores None/escalares acidentais)
+    fixed_results = {}
+    for k, v in results.items():
+        fixed_results[k] = v if isinstance(v, dict) else {}
+
+    return {"meta": meta, "results": fixed_results}
+
+def tail_mean(
+    x: Sequence[float],
+    *,
+    tail_len: Optional[int] = None,
+    tail_frac: Optional[float] = 0.2,
+    method: Literal["iid", "autocorr"] = "iid",
+    max_lag: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Calcula a média na cauda e o erro associado.
+
+    Parâmetros
+    ----------
+    x : sequência numérica (list/np.ndarray)
+        Série de dados.
+    tail_len : int, opcional
+        Quantidade de pontos finais usados. Se None, usa tail_frac.
+    tail_frac : float in (0,1], opcional
+        Fração final usada (por padrão, 20% finais) se tail_len não for fornecido.
+    method : {"iid","autocorr"}
+        - "iid": assume independência; sem = s/√N.
+        - "autocorr": corrige para autocorrelação via τ_int estimado.
+    max_lag : int, opcional
+        Máximo defasagem para estimar autocorrelação quando method="autocorr".
+        Se None, usa min( N_tail//2 , 1000 ).
+
+    Retorna
+    -------
+    dict com:
+        mean : float         -> média na cauda
+        sem  : float         -> erro padrão da média
+        std  : float         -> desvio-padrão amostral da cauda
+        n_tail : int         -> tamanho da cauda usada
+        start_idx : int      -> índice inicial da cauda (inclusivo)
+        method : str         -> método de erro usado
+        n_eff : float        -> tamanho efetivo (apenas em "autocorr"; em "iid" = n_tail)
+        tau_int : float      -> tempo de autocorrelação integrado (apenas em "autocorr")
+    """
+    x = np.asarray(x, dtype=float)
+    if x.ndim != 1 or x.size == 0:
+        raise ValueError("x deve ser um vetor 1D não vazio.")
+
+    N = x.size
+    if tail_len is None:
+        if tail_frac is None or not (0 < tail_frac <= 1):
+            raise ValueError("Defina tail_len OU tail_frac em (0,1].")
+        tail_len = max(1, int(np.floor(tail_frac * N)))
+    tail_len = min(tail_len, N)
+
+    start_idx = N - tail_len
+    tail = x[start_idx:]
+
+    mean = float(np.mean(tail))
+    # Desvio-padrão amostral (Bessel, ddof=1) — se só 1 ponto, std=0
+    std = float(np.std(tail, ddof=1)) if tail_len > 1 else 0.0
+
+    if method == "iid" or tail_len <= 1 or std == 0.0:
+        sem = std / np.sqrt(tail_len) if tail_len > 0 else np.nan
+        return {
+            "mean": mean,
+            "sem": float(sem),
+            "std": std,
+            "n_tail": int(tail_len),
+            "start_idx": int(start_idx),
+            "method": "iid",
+            "n_eff": float(tail_len),
+            "tau_int": 0.0,
+        }
+
+    # --- método com autocorrelação ---
+    # Estima a autocorrelação normalizada até max_lag e integra enquanto positiva (regra de Sokal).
+    y = tail - mean
+    n = y.size
+    if max_lag is None:
+        max_lag = min(n // 2, 1000)
+
+    # autocorrelação via FFT (O(n log n))
+    # corr[k] = sum_{t} y[t]*y[t+k]
+    def _acf_fft(v):
+        m = int(2 ** np.ceil(np.log2(2 * len(v) - 1)))
+        fv = np.fft.rfft(v, n=m)
+        acf = np.fft.irfft(fv * np.conj(fv), n=m)[:len(v)]
+        return acf
+
+    acf_raw = _acf_fft(y)
+    acf_raw = acf_raw / acf_raw[0]  # normaliza: acf[0] = 1
+
+    # τ_int = 0.5 + sum_{k=1..K} acf[k], parando quando acf vira negativa (janela Geyer/Sokal)
+    tau_int = 0.5
+    for k in range(1, max_lag + 1):
+        if k >= len(acf_raw):
+            break
+        if acf_raw[k] <= 0:
+            break
+        tau_int += acf_raw[k]
+
+    # N_eff = n / (2 * τ_int); limite inferior 1
+    n_eff = max(1.0, n / (2.0 * tau_int))
+    sem = std / np.sqrt(n_eff)
+
+    return {
+        "mean": mean,
+        "sem": float(sem),
+        "std": std,
+        "n_tail": int(n),
+        "start_idx": int(start_idx),
+        "method": "autocorr",
+        "n_eff": float(n_eff),
+        "tau_int": float(tau_int),
+    }
+
+
+# mantém como antes
+desired_cols = ['filename','P0','p0','order','p_mean','p_std','p_sem','shortest_path','S_perc']
+
+def process_one_data_dir(data_dir: str, verbose: bool = True):
+    info = parse_data_dir(data_dir)
+    if info is None:
+        if verbose:
+            print(f"[skip] não bate o padrão: {data_dir}")
+        return
+
+    data_dir = Path(data_dir)
+    filename_save = data_dir / "all_data.dat"
+    all_files = sorted(glob.glob(str(data_dir / "*.json")))
+    if not all_files:
+        if verbose:
+            print(f"[vazio] sem JSON em: {data_dir}")
+        if not filename_save.exists():
+            # cria arquivo vazio com cabeçalho
+            pd.DataFrame(columns=desired_cols).to_csv(
+                filename_save, sep=" ", index=False, na_rep="NaN"
+            )
+            if verbose: print(f"[created-empty] {filename_save} (sem arquivos JSON)")
+        return
+
+    # --- carrega df existente (robusto) ---
+    df = None
+    known = set()
+    if filename_save.exists():
         try:
-            entries = read_orders_one_file(jf)
+            df = pd.read_csv(
+                filename_save,
+                sep=r"\s+",
+                engine="python",
+                dtype={"filename": str},
+                na_values=["nan","NaN","None",""],   # adicione "Null" aqui se usar na_rep="Null"
+            )
+            if isinstance(df, pd.DataFrame) and ("filename" in df.columns):
+                known = set(df["filename"].astype(str).values)
+            else:
+                if verbose:
+                    print(f"[warn] '{filename_save.name}' sem coluna 'filename'; vou recriar.")
+                df = None
+                known = set()
         except Exception as e:
             if verbose:
-                print(f"[WARN] failed to read {os.path.basename(jf)}: {e}")
-            continue
-        if entries:
-            any_seen = True
+                print(f"[warn] Falha ao ler {filename_save}: {e}. Vou recriar.")
+            df = None
+            known = set()
 
-        for order, p_arr, n_arr, m_size, spl_arr in entries:
-            n = len(p_arr)
-            if n < 3:
+    dict_new = {c: [] for c in desired_cols}
+
+    # contadores diagnósticos
+    n_skipped_no_data = 0
+    n_skipped_empty_pt = 0
+    n_skipped_bad_order = 0
+    n_added_empty_results = 0
+
+    added = 0
+    for file in all_files:
+        filename = os.path.basename(file)
+        if filename in known:
+            continue  # já registrado
+
+        file_content = read_experiment_json(file)
+        results_block = file_content.get('results', {})
+
+        parms = parse_filename(filename)
+
+        # results vazio -> registra linha com NaN nas colunas pedidas
+        if not results_block:
+            dict_new['filename'].append(filename)
+            dict_new['P0'].append(parms['P0'])
+            dict_new['p0'].append(parms['p0'])
+            dict_new['order'].append(np.nan)
+            dict_new['p_mean'].append(np.nan)
+            dict_new['p_std'].append(np.nan)
+            dict_new['p_sem'].append(np.nan)
+            dict_new['shortest_path'].append(np.nan)
+            dict_new['S_perc'].append(np.nan)
+            added += 1
+            n_added_empty_results += 1
+            continue
+
+        # results não-vazio: processa normalmente cada 'order'
+        for order_key, node in results_block.items():
+            d = (node or {}).get('data', None)
+            if not d:
+                n_skipped_no_data += 1
                 continue
-            start = int(burn_in_frac * n)
-            p_stationary = p_arr[start:]
-            if p_stationary.size < 1:
+
+            pt = d.get('pt', [])
+            # mesmo se pt vazio, registramos linha com NaNs e (se possível) o order
+            if pt is None or len(pt) == 0:
+                try:
+                    order_num = int(str(order_key).split()[-1])
+                except Exception:
+                    order_num = np.nan
+                    n_skipped_bad_order += 1
+
+                dict_new['filename'].append(filename)
+                dict_new['P0'].append(parms['P0'])
+                dict_new['p0'].append(parms['p0'])
+                dict_new['order'].append(order_num)
+                dict_new['p_mean'].append(np.nan)
+                dict_new['p_std'].append(np.nan)
+                dict_new['p_sem'].append(np.nan)
+                dict_new['shortest_path'].append(_scalar_or_last(d.get('shortest_path_lin')))
+                dict_new['S_perc'].append(_scalar_or_last(d.get('M_size')))
+                added += 1
+                n_skipped_empty_pt += 1
                 continue
-            mean_p, _, _, _ = sem_acf(p_stationary)
-            per_order_pt.setdefault(order, []).append(mean_p)
 
-            if n_arr is not None:
-                n_stationary = n_arr[start:]
-                if n_stationary.size > 0:
-                    mean_n, _, _, _ = sem_acf(n_stationary)
-                    per_order_nt.setdefault(order, []).append(mean_n)
+            # estatística da cauda
+            s = tail_mean(pt, tail_frac=0.2, method="autocorr")
 
-            if m_size is not None and np.isfinite(m_size):
-                per_order_msize.setdefault(order, []).append(float(m_size))
-
-            if spl_arr is not None and np.size(spl_arr) > 0:
-                spl_stationary = spl_arr[start:]
-                if spl_stationary.size > 0:
-                    mean_spl, _, _, _ = sem_acf(spl_stationary)
-                    per_order_spl.setdefault(order, []).append(mean_spl)
-
-    if not any_seen and not per_order_pt and not per_order_nt and not per_order_msize and not per_order_spl:
-        return {}, True, processed_here
-
-    summary = {}
-    orders = sorted(set(list(per_order_pt.keys()) + list(per_order_nt.keys()) + list(per_order_msize.keys()) + list(per_order_spl.keys())))
-    for order in orders:
-        mp = np.asarray(per_order_pt.get(order, []), float)
-        Sp = len(mp)
-        pt_mean = float(mp.mean()) if Sp > 0 else np.nan
-        pt_sem  = float(mp.std(ddof=1)/np.sqrt(Sp)) if Sp > 1 else (0.0 if Sp == 1 else np.nan)
-
-        mn = np.asarray(per_order_nt.get(order, []), float)
-        Sn = len(mn)
-        nt_mean = float(mn.mean()) if Sn > 0 else np.nan
-        nt_sem  = float(mn.std(ddof=1)/np.sqrt(Sn)) if Sn > 1 else (0.0 if Sn == 1 else np.nan)
-
-        ms = np.asarray(per_order_msize.get(order, []), float)
-        Sm = len(ms)
-        msize_mean = float(ms.mean()) if Sm > 0 else np.nan
-        msize_sem  = float(ms.std(ddof=1)/np.sqrt(Sm)) if Sm > 1 else (0.0 if Sm == 1 else np.nan)
-
-        spl = np.asarray(per_order_spl.get(order, []), float)
-        Ss = len(spl)
-        spl_mean = float(spl.mean()) if Ss > 0 else np.nan
-        spl_sem  = float(spl.std(ddof=1)/np.sqrt(Ss)) if Ss > 1 else (0.0 if Ss == 1 else np.nan)
-
-        n_contrib = Sp or Sn or Sm or Ss
-        summary[order] = {
-            "n_seeds_contributed": int(n_contrib),
-            "pt_mean": pt_mean,
-            "pt_sem_between": pt_sem,
-            "nt_mean": nt_mean,
-            "nt_sem_between": nt_sem,
-            "M_size_mean": msize_mean,
-            "M_size_sem_between": msize_sem,
-            "shortest_path_lin_mean": spl_mean,
-            "shortest_path_lin_sem_between": spl_sem,
-        }
-    return summary, False, processed_here
-
-
-def build_dataframe_by_p0(all_files, burn_in_frac=0.2, verbose=False, path_hint: str | None = None):
-    meta_source = path_hint or (all_files[0] if all_files else "")
-    meta = parse_params_from_path(meta_source) or \
-           (parse_params_from_path(all_files[0]) if all_files else None) or \
-           {"type_perc": None, "num_colors": None, "dim": None, "L": None, "Nt": None, "k": None, "rho": None}
-    n_orders = meta.get("num_colors") or 3
-
-    # group by rounded p0
-    groups = {}
-    for f in all_files:
-        p0_raw = parse_p0_from_filename(f)
-        if p0_raw is None:
-            if verbose:
-                print(f"[WARN] unexpected filename, skipping: {os.path.basename(f)}")
-            continue
-        p0_key = round(float(p0_raw), 1)
-        groups.setdefault(p0_key, []).append(f)
-
-    cols = BASE_COLS
-    rows, processed = [], set()
-
-    if not groups:
-        return pd.DataFrame([{c: None for c in cols}])[cols], processed
-
-    for p0_val in sorted(groups.keys()):
-        p0_fmt = round(float(p0_val), 1)
-        summary, all_empty, processed_here = summarize_multi_seed_by_order(
-            groups[p0_val], burn_in_frac=burn_in_frac, verbose=verbose
-        )
-        processed |= set(processed_here)
-        N = int(len(processed_here))
-
-        def append_row(order, M, pt_m, pt_e, nt_m, nt_e, msz_m, msz_e, spl_m, spl_e):
-            q = (float(M) / float(N)) if N > 0 else np.nan
-            rows.append({
-                "type_perc": meta["type_perc"], "num_colors": meta["num_colors"], "dim": meta["dim"],
-                "L": meta["L"], "Nt": meta["Nt"], "k": meta["k"], "rho": meta["rho"],
-                "p0": p0_fmt, "order": order,
-                "num_samples": N, "num_sample_perc": int(M),
-                "pt_mean": pt_m, "pt_erro": pt_e, "nt_mean": nt_m, "nt_erro": nt_e,
-                "M_size_mean": msz_m, "M_size_erro": msz_e,
-                "shortest_path_lin_mean": spl_m, "shortest_path_lin_erro": spl_e,
-                "perc_rate": q,
-            })
-
-        if all_empty or not summary:
-            for order in range(1, int(n_orders) + 1):
-                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
-            continue
-
-        for order in range(1, int(n_orders) + 1):
-            if order in summary:
-                s = summary[order]
-                append_row(order, s["n_seeds_contributed"], s["pt_mean"], s["pt_sem_between"],
-                           s["nt_mean"], s["nt_sem_between"], s["M_size_mean"], s["M_size_sem_between"],
-                           s.get("shortest_path_lin_mean", np.nan), s.get("shortest_path_lin_sem_between", np.nan))
-            else:
-                append_row(order, 0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
-
-    df = pd.DataFrame(rows, columns=cols)
-
-    df = df.drop_duplicates(subset=KEY_COLS, keep="last")
-
-    num_cols = [
-        "num_colors","dim","L","Nt","k","rho","p0","order",
-        "num_samples","num_sample_perc",
-        "pt_mean","pt_erro","nt_mean","nt_erro",
-        "M_size_mean","M_size_erro",
-        "shortest_path_lin_mean","shortest_path_lin_erro",
-        "perc_rate",
-    ]
-    for c in num_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    if "p0" in df.columns:
-        df["p0"] = df["p0"].round(1)
-
-    df = df.drop(columns=[c for c in DEPRECATED_COLS if c in df.columns], errors="ignore")
-    return df, processed
-
-def iter_all_data_dirs(base_root: str = "../Data"):
-    """Yield every directory matching .../data under base_root that fits our layout."""
-    root = Path(base_root)
-    if not root.exists():
-        return
-    for data_dir in root.rglob("data"):
-        if not data_dir.is_dir():
-            continue
-        meta = parse_params_from_path(str(data_dir))
-        if meta is None:
-            continue
-        yield data_dir, meta
-
-
-def _latest_mtime_json(data_dir: Path) -> float:
-    latest = 0.0
-    for p in data_dir.glob("*.json"):
-        try:
-            ts = p.stat().st_mtime
-            if ts > latest:
-                latest = ts
-        except Exception:
-            pass
-    return latest
-
-def saving_data(all_data,
-                output_data: Path,
-                output_names: Path,
-                burn_in_frac=0.20,
-                verbose=False,
-                path_hint: str | None = None,
-                force_recompute: bool = False,
-                clean_outputs: bool = False):
-    return process_with_guard(
-        all_files=all_data,
-        out_dat_path=output_data,
-        out_txt_path=output_names,
-        burn_in_frac=burn_in_frac,
-        verbose=verbose,
-        path_hint=path_hint,
-        force_recompute=force_recompute,
-        clean_outputs=clean_outputs,
-    )
-def join_all_data(type_perc, num_colors, dim, L, Nt, k, base_root="../Data",
-                  rel_tol: float = 1e-12, abs_tol: float = 1e-15):
-    """
-    Aggregate all 'all_data*.dat' across rho under (type_perc, num_colors, dim, L, Nt, k),
-    and UPDATE the global accumulated file:
-        {base_root}/{type_perc}_percolation/all_data_{dim}D.dat
-    """
-    out_dir = Path(base_root) / f"{type_perc}_percolation"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"all_data_{dim}D.dat"
-
-    rho_values = list_rho_values(type_perc, num_colors, dim, L, Nt, k, base_root=base_root)
-    if not rho_values:
-        if out_path.exists():
             try:
-                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-                return acc
+                order_num = int(str(order_key).split()[-1])
             except Exception:
-                pass
-        return pd.DataFrame(columns=BASE_COLS)
+                n_skipped_bad_order += 1
+                order_num = np.nan
 
-    base_nt = (Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{num_colors}" /
-               f"dim_{dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}")
+            dict_new['filename'].append(filename)
+            dict_new['P0'].append(parms['P0'])
+            dict_new['p0'].append(parms['p0'])
+            dict_new['order'].append(order_num)
+            dict_new['p_mean'].append(s['mean'])
+            dict_new['p_std'].append(s['std'])
+            dict_new['p_sem'].append(s['sem'])
+            dict_new['shortest_path'].append(_scalar_or_last(d.get('shortest_path_lin')))
+            dict_new['S_perc'].append(_scalar_or_last(d.get('M_size')))
+            added += 1
 
-    k_dir = _find_numeric_subdir(base_nt, "k", k, rel_tol=rel_tol, abs_tol=abs_tol)
-    if k_dir is None:
-        if out_path.exists():
-            try:
-                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-                return acc
-            except Exception:
-                pass
-        return pd.DataFrame(columns=BASE_COLS)
+    # --- escreve/atualiza ---
+    if added > 0:
+        df_new = pd.DataFrame(dict_new)
+        if df is None:
+            df = df_new[desired_cols]
+        else:
+            for c in desired_cols:
+                if c not in df.columns:
+                    df[c] = np.nan
+            df = df[desired_cols]
+            df = pd.concat([df, df_new[desired_cols]], ignore_index=True)
 
-    dfs = []
-    for rho in sorted(rho_values):
-        rho_dir = _find_numeric_subdir(k_dir, "rho", rho, rel_tol=rel_tol, abs_tol=abs_tol)
-        if rho_dir is None:
-            continue
-        data_dir = rho_dir / "data"
-        candidates = [data_dir / "all_data.dat", data_dir / f"all_data_{dim}D.dat"]
-        fpath = _first_existing(candidates)
-        if fpath is None:
-            continue
-        try:
-            df_rho = pd.read_csv(fpath, sep="\t", na_values=["Null"])
-        except Exception:
-            continue
-        df_rho = df_rho.drop(columns=[c for c in DEPRECATED_COLS if c in df_rho.columns], errors="ignore")
-        for c in BASE_COLS:
-            if c not in df_rho.columns:
-                df_rho[c] = np.nan
-        dfs.append(df_rho)
-
-    if not dfs:
-        if out_path.exists():
-            try:
-                acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-                acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-                return acc
-            except Exception:
-                pass
-        return pd.DataFrame(columns=BASE_COLS)
-
-    new_block = pd.concat(dfs, ignore_index=True, sort=False)
-
-    num_cols = ["num_colors","dim","L","Nt","k","rho","p0","order",
-                "num_samples","num_sample_perc","pt_mean","pt_erro","nt_mean","nt_erro",
-                "M_size_mean","M_size_erro","shortest_path_lin_mean","shortest_path_lin_erro","perc_rate"]
-    for c in num_cols:
-        if c in new_block.columns:
-            new_block[c] = pd.to_numeric(new_block[c], errors="coerce")
-    if "p0" in new_block.columns:
-        new_block["p0"] = new_block["p0"].round(1)
-
-    new_block = new_block.drop_duplicates(subset=KEY_COLS, keep="last")
-
-    if out_path.exists():
-        try:
-            acc = pd.read_csv(out_path, sep="\t", na_values=["Null"])
-            acc = acc.drop(columns=[c for c in DEPRECATED_COLS if c in acc.columns], errors="ignore")
-        except Exception:
-            acc = pd.DataFrame(columns=BASE_COLS)
-    else:
-        acc = pd.DataFrame(columns=BASE_COLS)
-
-    union_cols = list(dict.fromkeys(list(BASE_COLS) + list(acc.columns) + list(new_block.columns)))
-    acc_aligned = _align_to_union(acc, union_cols)
-    new_aligned = _align_to_union(new_block, union_cols)
-
-    merged = pd.concat([acc_aligned, new_aligned], ignore_index=True, sort=False)
-    if "type_perc" in merged.columns:
-        merged["type_perc"] = merged["type_perc"].astype(str)
-    merged = merged.drop_duplicates(subset=KEY_COLS, keep="last")
-
-    sort_cols = ["type_perc","num_colors","dim","L","Nt","k","rho","p0","order"]
-    sort_cols = [c for c in sort_cols if c in merged.columns]
-    merged = merged.sort_values(sort_cols).reset_index(drop=True)
-
-    merged.to_csv(out_path, sep="\t", index=False, na_rep="Null")
-    print("Updated:", out_path.resolve())
-    return merged
-
-def _find_numeric_subdir(base: Path, key: str, target: float,
-                         rel_tol: float = 1e-12, abs_tol: float = 1e-15) -> Path | None:
-    """Find subdir named '{key}_<number>' numerically close to target."""
-    key = key.lower()
-    best = None
-    best_err = None
-    if not base.exists():
-        return None
-    for d in base.iterdir():
-        if not d.is_dir():
-            continue
-        m = _FLOAT_DIR_RE.match(d.name)
-        if not m:
-            continue
-        if m.group("key").lower() != key:
-            continue
-        try:
-            val = float(m.group("val"))
-        except Exception:
-            continue
-        if math.isclose(val, float(target), rel_tol=rel_tol, abs_tol=abs_tol):
-            err = abs(val - float(target))
-            if (best is None) or (err < best_err):
-                best, best_err = d, err
-    return best
-
-def list_rho_values(type_perc: str, num_colors: int, dim: int, L: int, Nt: int, k: float, base_root: str = "../Data") -> list:
-    """
-    List all rho values for given parameters in base_root directory.
-    """
-    base_dir = Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{num_colors}" / f"dim_{dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}"
-    k_dir = _find_numeric_subdir(base_dir, "k", k)
-    if k_dir is None:
-        return []
-    rho_values = []
-    for rho_dir in k_dir.glob("rho_*"):
-        try:
-            rho_value = float(rho_dir.name.split("_")[1])
-            rho_values.append(rho_value)
-        except ValueError:
-            continue
-    return sorted(rho_values)
-
-def _first_existing(candidates: list[Path]) -> Path | None:
-    """Return the first existing file from the candidates list."""
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-def _normalize_names(lines: list[str]) -> set[str]:
-    """Normalize names list and remove duplicates."""
-    out = set()
-    for ln in lines:
-        if not ln.strip():
-            continue
-        out.add(ln.strip().lower())
-    return out
-
-
-def process_with_guard(all_files,
-                       out_dat_path: Path,
-                       out_txt_path: Path,
-                       burn_in_frac=0.20,
-                       verbose=False,
-                       path_hint: str | None = None,
-                       force_recompute: bool = False,
-                       clean_outputs: bool = False):
-    """Process a list of seed JSONs into a per-(p0,order) .dat and a TSV of per-file stats."""
-    def _read_prev_names_first_column(path: Path) -> set[str]:
-        if not path.exists():
-            return set()
-        lines = path.read_text().splitlines()
-        if not lines:
-            return set()
-        first = lines[0]
-        if "\t" in first and first.split("\t", 1)[0].strip().lower() == "filename":
-            out = set()
-            for ln in lines[1:]:
-                if not ln.strip():
-                    continue
-                out.add(os.path.basename(ln.split("\t", 1)[0].strip()))
-            return out
-        return _normalize_names(lines)
-
-    def _per_file_rows(file_path: str, meta: dict, n_orders: int, burn_in_frac=0.2):
-        rows = []
-        base = {
-            "type_perc": meta.get("type_perc"),
-            "num_colors": meta.get("num_colors"),
-            "dim": meta.get("dim"),
-            "L": meta.get("L"),
-            "Nt": meta.get("Nt"),
-            "k": meta.get("k"),
-            "rho": meta.get("rho"),
-        }
-        p0_val = parse_p0_from_filename(file_path)
-        try:
-            entries = read_orders_one_file(file_path)
-        except Exception:
-            entries = []
-        by_order = {}
-        for order, p_arr, n_arr, m_size, spl_arr in entries:
-            by_order[int(order)] = (
-                np.asarray(p_arr, float) if p_arr is not None else np.array([], float),
-                None if n_arr is None else np.asarray(n_arr, float),
-                m_size if (m_size is None or np.isfinite(m_size)) else None,
-                None if spl_arr is None else np.asarray(spl_arr, float),
-            )
-        for order in range(1, int(n_orders) + 1):
-            if order in by_order:
-                p_arr, n_arr, m_size, spl_arr = by_order[order]
-                n = len(p_arr)
-                start = int(burn_in_frac * n) if n > 0 else 0
-                if n > 0 and start < n:
-                    m_pt, _, _, _ = sem_acf(p_arr[start:])
-                    pt_mean, pt_sem = float(m_pt), 0.0
-                else:
-                    pt_mean, pt_sem = (np.nan, np.nan)
-                if n_arr is not None and n_arr.size > 0:
-                    ns = n_arr[start:] if start < n_arr.size else np.array([], float)
-                    if ns.size > 0:
-                        m_nt, _, _, _ = sem_acf(ns)
-                        nt_mean, nt_sem = float(m_nt), 0.0
-                    else:
-                        nt_mean, nt_sem = (np.nan, np.nan)
-                else:
-                    nt_mean, nt_sem = (np.nan, np.nan)
-                if m_size is not None and np.isfinite(m_size):
-                    msize_mean, msize_sem = float(m_size), 0.0
-                else:
-                    msize_mean, msize_sem = (np.nan, np.nan)
-                # shortest_path_lin per-file mean in stationary window
-                if spl_arr is not None and spl_arr.size > 0:
-                    ss = spl_arr[start:] if start < spl_arr.size else np.array([], float)
-                    if ss.size > 0:
-                        m_spl, _, _, _ = sem_acf(ss)
-                        spl_mean, spl_sem = float(m_spl), 0.0
-                    else:
-                        spl_mean, spl_sem = (np.nan, np.nan)
-                else:
-                    spl_mean, spl_sem = (np.nan, np.nan)
-                rows.append({
-                    "filename": os.path.basename(file_path),
-                    **base,
-                    "p0": None if p0_val is None else round(float(p0_val), 1),
-                    "order": int(order),
-                    "num_samples": 1,
-                    "num_sample_perc": 1,
-                    "pt_mean": pt_mean, "pt_erro": pt_sem,
-                    "nt_mean": nt_mean, "nt_erro": nt_sem,
-                    "M_size_mean": msize_mean, "M_size_erro": msize_sem,
-                    "shortest_path_lin_mean": spl_mean, "shortest_path_lin_erro": spl_sem,
-                    "perc_rate": 1.0,
-                })
-            else:
-                rows.append({
-                    "filename": os.path.basename(file_path),
-                    **base,
-                    "p0": None if p0_val is None else round(float(p0_val), 1),
-                    "order": int(order),
-                    "num_samples": 1,
-                    "num_sample_perc": 0,
-                    "pt_mean": np.nan, "pt_erro": np.nan,
-                    "nt_mean": np.nan, "nt_erro": np.nan,
-                    "M_size_mean": np.nan, "M_size_erro": np.nan,
-                    "shortest_path_lin_mean": np.nan, "shortest_path_lin_erro": np.nan,
-                    "perc_rate": 0.0,
-                })
-        return rows
-
-    # Determine real data_dir and normalize outputs inside it
-    data_dir = None
-    if all_files:
-        data_dir = Path(all_files[0]).parent
-    else:
-        p = Path(out_dat_path)
-        data_dir = p.parent if p.suffix.lower() == ".dat" else p
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    out_dat_path = data_dir / Path(out_dat_path).name
-    out_txt_path = data_dir / Path(out_txt_path).name
-
-    # Optional cleaning step to force full reprocessing and avoid stale outputs
-    if clean_outputs:
-        for candidate in {out_dat_path, out_txt_path, data_dir / 'all_data.dat', data_dir / 'process_names.txt', data_dir / 'process_name.txt'}:
-            try:
-                if candidate.exists():
-                    candidate.unlink()
-            except Exception:
-                pass
-
-    if not all_files:
-        all_files = [str(x) for x in sorted(data_dir.glob("*.json"))]
-
-    out_dat_path.parent.mkdir(parents=True, exist_ok=True)
-
-    expected_set = _normalize_names([f for f in all_files if FNAME_RE.search(os.path.basename(f))])
-    prev_set = _read_prev_names_first_column(out_txt_path) if out_txt_path.exists() else set()
-
-    if (not force_recompute) and expected_set and (expected_set == prev_set) and out_dat_path.exists():
+        # remove duplicados por (filename, order)
+        df = df.drop_duplicates(subset=["filename", "order"], keep="last").reset_index(drop=True)
+        df.to_csv(filename_save, sep=" ", index=False, na_rep="NaN")
         if verbose:
-            print(f"[INFO] Up-to-date: {len(prev_set)} names == {len(expected_set)} JSONs: {data_dir}")
-        df = pd.read_csv(out_dat_path, sep="\t", na_values=["Null"])
-        return df, prev_set
+            print(f"[ok] {added} linhas → {filename_save} (inclui results vazios: {n_added_empty_results})")
+    else:
+        # sem novidades; ainda assim garante existência do arquivo com cabeçalho
+        if not filename_save.exists():
+            pd.DataFrame(columns=desired_cols).to_csv(
+                filename_save, sep=" ", index=False, na_rep="NaN"
+            )
+            if verbose:
+                print(f"[created-empty] {filename_save} (sem novidades)")
 
     if verbose:
-        print(f"[INFO] Reprocessing: force={force_recompute} dir={data_dir}")
-    df, processed_set = build_dataframe_by_p0(
-        all_files, burn_in_frac=burn_in_frac, verbose=verbose, path_hint=str(data_dir)
-    )
-    df.to_csv(out_dat_path, sep="\t", index=False, na_rep="Null")
+        print(f"[info] skipped: no_data={n_skipped_no_data}, empty_pt={n_skipped_empty_pt}, bad_order={n_skipped_bad_order}, added_empty_results={n_added_empty_results}")
 
-    # Build TSV per-file/ordem (modern format with header)
-    meta = parse_params_from_path(str(data_dir)) or {"type_perc": None, "num_colors": None, "dim": None, "L": None, "Nt": None, "k": None, "rho": None}
-    n_orders = meta.get("num_colors") or 1
-    by_basename = {os.path.basename(p): p for p in all_files}
-    names_rows = []
-    new_set = expected_set if expected_set else processed_set
-    for bname in sorted(new_set):
-        full = by_basename.get(bname)
-        if not full or not Path(full).exists():
-            names_rows.append({
-                "filename": bname,
-                "type_perc": meta["type_perc"], "num_colors": meta["num_colors"], "dim": meta["dim"],
-                "L": meta["L"], "Nt": meta["Nt"], "k": meta["k"], "rho": meta["rho"],
-                "p0": np.nan, "order": np.nan,
-                "num_samples": np.nan, "num_sample_perc": np.nan,
-                "pt_mean": np.nan, "pt_erro": np.nan, "nt_mean": np.nan, "nt_erro": np.nan,
-                "M_size_mean": np.nan, "M_size_erro": np.nan,
-                "shortest_path_lin_mean": np.nan, "shortest_path_lin_erro": np.nan,
-                "perc_rate": np.nan,
-            })
-            continue
-        names_rows.extend(_per_file_rows(full, meta, n_orders, burn_in_frac=burn_in_frac))
 
-    names_cols = (["filename"] + BASE_COLS)
-    names_df = pd.DataFrame(names_rows, columns=names_cols)
-    names_df.to_csv(out_txt_path, sep="\t", index=False, na_rep="Null")
-
-    return df, new_set
-
-def _align_to_union(df, union_cols):
-    """Align DataFrame to union of columns, filling missing values with NaN."""
-    return df.reindex(columns=union_cols).fillna(np.nan)
-
-def _global_join_is_up_to_date(base_root: str, type_perc: str, dim: int, combos: list[tuple]) -> bool:
-    out_path = Path(base_root) / f"{type_perc}_percolation" / f"all_data_{dim}D.dat"
-    if not out_path.exists():
-        return False
-    try:
-        out_mtime = out_path.stat().st_mtime
-    except Exception:
-        return False
-    # If global is newer than every constituent all_data.dat, we can skip
-    latest_constituent = 0.0
-    for (_, _nc, _dim, L, Nt, k) in combos:
-        if _dim != dim:
-            continue
-        base = Path(base_root) / f"{type_perc}_percolation" / f"num_colors_{_nc}" / f"dim_{_dim}" / f"L_{L}" / "NT_constant" / f"NT_{Nt}"
-        k_dir = _find_numeric_subdir(base, "k", k)
-        if not k_dir:
-            continue
-        for rho_dir in k_dir.glob("rho_*/data"):
-            f = rho_dir / "all_data.dat"
-            if f.exists():
-                try:
-                    mt = f.stat().st_mtime
-                    if mt > latest_constituent:
-                        latest_constituent = mt
-                except Exception:
-                    pass
-    return out_mtime >= latest_constituent and latest_constituent > 0.0
-
-def crawl_and_process(base_root: str = "../Data", burn_in_frac: float = 0.20,
-                      verbose: bool = True, force_recompute: bool = False,
-                      workers: int | None = None, clean_outputs: bool = False):
+def process_all_roots(base_root="../Data/bond_percolation", verbose=True, clean_outputs=False):
     """
-    1) Recursively find EVERY '.../data' folder under base_root;
-    2) Run saving_data() inside it (produces all_data.dat + process_names.txt (TSV style));
-    3) Return a set of unique (type_perc, num_colors, dim, L, Nt, k) tuples discovered.
+    Percorre todas as pastas que batem o padrão:
+      ../Data/bond_percolation/num_colors_{nc}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k}/rho_{rho}/data
+    e chama process_one_data_dir para cada 'data/'.
 
-    Performance tweaks:
-      - Quick-skip by mtime: if all_data.dat is newer than every *.json and force_recompute=False,
-        we skip the folder without reading/process_names.txt.
-      - Optional parallelism (IO-bound) via ThreadPoolExecutor.
+    clean_outputs=True  -> remove 'all_data.dat' de cada pasta antes de processar.
     """
-    tuples = set()
+    base = Path(base_root)
+    guess = base.glob("num_colors_*/dim_*/L_*/NT_constant/NT_*/k_*/rho_*/data")
 
-    jobs = []
-    for data_dir, meta in iter_all_data_dirs(base_root):
-        jobs.append((data_dir, meta))
+    count = 0
+    deleted = 0
+    for d in guess:
+        dposix = d.as_posix()
+        if not DIR_RE.match(dposix):
+            if verbose:
+                print(f"[ignorado] {dposix} (não bate regex)")
+            continue
 
-    def _process_dir(job):
-        data_dir, meta = job
-        try:
-            out_dat = data_dir / "all_data.dat"
-            out_txt = data_dir / "process_names.txt"
-            if (not force_recompute) and out_dat.exists():
-                latest_json = _latest_mtime_json(data_dir)
+        if clean_outputs:
+            target = Path(d) / "all_data.dat"
+            if target.exists():
                 try:
-                    out_mtime = out_dat.stat().st_mtime
-                except Exception:
-                    out_mtime = 0.0
-                # If output newer than all inputs and names file exists -> fast skip
-                if out_mtime >= latest_json and out_txt.exists() and not clean_outputs:
+                    os.remove(target)
+                    deleted += 1
                     if verbose:
-                        print(f"[SKIP] Up-to-date by mtime: {data_dir}")
-                    return (meta["type_perc"], meta["num_colors"], meta["dim"], meta["L"], meta["Nt"], meta["k"])  # still register tuple
+                        print(f"[clean] removido: {target}")
+                except Exception as e:
+                    if verbose:
+                        print(f"[warn] não consegui remover {target}: {e}")
 
-            all_json = sorted([str(p) for p in data_dir.glob("*.json")])
-            if verbose:
-                print("[DIR]", data_dir)
-            saving_data(
-                all_data=all_json,
-                output_data=out_dat,
-                output_names=out_txt,
-                burn_in_frac=burn_in_frac,
-                verbose=verbose,
-                path_hint=str(data_dir),
-                force_recompute=force_recompute,
-                clean_outputs=clean_outputs,
-            )
-            return (meta["type_perc"], meta["num_colors"], meta["dim"], meta["L"], meta["Nt"], meta["k"])  # no rho
-        except Exception as e:
-            print(f"[WARN] Failed in {data_dir}: {e}")
-            return None
+        process_one_data_dir(dposix, verbose=verbose)
+        count += 1
 
-    if workers and workers > 1:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = [ex.submit(_process_dir, j) for j in jobs]
-            for fut in as_completed(futs):
-                res = fut.result()
-                if res:
-                    tuples.add(res)
-    else:
-        for j in jobs:
-            res = _process_dir(j)
-            if res:
-                tuples.add(res)
-
-    return tuples
+    if verbose:
+        msg = f"[done] pastas processadas: {count}"
+        if clean_outputs:
+            msg += f" | arquivos removidos: {deleted}"
+        print(msg)
+    return {"processed_dirs": count, "removed_all_data": deleted if clean_outputs else 0}
 
 
-def crawl_join_all_data(base_root: str = "../Data", verbose: bool = True,
-                        rel_tol: float = 1e-12, abs_tol: float = 1e-15):
+
+FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+RGX_FLEX = re.compile(
+    rf'^P0_(?P<P0>{FLOAT})_p0_(?P<p0>{FLOAT})_seed_(?P<seed>\d+)\.json$'
+)
+
+def parse_filename(path):
+    m = RGX_FLEX.match(Path(path).name)
+    if not m:
+        raise ValueError(f"Nome inválido: {path}")
+    return {
+        "P0": float(m.group("P0")),
+        "p0": float(m.group("p0")),
+        "seed": int(m.group("seed")),
+    }
+def combine_tail_means(run_stats: list[dict], random_effects: bool = True):
     """
-    Discover all (type_perc, num_colors, dim, L, Nt, k) combinations under base_root and
-    call join_all_data() for each, updating the global all_data_{dim}D.dat per type_perc.
+    run_stats: lista de dicts com, no mínimo, {'mean': ..., 'sem': ...}
+               (ex.: a saída da sua função tail_mean(method="autocorr"))
+    random_effects: True -> DerSimonian-Laird; False -> fixed-effect
 
-    Performance tweaks:
-      - Fast global skip: if the per-(type_perc, dim) output is newer than all involved
-        constituent all_data.dat files, we skip its join entirely.
+    Retorna: {'mean': ..., 'se': ..., 'method': 'FE'|'RE', 'tau2': ... , 'R': ...}
     """
-    combos = set()
-    for data_dir, meta in iter_all_data_dirs(base_root):
-        combos.add((meta["type_perc"], meta["num_colors"], meta["dim"], meta["L"], meta["Nt"], meta["k"]))
+    # filtra runs válidos
+    stats = [d for d in run_stats if (d is not None and math.isfinite(d.get('mean', float('nan')))
+                                      and math.isfinite(d.get('sem', float('nan'))) and d['sem'] > 0)]
+    R = len(stats)
+    if R == 0:
+        return {'mean': float('nan'), 'se': float('nan'), 'method': 'FE', 'tau2': 0.0, 'R': 0}
 
-    # group by (type_perc, dim) for the global skip check
-    by_td = {}
-    for c in combos:
-        td = (c[0], c[2])
-        by_td.setdefault(td, []).append(c)
+    means = [d['mean'] for d in stats]
+    vars_ = [d['sem']**2 for d in stats]
+    w = [1.0/v for v in vars_]
 
-    for (type_perc, dim), group in sorted(by_td.items()):
-        if _global_join_is_up_to_date(base_root, type_perc, dim, group):
+    # fixed-effect
+    sumw = sum(w)
+    m_fe = sum(wi*mi for wi, mi in zip(w, means)) / sumw
+    se_fe = (1.0 / sumw) ** 0.5
+
+    if not random_effects or R == 1:
+        return {'mean': m_fe, 'se': se_fe, 'method': 'FE', 'tau2': 0.0, 'R': R}
+
+    # heterogeneidade (DL)
+    Q = sum(wi*(mi - m_fe)**2 for wi, mi in zip(w, means))
+    c = sumw - sum(wi*wi for wi in w) / sumw
+    tau2 = max(0.0, (Q - (R - 1)) / c) if c > 0 else 0.0
+
+    w_star = [1.0/(v + tau2) for v in vars_]
+    sumw_star = sum(w_star)
+    m_re = sum(wi*mi for wi, mi in zip(w_star, means)) / sumw_star
+    se_re = (1.0 / sumw_star) ** 0.5
+
+    return {'mean': m_re, 'se': se_re, 'method': 'RE', 'tau2': tau2, 'R': R}
+
+# ------------------------------------------------------------
+# Leitura robusta de all_data.dat
+# ------------------------------------------------------------
+def _load_all_data(file_path: str) -> pd.DataFrame:
+    """
+    Lê all_data.dat aceitando múltiplos espaços e 'NaN' como nulos.
+    Garante colunas esperadas; se faltarem, cria com NaN.
+    """
+    expected = ['filename','P0','p0','order','p_mean','p_std','p_sem','shortest_path','S_perc']
+    if not os.path.exists(file_path):
+        return pd.DataFrame(columns=expected)
+
+    try:
+        df = pd.read_csv(
+            file_path,
+            sep=r"\s+",
+            engine="python",
+            dtype={"filename": str},
+            na_values=["nan","NaN","Null","None",""]
+        )
+    except Exception:
+        df = pd.DataFrame(columns=expected)
+
+    for c in expected:
+        if c not in df.columns:
+            df[c] = np.nan
+    # tipos
+    for c in ["P0","p0","order","p_mean","p_std","p_sem","shortest_path","S_perc"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["filename"] = df["filename"].astype(str)
+    return df[expected]
+
+
+# ------------------------------------------------------------
+# Estatística auxiliar: média e erro padrão (std/sqrt(n))
+# ------------------------------------------------------------
+def _mean_sem(arr_like):
+    v = pd.to_numeric(pd.Series(arr_like), errors="coerce").dropna().to_numpy()
+    n = v.size
+    if n == 0:
+        return np.nan, np.nan, 0
+    mean = float(v.mean())
+    std = float(v.std(ddof=1)) if n > 1 else 0.0
+    sem = float(std / math.sqrt(n)) if n > 0 else np.nan
+    return mean, sem, n
+
+
+# ------------------------------------------------------------
+# Agrega um diretório .../data por 'order', produzindo linhas
+# ------------------------------------------------------------
+def _summarize_one_data_dir(data_dir: str) -> list[dict]:
+    """
+    Retorna uma lista de dicionários (uma linha por 'order') com:
+    L, Nt, k, nc, rho, p0, P0, order, N_samples, p_mean, p_err,
+    shortest_path, shortest_path_err, S_perc, S_perc_err
+    """
+    info = parse_data_dir(data_dir)
+    if info is None:
+        return []
+
+    all_file = Path(data_dir) / "all_data.dat"
+    df = _load_all_data(all_file.as_posix())
+
+    # p0/P0: tentamos pegar único valor (se múltiplos, fica NaN)
+    def _unique_or_nan(s: pd.Series):
+        vals = s.dropna().unique()
+        return float(vals[0]) if vals.size == 1 else np.nan
+
+    p0_uni = _unique_or_nan(df["p0"])
+    P0_uni = _unique_or_nan(df["P0"])
+
+    # Agrupar por 'order' (apenas ordens não-NaN)
+    rows = []
+    orders = sorted([o for o in df["order"].dropna().unique()])
+    if len(orders) == 0:
+        # não há ordens válidas → não gera linha agregada
+        return rows
+
+    for order in orders:
+        sub = df.loc[df["order"] == order].copy()
+
+        # N_samples = número de filenames distintos para essa order
+        N_samples = int(sub["filename"].nunique())
+
+        # p_mean/p_err com combine_tail_means usando (mean, sem) de cada seed
+        run_stats = []
+        # Usamos a última linha por filename (se houver repetidos) para evitar duplicação
+        for fname, g in sub.groupby("filename"):
+            # Uma linha por seed: se houver várias linhas (improvável), pega a última
+            last = g.tail(1).iloc[0]
+            m = last.get("p_mean", np.nan)
+            s = last.get("p_sem", np.nan)
+            if np.isfinite(m) and np.isfinite(s) and s >= 0:
+                run_stats.append({"mean": float(m), "sem": float(s)})
+
+        if len(run_stats) > 0:
+            combo = combine_tail_means(run_stats, random_effects=False)
+            p_mean = float(combo["mean"])
+            p_err  = float(combo["se"])
+        else:
+            p_mean, p_err = np.nan, np.nan
+
+        # shortest_path: média simples e erro padrão (ignorando NaN)
+        sp_mean, sp_sem, _ = _mean_sem(sub["shortest_path"])
+        # S_perc: média simples e erro padrão
+        sperc_mean, sperc_sem, _ = _mean_sem(sub["S_perc"])
+
+        rows.append({
+            "L":   int(info["L"]),
+            "Nt":  int(info["Nt"]),
+            "k":   float(info["k"]),
+            "nc":  int(info["nc"]),
+            "rho": float(info["rho"]),
+            "p0":  p0_uni,
+            "P0":  P0_uni,
+            "order": int(order),
+            "N_samples": N_samples,
+            "p_mean": p_mean,
+            "p_err":  p_err,
+            "shortest_path": sp_mean,
+            "shortest_path_err": sp_sem,
+            "S_perc": sperc_mean,
+            "S_perc_err": sperc_sem,
+        })
+
+    return rows
+
+
+# ------------------------------------------------------------
+# Varre TODAS as pastas e escreve 1 arquivo por dimensão:
+# ../Data/bond_percolation/all_data_{dim}D.dat
+# ------------------------------------------------------------
+def summarize_all_dirs(base_root: str = "../Data/bond_percolation",
+                       verbose: bool = True) -> dict[int, Path]:
+    """
+    Percorre todas as pastas que batem o padrão e cria arquivos agregados por dimensão:
+      <base_root>/all_data_{dim}D.dat
+
+    Retorna: {dim: Path(arquivo_gerado)}
+    """
+    base = Path(base_root)
+    outputs: dict[int, Path] = {}
+    buckets: dict[int, list[dict]] = {}
+
+    # percorre apenas diretórios que batem DIR_RE
+    for d in base.glob("num_colors_*/dim_*/L_*/NT_constant/NT_*/k_*/rho_*/data"):
+        dposix = d.as_posix()
+        m = DIR_RE.match(dposix)
+        if not m:
             if verbose:
-                print(f"[SKIP] Global join up-to-date: {type_perc} dim={dim}")
+                print(f"[ignorado] {dposix} (não bate regex)")
             continue
-        # run join per combo in this (type_perc, dim)
-        for (t, num_colors, d, L, Nt, k) in sorted(group):
-            try:
-                join_all_data(t, num_colors, d, L, Nt, k,
-                              base_root=base_root, rel_tol=rel_tol, abs_tol=abs_tol)
-            except Exception as e:
-                print(f"[WARN] join failed for {(t, num_colors, d, L, Nt, k)}: {e}")
 
-# =============================================================
-#  Public processing APIs
-# =============================================================
+        # agrega esse data_dir
+        rows = _summarize_one_data_dir(dposix)
+        if len(rows) == 0:
+            if verbose:
+                print(f"[info] sem ordens válidas em: {dposix}")
+            continue
 
-def run_processing_data(base_root: str = "../Data", *, force_recompute: bool = True,
-                        burn_in: float = 0.20, verbose: bool = True, clean_outputs: bool = False):
-    """Programmatic entry point (safe for notebooks)."""
-    print("=== STEP 1: per-folder processing ===")
-    _ = crawl_and_process(base_root=base_root, burn_in_frac=burn_in,
-                          verbose=verbose, force_recompute=force_recompute, clean_outputs=clean_outputs)
+        dim = int(m.group("dim"))
+        buckets.setdefault(dim, []).extend(rows)
+        if verbose:
+            print(f"[ok] {len(rows)} linhas agregadas de: {dposix}")
 
-    print("=== STEP 2: global joins per (type,dim) ===")
-    crawl_join_all_data(base_root=base_root, verbose=verbose)
+    # grava um arquivo por dimensão
+    for dim, records in buckets.items():
+        out_df = pd.DataFrame.from_records(records, columns=[
+            "L","Nt","k","nc","rho","p0","P0","order",
+            "N_samples","p_mean","p_err",
+            "shortest_path","shortest_path_err",
+            "S_perc","S_perc_err"
+        ])
 
-    print("Done.")
+        out_path = base / f"all_data_{dim}D.dat"
+        out_df.to_csv(out_path.as_posix(), sep=" ", index=False, na_rep="NaN")
+        outputs[dim] = out_path
+        if verbose:
+            print(f"[write] {out_path}  ({len(out_df)} linhas)")
+
+    if verbose and not buckets:
+        print("[done] nenhuma pasta com ordens válidas encontrada.")
+
+    return outputs
