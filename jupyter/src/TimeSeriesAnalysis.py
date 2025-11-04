@@ -1509,3 +1509,256 @@ def compute_means_for_folder_new(
         json.dump(bundle, f, ensure_ascii=False, indent=2)
     print(f"[salvo] {out_path}")
     return out_path
+
+
+# ------------------ Regex / parsing de arquivo ------------------
+FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+RGX_FLEX = re.compile(
+    rf'^P0_(?P<P0>{FLOAT})_p0_(?P<p0>{FLOAT})_seed_(?P<seed>\d+)\.json$'
+)
+
+def parse_filename(path):
+    m = RGX_FLEX.match(Path(path).name)
+    if not m:
+        raise ValueError(f"Nome inválido: {path}")
+    return {"P0": float(m.group("P0")), "p0": float(m.group("p0")), "seed": int(m.group("seed"))}
+
+# ------------------ Leitura do JSON do experimento ------------------
+def read_experiment_json(path):
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+    meta = raw.get("meta", {}) or {}
+    results = raw.get("results", {}) or {}
+    fixed_results = {k: (v if isinstance(v, dict) else {}) for k, v in results.items()}
+    return {"meta": meta, "results": fixed_results}
+
+# ------------------ Helpers ------------------
+def orders_for(num_colors:int):
+    # nomes no JSON de entrada têm espaço; no bundle de saída usar underscore
+    return [f"order_percolation {i}" for i in range(1, num_colors+1)]
+
+def group_files_by_p0(file_list):
+    groups = {}
+    for fp in file_list:
+        p0 = parse_filename(fp)["p0"]
+        groups.setdefault(p0, []).append(fp)
+    # ordenar para reprodutibilidade
+    for p0 in groups:
+        groups[p0] = sorted(groups[p0])
+    return dict(sorted(groups.items(), key=lambda kv: kv[0]))
+
+def stack_by_order(files, num_colors):
+    """
+    Empilha séries por ordem para um conjunto de arquivos (mesmo p0).
+    Trunca cada ordem ao menor comprimento comum.
+    Retorna dict {ord_label_space: {"t": np.array(T), "Y": np.ndarray(n_files, T)}}
+    """
+    ords = orders_for(num_colors)
+    # comprimento mínimo por ordem
+    tmin = {o: np.inf for o in ords}
+    for fp in files:
+        data = read_experiment_json(fp)["results"]
+        for o in ords:
+            tlen = len(data[o]["data"]["time"])
+            if tlen < tmin[o]:
+                tmin[o] = tlen
+
+    out = {}
+    for o in ords:
+        series = []
+        t_keep = None
+        T = int(tmin[o])
+        for fp in files:
+            d = read_experiment_json(fp)["results"][o]["data"]
+            if t_keep is None:
+                t_keep = np.array(d["time"][:T], dtype=float)
+            series.append(np.array(d["pt"][:T], dtype=float))
+        out[o] = {"t": t_keep, "Y": np.vstack(series)}  # (n_files, T)
+    return out
+
+def summarize(stacked):
+    """
+    Recebe saída de stack_by_order e devolve dict por ordem com:
+    n, t, mean, sem
+    """
+    sums = {}
+    for o, d in stacked.items():
+        Y = d["Y"]                # (n, T)
+        n = Y.shape[0]
+        mean = Y.mean(axis=0)
+        if n > 1:
+            std = Y.std(axis=0, ddof=1)
+            sem = std / np.sqrt(n)
+        else:
+            sem = np.zeros_like(mean)
+        sums[o] = {"n": int(n), "t": d["t"], "mean": mean, "sem": sem}
+    return sums
+
+def to_serializable(a):
+    # garante listas JSON-serializáveis
+    if isinstance(a, np.ndarray):
+        return a.tolist()
+    if isinstance(a, (np.floating, np.integer)):
+        return a.item()
+    return a
+
+# ------------------ Parâmetros do caminho ------------------
+base_root = "../Data/bond_percolation"
+
+
+def compute_means_for_folder(L: int, DIM: int, NT:int, K : float, NC_list : list[int], RHO_list : list[float]) -> dict:
+    """
+       L(int) : Lenght of network  
+       DIM(int): dimension of network
+       NT(int): parameter of model
+       K(float): parameter of model
+       NC_list(list): numbers of colors
+       RHO_list(list): density of each color
+    """
+    for num_colors, rho in zip(NC_list, RHO_list):
+        data_dir = os.path.join(
+            base_root,
+            f"num_colors_{num_colors}",
+            f"dim_{DIM}",
+            f"L_{L}",
+            "NT_constant",
+            f"NT_{NT}",
+            f"k_{K:.1e}",
+            f"rho_{rho:.4e}",
+            "data",
+        )
+        parent_dir = os.path.dirname(data_dir)  # um nível acima de 'data'
+        os.makedirs(parent_dir, exist_ok=True)
+
+        files = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+        if not files:
+            print(f"[AVISO] Sem arquivos em: {data_dir}")
+            continue
+
+        # 1) agrupar por p0 (nome do arquivo)
+        groups = group_files_by_p0(files)
+
+        # 2) montar o bundle
+        bundle = {"meta": {"num_colors": num_colors, "rho": rho}}
+
+        for p0_val, flist in groups.items():
+            # empilhar e resumir por ordem
+            stacked = stack_by_order(flist, num_colors)
+            sums = summarize(stacked)
+            # montar nó "p0 = {valor}"
+            pkey = f"p0 = {p0_val}"
+            bundle[pkey] = {}
+            for o_space, agg in sums.items():
+                # saída deve usar underscore no nome
+                idx = int(o_space.split()[-1])  # pega o número da ordem
+                o_key = f"order_percolation_{idx}"
+                bundle[pkey][o_key] = {
+                    "num_samples": int(agg["n"]),
+                    "t": to_serializable(agg["t"]),
+                    "pt": to_serializable(agg["mean"]),
+                    "pt_err": to_serializable(agg["sem"]),
+                }
+
+        # 3) salvar JSON
+        out_path = os.path.join(parent_dir, "all_data_bundle.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(bundle, f, ensure_ascii=False, indent=2)
+
+        print(f"[OK] Salvo: {out_path}")
+
+def read_all_data_bundle(path, as_dataframe=False):
+    """
+    Lê um 'all_data_bundle.json' e retorna os dados em um dicionário conveniente.
+    Opcionalmente, retorna também um DataFrame "longo" (uma linha por tempo).
+
+    Parâmetros
+    ----------
+    path : str | Path
+        Caminho para o arquivo all_data_bundle.json.
+    as_dataframe : bool, padrão False
+        Se True, retorna também um DataFrame com colunas:
+        [num_colors, rho, p0, order, num_samples, t, pt, pt_err].
+
+    Retorno
+    -------
+    bundle : dict
+        {
+          "meta": {"num_colors": int, "rho": float},
+          p0_value(float): {
+            "order_percolation_1": {"num_samples": int, "t": np.array, "pt": np.array, "pt_err": np.array},
+            "order_percolation_2": {...},
+            ...
+          },
+          ...
+        }
+    df (opcional) : pandas.DataFrame
+        Apenas se as_dataframe=True.
+    """
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    if "meta" not in raw or not isinstance(raw["meta"], dict):
+        raise ValueError("JSON inválido: campo 'meta' ausente ou malformado.")
+
+    meta = raw["meta"]
+    num_colors = meta.get("num_colors", None)
+    rho = meta.get("rho", None)
+
+    # Converter chaves "p0 = X" -> float X
+    p0_pat = re.compile(r"^\s*p0\s*=\s*(.+?)\s*$", re.IGNORECASE)
+
+    bundle = {"meta": {"num_colors": num_colors, "rho": rho}}
+    for k, v in raw.items():
+        if k == "meta":
+            continue
+        m = p0_pat.match(k)
+        if not m:
+            # ignora chaves inesperadas
+            continue
+        p0_val = float(m.group(1))
+
+        # Converte listas para np.array
+        orders_dict = {}
+        for ord_key, payload in v.items():
+            t = np.asarray(payload.get("t", []), dtype=float)
+            pt = np.asarray(payload.get("pt", []), dtype=float)
+            pt_err = np.asarray(payload.get("pt_err", []), dtype=float)
+            n = int(payload.get("num_samples", 0))
+            orders_dict[ord_key] = {
+                "num_samples": n,
+                "t": t,
+                "pt": pt,
+                "pt_err": pt_err
+            }
+        bundle[p0_val] = orders_dict
+
+    if not as_dataframe:
+        return bundle
+
+    # Construir DataFrame longo
+    rows = []
+    for p0_val, orders in bundle.items():
+        if p0_val == "meta":
+            continue
+        for ord_key, d in orders.items():
+            n = d["num_samples"]
+            t = d["t"]
+            pt = d["pt"]
+            pt_err = d["pt_err"]
+            if len(t) != len(pt) or len(t) != len(pt_err):
+                raise ValueError(f"Tamanhos inconsistentes em {ord_key} para p0={p0_val}.")
+            for ti, vi, ei in zip(t, pt, pt_err):
+                rows.append({
+                    "num_colors": num_colors,
+                    "rho": rho,
+                    "p0": p0_val,
+                    "order": ord_key,
+                    "num_samples": n,
+                    "t": ti,
+                    "pt": vi,
+                    "pt_err": ei
+                })
+    df = pd.DataFrame(rows, columns=["num_colors","rho","p0","order","num_samples","t","pt","pt_err"])
+    return bundle, df
