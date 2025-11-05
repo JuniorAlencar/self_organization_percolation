@@ -16,7 +16,7 @@
 static void print_help(const char* prog){
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val>
+  ./SOP <L> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val> <P0>
 
 Arguments:
   L                : Length of network (int)
@@ -28,10 +28,10 @@ Arguments:
   dim              : Dimension of Network (2 or 3)
   num_colors       : Number of colors in network >= 1 (int)
   rho_val          : Density for each color (double)  [IMPORTANT => num_colors * rho_val <= 1.0]
-
+  P0               : Fraction of active nodes in base [0 < P0 <= 1.0]
 Examples:
-  ./SOP 1000 0.10 -1 bond 1.0e-05 200 2 2 0.30
-  ./SOP  500  0.05 42 node 1.0e-04 100 3 3 0.25
+  ./SOP 1000 0.10 -1 bond 1.0e-05 200 2 2 0.30 0.1
+  ./SOP  500  0.05 42 node 1.0e-04 100 3 3 0.25 0.5
 
 Tips:
   - Use seed = -1 to auto-generate a random seed.
@@ -66,7 +66,7 @@ int main(int argc, char* argv[]){
         if (is_help_token(argv[1])) { print_help(argv[0]); return 0; }
         if (std::strcmp(argv[1],"--version")==0) { print_version(); return 0; }
     }
-    if (argc != 10) {
+    if (argc != 11) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc-1 << ").\n";
         print_help(argv[0]);
         return 1;
@@ -82,13 +82,12 @@ int main(int argc, char* argv[]){
         int dim = std::stoi(argv[7]);     // 2
         int num_colors = std::stoi(argv[8]);
         double rho_val = std::stod(argv[9]);
-        
+        double P0 = std::stod(argv[10]);
 
         int type_N_t = 0;   // 0 => Nt constante; 1 => Nt = a * t^alpha
         double a = 0.0;
         double alpha = 0.0;
-        double P0 = 0.1;
-
+        
         // validações amigáveis
         if (dim != 2 && dim != 3){
             std::cerr << "[ERROR] dim must be 2 or 3.\n";
