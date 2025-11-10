@@ -592,29 +592,91 @@ def summarize_all_dirs(base_root: str = "../Data/bond_percolation",
     Percorre todas as pastas que batem o padrão e cria arquivos agregados por dimensão:
       <base_root>/all_data_{dim}D.dat
 
-    Retorna: {dim: Path(arquivo_gerado)}
+    Agrega diretamente a partir de cada all_data.dat, criando uma linha por (P0, p0, order).
     """
     base = Path(base_root)
     outputs: dict[int, Path] = {}
     buckets: dict[int, list[dict]] = {}
 
-    # percorre apenas diretórios que batem DIR_RE
     for d in base.glob("num_colors_*/dim_*/L_*/NT_constant/NT_*/k_*/rho_*/data"):
         dposix = d.as_posix()
-        m = DIR_RE.match(dposix)
-        if not m:
+        m_dir = DIR_RE.match(dposix)  # <<< NÃO usar 'm'
+        if not m_dir:
             if verbose:
                 print(f"[ignorado] {dposix} (não bate regex)")
             continue
 
-        # agrega esse data_dir
-        rows = _summarize_one_data_dir(dposix)
-        if len(rows) == 0:
+        info = parse_data_dir(dposix)
+        if info is None:
             if verbose:
-                print(f"[info] sem ordens válidas em: {dposix}")
+                print(f"[ignorado] {dposix} (parse falhou)")
             continue
 
-        dim = int(m.group("dim"))
+        all_file = Path(d) / "all_data.dat"
+        if not all_file.exists():
+            if verbose:
+                print(f"[info] sem all_data.dat em: {dposix}")
+            continue
+
+        df = _load_all_data(all_file.as_posix())
+        if df.empty:
+            if verbose:
+                print(f"[info] all_data.dat vazio em: {dposix}")
+            continue
+
+        rows: list[dict] = []
+        for (P0_val, p0_val, order_val), ggrp in df.groupby(["P0", "p0", "order"], dropna=False):
+            if pd.isna(order_val):
+                continue
+            try:
+                order_int = int(order_val)
+            except Exception:
+                continue
+
+            N_samples = int(ggrp["filename"].nunique())
+
+            run_stats = []
+            for fname, gfname in ggrp.groupby("filename"):
+                last = gfname.tail(1).iloc[0]
+                p_mean_val = float(last.get("p_mean", float("nan")))
+                p_sem_val  = float(last.get("p_sem",  float("nan")))
+                if np.isfinite(p_mean_val) and np.isfinite(p_sem_val) and p_sem_val >= 0:
+                    run_stats.append({"mean": p_mean_val, "sem": p_sem_val})
+
+            if run_stats:
+                combo = combine_tail_means(run_stats, random_effects=False)
+                p_mean = float(combo["mean"])
+                p_err  = float(combo["se"])
+            else:
+                p_mean, p_err = np.nan, np.nan
+
+            sp_mean, sp_sem, _ = _mean_sem(ggrp["shortest_path"])
+            sperc_mean, sperc_sem, _ = _mean_sem(ggrp["S_perc"])
+
+            rows.append({
+                "L":   int(info["L"]),
+                "Nt":  int(info["Nt"]),
+                "k":   float(info["k"]),
+                "nc":  int(info["nc"]),
+                "rho": float(info["rho"]),
+                "p0":  float(p0_val) if pd.notna(p0_val) else np.nan,
+                "P0":  float(P0_val) if pd.notna(P0_val) else np.nan,
+                "order": order_int,
+                "N_samples": N_samples,
+                "p_mean": p_mean,
+                "p_err":  p_err,
+                "shortest_path": sp_mean,
+                "shortest_path_err": sp_sem,
+                "S_perc": sperc_mean,
+                "S_perc_err": sperc_sem,
+            })
+
+        if not rows:
+            if verbose:
+                print(f"[info] sem grupos (P0,p0,order) válidos em: {dposix}")
+            continue
+
+        dim = int(m_dir.group("dim"))  # <<< agora é o Match
         buckets.setdefault(dim, []).extend(rows)
         if verbose:
             print(f"[ok] {len(rows)} linhas agregadas de: {dposix}")
@@ -627,6 +689,15 @@ def summarize_all_dirs(base_root: str = "../Data/bond_percolation",
             "shortest_path","shortest_path_err",
             "S_perc","S_perc_err"
         ])
+        # ordem estável opcional
+        try:
+            out_df = out_df.sort_values(
+                by=["L","nc","rho","p0","P0","order","Nt","k"],
+                kind="mergesort",
+                ignore_index=True
+            )
+        except Exception:
+            pass
 
         out_path = base / f"all_data_{dim}D.dat"
         out_df.to_csv(out_path.as_posix(), sep=" ", index=False, na_rep="NaN")
