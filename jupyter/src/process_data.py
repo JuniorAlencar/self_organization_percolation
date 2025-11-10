@@ -461,6 +461,7 @@ def _load_all_data(file_path: str) -> pd.DataFrame:
     """
     Lê all_data.dat aceitando múltiplos espaços e 'NaN' como nulos.
     Garante colunas esperadas; se faltarem, cria com NaN.
+    Também faz 'backfill' de P0/p0 a partir do filename quando estiverem faltando.
     """
     expected = ['filename','P0','p0','order','p_mean','p_std','p_sem','shortest_path','S_perc']
     if not os.path.exists(file_path):
@@ -477,13 +478,29 @@ def _load_all_data(file_path: str) -> pd.DataFrame:
     except Exception:
         df = pd.DataFrame(columns=expected)
 
+    # garante colunas
     for c in expected:
         if c not in df.columns:
             df[c] = np.nan
-    # tipos
+
+    # tipos numéricos
     for c in ["P0","p0","order","p_mean","p_std","p_sem","shortest_path","S_perc"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df["filename"] = df["filename"].astype(str)
+
+    # ---- BACKFILL de P0/p0 quando NaN ----
+    mask_missing = df["P0"].isna() | df["p0"].isna()
+    if mask_missing.any():
+        def _try_parse(row):
+            try:
+                vals = parse_filename(row["filename"])
+                if np.isnan(row["P0"]): row["P0"] = vals["P0"]
+                if np.isnan(row["p0"]): row["p0"] = vals["p0"]
+            except Exception:
+                pass
+            return row
+        df.loc[mask_missing] = df.loc[mask_missing].apply(_try_parse, axis=1)
+
     return df[expected]
 
 
@@ -506,7 +523,7 @@ def _mean_sem(arr_like):
 # ------------------------------------------------------------
 def _summarize_one_data_dir(data_dir: str) -> list[dict]:
     """
-    Retorna uma lista de dicionários (uma linha por 'order') com:
+    Retorna uma lista de dicionários (uma linha por (order, P0, p0)) com:
     L, Nt, k, nc, rho, p0, P0, order, N_samples, p_mean, p_err,
     shortest_path, shortest_path_err, S_perc, S_perc_err
     """
@@ -517,32 +534,22 @@ def _summarize_one_data_dir(data_dir: str) -> list[dict]:
     all_file = Path(data_dir) / "all_data.dat"
     df = _load_all_data(all_file.as_posix())
 
-    # p0/P0: tentamos pegar único valor (se múltiplos, fica NaN)
-    def _unique_or_nan(s: pd.Series):
-        vals = s.dropna().unique()
-        return float(vals[0]) if vals.size == 1 else np.nan
+    # linhas válidas: precisam ter order e P0/p0 definidos
+    df_valid = df.dropna(subset=["order", "P0", "p0"]).copy()
+    if df_valid.empty:
+        return []
 
-    p0_uni = _unique_or_nan(df["p0"])
-    P0_uni = _unique_or_nan(df["P0"])
-
-    # Agrupar por 'order' (apenas ordens não-NaN)
     rows = []
-    orders = sorted([o for o in df["order"].dropna().unique()])
-    if len(orders) == 0:
-        # não há ordens válidas → não gera linha agregada
-        return rows
+    # agrupa por (order, P0, p0) para não misturar rodadas com parâmetros diferentes
+    for (order, P0_val, p0_val), sub in df_valid.groupby(["order", "P0", "p0"]):
+        order = int(order)
 
-    for order in orders:
-        sub = df.loc[df["order"] == order].copy()
-
-        # N_samples = número de filenames distintos para essa order
+        # N_samples = nº de seeds (filenames) distintos nesse grupo
         N_samples = int(sub["filename"].nunique())
 
-        # p_mean/p_err com combine_tail_means usando (mean, sem) de cada seed
+        # p_mean/p_err combinando por seed (última linha por filename)
         run_stats = []
-        # Usamos a última linha por filename (se houver repetidos) para evitar duplicação
         for fname, g in sub.groupby("filename"):
-            # Uma linha por seed: se houver várias linhas (improvável), pega a última
             last = g.tail(1).iloc[0]
             m = last.get("p_mean", np.nan)
             s = last.get("p_sem", np.nan)
@@ -556,9 +563,7 @@ def _summarize_one_data_dir(data_dir: str) -> list[dict]:
         else:
             p_mean, p_err = np.nan, np.nan
 
-        # shortest_path: média simples e erro padrão (ignorando NaN)
         sp_mean, sp_sem, _ = _mean_sem(sub["shortest_path"])
-        # S_perc: média simples e erro padrão
         sperc_mean, sperc_sem, _ = _mean_sem(sub["S_perc"])
 
         rows.append({
@@ -567,8 +572,8 @@ def _summarize_one_data_dir(data_dir: str) -> list[dict]:
             "k":   float(info["k"]),
             "nc":  int(info["nc"]),
             "rho": float(info["rho"]),
-            "p0":  p0_uni,
-            "P0":  P0_uni,
+            "p0":  float(p0_val),
+            "P0":  float(P0_val),
             "order": int(order),
             "N_samples": N_samples,
             "p_mean": p_mean,
@@ -580,6 +585,7 @@ def _summarize_one_data_dir(data_dir: str) -> list[dict]:
         })
 
     return rows
+
 
 
 # ------------------------------------------------------------
