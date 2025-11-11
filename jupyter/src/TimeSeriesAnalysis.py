@@ -19,6 +19,7 @@ import numpy as np
 from collections import defaultdict
 from typing import Dict, List, Any, Tuple, Optional
 import pandas as pd
+import random
 
 # ============================================================
 # Paths / Regex helpers
@@ -132,6 +133,27 @@ def read_orders_one_file(file_path: str) -> list[tuple[int | None, np.ndarray, n
             order_val = int(order) if isinstance(order, (int, np.integer)) else None
             out.append((order_val, p, n_arr))
     return out  # possibly []
+
+def read_orders_one_file_fix(file_path: str) -> dict:
+    """
+    Read one SOP result JSON and return a dictionary with all properties of the JSON file.
+    """
+    try:
+        with open(file_path, "r") as f:
+            obj = json.load(f)
+    except Exception as e:
+        print(f"Erro ao ler o arquivo: {e}")
+        return {}
+
+    # Verifica se o arquivo contém a chave 'results' e, se sim, processa
+    if isinstance(obj, dict) and "results" in obj:
+        results = obj["results"]    
+        
+        # Retorna o dicionário completo para que você possa acessar todas as propriedades
+        return obj
+    else:
+        print("Estrutura do arquivo inválida")
+        return {}
 
 
 # ============================================================
@@ -1762,3 +1784,24 @@ def read_all_data_bundle(path, as_dataframe=False):
                 })
     df = pd.DataFrame(rows, columns=["num_colors","rho","p0","order","num_samples","t","pt","pt_err"])
     return bundle, df
+
+def select_random_json(directory: str) -> str:
+    """
+    Seleciona aleatoriamente um arquivo .json dentro de um diretório.
+    
+    :param directory: Caminho do diretório onde os arquivos .json estão localizados
+    :return: Caminho do arquivo .json selecionado aleatoriamente
+    """
+    # Lista todos os arquivos no diretório
+    files = [f for f in os.listdir(directory) if f.endswith('.json')]
+    
+    # Se não houver arquivos .json no diretório, retorna None
+    if not files:
+        print("Nenhum arquivo .json encontrado no diretório.")
+        return None
+    
+    # Seleciona aleatoriamente um arquivo da lista
+    random_file = random.choice(files)
+    
+    # Retorna o caminho completo do arquivo selecionado
+    return os.path.join(directory, random_file)
