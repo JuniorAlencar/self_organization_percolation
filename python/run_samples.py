@@ -33,23 +33,27 @@ from src.SOP_parms import *
 #                 shell_data(L_lst[i], type_perc, p0, seed, k, Nt, dim,
 #                          nc, num_runs[i], rho, exec_name, P0, num_threads, multi)
 
-num_runs = [300, 200, 100]
-rho = [1.0]
 
-L_lst = [1024, 2048, 4096]
-nc_ = 1
+num_runs = [100, 50, 10]
+rho = [0.125]
+
+L_lst = [2048, 4096, 8192]
 dim = 2
+rho = [0.125]
+
+nc_ = [2, 4, 8]
 
 p0 = 1.0
 seed = -1
 multi=True
 num_threads = 8
 type_perc = 'bond'
-k = 1.0e-04
-Nt = 200
+k = 1.0e-05
+Nt = 400
 P0 = 0.1
 
 for i in range(len(L_lst)):                
-        exec_name = f"data_{dim}D_L_{L_lst[i]}_nc_{nc_}_P0_{P0}_props.sh"
-        shell_data(L_lst[i], type_perc, p0, seed, k, Nt, dim,
-                        nc_, num_runs[i], rho, exec_name, P0, num_threads, multi)
+        for nc in nc_:
+                exec_name = f"data_{dim}D_L_{L_lst[i]}_nc_{nc}_P0_{P0}_props.sh"
+                shell_data(L_lst[i], type_perc, p0, seed, k, Nt, dim,
+                         nc, num_runs[i], rho, exec_name, P0, num_threads, multi)
