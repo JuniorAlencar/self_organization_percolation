@@ -1555,6 +1555,8 @@ def read_experiment_json(path):
     fixed_results = {k: (v if isinstance(v, dict) else {}) for k, v in results.items()}
     return {"meta": meta, "results": fixed_results}
 
+
+
 # ------------------ Helpers ------------------
 def orders_for(num_colors:int):
     # nomes no JSON de entrada têm espaço; no bundle de saída usar underscore
@@ -1785,23 +1787,26 @@ def read_all_data_bundle(path, as_dataframe=False):
     df = pd.DataFrame(rows, columns=["num_colors","rho","p0","order","num_samples","t","pt","pt_err"])
     return bundle, df
 
-def select_random_json(directory: str) -> str:
+def select_random_json(directory: str, p0: float) -> Optional[str]:
     """
-    Seleciona aleatoriamente um arquivo .json dentro de um diretório.
-    
-    :param directory: Caminho do diretório onde os arquivos .json estão localizados
-    :return: Caminho do arquivo .json selecionado aleatoriamente
+    Seleciona aleatoriamente um arquivo .json dentro de 'directory' cujo nome
+    contenha o p0 especificado no padrão:
+      P0_{P0:.2f}_p0_{p0:.2f}_seed_{seed}.json
+
+    :param directory: Diretório onde estão os .json
+    :param p0: Valor de p0 a filtrar (será formatado em 2 casas decimais)
+    :return: Caminho absoluto do .json selecionado, ou None se não encontrar
     """
-    # Lista todos os arquivos no diretório
-    files = [f for f in os.listdir(directory) if f.endswith('.json')]
-    
-    # Se não houver arquivos .json no diretório, retorna None
+    directory_abs = os.path.abspath(os.path.expanduser(directory))
+    if not os.path.isdir(directory_abs):
+        raise NotADirectoryError(f"Diretório inválido: {directory_abs}")
+
+    p0_str = f"{float(p0):.2f}"
+    pattern = os.path.join(directory_abs, f"P0_*_p0_{p0_str}_seed_*.json")
+    files = [f for f in glob.glob(pattern) if os.path.isfile(f)]
+
     if not files:
-        print("Nenhum arquivo .json encontrado no diretório.")
+        print(f"Nenhum arquivo encontrado com p0={p0_str} em {directory_abs}.")
         return None
-    
-    # Seleciona aleatoriamente um arquivo da lista
-    random_file = random.choice(files)
-    
-    # Retorna o caminho completo do arquivo selecionado
-    return os.path.join(directory, random_file)
+
+    return os.path.abspath(random.choice(files))
