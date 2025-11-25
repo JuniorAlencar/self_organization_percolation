@@ -145,6 +145,12 @@ int main(int argc, char* argv[]){
             num_colors, rho, ts, ps, rng
         );
         
+        // Data to animate network
+        // NetworkPattern net = net_generator.animate_network(
+        //     dim, L, N_samples, k, N_t, type_N_t,
+        //     p0, P0, a, alpha, type_percolation,
+        //     num_colors, rho, ts, ps, rng
+        // );
         // UNCOMENT BELOW TO CHECK INITIAL NETWORK===============
         // NetworkPattern net = net_generator.initialize_network(
         //                 dim,               // dimensão (2D/3D)
@@ -194,7 +200,7 @@ int main(int argc, char* argv[]){
         save_data saver;
 
         // 1) rede (Numpy .npy)
-        //saver.save_network_as_npz(net, net_filename);
+        saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //    sort_by_order = true para ordenar por percolation_order
