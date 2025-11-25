@@ -72,12 +72,13 @@ class network{
         void print_initial_site_fractions(const NetworkPattern& net);
         
         // Create a net for animate 
-        NetworkPattern animate_network(const int dim, const int lenght_network, const int num_of_samples,
-                                       const double k, const double N_t, const int seed, const int type_N_t,
-                                       const std::vector<double> p0, const double P0, const double a, const double alpha,
-                                       const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-                                       TimeSeries& ts_out);
-        
+        NetworkPattern animate_network(
+            const int dim, const int lenght_network, const int num_of_samples,
+            const double k, const double N_t, const int type_N_t,
+            const std::vector<double> p0, const double P0, const double a, const double alpha,
+            const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
+            TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng);
+
 };
 
 
