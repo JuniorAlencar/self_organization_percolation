@@ -267,7 +267,6 @@ NetworkPattern network::create_network(
     return net;
 }
 
-
 NetworkPattern network::animate_network(
     const int dim, const int lenght_network, const int num_of_samples,
     const double k, const double N_t, const int type_N_t,
@@ -312,13 +311,11 @@ NetworkPattern network::animate_network(
     NetworkPattern net_animation(dim, shape, num_colors, rho);// tempos codificados
     std::fill(net_animation.data.begin(), net_animation.data.end(), -1);
 
+    int base_multi = (dim == 3) ? 100000000 : 1000000;    
     // ===== multiplicador por cor para codificar cor + tempo =====
     std::vector<int> color_mul(num_colors, 0);
     for (int c = 0; c < num_colors; ++c) {
-        if (dim == 3)
-            color_mul[c] = c * 100000000; // 10^8
-        else
-            color_mul[c] = c * 1000000;   // 10^6
+        color_mul[c] = (c + 1) * base_multi;
     }
 
     // ===== séries temporais (como no create_network) =====
