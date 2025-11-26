@@ -6,4 +6,5 @@
 /animation/frames_*
 /shells/data_*
 *.zip
-
+*.csv
+*.gif
