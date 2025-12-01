@@ -3,7 +3,7 @@
 /build
 /results_paper_SOP
 *.pyc
-/animation/frames_*
+/animation/3D_L256_nc4_rho0.25_k1.0e-06_Nt3000/positions_vs_time
 /shells/data_*
 *.zip
 *.csv
