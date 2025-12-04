@@ -66,5 +66,3 @@ path_out_network = path_dir + f"L{L}_seed{seed}_{cut}_better.png"
 mlab.savefig(path_out_network, magnification=4)
 print(f"network save in {path_out_network}")
 mlab.show()
-
-

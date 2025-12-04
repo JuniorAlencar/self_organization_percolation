@@ -200,7 +200,7 @@ int main(int argc, char* argv[]){
         save_data saver;
 
         // 1) rede (Numpy .npy)
-        //saver.save_network_as_npz(net, net_filename);
+        // saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //    sort_by_order = true para ordenar por percolation_order
