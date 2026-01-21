@@ -78,7 +78,9 @@ class network{
             const std::vector<double> p0, const double P0, const double a, const double alpha,
             const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
             TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng);
-
+    
+        NetworkPattern create_shortest_paths_map(const NetworkPattern& net,
+                                             const PercolationSeries& ps_out);
 };
 
 

@@ -145,6 +145,8 @@ int main(int argc, char* argv[]){
             num_colors, rho, ts, ps, rng
         );
         
+        //NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
+        
         // Data to animate network
         // NetworkPattern net = net_generator.animate_network(
         //     dim, L, N_samples, k, N_t, type_N_t,
@@ -181,7 +183,8 @@ int main(int argc, char* argv[]){
                   << ", t="  << ts.t.size()
                   << ", p_t="<< ts.p_t.size()
                   << ", Nt=" << ts.Nt.size() << "\n";
-        cout << "seed = " << seed << endl;
+        
+                  cout << "seed = " << seed << endl;
         // nomes dos arquivos
         std::ostringstream oss_name;
         oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0
@@ -193,19 +196,28 @@ int main(int argc, char* argv[]){
                 << "_p0_" << std::fixed << std::setprecision(2) << pp0
                 << "_seed_" << seed << ".npz"; // writer grava .npy
 
-        std::string json_filename = data_dir + oss_name.str();
-        std::string net_filename  = oss_net.str();
-
+        std::ostringstream shortest_map;
+        shortest_map << network_dir << "/map_shortest_P0_" << std::fixed << std::setprecision(2) << P0
+                << "_p0_" << std::fixed << std::setprecision(2) << pp0
+                << "_seed_" << seed << ".npz"; // writer grava .npy
+        
+        string json_filename = data_dir + oss_name.str();
+        string net_filename  = oss_net.str();
+        string shotest_filename = shortest_map.str();
+        
         // salvar (novo writer JSON)
         save_data saver;
-
+        
         // 1) rede (Numpy .npy)
-        // saver.save_network_as_npz(net, net_filename);
+        saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //    sort_by_order = true para ordenar por percolation_order
         saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
 
+        // 3) save shortest map(Numpy .npy)
+        //saver.save_network_as_npz(sp_net, shotest_filename);
+        
         std::cout << "file save with name:\t" << oss_name.str() << std::endl;
         return 0;
     }
