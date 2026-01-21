@@ -25,7 +25,7 @@ class save_data {
         // Mantém o nome da API anterior por compatibilidade.
         void save_network_as_npz(const NetworkPattern& net,
                                     const std::string& filename) const;
-
+        
         // Salva tudo em JSON (inclui séries p_t, Nt, M_t, M_t_total; eventos de percolação; SP).
         void save_percolation_json(const PercolationSeries& ps,
                                 const TimeSeries& ts,

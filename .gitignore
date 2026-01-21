@@ -8,3 +8,6 @@
 *.zip
 *.csv
 *.gif
+/animation
+/network
+/results

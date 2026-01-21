@@ -1,5 +1,10 @@
 import numpy as np
 import pandas as pd
+from mayavi import mlab
+import os 
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
+from matplotlib import patches  # coloque no topo do arquivo
 
 def read_network(path_dir, filename):
     fname = path_dir + filename
@@ -18,7 +23,7 @@ def read_network(path_dir, filename):
     mat3d = data["data"].reshape(shape)  # shape = (L, L, L)
     return mat3d
 
-def convert_positions(path_dir, filename, dim):
+def convert_positions(path_dir, filename, output_filename ,dim):
     fname = path_dir + filename
     network = read_network(path_dir, filename)
 
@@ -53,11 +58,55 @@ def convert_positions(path_dir, filename, dim):
             "y": y,
             "color": colors
         })
-    save_out = path_dir + "network_positions.csv"
+    save_out = path_dir + output_filename
 
     print(df_points.head())
     print("Total de pontos ativos:", len(df_points))
     df_points.to_csv(save_out, sep=',', index=False)
+
+def convert_positions_sp(path_dir, filename, output_filename, dim):
+    fname = path_dir + filename
+    network = read_network(path_dir, filename)  # deve retornar um np.ndarray
+
+    # valores únicos só pra conferência (opcional)
+    valores_unicos, contagens = np.unique(network, return_counts=True)
+    print("Valores únicos na rede:", dict(zip(valores_unicos, contagens)))
+
+    # índices de todos os sítios NÃO NULOS (valor != 0)
+    coords_zyx = np.argwhere(network != 0)  # (z, y, x) em 3D; (y, x) em 2D
+
+    # valores (cores) correspondentes: exatamente o valor da matriz em (i,j,k)
+    colors = network[network != 0]
+
+    if dim == 3:
+        # mapeando para o sistema físico: x,y base; z altura
+        x = coords_zyx[:, 2]   # eixo 2 -> x
+        y = coords_zyx[:, 1]   # eixo 1 -> y
+        z = coords_zyx[:, 0]   # eixo 0 -> z
+
+        df_points = pd.DataFrame({
+            "x": x,
+            "y": y,
+            "z": z,
+            "color": colors
+        })
+    else:
+        # 2D: network esperado como (y, x)
+        y = coords_zyx[:, 0]
+        x = coords_zyx[:, 1]
+
+        df_points = pd.DataFrame({
+            "x": x,
+            "y": y,
+            "color": colors
+        })
+
+    save_out = path_dir + output_filename
+
+    print(df_points.head())
+    print("Total de pontos não nulos:", len(df_points))
+    df_points.to_csv(save_out, sep=',', index=False)
+
 
 TIME_BASE_3D = 100_000_000  # fator da codificação: C * 100000000 + t
 
@@ -124,3 +173,465 @@ def convert_positions_3D(path_dir, filename, dim, time_base=TIME_BASE_3D):
     print("Total de pontos ativos:", len(df_points))
     df_points.to_csv(save_out, sep=',', index=False)
     print("CSV salvo em:", save_out)
+
+
+def plot_3D_cut(dim, L, nc, rho, k, NT):
+    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho}_k{k:.1e}_Nt{NT}/"
+    
+    file_positions = f"../network/{dim}D_L{L}_nc{nc}_rho{rho}_k{k:.1e}_Nt{NT}/network_positions.csv"
+    seed = 1
+
+    # Create file positions, if dont exist
+    if not os.path.exists(file_positions):
+        print("file positions don't exist, create it...")
+        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", dim)
+        print("File with positions created")
+
+    a = 0
+    b = 0
+    seed = 1
+
+    df = pd.read_csv(path_dir + "network_positions.csv")
+
+    cut = L * (1/2)
+
+    # Ajuste as coordenadas x e y para levar em conta a e b
+    df['x'] = (df['x'] + a) % L
+    df['y'] = (df['y'] + b) % L
+
+    figure_size = (800, 800)
+    mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
+
+    colors = [i+2 for i in range(nc)]
+    colors_used = [
+        (0.9, 0.1, 0.1),  # 2 - red
+        (1.0, 0.5, 0.0),  # 3 - orange
+        (0.1, 0.9, 0.1),  # 4 - green
+        (0.1, 0.1, 0.9),  # 5 - blue
+        (0.8, 0.2, 0.8),  # 6 - purple
+        (0.2, 0.8, 0.8),  # 7 - teal
+        (1.0, 1.0, 0.0),  # 8 - yellow
+        (0.6, 0.4, 0.2),  # 9 - brown
+    ]
+
+    for idx, color in enumerate(colors):
+        df_color = df[df['color'] == color]
+
+        mask_oct = (df_color['x'] <= cut) | (df_color['y'] <= cut) | (df_color['z'] <= cut)
+        x = df_color['x'][mask_oct]
+        y = df_color['y'][mask_oct]
+        z = df_color['z'][mask_oct]
+
+        if len(x) > 0:
+            pts = mlab.points3d(
+            x, y, z,
+            color=colors_used[idx],
+            scale_factor=1,
+            opacity=1.0,
+            mode='cube'
+        )
+        #pts.actor.property.edge_visibility = True
+        #pts.actor.property.edge_color = (0, 0, 0)   # preto
+        #pts.actor.property.line_width = 0.00         # espessura da borda (ajuste se quiser)
+
+
+    mlab.outline(
+        extent=[0, L, 0, L, 0, L],  # [xmin, xmax, ymin, ymax, zmin, zmax]
+        color=(0, 0, 0),            # contorno preto
+        line_width=2.0              # espessura da linha
+    )
+
+    mlab.view(azimuth=60, elevation=60, distance=3.25*L)
+    path_out_network = path_dir + f"L{L}_seed{seed}_{cut}_better.png" 
+    mlab.savefig(path_out_network, magnification=4)
+    print(f"network save in {path_out_network}")
+    mlab.show()
+
+
+def plot_3D_full(dim, L, nc, rho, k, NT, specific_color=None):
+    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
+
+    file_positions = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/network_positions.csv"
+    seed = 1
+
+    # Create file positions, if dont exist
+    if not os.path.exists(file_positions):
+        print("file positions don't exist, create it...")
+        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", "network_positions.csv", dim)
+        print("File with positions created")
+
+    a = 0
+    b = 0
+    seed = 1
+
+    df = pd.read_csv(path_dir + "network_positions.csv")
+
+    cut = L * (1/2)
+
+    # Ajuste as coordenadas x e y para levar em conta a e b
+    df['x'] = (df['x'] + a) % L
+    df['y'] = (df['y'] + b) % L
+
+    figure_size = (800, 800)
+    mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
+
+    colors = [i+2 for i in range(nc)]
+    
+    colors_used = [
+        (0.9, 0.1, 0.1),  # 2 - red
+        (1.0, 0.5, 0.0),  # 3 - orange
+        (0.1, 0.9, 0.1),  # 4 - green
+        (0.1, 0.1, 0.9),  # 5 - blue
+        (0.8, 0.2, 0.8),  # 6 - purple
+        (0.2, 0.8, 0.8),  # 7 - teal
+        (1.0, 1.0, 0.0),  # 8 - yellow
+        (0.6, 0.4, 0.2),  # 9 - brown
+    ]
+
+    if(specific_color==None):
+        for idx, color in enumerate(colors):
+                df_color = df[df['color'] == color]
+
+                x = df_color['x']
+                y = df_color['y']
+                z = df_color['z']
+                
+                if len(x) > 0:
+                    pts = mlab.points3d(
+                    x, y, z,
+                    color=colors_used[idx],
+                    scale_factor=1,
+                    opacity=1.0,
+                    mode='cube'
+                )
+                # Ativar contorno preto nos cubos
+                pts.actor.property.edge_visibility = True
+                pts.actor.property.edge_color = (0, 0, 0)   # preto
+                pts.actor.property.line_width = 0.00         # espessura da borda (ajuste se quiser)
+        
+        path_out_network = path_dir + f"L{L}_seed{seed}_all.png"
+    
+    else:
+        if(specific_color not in colors):
+            print(f"color not accept, please enter with any color in list {colors}")
+        
+        else:
+            df_color = df[df['color'] == specific_color]
+            x = df_color['x']
+            y = df_color['y']
+            z = df_color['z']
+
+            if len(x) > 0:
+                pts = mlab.points3d(
+                x, y, z,
+                color=colors_used[idx],
+                scale_factor=1,
+                opacity=1.0,
+                mode='cube'
+            )
+            # Ativar contorno preto nos cubos
+            pts.actor.property.edge_visibility = True
+            pts.actor.property.edge_color = (0, 0, 0)   # preto
+            pts.actor.property.line_width = 0.00         # espessura da borda (ajuste se quiser)
+            path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}.png"
+    
+    # Depois de plotar os pontos3d, lá no final, antes do mlab.show()
+    mlab.outline(
+        extent=[0, L, 0, L, 0, L],  # [xmin, xmax, ymin, ymax, zmin, zmax]
+        color=(0, 0, 0),            # contorno preto
+        line_width=2.0              # espessura da linha
+    )
+
+    center = (L/2, L/2, L/2)
+
+    mlab.view(
+        azimuth=70,
+        elevation=65,
+        distance=3.1 * L,      # bem mais perto que 3.25*L
+        focalpoint=center      # olha pro centro da rede
+    )
+
+    mlab.savefig(path_out_network, magnification=4)
+    print(f"network save in {path_out_network}")
+    mlab.show()
+
+
+def plot_3D_full_with_planes(dim, L, nc, rho, k, NT, specific_color=None):
+    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
+
+    file_positions = f"{path_dir}network_positions.csv"
+    seed = 1
+
+    # Create file positions, if dont exist
+    if not os.path.exists(file_positions):
+        print("file positions don't exist, create it...")
+        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", "network_positions.csv", dim)
+        print("File with positions created")
+
+    a = 0
+    b = 0
+    seed = 1
+
+    df = pd.read_csv(file_positions)
+
+    cut = L * (1/2)
+
+    # Ajuste as coordenadas x e y para levar em conta a e b
+    df['x'] = (df['x'] + a) % L
+    df['y'] = (df['y'] + b) % L
+
+    figure_size = (800, 800)
+    mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
+
+    colors = [i + 2 for i in range(nc)]
+    
+    colors_used = [
+        (0.9, 0.1, 0.1),  # 2 - red
+        (1.0, 0.5, 0.0),  # 3 - orange
+        (0.1, 0.9, 0.1),  # 4 - green
+        (0.1, 0.1, 0.9),  # 5 - blue
+        (0.8, 0.2, 0.8),  # 6 - purple
+        (0.2, 0.8, 0.8),  # 7 - teal
+        (1.0, 1.0, 0.0),  # 8 - yellow
+        (0.6, 0.4, 0.2),  # 9 - brown
+    ]
+
+    if specific_color is None:
+        for idx, color in enumerate(colors):
+            df_color = df[df['color'] == color]
+
+            x = df_color['x']
+            y = df_color['y']
+            z = df_color['z']
+            
+            if len(x) > 0:
+                pts = mlab.points3d(
+                    x, y, z,
+                    color=colors_used[idx],
+                    scale_factor=1,
+                    opacity=1.0,   # cubos totalmente opacos
+                    mode='cube'
+                )
+                # Ativar contorno preto nos cubos
+                pts.actor.property.edge_visibility = True
+                pts.actor.property.edge_color = (0, 0, 0)   # preto
+                pts.actor.property.line_width = 0.00        # espessura da borda
+        
+        path_out_network = path_dir + f"L{L}_seed{seed}_all_planes.png"
+    
+    else:
+        if specific_color not in colors:
+            print(f"color not accept, please enter with any color in list {colors}")
+        else:
+            df_color = df[df['color'] == specific_color]
+            x = df_color['x']
+            y = df_color['y']
+            z = df_color['z']
+
+            if len(x) > 0:
+                # índice da cor correta no vetor colors_used
+                color_idx = colors.index(specific_color)
+                pts = mlab.points3d(
+                    x, y, z,
+                    color=colors_used[color_idx],
+                    scale_factor=1,
+                    opacity=1.0,
+                    mode='cube'
+                )
+                # Ativar contorno preto nos cubos
+                pts.actor.property.edge_visibility = True
+                pts.actor.property.edge_color = (0, 0, 0)   # preto
+                pts.actor.property.line_width = 0.00        # espessura da borda
+
+                prop = pts.actor.property
+                prop.ambient = 0.2       # componente ambiente (luz geral)
+                prop.diffuse = 0.9       # quanto o objeto responde à luz difusa
+                prop.specular = 0.3      # brilho especular (reflexo)
+                prop.specular_power = 20 # quão concentrado é esse brilho
+
+            path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}_planes.png"
+
+    # ------------------------------------------------------
+    # Planos de corte em z = 25, 125, 225 atravessando o cubo
+    # ------------------------------------------------------
+    z_planes = [25, 125, 225]
+    margin = 0.1 * L  # quanto o plano "sai" para fora da caixa
+
+    for z0 in z_planes:
+        if 0 <= z0 <= L:
+            # plano maior que o cubo: [-margin, L+margin] em x e y
+            x_plane, y_plane = np.mgrid[
+                -margin : L + margin : 2j,
+                -margin : L + margin : 2j
+            ]
+            z_plane = np.full_like(x_plane, float(z0))
+
+            mlab.mesh(
+                x_plane, y_plane, z_plane,
+                color=(0.3, 0.3, 0.3),   # cinza
+                opacity=0.3              # semi-transparente
+            )
+
+    # Caixa de contorno do sistema
+    mlab.outline(
+        extent=[0, L, 0, L, 0, L],  # [xmin, xmax, ymin, ymax, zmin, zmax]
+        color=(0, 0, 0),            # contorno preto
+        line_width=2.0              # espessura da linha
+    )
+
+    center = (L / 2, L / 2, L / 2)
+
+    mlab.view(
+        azimuth=50,
+        elevation=60,
+        distance=3.50 * L,
+        focalpoint=center
+    )
+
+    mlab.savefig(path_out_network, magnification=4)
+    print(f"network save in {path_out_network}")
+    mlab.show()
+
+
+
+
+TIME_BASE_3D = 100_000_000  # fator da codificação: C * 100000000 + t
+
+def convert_positions_animation(path_dir, filename, dim, time_base=TIME_BASE_3D):
+    """
+    Lê o arquivo da rede (2D ou 3D) e gera um CSV com:
+      - 3D: x, y, z, color, time
+      - 2D: x, y, color, time
+
+    Supõe que os valores ativos estejam codificados como:
+        valor = C * time_base + t
+    e que sítios inativos tenham valor <= 0 (0 ou negativo).
+    """
+    fname = path_dir + filename
+    network = read_network(path_dir, filename)  # deve retornar np.ndarray
+
+    # conferência rápida
+    print("network.shape:", network.shape)
+    valores_unicos, contagens = np.unique(network, return_counts=True)
+    print("alguns valores únicos:", valores_unicos[:10])
+
+    # máscara: pega apenas sítios ativos (valor > 0)
+    mask_active = network > 0
+
+    # índices dos sítios ativos
+    coords = np.argwhere(mask_active)  # (z,y,x) se 3D; (y,x) se 2D
+
+    # valores codificados
+    encoded_vals = network[mask_active].astype(np.int64, copy=False)
+
+    # decodificação cor e tempo
+    colors = encoded_vals // time_base
+    times  = encoded_vals %  time_base
+
+    # mapeando para o sistema físico
+    if dim == 3:
+        # coords: (z, y, x)
+        z = coords[:, 0]
+        y = coords[:, 1]
+        x = coords[:, 2]
+
+        df_points = pd.DataFrame({
+            "x": x,
+            "y": y,
+            "z": z,
+            "color": colors,
+            "time": times,
+        })
+    else:
+        # dim == 2: coords: (y, x)
+        y = coords[:, 0]
+        x = coords[:, 1]
+
+        df_points = pd.DataFrame({
+            "x": x,
+            "y": y,
+            "color": colors,
+            "time": times,
+        })
+
+    save_out = path_dir + "network_positions_time.csv"
+    df_points = df_points.sort_values("time").reset_index(drop=True)
+    print(df_points.head())
+    print("Total de pontos ativos:", len(df_points))
+    df_points.to_csv(save_out, sep=',', index=False)
+    print("CSV salvo em:", save_out)
+
+
+from matplotlib import patches  # coloque no topo do arquivo
+
+def plot_projection(dim, L, nc, rho, k, NT ,z_level):
+    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
+    file_positions = f"{path_dir}network_positions.csv"
+    seed = 1
+
+    colors_used = [
+        (0.9, 0.1, 0.1),  # 2 - red
+        (1.0, 0.5, 0.0),  # 3 - orange
+        (0.1, 0.9, 0.1),  # 4 - green
+        (0.1, 0.1, 0.9),  # 5 - blue
+        (0.8, 0.2, 0.8),  # 6 - purple
+        (0.2, 0.8, 0.8),  # 7 - teal
+        (1.0, 1.0, 0.0),  # 8 - yellow
+        (0.6, 0.4, 0.2),  # 9 - brown
+    ]
+
+    if not os.path.exists(file_positions):
+        print("file positions don't exist, create it...")
+        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", dim)
+        print("File with positions created")
+
+    df = pd.read_csv(file_positions)
+
+    df_sub = df[df['z'] == z_level].copy()
+
+    a, b = 0, 0
+    df_sub.loc[:, "x"] = (df_sub["x"] + a) % L
+    df_sub.loc[:, "y"] = (df_sub["y"] + b) % L
+
+    df_sub["x"] = df_sub["x"].astype(int)
+    df_sub["y"] = df_sub["y"].astype(int)
+
+    color_values = sorted(df_sub["color"].unique())
+
+    img = np.zeros((L, L), dtype=np.uint8)
+
+    for j, c in enumerate(color_values):
+        idx = j + 1
+        mask = (df_sub["color"] == c)
+        xs = df_sub.loc[mask, "x"].to_numpy()
+        ys = df_sub.loc[mask, "y"].to_numpy()
+        img[ys, xs] = idx
+
+    cmap = ListedColormap([(1.0, 1.0, 1.0)] + colors_used[:len(color_values)])
+
+    fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
+    im = ax.imshow(
+        img,
+        origin="lower",
+        cmap=cmap,
+        interpolation="nearest"
+    )
+
+    # --- Moldura preta em torno da imagem ---
+    height, width = img.shape
+    rect = patches.Rectangle(
+        (-0.5, -0.5),       # canto inferior esquerdo
+        width, height,      # largura, altura
+        linewidth=1.5,
+        edgecolor="black",
+        facecolor="none"
+    )
+    ax.add_patch(rect)
+    # ----------------------------------------
+
+    ax.set_axis_off()
+    plt.tight_layout(pad=0)
+    plt.savefig(path_dir + f"projection_z_{z_level}.png", bbox_inches="tight", pad_inches=0)
+    plt.show()
+
+    

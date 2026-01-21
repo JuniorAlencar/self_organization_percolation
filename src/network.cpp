@@ -550,6 +550,51 @@ NetworkPattern network::animate_network(
 }
 
 
+NetworkPattern network::create_shortest_paths_map(const NetworkPattern& net,
+                                                  const PercolationSeries& ps_out)
+{
+    // Cria uma nova rede com mesmo dim/shape/num_colors/rho,
+    // mas dados inicializados em zero.
+    NetworkPattern sp_net(net.dim, net.shape, net.num_colors, net.rho);
+
+    if (sp_net.data.size() != net.data.size()) {
+        throw std::runtime_error("[create_shortest_paths_map] tamanho de data inconsistente");
+    }
+
+    std::fill(sp_net.data.begin(), sp_net.data.end(), 0);
+
+    const int num_colors = net.num_colors;
+
+    // Sanidade básica sobre PercolationSeries
+    if (static_cast<int>(ps_out.sp_path_lin.size()) < num_colors ||
+        static_cast<int>(ps_out.sp_len.size())      < num_colors) {
+        throw std::runtime_error("[create_shortest_paths_map] PercolationSeries inconsistente");
+    }
+
+    const std::size_t N = sp_net.data.size();
+
+    for (int c = 0; c < num_colors; ++c) {
+        // Se não percolou ou não há caminho registrado, pula
+        if (ps_out.sp_len[c] <= 0) continue;
+
+        const std::vector<int>& path = ps_out.sp_path_lin[c];
+        if (path.empty()) continue;
+
+        // Valor numérico igual ao índice da cor (1, 2, 3, ...)
+        const int color_label = (num_colors == 1 ? 1 : (c + 2));
+
+        for (int idx : path) {
+            if (idx < 0 || static_cast<std::size_t>(idx) >= N) {
+                // segurança: ignora índices inválidos
+                continue;
+            }
+            // Se um sítio estiver em mais de um caminho (raro), o último sobrescreve o anterior.
+            sp_net.data[idx] = color_label;
+        }
+    }
+
+    return sp_net;
+}
 
 
 // // ===== print_initial_site_fractions (compatível com o struct atual) =====
