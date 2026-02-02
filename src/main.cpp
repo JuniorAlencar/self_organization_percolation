@@ -145,7 +145,7 @@ int main(int argc, char* argv[]){
             num_colors, rho, ts, ps, rng
         );
         
-        //NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
+        
         
         // Data to animate network
         // NetworkPattern net = net_generator.animate_network(
@@ -209,17 +209,39 @@ int main(int argc, char* argv[]){
         save_data saver;
         
         // 1) rede (Numpy .npy)
-        saver.save_network_as_npz(net, net_filename);
+        //saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //    sort_by_order = true para ordenar por percolation_order
-        saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
+        // saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
 
         // 3) save shortest map(Numpy .npy)
+        //NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
         //saver.save_network_as_npz(sp_net, shotest_filename);
         
-        std::cout << "file save with name:\t" << oss_name.str() << std::endl;
+        // TESTS ----------------
+
+        FolderCreator creator_tests("./Data_tests");
+        auto [network_dir_tests, data_dir_tests] = creator_tests.create_structure(
+            dim, type_N_t, N_t, k, L, num_colors, a, alpha,
+            type_percolation, pp0, P0, rho_val
+        );
+                
+        std::ostringstream oss_name_tests;
+        oss_name_tests << "/P0_" << std::fixed << std::setprecision(2) << P0
+                 << "_p0_" << std::fixed << std::setprecision(2) << pp0
+                 << "_seed_" << seed << ".json";
+        
+        
+        string json_filename_tests = data_dir_tests + oss_name_tests.str();
+        
+        saver.save_percolation_json(ps, ts, json_filename_tests, /*sort_by_order=*/true);
+        
+        std::cout << "file save with name:\t" << oss_name_tests.str() << std::endl;
+        
         return 0;
+        // END TESTS -----
+    
     }
     catch (const std::exception& e){
         std::cerr << "[FATAL] Exception: " << e.what() << "\n";

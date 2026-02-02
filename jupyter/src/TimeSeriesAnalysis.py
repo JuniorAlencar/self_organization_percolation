@@ -1470,6 +1470,230 @@ def compute_means_for_folder_new(
     print(f"[salvo] {out_path}")
     return out_path
 
+def compute_means_for_folder_tests(
+    type_perc: str,
+    num_colors: int,
+    dim: int,
+    L: int,
+    NT: int,
+    k: float,
+    rho: float,
+    p0_list: List[float],
+    *,
+    x_max: float | None = None,     # limite temporal opcional (ex.: 5000)
+    n_boot: int = 20000,            # iterações de bootstrap
+    rng_seed: int = 12345,          # semente do bootstrap
+    window_roll: int | None = None  # <- NOVO: tamanho da janela deslizante (ex.: 50). Se None, não calcula
+) -> str:
+    """
+    Agrega todas as seeds para cada p0 em p0_list, alinha por order_percolation,
+    calcula médias e SEM:
+      - séries: pt (e nt se existir);
+      - escalares: time_percolation e M_size;
+    Além disso, calcula e salva no JSON:
+      - p_{c,SOP} (bootstrap ENTRE-SEEDS, escalar)
+      - (NOVO) p_{c,SOP}^{roll}(t): série rolada com incerteza bootstrap ENTRE-SEEDS por ponto
+        em 'pc_sop_roll': {"t_center":[...], "mean":[...], "std_boot":[...], "n_seeds":..., "n_boot":..., "window":...}
+      - (NOVO) por ordem, 'orders -> data -> pt_mean_roll' calculado da série média da ordem.
+    """
+    base_dir = "../Data_tests"
+    data_dir = os.path.join(
+        base_dir,
+        f"{type_perc}_percolation",
+        f"num_colors_{num_colors}",
+        f"dim_{dim}",
+        f"L_{L}",
+        "NT_constant",
+        f"NT_{NT}",
+        f"k_{k:.1e}",
+        f"rho_{rho:.4e}",
+        "data",
+    )
+    if not os.path.isdir(data_dir):
+        raise FileNotFoundError(f"Pasta de dados não encontrada: {data_dir}")
+
+    bundle: Dict[str, Any] = {
+        "meta": {
+            "type_perc": type_perc,
+            "num_colors": num_colors,
+            "dim": dim,
+            "L": L,
+            "NT": NT,
+            "k": float(k),
+            "rho": float(rho),
+            "base_dir": os.path.dirname(data_dir),  # uma pasta acima de 'data'
+            "x_max_used": None if x_max is None else float(x_max),
+            "bootstrap": {"n_boot": int(n_boot), "rng_seed": int(rng_seed)},
+            "rolling": {"window": None if window_roll is None else int(window_roll)}
+        },
+        "p0_groups": []
+    }
+
+    for p0 in p0_list:
+        # padrão principal (2 casas) + fallback (1 casa)
+        pattern = os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")
+        files = sorted(glob.glob(pattern)) or sorted(
+            glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.1f}_seed_*.json"))
+        )
+
+        if not files:
+            print(f"[aviso] Sem arquivos para p0={p0:.2f} em {data_dir}")
+            continue
+
+        per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        seeds: List[int] = []
+
+        # para p_c,SOP e p_c,SOP^roll (concatenado por seed)
+        pt_by_seed: Dict[int, List[np.ndarray]] = defaultdict(list)
+        t_by_seed:  Dict[int, List[np.ndarray]] = defaultdict(list)
+
+        for fp in files:
+            parsed = _parse_fname(fp)
+            if not parsed:
+                continue
+            _, p0_val, seed = parsed
+            seeds.append(seed)
+
+            orders = _load_orders_new(fp)  # {ordk: {"t":..., "pt":..., "nt":...}}
+            for ordk, data in orders.items():
+                per_order[ordk].append(data)
+
+                # acumular por seed (para pc_sop e pc_sop_roll)
+                if "pt" in data:
+                    pt_arr = np.asarray(data["pt"], dtype=float)
+                    if "t" in data and data["t"] is not None:
+                        t_arr = np.asarray(data["t"], dtype=float)
+                    else:
+                        t_arr = np.arange(len(pt_arr), dtype=float)
+                    if x_max is not None:
+                        msk = (t_arr <= x_max)
+                        pt_arr = pt_arr[msk]
+                        t_arr  = t_arr[msk]
+                    if pt_arr.size > 0:
+                        pt_by_seed[seed].append(pt_arr)
+                        t_by_seed[seed].append(t_arr)
+
+        # ---- médias por ordem (como antes) ----
+        mean_by_order: Dict[int, Dict[str, Any]] = {}
+        for ordk, lst in per_order.items():
+            mean_by_order[ordk] = _average_by_order_new(lst)
+
+            # ---- NOVO: janela deslizante sobre a série média da ORDEM ----
+            if window_roll is not None:
+                data_ord = mean_by_order[ordk]
+                if "pt" in data_ord and "t" in data_ord and data_ord["pt"] is not None and data_ord["t"] is not None:
+                    t_ord = np.asarray(data_ord["t"], dtype=float)
+                    pt_ord_mean = np.asarray(data_ord["pt"], dtype=float)  # série média (já agregada entre arquivos)
+                    if len(pt_ord_mean) >= window_roll:
+                        t_c, mu_r, sd_r = rolling_mean_std(t_ord, pt_ord_mean, window_roll)
+                        # salva dentro do "data" da ordem
+                        mean_by_order[ordk]["pt_mean_roll"] = {
+                            "t_center": t_c.tolist(),
+                            "mean":     mu_r.tolist(),
+                            "std":      sd_r.tolist(),
+                            "window":   int(window_roll)
+                        }
+
+        orders_blocks = [
+            {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
+            for ordk in sorted(mean_by_order.keys())
+        ]
+
+        # -------- p_{c,SOP} (igual ao seu) --------
+        # para cada seed: concatena ordens e calcula <pt>_tempo (seed)
+        seed_means: list[float] = []
+        for s in sorted(set(seeds)):
+            pts = pt_by_seed.get(s, [])
+            if len(pts) == 0: 
+                continue
+            pt_concat = np.concatenate(pts)
+            if pt_concat.size > 0:
+                seed_means.append(float(np.mean(pt_concat)))
+
+        mu_boot, sd_boot = _bootstrap_mean_across_samples(np.array(seed_means, dtype=float),
+                                                          n_boot=n_boot, rng_seed=rng_seed)
+
+        # -------- NOVO: p_{c,SOP}^{roll}(t) ENTRE-SEEDS --------
+        pc_sop_roll_block = None
+        if window_roll is not None:
+            seed_series = _concat_seed_series_for_pc(pt_by_seed, t_by_seed, x_max)
+            # calcula série rolada por seed
+            rolled_means = []
+            rolled_times = []
+            for s in sorted(seed_series.keys()):
+                t_concat  = seed_series[s]["t"]
+                pt_concat = seed_series[s]["pt"]
+                if len(pt_concat) >= window_roll:
+                    t_c, mu_r, _ = rolling_mean_std(t_concat, pt_concat, window_roll)
+                    rolled_means.append(mu_r)    # (T_s,)
+                    rolled_times.append(t_c)     # (T_s,)
+
+            if len(rolled_means) > 0:
+                min_len = min(len(x) for x in rolled_means)
+                if min_len >= 1:
+                    M = np.stack([m[:min_len] for m in rolled_means], axis=0).astype(np.float32)   # (n_seeds_valid, T)
+                    Tstack   = np.stack([tc[:min_len] for tc in rolled_times], axis=0)
+                    t_center = np.median(Tstack, axis=0)
+
+                    mean_boot, std_boot_series = _bootstrap_series_across_seeds(
+                        M, n_boot=n_boot, rng_seed=rng_seed, batch_size=128, use_float32=True
+                    )
+
+                    # --- NOVO: média da cauda com erro bootstrap ENTRE-SEEDS (escalar) ---
+                    mean_tail, std_tail, T_tail = _bootstrap_tail_mean_across_seeds(
+                        M, t_center,
+                        n_boot=n_boot, rng_seed=rng_seed,
+                        tail_tmin=None,      # opcional: defina um t mínimo absoluto
+                        tail_frac=0.2,       # ex.: última 20% da série; ajuste a gosto
+                        batch_size=128, use_float32=True
+                    )
+
+                    pc_sop_roll_block = {
+                        "t_center": t_center.tolist(),
+                        "mean":     mean_boot.tolist(),
+                        "std_boot": std_boot_series.tolist(),
+                        "n_seeds":  int(M.shape[0]),
+                        "n_boot":   int(n_boot),
+                        "window":   int(window_roll),
+                        # ---- NOVO bloco resumido da cauda ----
+                        "tail_summary": {
+                            "mode": "frac",
+                            "tail_frac": 0.2,           # ou inclua "tail_tmin" se usar limite absoluto
+                            "T_used": T_tail,           # quantos pontos entraram na média da cauda
+                            "mean": mean_tail,          # média bootstrap ENTRE-SEEDS na cauda
+                            "std_boot": std_tail        # desvio bootstrap ENTRE-SEEDS dessa média
+                        }
+                    }
+
+
+        p0_group = {
+            "p0_value": float(p0),
+            "num_seeds": len(set(seeds)),
+            "seeds": sorted(set(seeds)),
+            "orders": orders_blocks,
+            "pc_sop": {
+                "mean": mu_boot,          # <pt> médio entre-seeds (bootstrap)
+                "std_boot": sd_boot,      # desvio dos meios bootstrap (incerteza entre-seeds)
+                "n_seeds": len(seed_means),
+                "n_boot": int(n_boot)
+            }
+        }
+        if pc_sop_roll_block is not None:
+            p0_group["pc_sop_roll"] = pc_sop_roll_block
+
+        bundle["p0_groups"].append(p0_group)
+        msg_roll = ""
+        if pc_sop_roll_block is not None:
+            msg_roll = f" | pc_SOP^roll: T={len(pc_sop_roll_block['t_center'])}, seeds_valid={pc_sop_roll_block['n_seeds']}, win={pc_sop_roll_block['window']}"
+        print(f"[ok] p0={p0:.2f}: {len(files)} arquivos | seeds={len(set(seeds))} | pc_SOP={mu_boot:.6f}±{sd_boot:.6f}{msg_roll}")
+
+    # salvar UMA pasta acima de 'data/'
+    out_dir = os.path.dirname(data_dir)
+    out_path = os.path.join(out_dir, "properties_mean_bundle.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(bundle, f, ensure_ascii=False, indent=2)
+    print(f"[salvo] {out_path}")
+    return out_path
 
 # ------------------ Regex / parsing de arquivo ------------------
 FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
@@ -1568,7 +1792,6 @@ def to_serializable(a):
 # ------------------ Parâmetros do caminho ------------------
 base_root = "../Data/bond_percolation"
 
-
 def compute_means_for_folder(
     L: int,
     DIM: int,
@@ -1639,7 +1862,6 @@ def compute_means_for_folder(
 
     print(f"[OK] Salvo: {out_path}")
     return bundle
-
 
 def read_all_data_bundle(path, as_dataframe=False):
     """
@@ -1737,6 +1959,7 @@ def read_all_data_bundle(path, as_dataframe=False):
     df = pd.DataFrame(rows, columns=["num_colors","rho","p0","order","num_samples","t","pt","pt_err"])
     return bundle, df
 
+
 def select_random_json(directory: str, p0: float) -> Optional[str]:
     """
     Seleciona aleatoriamente um arquivo .json dentro de 'directory' cujo nome
@@ -1760,3 +1983,5 @@ def select_random_json(directory: str, p0: float) -> Optional[str]:
         return None
 
     return os.path.abspath(random.choice(files))
+
+
