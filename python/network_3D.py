@@ -20,7 +20,7 @@ from src.network_functions import convert_positions, convert_positions_sp, plot_
 
 
 # plot network with 4 colors
-L = 512
+L = 128
 dim = 3
 nc = 4
 rho = 1/nc
