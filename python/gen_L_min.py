@@ -1,6 +1,6 @@
 from src.run_samples_functions import *
 
-L = np.arange(210, 235, 5)
+L = np.arange(220, 255, 5)
 nc = 2
 rho = [1/nc]
 p0 = 1.0
@@ -12,7 +12,7 @@ k=1.0e-06
 P0 = 1.0
 multi=True
 num_threads = 16
-num_runs = 10
+num_runs = 40
 
 for l in L:
     exec_name = f"data_{dim}D_L_{l}_p0_{p0}_nc_{nc}_props.sh"
