@@ -20,18 +20,18 @@ from src.network_functions import convert_positions, convert_positions_sp, plot_
 
 
 # plot network with 4 colors
-L = 128
+L = 300
 dim = 3
-nc = 4
+nc = 10
 rho = 1/nc
 k = 1.0e-06
 NT = 3000
-P0 = 0.1
+P0 = 1.00
+seed = 1
 path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
-filename = f"P0_{P0:.2f}_p0_1.00_seed_1.npz"
+filename = f"P0_{P0:.2f}_p0_1.00_seed_{seed}.npz"
 output_fn = f"network_positions_P0_{P0:.2f}.csv"
-#plot_3D_full(dim, L, nc, rho, k, NT, specific_color=None)
 #plot_3D_full(dim, L, nc, rho, k, NT, specific_color=None)
 #plot_3D_full_with_planes(dim, L, nc, rho, k, NT)
 convert_positions(path_dir,filename, output_fn, dim)
-
+plot_3D_full(dim, L, nc, rho, k, NT, seed, P0, specific_color=None)

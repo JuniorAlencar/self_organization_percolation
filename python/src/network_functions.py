@@ -248,23 +248,23 @@ def plot_3D_cut(dim, L, nc, rho, k, NT):
     mlab.show()
 
 
-def plot_3D_full(dim, L, nc, rho, k, NT, specific_color=None):
+def plot_3D_full(dim, L, nc, rho, k, NT, seed, P0, specific_color=None):
     path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
 
-    file_positions = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/network_positions.csv"
+    file_positions = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/network_positions_P0_{P0:.2f}.csv"
     seed = 1
 
     # Create file positions, if dont exist
     if not os.path.exists(file_positions):
         print("file positions don't exist, create it...")
-        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", "network_positions.csv", dim)
+        convert_positions(path_dir, f"P0_0.10_p0_1.00_seed_{seed}.npz", f"network_positions_P0_{P0:.2f}.csv", dim)
         print("File with positions created")
 
     a = 0
     b = 0
     seed = 1
 
-    df = pd.read_csv(path_dir + "network_positions.csv")
+    df = pd.read_csv(path_dir + f"network_positions_P0_{P0:.2f}.csv")
 
     cut = L * (1/2)
 
@@ -278,14 +278,16 @@ def plot_3D_full(dim, L, nc, rho, k, NT, specific_color=None):
     colors = [i+2 for i in range(nc)]
     
     colors_used = [
-        (0.9, 0.1, 0.1),  # 2 - red
-        (1.0, 0.5, 0.0),  # 3 - orange
-        (0.1, 0.9, 0.1),  # 4 - green
-        (0.1, 0.1, 0.9),  # 5 - blue
-        (0.8, 0.2, 0.8),  # 6 - purple
-        (0.2, 0.8, 0.8),  # 7 - teal
-        (1.0, 1.0, 0.0),  # 8 - yellow
-        (0.6, 0.4, 0.2),  # 9 - brown
+        (0.9, 0.1, 0.1),   # 2 - red
+        (1.0, 0.5, 0.0),   # 3 - orange
+        (0.1, 0.9, 0.1),   # 4 - green
+        (0.1, 0.1, 0.9),   # 5 - blue
+        (0.8, 0.2, 0.8),   # 6 - purple
+        (0.2, 0.8, 0.8),   # 7 - teal
+        (1.0, 1.0, 0.0),   # 8 - yellow
+        (0.6, 0.4, 0.2),   # 9 - brown
+        (0.0, 0.0, 0.0),   # 10 - black
+        (0.65, 0.65, 0.65) # 11 - gray
     ]
 
     if(specific_color==None):
