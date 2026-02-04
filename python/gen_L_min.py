@@ -1,7 +1,7 @@
 from src.run_samples_functions import *
 
-L = np.arange(220, 255, 5)
-nc = 2
+L = np.arange(287, 289, 1)
+nc = 1
 rho = [1/nc]
 p0 = 1.0
 dim = 3

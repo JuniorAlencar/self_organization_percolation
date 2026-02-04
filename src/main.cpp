@@ -232,10 +232,15 @@ int main(int argc, char* argv[]){
                  << "_p0_" << std::fixed << std::setprecision(2) << pp0
                  << "_seed_" << seed << ".json";
         
+        std::ostringstream oss_net_tests;
+        oss_net_tests << network_dir_tests << "/P0_" << std::fixed << std::setprecision(2) << P0
+            << "_p0_" << std::fixed << std::setprecision(2) << pp0
+            << "_seed_" << seed << ".npz"; // writer grava .npy
         
         string json_filename_tests = data_dir_tests + oss_name_tests.str();
-        
         saver.save_percolation_json(ps, ts, json_filename_tests, /*sort_by_order=*/true);
+        //string net_filename_tests  = oss_net_tests.str();
+        //saver.save_network_as_npz(net, net_filename_tests);
         
         std::cout << "file save with name:\t" << oss_name_tests.str() << std::endl;
         
