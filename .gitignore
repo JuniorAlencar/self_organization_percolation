@@ -1,5 +1,5 @@
 /Data
-/Data_tests
+/Data_*
 /build
 /results_paper_SOP
 *.pyc
