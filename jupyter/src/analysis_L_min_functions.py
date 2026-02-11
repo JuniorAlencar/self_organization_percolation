@@ -9,11 +9,21 @@ def calculate_means_L(N_COLORS, DIM, NT, K, RHO, p0):
     L_lst = []
 
     for entry in os.scandir(base):
-        if entry.is_dir():
-            L_lst.append(entry.path[-3:])
+        if not entry.is_dir():
+            continue
+
+        name = entry.name              # ex: "L_256" ou "L_1024"
+        if not name.startswith("L_"):
+            continue
+
+        try:
+            L_lst.append(int(name.split("_", 1)[1]))
+        except ValueError:
+            pass  # ignora pastas tipo "L_backup", etc.
     
     for L in L_lst:
         compute_means_for_folder_tests(type_perc='bond', num_colors=N_COLORS, dim=DIM, L=L, NT=NT, k=K, rho=RHO, p0_list=p0)
+    
     return L_lst
 
 def read_mean_json(N_COLORS:int, DIM:int, L:int, NT:int, K:float, RHO:float):

@@ -881,18 +881,7 @@ _FNAME_RE = re.compile(
     re.IGNORECASE
 )
 
-def _parse_fname(filepath: str) -> Optional[Tuple[float, float, int]]:
-    """Extrai (P0, p0, seed) do nome do arquivo."""
-    m = _FNAME_RE.search(os.path.basename(filepath))
-    if not m:
-        return None
-    try:
-        P0 = float(m.group("P0"))
-        p0 = float(m.group("p0"))
-        seed = int(m.group("seed"))
-        return (P0, p0, seed)
-    except Exception:
-        return None
+d
 
 
 import json
@@ -1111,70 +1100,9 @@ def rolling_mean_std(t, y, window: int):
 # ----------------------------------------------------------
 # 3) novas rotinas auxiliares para o modo "entre-seeds (concatenado)"
 # ----------------------------------------------------------
-def _concat_seed_series_for_pc(pt_by_seed: Dict[int, List[np.ndarray]],
-                               t_by_seed: Dict[int, List[np.ndarray]],
-                               x_max: float | None) -> Dict[int, Dict[str, np.ndarray]]:
-    """
-    Concatena, por seed, as séries pt e t (já com x_max aplicado no loop de leitura),
-    retornando {seed: {"t": t_concat, "pt": pt_concat}} apenas para seeds com dados.
-    """
-    out = {}
-    for s, pts in pt_by_seed.items():
-        if len(pts) == 0: 
-            continue
-        ts = t_by_seed.get(s, [])
-        if len(ts) != len(pts):
-            # segurança extra
-            continue
-        t_concat  = np.concatenate(ts)
-        pt_concat = np.concatenate(pts)
-        if t_concat.size > 0 and pt_concat.size == t_concat.size:
-            out[s] = {"t": t_concat, "pt": pt_concat}
-    return out
 
-def _bootstrap_series_across_seeds(series_stack: np.ndarray,
-                                   n_boot: int,
-                                   rng_seed: int,
-                                   batch_size: int = 128,
-                                   use_float32: bool = True) -> (np.ndarray, np.ndarray):
-    """
-    Bootstrap ENTRE-SEEDS por ponto temporal, em streaming (sem alocar (n_boot, n_seeds, T)).
-    - series_stack: shape (n_seeds, T)
-    Retorna (mean_boot[T], std_boot[T]).
-    """
-    X = np.asarray(series_stack, dtype=np.float32 if use_float32 else np.float64)  # (n_seeds, T)
-    n_seeds, T = X.shape
-    rng = np.random.default_rng(rng_seed)
 
-    # estatísticas online (Welford) ao longo das réplicas de bootstrap
-    mean = np.zeros(T, dtype=np.float64)
-    M2   = np.zeros(T, dtype=np.float64)
-    count = 0
 
-    # probabilidades uniformes para a Multinomial (bootstrap clássico com reposição)
-    p = np.full(n_seeds, 1.0 / n_seeds, dtype=np.float64)
-
-    # processa em lotes pequenos para não estourar RAM
-    for start in range(0, n_boot, batch_size):
-        b = min(batch_size, n_boot - start)
-        # counts ~ Multinomial(n_seeds, p) para cada réplica (b, n_seeds)
-        counts = rng.multinomial(n_seeds, pvals=p, size=b)   # int32
-        # média bootstrap do tempo para cada réplica = (counts @ X) / n_seeds
-        # (b, n_seeds) @ (n_seeds, T) -> (b, T)
-        batch_means = (counts @ X) / float(n_seeds)
-
-        # atualiza estatísticas online por réplica
-        for i in range(b):
-            count += 1
-            delta = batch_means[i] - mean
-            mean += delta / count
-            M2   += delta * (batch_means[i] - mean)
-
-        # libera rápido memória temporária
-        del counts, batch_means
-
-    std = np.sqrt(M2 / (count - 1)) if count > 1 else np.zeros_like(mean)
-    return mean, std
 
 def _bootstrap_tail_mean_across_seeds(series_stack: np.ndarray,
                                       t_center: np.ndarray,
@@ -1469,6 +1397,7 @@ def compute_means_for_folder_new(
         json.dump(bundle, f, ensure_ascii=False, indent=2)
     print(f"[salvo] {out_path}")
     return out_path
+
 
 def compute_means_for_folder_tests(
     type_perc: str,
@@ -1792,76 +1721,76 @@ def to_serializable(a):
 # ------------------ Parâmetros do caminho ------------------
 base_root = "../Data/bond_percolation"
 
-def compute_means_for_folder(
-    L: int,
-    DIM: int,
-    NT: int,
-    K: float,
-    NC_list: float,
-    RHO_list: float,
-) -> dict:
-    """
-       L(int) : Lenght of network  
-       DIM(int): dimension of network
-       NT(int): parameter of model
-       K(float): parameter de modelo
-       NC_list(float): número de cores (valor único)
-       RHO_list(float): densidade de cada cor (valor único)
-    """
-    # Agora tratamos NC_list e RHO_list como valores únicos
-    num_colors = int(NC_list)
-    rho = float(RHO_list)
+# def compute_means_for_folder(
+#     L: int,
+#     DIM: int,
+#     NT: int,
+#     K: float,
+#     NC_list: float,
+#     RHO_list: float,
+# ) -> dict:
+#     """
+#        L(int) : Lenght of network  
+#        DIM(int): dimension of network
+#        NT(int): parameter of model
+#        K(float): parameter de modelo
+#        NC_list(float): número de cores (valor único)
+#        RHO_list(float): densidade de cada cor (valor único)
+#     """
+#     # Agora tratamos NC_list e RHO_list como valores únicos
+#     num_colors = int(NC_list)
+#     rho = float(RHO_list)
 
-    data_dir = os.path.join(
-        base_root,
-        f"num_colors_{num_colors}",
-        f"dim_{DIM}",
-        f"L_{L}",
-        "NT_constant",
-        f"NT_{NT}",
-        f"k_{K:.1e}",
-        f"rho_{rho:.4e}",
-        "data",
-    )
-    parent_dir = os.path.dirname(data_dir)  # um nível acima de 'data'
-    os.makedirs(parent_dir, exist_ok=True)
+#     data_dir = os.path.join(
+#         base_root,
+#         f"num_colors_{num_colors}",
+#         f"dim_{DIM}",
+#         f"L_{L}",
+#         "NT_constant",
+#         f"NT_{NT}",
+#         f"k_{K:.1e}",
+#         f"rho_{rho:.4e}",
+#         "data",
+#     )
+#     parent_dir = os.path.dirname(data_dir)  # um nível acima de 'data'
+#     os.makedirs(parent_dir, exist_ok=True)
 
-    files = sorted(glob.glob(os.path.join(data_dir, "*.json")))
-    if not files:
-        print(f"[AVISO] Sem arquivos em: {data_dir}")
-        return {}
+#     files = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+#     if not files:
+#         print(f"[AVISO] Sem arquivos em: {data_dir}")
+#         return {}
 
-    # 1) agrupar por p0 (nome do arquivo)
-    groups = group_files_by_p0(files)
+#     # 1) agrupar por p0 (nome do arquivo)
+#     groups = group_files_by_p0(files)
 
-    # 2) montar o bundle
-    bundle = {"meta": {"num_colors": num_colors, "rho": rho}}
+#     # 2) montar o bundle
+#     bundle = {"meta": {"num_colors": num_colors, "rho": rho}}
 
-    for p0_val, flist in groups.items():
-        # empilhar e resumir por ordem
-        stacked = stack_by_order(flist, num_colors)
-        sums = summarize(stacked)
-        # montar nó "p0 = {valor}"
-        pkey = f"p0 = {p0_val}"
-        bundle[pkey] = {}
-        for o_space, agg in sums.items():
-            # saída deve usar underscore no nome
-            idx = int(o_space.split()[-1])  # pega o número da ordem
-            o_key = f"order_percolation_{idx}"
-            bundle[pkey][o_key] = {
-                "num_samples": int(agg["n"]),
-                "t": to_serializable(agg["t"]),
-                "pt": to_serializable(agg["mean"]),
-                "pt_err": to_serializable(agg["sem"]),
-            }
+#     for p0_val, flist in groups.items():
+#         # empilhar e resumir por ordem
+#         stacked = stack_by_order(flist, num_colors)
+#         sums = summarize(stacked)
+#         # montar nó "p0 = {valor}"
+#         pkey = f"p0 = {p0_val}"
+#         bundle[pkey] = {}
+#         for o_space, agg in sums.items():
+#             # saída deve usar underscore no nome
+#             idx = int(o_space.split()[-1])  # pega o número da ordem
+#             o_key = f"order_percolation_{idx}"
+#             bundle[pkey][o_key] = {
+#                 "num_samples": int(agg["n"]),
+#                 "t": to_serializable(agg["t"]),
+#                 "pt": to_serializable(agg["mean"]),
+#                 "pt_err": to_serializable(agg["sem"]),
+#             }
 
-    # 3) salvar JSON
-    out_path = os.path.join(parent_dir, "all_data_bundle.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(bundle, f, ensure_ascii=False, indent=2)
+#     # 3) salvar JSON
+#     out_path = os.path.join(parent_dir, "all_data_bundle.json")
+#     with open(out_path, "w", encoding="utf-8") as f:
+#         json.dump(bundle, f, ensure_ascii=False, indent=2)
 
-    print(f"[OK] Salvo: {out_path}")
-    return bundle
+#     print(f"[OK] Salvo: {out_path}")
+#     return bundle
 
 def read_all_data_bundle(path, as_dataframe=False):
     """
@@ -1983,5 +1912,3 @@ def select_random_json(directory: str, p0: float) -> Optional[str]:
         return None
 
     return os.path.abspath(random.choice(files))
-
-
