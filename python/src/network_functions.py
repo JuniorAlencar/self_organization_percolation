@@ -367,7 +367,7 @@ def plot_3D_full_with_planes(dim, L, nc, rho, k, NT, specific_color=None):
     # Create file positions, if dont exist
     if not os.path.exists(file_positions):
         print("file positions don't exist, create it...")
-        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", "network_positions.csv", dim)
+        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", "network_positions_.csv", dim)
         print("File with positions created")
 
     a = 0
@@ -566,9 +566,9 @@ def convert_positions_animation(path_dir, filename, dim, time_base=TIME_BASE_3D)
 
 from matplotlib import patches  # coloque no topo do arquivo
 
-def plot_projection(dim, L, nc, rho, k, NT ,z_level):
+def plot_projection(dim, L, nc, rho, k, NT , P0, z_level):
     path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
-    file_positions = f"{path_dir}network_positions.csv"
+    file_positions = f"{path_dir}network_positions_P0_{P0:.2f}.csv"
     seed = 1
 
     colors_used = [
@@ -584,9 +584,8 @@ def plot_projection(dim, L, nc, rho, k, NT ,z_level):
 
     if not os.path.exists(file_positions):
         print("file positions don't exist, create it...")
-        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", dim)
+        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz",f"network_positions_P0_{P0:.2f}.csv", dim)
         print("File with positions created")
-
     df = pd.read_csv(file_positions)
 
     df_sub = df[df['z'] == z_level].copy()
