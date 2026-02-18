@@ -229,36 +229,6 @@ def rolling_weighted_mean(y, sem, w):
 
     return mu, se, chi2r
 
-# def detect_equilibrium_start_with_errors(t, y, sem, w=40, lag=None, consec=6, z=2.0, chi2r_max=2.0):
-#     if lag is None:
-#         lag = w
-
-#     t = np.asarray(t)
-#     y = np.asarray(y, dtype=float)
-#     sem = np.asarray(sem, dtype=float)
-
-#     n = y.size
-#     if n < (w + lag + 5):
-#         return 0
-
-#     mu, se_mu, chi2r = rolling_weighted_mean(y, sem, w)
-#     m = mu.size
-#     if m <= lag:
-#         return 0
-
-#     dm = np.abs(mu[lag:] - mu[:-lag])
-#     se_comb = np.sqrt(se_mu[lag:]**2 + se_mu[:-lag]**2)
-
-#     ok_change = dm <= (z * se_comb)
-#     ok_chi = (chi2r[lag:] <= chi2r_max) & (chi2r[:-lag] <= chi2r_max)
-#     ok = ok_change & ok_chi
-
-#     run = 0
-#     for j, flag in enumerate(ok):
-#         run = run + 1 if flag else 0
-#         if run >= consec:
-#             return int(j)
-
 #     return 0
 def detect_equilibrium_start_with_errors(t, y, sem, w=40, lag=None, consec=6, z=2.0, chi2r_max=2.0,
                                          tail_frac=0.20, min_start_frac=0.05):
