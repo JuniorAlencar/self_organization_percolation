@@ -209,3 +209,45 @@ def linear_regression_weighted(x, y, y_err, scale_by_chi2=True, eps=1e-15):
     R2 = 1.0 - chi2 / chi2_tot if chi2_tot > 0 else np.nan
 
     return A, B, sigma_A, sigma_B, chi2, chi2_red, R2, y_fit, cov
+
+
+import numpy as np
+import math
+
+def format_param_parenthesis(value, error):
+    """
+    Formato: valor(erro)
+    Erro com 1 dígito significativo.
+    Nunca usa notação científica.
+    """
+
+    if error == 0 or np.isnan(error):
+        return f"{value}"
+
+    exponent = int(math.floor(math.log10(abs(error))))
+    
+    # número de casas decimais necessárias
+    decimals = -exponent if exponent < 0 else 0
+
+    # erro com 1 dígito significativo
+    error_rounded = round(error, decimals)
+    value_rounded = round(value, decimals)
+
+    # converte erro para inteiro na casa correta
+    error_int = int(round(error_rounded * 10**decimals))
+
+    # formata valor com número fixo de casas
+    value_str = f"{value_rounded:.{decimals}f}"
+
+    return f"{value_str}({error_int})"
+
+def format_legend(A, sigma_A, B, sigma_B, nu):
+
+    A_str = format_param_parenthesis(A, sigma_A)
+    B_str = format_param_parenthesis(B, sigma_B)
+
+    return (
+        rf"$\nu = {nu:.3f}$" + "\n" +
+        rf"$A = {A_str}$" + "\n" +
+        rf"$B = {B_str}$"
+    )
