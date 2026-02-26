@@ -8,7 +8,8 @@ import math
 from collections import defaultdict
 import json
 import gc
-
+from tqdm import tqdm
+from IPython.display import clear_output
 
 FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
 
@@ -889,14 +890,155 @@ def _mean_sem_1d(values: List[float]) -> Tuple[float, float, int]:
 import numpy as np
 from typing import Any, Dict, List
 
+# def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
+#     """
+#     Faz média/STD/SEM entre seeds para uma ordem.
+#     Corrige o problema de shapes diferentes truncando todas as séries
+#     para o menor comprimento comum entre seeds válidas.
+
+#     Agora também salva:
+#       - pt_std (dispersão entre seeds)
+#       - nt_std (dispersão entre seeds)
+#     """
+
+#     series_pt = []
+#     series_nt = []
+#     spl_vals: List[float] = []
+#     msz_vals: List[float] = []
+
+#     for d in lst:
+#         t = d.get("t", None)
+#         pt = d.get("pt", None)
+#         nt = d.get("nt", None)
+
+#         if t is None or pt is None:
+#             continue
+
+#         t = np.asarray(t, dtype=float)
+#         pt = np.asarray(pt, dtype=float)
+
+#         n_pt = min(len(t), len(pt))
+#         if n_pt <= 0:
+#             continue
+#         series_pt.append((t[:n_pt], pt[:n_pt]))
+
+#         if nt is not None:
+#             nt = np.asarray(nt, dtype=float)
+#             n_nt = min(len(t), len(nt), n_pt)
+#             if n_nt > 0:
+#                 series_nt.append(nt[:n_nt])
+
+#         spl = d.get("shortest_path_lin", None)
+#         if spl is not None:
+#             try:
+#                 spl_vals.append(float(spl))
+#             except Exception:
+#                 pass
+
+#         msz = d.get("M_size", None)
+#         if msz is not None:
+#             try:
+#                 msz_vals.append(float(msz))
+#             except Exception:
+#                 pass
+
+#     if not series_pt:
+#         return {
+#             "time": [],
+#             "pt_mean": [],
+#             "pt_std": [],
+#             "pt_sem": [],
+#             "nt_mean": [],
+#             "nt_std": [],
+#             "nt_sem": [],
+#             "n_seeds_pt": 0,
+#             "n_seeds_nt": 0,
+#         }
+
+#     min_len_pt = min(len(pt) for (_, pt) in series_pt)
+#     t_common = series_pt[0][0][:min_len_pt]
+#     pts = np.stack([pt[:min_len_pt] for (_, pt) in series_pt], axis=0)  # (nseed, T)
+
+#     nseed_pt = int(pts.shape[0])
+#     pt_mean = np.mean(pts, axis=0)
+#     if nseed_pt > 1:
+#         pt_std = np.std(pts, axis=0, ddof=1)
+#         pt_sem = pt_std / np.sqrt(nseed_pt)
+#     else:
+#         pt_std = np.zeros_like(pt_mean)
+#         pt_sem = np.zeros_like(pt_mean)
+
+#     out: Dict[str, Any] = {}
+#     out["time"] = t_common.tolist()
+#     out["pt_mean"] = pt_mean.tolist()
+#     out["pt_std"]  = pt_std.tolist()
+#     out["pt_sem"]  = pt_sem.tolist()
+#     out["n_seeds_pt"] = nseed_pt
+
+#     # nt
+#     if series_nt:
+#         min_len_nt = min(len(nt) for nt in series_nt)
+#         min_len = min(min_len_pt, min_len_nt)
+
+#         nts = np.stack([nt[:min_len] for nt in series_nt], axis=0)
+#         nseed_nt = int(nts.shape[0])
+
+#         nt_mean = np.mean(nts, axis=0)
+#         if nseed_nt > 1:
+#             nt_std = np.std(nts, axis=0, ddof=1)
+#             nt_sem = nt_std / np.sqrt(nseed_nt)
+#         else:
+#             nt_std = np.zeros_like(nt_mean)
+#             nt_sem = np.zeros_like(nt_mean)
+
+#         # re-trunca pt para bater com nt
+#         pt_mean2 = np.mean(pts[:, :min_len], axis=0)
+#         if nseed_pt > 1:
+#             pt_std2 = np.std(pts[:, :min_len], axis=0, ddof=1)
+#             pt_sem2 = pt_std2 / np.sqrt(nseed_pt)
+#         else:
+#             pt_std2 = np.zeros_like(pt_mean2)
+#             pt_sem2 = np.zeros_like(pt_mean2)
+
+#         out["time"] = t_common[:min_len].tolist()
+#         out["pt_mean"] = pt_mean2.tolist()
+#         out["pt_std"]  = pt_std2.tolist()
+#         out["pt_sem"]  = pt_sem2.tolist()
+
+#         out["nt_mean"] = nt_mean.tolist()
+#         out["nt_std"]  = nt_std.tolist()
+#         out["nt_sem"]  = nt_sem.tolist()
+#         out["n_seeds_nt"] = nseed_nt
+#     else:
+#         out["nt_mean"] = []
+#         out["nt_std"]  = []
+#         out["nt_sem"]  = []
+#         out["n_seeds_nt"] = 0
+
+#     # escalares (mantive SEM; se quiser STD também, dá pra adicionar)
+#     if spl_vals:
+#         a = np.asarray(spl_vals, dtype=float)
+#         out["shortest_path_lin_mean"] = float(np.mean(a))
+#         out["shortest_path_lin_sem"]  = float(np.std(a, ddof=1) / np.sqrt(a.size)) if a.size > 1 else 0.0
+#         out["n_seeds_shortest_path_lin"] = int(a.size)
+
+#     if msz_vals:
+#         a = np.asarray(msz_vals, dtype=float)
+#         out["M_size_mean"] = float(np.mean(a))
+#         out["M_size_sem"]  = float(np.std(a, ddof=1) / np.sqrt(a.size)) if a.size > 1 else 0.0
+#         out["n_seeds_M_size"] = int(a.size)
+
+#     return out
+
 def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Faz média/SEM entre seeds para uma ordem.
-    Corrige o problema de shapes diferentes truncando todas as séries
-    para o menor comprimento comum entre seeds válidas.
-    """
+    Média/STD/SEM entre seeds para uma ordem.
 
-    # coleta séries válidas
+    Agora salva:
+      - pt_std: desvio padrão entre seeds (dispersão)
+      - pt_sem: erro padrão da média entre seeds (precisão da média)
+      - nt_std, nt_sem análogos
+    """
     series_pt = []
     series_nt = []
     spl_vals: List[float] = []
@@ -913,16 +1055,16 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
         t = np.asarray(t, dtype=float)
         pt = np.asarray(pt, dtype=float)
 
-        # garante consistência entre t e pt da própria seed
         n_pt = min(len(t), len(pt))
-        if n_pt <= 0:
+        if n_pt <= 1:
             continue
+
         series_pt.append((t[:n_pt], pt[:n_pt]))
 
         if nt is not None:
             nt = np.asarray(nt, dtype=float)
             n_nt = min(len(t), len(nt), n_pt)
-            if n_nt > 0:
+            if n_nt > 1:
                 series_nt.append(nt[:n_nt])
 
         spl = d.get("shortest_path_lin", None)
@@ -939,55 +1081,80 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
             except Exception:
                 pass
 
-    # sem dados
     if not series_pt:
         return {
             "time": [],
             "pt_mean": [],
+            "pt_std": [],
             "pt_sem": [],
             "nt_mean": [],
+            "nt_std": [],
             "nt_sem": [],
             "n_seeds_pt": 0,
             "n_seeds_nt": 0,
         }
 
-    # -----------------------------
-    # ALINHAMENTO: truncar no menor comprimento
-    # -----------------------------
     min_len_pt = min(len(pt) for (_, pt) in series_pt)
-
-    # time comum: pega do primeiro e trunca
     t_common = series_pt[0][0][:min_len_pt]
-
-    # monta matriz pt
     pts = np.stack([pt[:min_len_pt] for (_, pt) in series_pt], axis=0)  # (nseed, T)
+
+    nseed_pt = int(pts.shape[0])
+    pt_mean = np.mean(pts, axis=0)
+    if nseed_pt > 1:
+        pt_std = np.std(pts, axis=0, ddof=1)
+        pt_sem = pt_std / np.sqrt(nseed_pt)
+    else:
+        pt_std = np.zeros_like(pt_mean)
+        pt_sem = np.zeros_like(pt_mean)
 
     out: Dict[str, Any] = {}
     out["time"] = t_common.tolist()
-    out["pt_mean"] = np.mean(pts, axis=0).tolist()
-    out["pt_sem"] = (np.std(pts, axis=0, ddof=1) / np.sqrt(pts.shape[0])).tolist()
-    out["n_seeds_pt"] = int(pts.shape[0])
+    out["pt_mean"] = pt_mean.tolist()
+    out["pt_std"] = pt_std.tolist()
+    out["pt_sem"] = pt_sem.tolist()
+    out["n_seeds_pt"] = nseed_pt
 
-    # nt pode ter ainda menor comprimento (porque algumas seeds podem não ter nt)
+    # nt
     if series_nt:
         min_len_nt = min(len(nt) for nt in series_nt)
         min_len = min(min_len_pt, min_len_nt)
+
         nts = np.stack([nt[:min_len] for nt in series_nt], axis=0)
+        nseed_nt = int(nts.shape[0])
 
-        # usa o mesmo time truncado
+        nt_mean = np.mean(nts, axis=0)
+        if nseed_nt > 1:
+            nt_std = np.std(nts, axis=0, ddof=1)
+            nt_sem = nt_std / np.sqrt(nseed_nt)
+        else:
+            nt_std = np.zeros_like(nt_mean)
+            nt_sem = np.zeros_like(nt_mean)
+
+        # re-trunca pt para bater com nt
+        pt_mean2 = np.mean(pts[:, :min_len], axis=0)
+        if nseed_pt > 1:
+            pt_std2 = np.std(pts[:, :min_len], axis=0, ddof=1)
+            pt_sem2 = pt_std2 / np.sqrt(nseed_pt)
+        else:
+            pt_std2 = np.zeros_like(pt_mean2)
+            pt_sem2 = np.zeros_like(pt_mean2)
+
         out["time"] = t_common[:min_len].tolist()
-        out["pt_mean"] = np.mean(pts[:, :min_len], axis=0).tolist()
-        out["pt_sem"] = (np.std(pts[:, :min_len], axis=0, ddof=1) / np.sqrt(pts.shape[0])).tolist()
+        out["pt_mean"] = pt_mean2.tolist()
+        out["pt_std"] = pt_std2.tolist()
+        out["pt_sem"] = pt_sem2.tolist()
 
-        out["nt_mean"] = np.mean(nts, axis=0).tolist()
-        out["nt_sem"] = (np.std(nts, axis=0, ddof=1) / np.sqrt(nts.shape[0])).tolist()
-        out["n_seeds_nt"] = int(nts.shape[0])
+        out["nt_mean"] = nt_mean.tolist()
+        out["nt_std"] = nt_std.tolist()
+        out["nt_sem"] = nt_sem.tolist()
+        out["n_seeds_nt"] = nseed_nt
     else:
         out["nt_mean"] = []
+        out["nt_std"] = []
         out["nt_sem"] = []
         out["n_seeds_nt"] = 0
 
-    # escalares médios
+    # escalares (mantive SEM; se quiser STD também, dá pra adicionar)
     if spl_vals:
         a = np.asarray(spl_vals, dtype=float)
         out["shortest_path_lin_mean"] = float(np.mean(a))
@@ -1001,7 +1168,6 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
         out["n_seeds_M_size"] = int(a.size)
 
     return out
-
 
 def _sanitize_for_json(obj: Any) -> Any:
     """Recursivo: remove NaN/inf, converte numpy types."""
@@ -1443,7 +1609,275 @@ def _list_seed_files_in_data_dir(data_dir: str, p0_list: List[float]) -> List[st
         files_all.extend(sorted(glob.glob(pat)))
     return sorted({os.path.basename(fp) for fp in files_all})
 
-def compute_means_for_folder_new(
+# def compute_means_for_folder(
+#     type_perc: str,
+#     num_colors: int,
+#     dim: int,
+#     L: int,
+#     NT: int,
+#     k: float,
+#     rho: float,
+#     p0_list: List[float],
+#     *,
+#     base_dir: str,
+#     x_max: float | None = None,
+#     n_boot: int = 20000,
+#     rng_seed: int = 12345,
+#     window_roll: int | None = None,
+#     clear_data: bool = False,
+# ) -> str:
+#     """
+#     Versão AJUSTADA para o seu problema de erros do pt:
+
+#     - O que estava acontecendo: _average_by_order_new devolve pt_sem como SEM da MÉDIA
+#       ao longo das seeds (std / sqrt(n_seeds)). Se você tem muitas seeds, isso fica
+#       naturalmente MUITO pequeno.
+
+#     - O ajuste aqui: preservamos o SEM original em `pt_sem_mean` e passamos a salvar
+#       em `pt_sem` o DESVIO-PADRÃO entre seeds (pt_std). Assim:
+#         pt_std = pt_sem_mean * sqrt(n_seeds)
+#       e `pt_sem` fica na escala das flutuações amostrais entre seeds (bem maior).
+
+#     - Além disso, toda a detecção de equilíbrio e médias ponderadas passam a usar esse
+#       `pt_sem` (agora interpretado como pt_std), evitando pesos absurdos.
+#     """
+#     base_dir = os.path.abspath(base_dir)
+
+#     data_dir = os.path.join(
+#         base_dir,
+#         f"{type_perc}_percolation",
+#         f"num_colors_{num_colors}",
+#         f"dim_{dim}",
+#         f"L_{L}",
+#         "NT_constant",
+#         f"NT_{NT}",
+#         f"k_{k:.1e}",
+#         f"rho_{rho:.4e}",
+#         "data",
+#     )
+#     if not os.path.isdir(data_dir):
+#         raise FileNotFoundError(f"Pasta de dados não encontrada: {data_dir}")
+
+#     out_dir = os.path.dirname(data_dir)
+#     out_path = os.path.join(out_dir, "properties_mean_bundle.json")
+
+#     if clear_data and os.path.isfile(out_path):
+#         os.remove(out_path)
+#         print(f"[clear_data] removido: {out_path}")
+
+#     # incremental: se existe e não tem arquivo novo, skip
+#     current_seed_files = []
+#     for p0 in p0_list:
+#         current_seed_files += sorted(
+#             glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json"))
+#         )
+#     current_seed_files = sorted({os.path.basename(x) for x in current_seed_files})
+
+#     if os.path.isfile(out_path) and (not clear_data):
+#         try:
+#             with open(out_path, "r", encoding="utf-8") as f:
+#                 old = json.load(f)
+#             old_used = old.get("meta", {}).get("seed_used", [])
+#             old_used = old_used if isinstance(old_used, list) else []
+#             if set(current_seed_files).issubset(set(map(str, old_used))):
+#                 print(f"[skip] atualizado: {out_path}")
+#                 return out_path
+#         except Exception as e:
+#             print(f"[recalc] falha lendo bundle antigo ({e}) -> recalculando")
+
+#     seed_used_set = set()
+
+#     bundle: Dict[str, Any] = {
+#         "meta": {
+#             "type_perc": type_perc,
+#             "num_colors": num_colors,
+#             "dim": dim,
+#             "L": L,
+#             "NT": NT,
+#             "k": float(k),
+#             "rho": float(rho),
+#             "base_dir": out_dir,
+#             "x_max_used": None if x_max is None else float(x_max),
+#             "bootstrap": {"n_boot": int(n_boot), "rng_seed": int(rng_seed)},
+#             "rolling": {"window": None if window_roll is None else int(window_roll)},
+#             "seed_used": [],  # <<< AQUI (meta)
+#         },
+#         "p0_groups": [],
+#     }
+
+#     for p0 in p0_list:
+#         files = sorted(glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")))
+#         print(f"[debug] data_dir={data_dir} | p0={p0:.2f} | files={len(files)}")
+
+#         if not files:
+#             print(f"[aviso] Sem arquivos para p0={p0:.2f}")
+#             continue
+
+#         per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+#         seeds_set: set[int] = set()
+#         valid_files = 0
+
+#         for fp in files:
+#             orders = _load_orders_new(fp)
+#             if not orders:
+#                 continue
+
+#             valid_files += 1
+
+#             seed = _extract_seed_from_filename(fp)
+#             if seed is not None:
+#                 seeds_set.add(seed)
+
+#             bn = os.path.basename(fp)
+#             seed_used_set.add(bn)
+
+#             for ordk, data in orders.items():
+#                 # corta por x_max, se usado
+#                 if x_max is not None and data.get("t") is not None:
+#                     t = np.asarray(data["t"], dtype=float)
+#                     m = (t <= x_max)
+#                     data["t"] = t[m]
+#                     if data.get("pt") is not None:
+#                         data["pt"] = np.asarray(data["pt"], dtype=float)[m]
+#                     if data.get("nt") is not None:
+#                         data["nt"] = np.asarray(data["nt"], dtype=float)[m]
+
+#                 per_order[ordk].append(data)
+
+#         if valid_files == 0:
+#             print(f"[warn] p0={p0:.2f}: nenhum arquivo válido lido (JSON vazio/ruim?) -> pulando grupo")
+#             continue
+
+#         # ====== médias por ordem ======
+#         mean_by_order: Dict[int, Dict[str, Any]] = {}
+#         for ordk, lst in per_order.items():
+#             mean_by_order[ordk] = _average_by_order_new(lst)
+
+#             # -------- AJUSTE CRÍTICO DOS ERROS DO pt --------
+#             d = mean_by_order[ordk]
+
+#             # _average_by_order_new retorna pt_sem como SEM da média entre seeds
+#             # aqui vamos:
+#             #   - guardar o SEM original em pt_sem_mean
+#             #   - transformar pt_sem em desvio-padrão entre seeds (pt_std)
+#             if d.get("pt_sem") is not None:
+#                 sem_mean = np.asarray(d["pt_sem"], dtype=float)
+
+#                 n_seeds_pt = int(d.get("n_seeds_pt", 0) or 0)
+#                 if n_seeds_pt > 1:
+#                     pt_std = sem_mean * np.sqrt(n_seeds_pt)
+#                 else:
+#                     pt_std = sem_mean * 0.0  # sem seeds suficientes -> std=0
+
+#                 # preserva SEM original
+#                 d["pt_sem_mean"] = sem_mean.astype(float).tolist()
+#                 # substitui pt_sem pelo std entre seeds (o que você quer como "erro" no pt_mean)
+#                 d["pt_sem"] = pt_std.astype(float).tolist()
+#                 # opcional: também salvar explicitamente
+#                 d["pt_std"] = pt_std.astype(float).tolist()
+#             # -----------------------------------------------
+
+#         # ====== pc_sop global e por ordem ======
+#         series = []
+#         for ordk in sorted(mean_by_order.keys()):
+#             d = mean_by_order[ordk]
+#             if not d.get("time") or not d.get("pt_mean") or not d.get("pt_sem"):
+#                 continue
+#             t = np.asarray(d["time"], dtype=float)
+#             pt = np.asarray(d["pt_mean"], dtype=float)
+
+#             # agora pt_sem = pt_std (entre seeds), após o ajuste acima
+#             pt_sem = np.asarray(d["pt_sem"], dtype=float)
+
+#             if t.size > 0:
+#                 series.append((ordk, t, pt, pt_sem))
+
+#         t0_list = []
+#         for (_, t, pt, pt_sem) in series:
+#             idx0 = detect_equilibrium_start_with_errors(
+#                 t, pt, pt_sem, w=40, consec=6, z=2.0, chi2r_max=2.0
+#             )
+#             idx0 = int(np.clip(idx0, 0, len(t) - 1))
+#             t0_list.append(float(t[idx0]))
+#         t0_global = float(max(t0_list)) if t0_list else float("nan")
+
+#         mean_eq_list = []
+#         sem_eq_list = []
+#         for (_, t, pt, pt_sem) in series:
+#             idxg = idx_from_t0(t, t0_global)
+#             if idxg < len(pt):
+#                 mean_eq, sem_eq = weighted_mean_and_sem(pt[idxg:], pt_sem[idxg:])
+#                 mean_eq_list.append(mean_eq)
+#                 sem_eq_list.append(sem_eq)
+
+#         if mean_eq_list:
+#             pc_mean, pc_sem = weighted_mean_and_sem(mean_eq_list, sem_eq_list)
+#         else:
+#             pc_mean, pc_sem = float("nan"), float("nan")
+
+#         # pc_sop por ordem
+#         for (ordk, t, pt, pt_sem) in series:
+#             idx0 = detect_equilibrium_start_with_errors(
+#                 t, pt, pt_sem, w=40, consec=6, z=2.0, chi2r_max=2.0
+#             )
+#             idx0 = int(np.clip(idx0, 0, len(t) - 1))
+#             t0_i = float(t[idx0])
+
+#             idxi = idx_from_t0(t, t0_i)
+#             if idxi < len(pt):
+#                 pc_i_mean, pc_i_sem = weighted_mean_and_sem(pt[idxi:], pt_sem[idxi:])
+#             else:
+#                 pc_i_mean, pc_i_sem = float("nan"), float("nan")
+
+#             mean_by_order[ordk]["pc_sop"] = {
+#                 "mean": _safe_float(pc_i_mean),
+#                 "std_boot": _safe_float(pc_i_sem),
+#                 "n_seeds": int(mean_by_order[ordk].get("n_seeds_pt", 0)),
+#                 "n_boot": int(n_boot),
+#                 "t0": _safe_float(t0_i),
+#             }
+
+#         orders_blocks = [
+#             {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
+#             for ordk in sorted(mean_by_order.keys())
+#         ]
+
+#         p0_group = {
+#             "p0_value": float(p0),
+#             "num_seeds": len(seeds_set),
+#             "orders": orders_blocks,
+#             "pc_sop": {
+#                 "mean": _safe_float(pc_mean),
+#                 "std_boot": _safe_float(pc_sem),
+#                 "n_seeds": len(seeds_set),
+#                 "n_boot": int(n_boot),
+#                 "t0_global": _safe_float(t0_global),
+#             },
+#         }
+
+#         bundle["p0_groups"].append(p0_group)
+
+#         print(
+#             f"[ok] p0={p0:.2f}: files={len(files)} valid={valid_files} | "
+#             f"seeds={len(seeds_set)} | pc_SOP={pc_mean:.6f}±{pc_sem:.6f}"
+#         )
+
+#         # limpeza por p0 (streaming)
+#         per_order.clear()
+#         mean_by_order.clear()
+#         series.clear()
+#         seeds_set.clear()
+#         gc.collect()
+
+#     bundle["meta"]["seed_used"] = sorted(seed_used_set)
+
+#     bundle = _sanitize_for_json(bundle)
+#     with open(out_path, "w", encoding="utf-8") as f:
+#         json.dump(bundle, f, ensure_ascii=False, indent=2, allow_nan=False)
+
+#     print(f"[salvo] {out_path}")
+#     return out_path
+def compute_means_for_folder(
     type_perc: str,
     num_colors: int,
     dim: int,
@@ -1460,6 +1894,17 @@ def compute_means_for_folder_new(
     window_roll: int | None = None,
     clear_data: bool = False,
 ) -> str:
+    """
+    Versão corrigida para não subestimar erros do platô:
+
+    - Mantém pt_mean(t) como média entre seeds.
+    - Salva pt_std(t) e pt_sem(t) via _average_by_order_new.
+    - Estima pc_sop de forma robusta:
+        1) detecta t0_global a partir das curvas médias (por ordem)
+        2) para cada seed: calcula média na cauda com tail_mean(..., method="autocorr")
+        3) combina seeds com combine_tail_means(..., random_effects=True)
+        4) combina ordens por média ponderada
+    """
 
     base_dir = os.path.abspath(base_dir)
 
@@ -1488,7 +1933,9 @@ def compute_means_for_folder_new(
     # incremental: se existe e não tem arquivo novo, skip
     current_seed_files = []
     for p0 in p0_list:
-        current_seed_files += sorted(glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")))
+        current_seed_files += sorted(
+            glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json"))
+        )
     current_seed_files = sorted({os.path.basename(x) for x in current_seed_files})
 
     if os.path.isfile(out_path) and (not clear_data):
@@ -1518,9 +1965,9 @@ def compute_means_for_folder_new(
             "x_max_used": None if x_max is None else float(x_max),
             "bootstrap": {"n_boot": int(n_boot), "rng_seed": int(rng_seed)},
             "rolling": {"window": None if window_roll is None else int(window_roll)},
-            "seed_used": [],   # <<< AQUI (meta), não em rolling
+            "seed_used": [],
         },
-        "p0_groups": []
+        "p0_groups": [],
     }
 
     for p0 in p0_list:
@@ -1532,6 +1979,8 @@ def compute_means_for_folder_new(
             continue
 
         per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        per_order_seed_series: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = defaultdict(list)
+
         seeds_set: set[int] = set()
         valid_files = 0
 
@@ -1560,6 +2009,14 @@ def compute_means_for_folder_new(
                     if data.get("nt") is not None:
                         data["nt"] = np.asarray(data["nt"], dtype=float)[m]
 
+                # guarda (t,pt) da seed para pc com autocorr
+                if data.get("t") is not None and data.get("pt") is not None:
+                    t_seed = np.asarray(data["t"], dtype=float)
+                    pt_seed = np.asarray(data["pt"], dtype=float)
+                    n0 = min(t_seed.size, pt_seed.size)
+                    if n0 > 1:
+                        per_order_seed_series[ordk].append((t_seed[:n0], pt_seed[:n0]))
+
                 per_order[ordk].append(data)
 
         if valid_files == 0:
@@ -1571,62 +2028,78 @@ def compute_means_for_folder_new(
         for ordk, lst in per_order.items():
             mean_by_order[ordk] = _average_by_order_new(lst)
 
-        # ====== pc_sop global e por ordem ======
-        # (usa suas funções já existentes)
-        series = []
+        # ====== pc_sop global e por ordem (per-seed + autocorr + RE) ======
+
+        # 1) t0_global: detecta usando curvas médias por ordem (usa pt_sem como erro de pt_mean)
+        series_mean = []
         for ordk in sorted(mean_by_order.keys()):
             d = mean_by_order[ordk]
             if not d.get("time") or not d.get("pt_mean") or not d.get("pt_sem"):
                 continue
             t = np.asarray(d["time"], dtype=float)
             pt = np.asarray(d["pt_mean"], dtype=float)
-            pt_sem = np.asarray(d["pt_sem"], dtype=float)
+            pt_sem = np.asarray(d["pt_sem"], dtype=float)  # SEM da média entre seeds
             if t.size > 0:
-                series.append((ordk, t, pt, pt_sem))
+                series_mean.append((ordk, t, pt, pt_sem))
 
         t0_list = []
-        for (_, t, pt, pt_sem) in series:
-            idx0 = detect_equilibrium_start_with_errors(t, pt, pt_sem, w=40, consec=6, z=2.0, chi2r_max=2.0)
+        for (_, t, pt, pt_sem) in series_mean:
+            idx0 = detect_equilibrium_start_with_errors(
+                t, pt, pt_sem, w=40, consec=6, z=2.0, chi2r_max=2.0
+            )
             idx0 = int(np.clip(idx0, 0, len(t) - 1))
             t0_list.append(float(t[idx0]))
         t0_global = float(max(t0_list)) if t0_list else float("nan")
 
+        # 2) pc por ordem: pc por seed com autocorr e combine_tail_means (random effects)
+        pc_by_order: Dict[int, Tuple[float, float, int]] = {}
+        for ordk in sorted(mean_by_order.keys()):
+            runs = []
+            for (t_seed, pt_seed) in per_order_seed_series.get(ordk, []):
+                if not np.isfinite(t0_global):
+                    continue
+                idx = idx_from_t0(t_seed, t0_global)
+                if idx >= pt_seed.size:
+                    continue
+
+                s = tail_mean(pt_seed[idx:], tail_frac=0.2, method="autocorr")
+                if np.isfinite(s["mean"]) and np.isfinite(s["sem"]) and (s["sem"] > 0):
+                    runs.append({"mean": float(s["mean"]), "sem": float(s["sem"])})
+
+            combo = combine_tail_means(runs, random_effects=True)
+            pc_i_mean = float(combo["mean"])
+            pc_i_sem = float(combo["se"])
+            n_used = int(combo.get("R", 0))
+
+            pc_by_order[ordk] = (pc_i_mean, pc_i_sem, n_used)
+
+            mean_by_order[ordk]["pc_sop"] = {
+                "mean": _safe_float(pc_i_mean),
+                "std_boot": _safe_float(pc_i_sem),
+                "n_seeds": int(n_used),
+                "n_boot": int(n_boot),
+                "t0": _safe_float(t0_global),
+                "pc_method": "per-seed tail_mean(autocorr) + random-effects",
+            }
+
+        # 3) pc global: combina ordens por média ponderada
         mean_eq_list = []
         sem_eq_list = []
-        for (_, t, pt, pt_sem) in series:
-            idxg = idx_from_t0(t, t0_global)
-            if idxg < len(pt):
-                mean_eq, sem_eq = weighted_mean_and_sem(pt[idxg:], pt_sem[idxg:])
-                mean_eq_list.append(mean_eq)
-                sem_eq_list.append(sem_eq)
+        for ordk in sorted(pc_by_order.keys()):
+            m, s, _ = pc_by_order[ordk]
+            if np.isfinite(m) and np.isfinite(s) and (s > 0):
+                mean_eq_list.append(m)
+                sem_eq_list.append(s)
 
         if mean_eq_list:
             pc_mean, pc_sem = weighted_mean_and_sem(mean_eq_list, sem_eq_list)
         else:
             pc_mean, pc_sem = float("nan"), float("nan")
 
-        # pc_sop por ordem + média shortest_path_lin / M_size já vem do _average_by_order_new
-        for (ordk, t, pt, pt_sem) in series:
-            idx0 = detect_equilibrium_start_with_errors(t, pt, pt_sem, w=40, consec=6, z=2.0, chi2r_max=2.0)
-            idx0 = int(np.clip(idx0, 0, len(t) - 1))
-            t0_i = float(t[idx0])
-
-            idxi = idx_from_t0(t, t0_i)
-            if idxi < len(pt):
-                pc_i_mean, pc_i_sem = weighted_mean_and_sem(pt[idxi:], pt_sem[idxi:])
-            else:
-                pc_i_mean, pc_i_sem = float("nan"), float("nan")
-
-            mean_by_order[ordk]["pc_sop"] = {
-                "mean": _safe_float(pc_i_mean),
-                "std_boot": _safe_float(pc_i_sem),
-                "n_seeds": int(mean_by_order[ordk].get("n_seeds_pt", 0)),
-                "n_boot": int(n_boot),
-                "t0": _safe_float(t0_i),
-            }
-
-        orders_blocks = [{"order_percolation": int(ordk), "data": mean_by_order[ordk]}
-                         for ordk in sorted(mean_by_order.keys())]
+        orders_blocks = [
+            {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
+            for ordk in sorted(mean_by_order.keys())
+        ]
 
         p0_group = {
             "p0_value": float(p0),
@@ -1638,7 +2111,8 @@ def compute_means_for_folder_new(
                 "n_seeds": len(seeds_set),
                 "n_boot": int(n_boot),
                 "t0_global": _safe_float(t0_global),
-            }
+                "pc_method": "combine orders of (per-seed autocorr + random-effects)",
+            },
         }
 
         bundle["p0_groups"].append(p0_group)
@@ -1648,10 +2122,11 @@ def compute_means_for_folder_new(
             f"seeds={len(seeds_set)} | pc_SOP={pc_mean:.6f}±{pc_sem:.6f}"
         )
 
-        # limpeza por p0 (streaming)
+        # limpeza por p0
         per_order.clear()
+        per_order_seed_series.clear()
         mean_by_order.clear()
-        series.clear()
+        series_mean.clear()
         seeds_set.clear()
         gc.collect()
 
@@ -1663,8 +2138,6 @@ def compute_means_for_folder_new(
 
     print(f"[salvo] {out_path}")
     return out_path
-
-
 
 FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
 
@@ -1687,7 +2160,6 @@ PARAM_RE = re.compile(
 SEEDFILE_RE = re.compile(
     rf"^P0_(?P<P0>{FLOAT})_p0_(?P<p0>{FLOAT})_seed_(?P<seed>\d+)\.json$"
 )
-
 
 def _safe_float_df(x) -> float:
     try:
@@ -1834,3 +2306,41 @@ def build_properties_dataframe(root: str) -> pd.DataFrame:
     
     df.to_csv(root + "/all_data.dat", index=False)
     
+
+def process_all_data(clear_data: bool = False):
+    p0_lst = [1.0]
+    base_root = "../Data"               # <<< IMPORTANTE
+    bas = "../Data/bond_percolation"
+
+    all_parms = collect_param_combinations(bas)
+
+    pbar = tqdm(all_parms, desc="Processando conjuntos", ncols=120)
+    CLEAR_EVERY = 10
+
+    for i, par in enumerate(pbar, 1):
+
+        if i % CLEAR_EVERY == 0:
+            clear_output(wait=True)
+            print(f"--- Terminal limpo após {i} execuções ---")
+            pbar.refresh()
+
+        tp, nc, DIM, L, NT, K, RHO = par
+
+        compute_means_for_folder(
+            type_perc=tp,
+            num_colors=nc,
+            dim=DIM,
+            L=L,
+            NT=NT,
+            k=K,
+            rho=RHO,
+            p0_list=p0_lst,
+            base_dir=base_root,     # <<< NOVO ARGUMENTO OBRIGATÓRIO
+            clear_data=False         # ou False se quiser incremental
+        )
+
+    clear_output(wait=True)
+    print("Processamento finalizado.")
+    
+    root = "../Data/bond_percolation"
+    build_properties_dataframe(root)
