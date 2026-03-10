@@ -25,7 +25,7 @@
      inkscape:document-units="mm"
      inkscape:zoom="1.0267829"
      inkscape:cx="630.12347"
-     inkscape:cy="1180.8728"
+     inkscape:cy="1181.8467"
      inkscape:window-width="1854"
      inkscape:window-height="1011"
      inkscape:window-x="66"
@@ -708,7 +708,7 @@
                cy="101.37354"
                r="39.82383"
                inkscape:label="circulo_pontilhado" /><circle
-               style="fill:none;stroke:#717171;stroke-width:3.87637;stroke-dasharray:none;stroke-dashoffset:7.75274;stroke-opacity:1"
+               style="fill:none;stroke:#717171;stroke-width:3.87905556;stroke-dasharray:none;stroke-dashoffset:7.75274;stroke-opacity:1"
                id="circle1022"
                cx="234.94434"
                cy="101.37354"
@@ -1900,11 +1900,11 @@
            inkscape:label="title"><tspan
              x="565.65938"
              y="369.18734"
-             id="tspan4810">p<tspan
+             id="tspan2447">p<tspan
    style="font-size:65%;baseline-shift:sub"
-   id="tspan4806">i</tspan>(t) = p<tspan
+   id="tspan2443">i</tspan>(t) = p<tspan
    style="font-size:65%;baseline-shift:sub"
-   id="tspan4808">0.i</tspan></tspan></text></g><path
+   id="tspan2445">0.i</tspan></tspan></text></g><path
          style="fill:#000000;fill-opacity:1;stroke:#16a34a;stroke-width:4.45221;stroke-dasharray:4.45221, 4.45221;stroke-dashoffset:0;stroke-opacity:1"
          d="M 0.19488101,210.33853 H 27.838979"
          id="path9538"
@@ -2469,9 +2469,9 @@
            inkscape:label="title"><tspan
              x="575.02539"
              y="369.18734"
-             id="tspan4814">P<tspan
+             id="tspan2451">P<tspan
    style="font-size:65%;baseline-shift:sub"
-   id="tspan4812">0</tspan> = 0.5</tspan></text></g></g><text
+   id="tspan2449">0</tspan> = 0.5</tspan></text></g></g><text
        xml:space="preserve"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.5833px;font-family:sans-serif;-inkscape-font-specification:sans-serif;text-align:center;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#000000;stroke-width:0.529167;stroke-linecap:round;stroke-linejoin:round"
        x="44.583973"
@@ -2999,7 +2999,7 @@
              inkscape:label="colorless"><tspan
                x="379.34678"
                y="381.17375"
-               id="tspan4816">Colorless</tspan></text><text
+               id="tspan2453">Colorless</tspan></text><text
              xml:space="preserve"
              transform="matrix(0.26458333,0,0,0.26458333,110.70573,-66.780305)"
              id="text5"
@@ -3007,9 +3007,9 @@
              inkscape:label="Color1_inactive"><tspan
                x="492.37837"
                y="360.72258"
-               id="tspan4820">C<tspan
+               id="tspan2457">C<tspan
    style="font-size:65%;baseline-shift:sub"
-   id="tspan4818">1</tspan> - Inactive</tspan></text><text
+   id="tspan2455">1</tspan> - Inactive</tspan></text><text
              xml:space="preserve"
              transform="matrix(0.26458333,0,0,0.26458333,97.306273,-54.064234)"
              id="text6"
@@ -3017,9 +3017,9 @@
              inkscape:label="Color2_inactive"><tspan
                x="541.56197"
                y="357.80071"
-               id="tspan4824">C<tspan
+               id="tspan2461">C<tspan
    style="font-size:65%;baseline-shift:sub"
-   id="tspan4822">2</tspan> - Inactive</tspan></text><text
+   id="tspan2459">2</tspan> - Inactive</tspan></text><text
              xml:space="preserve"
              style="font-size:7.05556px;font-family:helvetica;-inkscape-font-specification:helvetica;text-align:center;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#000000;stroke-width:0.529167;stroke-linecap:round;stroke-linejoin:round"
              x="258.35745"
@@ -3053,11 +3053,11 @@
          inkscape:label="title"><tspan
            x="543.11017"
            y="369.18734"
-           id="tspan4830"><tspan
+           id="tspan2467"><tspan
              style="font-size:33.3333px"
-             id="tspan4826">ρ= 0.4, </tspan><tspan
+             id="tspan2463">ρ= 0.4, </tspan><tspan
              style="font-size:33.3333px"
-             id="tspan4828">L = 10</tspan></tspan></text></g><text
+             id="tspan2465">L = 10</tspan></tspan></text></g><text
        xml:space="preserve"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.5833px;font-family:sans-serif;-inkscape-font-specification:sans-serif;text-align:center;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#000000;stroke-width:0.529167;stroke-linecap:round;stroke-linejoin:round"
        x="53.883118"
