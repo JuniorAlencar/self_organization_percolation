@@ -20,8 +20,8 @@ from src.SOP_parms import *
 # rho = custom_range(start, stop, n_points)
 nc_lst = [4] 
 rho = [0.25]
-L_lst = [128]
-num_runs = [300]
+L_lst = [256]
+num_runs = [50]
 p0 = 1.0
 dim = 3
 type_perc = 'bond'
@@ -38,7 +38,7 @@ multi=True
 #rho = custom_range(start, stop, n_points=n_points)
 #rho = [0.125]
 #num_threads = [10, 10]
-k=1.0e-06
+
 for k in K_lst:
         for Nt in NT_lst:
                 exec_name = f"k_{k:.1e}_NT_{Nt}_props.sh"

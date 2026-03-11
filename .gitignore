@@ -11,3 +11,6 @@
 /animation
 /network
 /results
+
+shells/*.sh
+!shells/run_all.sh
