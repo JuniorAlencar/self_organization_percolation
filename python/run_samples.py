@@ -18,18 +18,18 @@ from src.SOP_parms import *
 # stop = 1/nc
 # n_points = 100
 # rho = custom_range(start, stop, n_points)
-nc_lst = [4] 
+nc_lst = [4]
 rho = [0.25]
-L_lst = [256]
-num_runs = [50]
+L_lst = [128]
+num_runs = [300]
 p0 = 1.0
 dim = 3
 type_perc = 'bond'
 seed = -1
 f0 = [round(i, 2) for i in np.arange(0.01, 0.26, 0.01)]
 NT_lst = [int(L_lst[0]**2 * f) for f in f0]
-Nt = 3000
-K_lst = [1.0e-04, 5.0e-04, 1.0e-05, 5.0e-05, 6.0e-06]
+#Nt = 3000
+K_lst = [5.0e-04, 1.0e-05, 5.0e-05]
 #nc=2
 P0 = 0.1
 num_threads = [11]
@@ -40,7 +40,13 @@ multi=True
 #num_threads = [10, 10]
 
 for k in K_lst:
-        for Nt in NT_lst:
+        if(k==5.0e-05):
+                NT_lst_filter = NT_lst[:-7]
+        elif(k==1.0e-05):
+                NT_lst_filter = NT_lst[-7:]
+        elif(k==5.0e-04):
+                NT_lst_filter = NT_lst
+        for Nt in NT_lst_filter:
                 exec_name = f"k_{k:.1e}_NT_{Nt}_props.sh"
                 shell_data(L_lst[0], type_perc, p0, seed, k, Nt, dim,
                         nc_lst[0], num_runs[0], rho, exec_name, P0, num_threads[0], multi)
