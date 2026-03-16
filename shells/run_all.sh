@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# evita que '*.sh' vire string literal se não houver match
 shopt -s nullglob
 
 self="$(realpath "$0")"
 
-# =========================
-# Configuração de clock
-# =========================
 LIMIT_CPU_CLOCK="${LIMIT_CPU_CLOCK:-1}"
 CPU_MAX_FREQ="${CPU_MAX_FREQ:-4.0GHz}"
 CPU_GOVERNOR="${CPU_GOVERNOR:-ondemand}"
@@ -20,12 +16,10 @@ SUDO_KEEPALIVE_PID=""
 restore_cpu_settings() {
   [[ "$LIMIT_CPU_CLOCK" -eq 1 ]] || return 0
 
-  if ! command -v cpupower >/dev/null 2>&1; then
-    return 0
-  fi
+  command -v cpupower >/dev/null 2>&1 || return 0
 
   echo
-  echo "[INFO] Restaurando configuração original da CPU..."
+  echo "[INFO] Restoring original CPU settings..."
 
   if [[ -n "$OLD_GOVERNOR" ]]; then
     sudo -n cpupower frequency-set -g "$OLD_GOVERNOR" >/dev/null 2>&1 || true
@@ -44,10 +38,9 @@ cleanup() {
 }
 
 start_sudo_keepalive() {
-  echo "[INFO] Validando permissões sudo..."
+  echo "[INFO] Validating sudo permissions..."
   sudo -v
 
-  # mantém o ticket do sudo vivo enquanto este script existir
   (
     while true; do
       sudo -n true
@@ -60,17 +53,17 @@ start_sudo_keepalive() {
 
 apply_cpu_limit() {
   [[ "$LIMIT_CPU_CLOCK" -eq 1 ]] || {
-    echo "[INFO] Limite de clock desativado."
+    echo "[INFO] CPU clock limit disabled."
     return 0
   }
 
   if ! command -v cpupower >/dev/null 2>&1; then
-    echo "[WARN] cpupower não encontrado. Rodando sem limitar clock."
+    echo "[WARN] cpupower not found. Running without CPU clock limit."
     return 0
   fi
 
   if ! command -v sudo >/dev/null 2>&1; then
-    echo "[WARN] sudo não encontrado. Rodando sem limitar clock."
+    echo "[WARN] sudo not found. Running without CPU clock limit."
     return 0
   fi
 
@@ -82,17 +75,19 @@ apply_cpu_limit() {
 
   if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq ]]; then
     OLD_MAX_FREQ="$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null || true)"
-    [[ -n "$OLD_MAX_FREQ" ]] && OLD_MAX_FREQ="${OLD_MAX_FREQ}KHz"
+    if [[ -n "$OLD_MAX_FREQ" ]]; then
+      OLD_MAX_FREQ="${OLD_MAX_FREQ}KHz"
+    fi
   fi
 
-  echo "[INFO] Limitando clock máximo da CPU para $CPU_MAX_FREQ"
+  echo "[INFO] Limiting CPU max frequency to $CPU_MAX_FREQ"
   sudo -n cpupower frequency-set -g "$CPU_GOVERNOR" >/dev/null 2>&1 || true
   sudo -n cpupower frequency-set -u "$CPU_MAX_FREQ" >/dev/null 2>&1 || {
-    echo "[WARN] Não foi possível aplicar o limite de clock."
+    echo "[WARN] Could not apply CPU clock limit."
     return 0
   }
 
-  echo "[INFO] Limite aplicado com sucesso."
+  echo "[INFO] CPU clock limit applied successfully."
 }
 
 trap cleanup EXIT
@@ -104,12 +99,12 @@ mapfile -t scripts < <(printf '%s\n' ./*.sh | sort -V)
 for f in "${scripts[@]}"; do
   [[ "$(realpath "$f")" == "$self" ]] && continue
 
-  echo ">> Rodando $f"
+  echo ">> Running $f"
   if ! "$f"; then
-    echo "[ERRO] $f falhou" >&2
+    echo "[ERROR] $f failed" >&2
     # exit 1
   fi
 done
 
 echo
-echo "[INFO] Todos os scripts foram processados."
+echo "[INFO] All scripts were processed."
