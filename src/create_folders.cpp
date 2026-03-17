@@ -21,7 +21,7 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
     double rho) {
 
     char main_folder[256];
-    sprintf(main_folder, "%s/%s_percolation/num_colors_%d/dim_%d/L_%d",
+    sprintf(main_folder, "%s/raw/%s_percolation/num_colors_%d/dim_%d/L_%d",
             base_path.c_str(), type_percolation.c_str(), n_colors ,dim, L);
 
     std::string full_path;

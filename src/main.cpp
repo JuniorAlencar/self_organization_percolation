@@ -179,7 +179,7 @@ int main(int argc, char* argv[]){
         all_random rng(seed);
 
         // cria pastas Data
-        FolderCreator creator("./Data");
+        FolderCreator creator("./SOP_data");
         auto [network_dir, data_dir] = creator.create_structure(
             dim, type_N_t, N_t, k, L, num_colors, a, alpha,
             type_percolation, pp0, P0, rho_val
