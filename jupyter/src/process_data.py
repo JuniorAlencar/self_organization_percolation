@@ -439,7 +439,7 @@ def process_one_data_dir(data_dir: str, verbose: bool = True):
         print(f"[info] skipped: no_data={n_skipped_no_data}, empty_pt={n_skipped_empty_pt}, bad_order={n_skipped_bad_order}, added_empty_results={n_added_empty_results}")
 
 
-def process_all_roots(base_root="../Data/bond_percolation", verbose=True, clean_outputs=False):
+def process_all_roots(base_root="../SOP_data/raw/bond_percolation", verbose=True, clean_outputs=False):
     """
     Percorre todas as pastas que batem o padrão:
       ../Data/bond_percolation/num_colors_{nc}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_{k}/rho_{rho}/data
@@ -682,7 +682,7 @@ def _summarize_one_data_dir(data_dir: str) -> list[dict]:
 # Varre TODAS as pastas e escreve 1 arquivo por dimensão:
 # ../Data/bond_percolation/all_data_{dim}D.dat
 # ------------------------------------------------------------
-def summarize_all_dirs(base_root: str = "../Data/bond_percolation",
+def summarize_all_dirs(base_root: str = "../SOP_data/raw/bond_percolation",
                        verbose: bool = True) -> dict[int, Path]:
     """
     Percorre todas as pastas que batem o padrão e cria arquivos agregados por dimensão:
@@ -2309,8 +2309,8 @@ def build_properties_dataframe(root: str) -> pd.DataFrame:
 
 def process_all_data(clear_data: bool = False):
     p0_lst = [1.0]
-    base_root = "../Data"               # <<< IMPORTANTE
-    bas = "../Data/bond_percolation"
+    base_root = "../SOP_data/raw"               # <<< IMPORTANTE
+    bas = "../SOP_data/raw/bond_percolation"
 
     all_parms = collect_param_combinations(bas)
 
