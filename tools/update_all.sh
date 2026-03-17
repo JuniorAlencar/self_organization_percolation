@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p ../SOP_data/{raw,manifests,reduced_local,published,logs,tmp}
+mkdir -p ../SOP_data/{manifests,reduced_local,published,logs,tmp}
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
