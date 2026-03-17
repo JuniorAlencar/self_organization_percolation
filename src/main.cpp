@@ -13,6 +13,19 @@
 #include <iostream>
 #include <utility>   // para structured bindings (C++17)
 
+#include <chrono>
+#include <ctime>
+#include <string>
+#include <algorithm>
+#include <cctype>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+
 static void print_help(const char* prog){
     std::cout <<
 R"(To run:
@@ -38,6 +51,51 @@ Tips:
   - 'bond' vs 'node' picks percolation type.
   - Check the article for recommended ranges of k and N_t.
 )" << std::endl;
+}
+
+static std::string sanitize_for_filename(std::string s) {
+    for (char& c : s) {
+        const bool ok =
+            std::isalnum(static_cast<unsigned char>(c)) ||
+            c == '-' || c == '_';
+        if (!ok) c = '_';
+    }
+    return s;
+}
+
+static std::string get_machine_name() {
+#ifdef _WIN32
+    char buffer[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD size = sizeof(buffer);
+    if (GetComputerNameA(buffer, &size)) {
+        return sanitize_for_filename(std::string(buffer, size));
+    }
+    return "unknown_host";
+#else
+    char buffer[256];
+    if (gethostname(buffer, sizeof(buffer)) == 0) {
+        buffer[sizeof(buffer) - 1] = '\0';
+        return sanitize_for_filename(std::string(buffer));
+    }
+    return "unknown_host";
+#endif
+}
+
+static std::string get_timestamp_now() {
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const std::time_t tt = system_clock::to_time_t(now);
+
+    std::tm tm_buf{};
+#ifdef _WIN32
+    localtime_s(&tm_buf, &tt);
+#else
+    localtime_r(&tt, &tm_buf);
+#endif
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y%m%dT%H%M%S");
+    return oss.str();
 }
 
 static bool is_help_token(const char* s){
@@ -185,26 +243,23 @@ int main(int argc, char* argv[]){
                   << ", Nt=" << ts.Nt.size() << "\n";
         
                   cout << "seed = " << seed << endl;
-        // nomes dos arquivos
-        std::ostringstream oss_name;
-        oss_name << "/P0_" << std::fixed << std::setprecision(2) << P0
-                 << "_p0_" << std::fixed << std::setprecision(2) << pp0
-                 << "_seed_" << seed << ".json";
 
-        std::ostringstream oss_net;
-        oss_net << network_dir << "/P0_" << std::fixed << std::setprecision(2) << P0
-                << "_p0_" << std::fixed << std::setprecision(2) << pp0
-                << "_seed_" << seed << ".npz"; // writer grava .npy
+        const std::string machine_name = get_machine_name();
+        const std::string timestamp_now = get_timestamp_now();
 
-        std::ostringstream shortest_map;
-        shortest_map << network_dir << "/map_shortest_P0_" << std::fixed << std::setprecision(2) << P0
-                << "_p0_" << std::fixed << std::setprecision(2) << pp0
-                << "_seed_" << seed << ".npz"; // writer grava .npy
-        
-        string json_filename = data_dir + oss_name.str();
-        string net_filename  = oss_net.str();
-        string shotest_filename = shortest_map.str();
-        
+        std::ostringstream base_name;
+        base_name << machine_name
+                << "_seed_" << seed
+                << "_ts_" << timestamp_now
+                << "_P0_" << std::fixed << std::setprecision(2) << P0
+                << "_p0_" << std::fixed << std::setprecision(2) << pp0;
+
+        const std::string sample_base = base_name.str();
+
+        std::string json_filename = data_dir + "/" + sample_base + ".json";
+        std::string net_filename  = network_dir + "/" + sample_base + ".npz";
+        std::string shortest_filename = network_dir + "/map_shortest_" + sample_base + ".npz";
+
         // // salvar (novo writer JSON)
         save_data saver;
         
