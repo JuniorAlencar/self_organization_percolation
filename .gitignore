@@ -13,3 +13,4 @@
 
 shells/*.sh
 !shells/run_all.sh
+shells/after/

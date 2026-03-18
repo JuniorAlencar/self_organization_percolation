@@ -18,38 +18,27 @@ import numpy as np
 # stop = 1/nc
 # n_points = 100
 # rho = custom_range(start, stop, n_points)
-nc_lst = [4]
-L_lst = [128, 256, 512, 1024]
+nc_lst = 1
+L_lst = [128, 256, 512, 1024, 2048]
 f = [round(i, 2) for i in np.arange(0.01, 0.26, 0.01)]
 Nt = [[int(fraction*L**2) for fraction in f] for L in L_lst]
-#k_lst = [1.0e-04, 1.0e-05, 1.0e-06, 1.0e-07]
-k_lst = 1.0e-06
-rho_lst = [0.001, 0.05, 0.10, 0.15, 0.20]
-num_runs = [300, 100, 20, 10]
+rho = 1/nc_lst
+k_lst = [1.0e-03, 1.0e-04, 1.0e-05]
+num_runs = [300, 100, 50, 40, 20]
 type_perc = 'bond'
 p0 = 1.0
 seed = -1
-dim = 3
-
-# =========================
-
-#Nt = 3000
-k = 1.0e-06
-
+dim = 2
 #nc=2
 P0 = 0.1
-num_threads = [19, 19, 19, 2]
+num_threads = 19
 multi=True
-
-#rho = custom_range(start, stop, n_points=n_points)
-#rho = [0.125]
-#num_threads = [10, 10]
-
-for idx, L in enumerate(L_lst):
-        f0 = [round(i, 4) for i in np.arange(0.005, 0.2, 0.005)]
-        NT_lst = [int(L**2 * f) for f in f0]
-        
-        for Nt in NT_lst:
-                exec_name = f"NT_{Nt}_L_{L}.sh"
-                shell_data(L, type_perc, p0, seed, k, Nt, dim,
-                        nc_lst[0], num_runs[idx], rho_lst, exec_name, P0, num_threads[0], multi)
+for k in k_lst:
+        for idx, L in enumerate(L_lst):
+                f0 = [round(i, 4) for i in np.arange(0.01, 0.36, 0.01)]
+                NT_lst = [int(L**2 * f) for f in f0]
+                
+                for Nt in NT_lst:
+                        exec_name = f"NT_{Nt}_L_{L}_k_{k}.sh"
+                        shell_data(L, type_perc, p0, seed, k, Nt, dim,
+                                nc_lst, num_runs[idx], [rho], exec_name, P0, num_threads, multi)

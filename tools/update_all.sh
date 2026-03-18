@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p ../SOP_data/{manifests,reduced_local,published,logs,tmp}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_DIR"
+# Como os scripts estão em tools/ e SOP_data está na raiz do repo,
+# o caminho correto é ../SOP_data a partir de tools/
+DEFAULT_SOP_ROOT="${SCRIPT_DIR}/../SOP_data"
+SOP_ROOT="${SOP_ROOT:-$DEFAULT_SOP_ROOT}"
 
-python3 tools/index_raw_samples.py
-python3 tools/update_group_summaries.py
+mkdir -p \
+  "${SOP_ROOT}/raw" \
+  "${SOP_ROOT}/manifests" \
+  "${SOP_ROOT}/published" \
+  "${SOP_ROOT}/logs" \
+  "${SOP_ROOT}/tmp"
+
+python3 "${SCRIPT_DIR}/update_published_means.py" --sop-root "${SOP_ROOT}" "$@"

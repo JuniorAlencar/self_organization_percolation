@@ -267,6 +267,293 @@ double network::generate_p(const int type_N_t, const double p_t, const int t_i, 
 //     return net;
 // }
 
+// NetworkPattern network::create_network(
+//     const int dim, const int lenght_network, const int num_of_samples,
+//     const double k, const double N_t, const int type_N_t,
+//     const std::vector<double> p0, const double P0, const double a, const double alpha,
+//     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
+//     TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
+// {
+//     // ===== parâmetros e shape =====
+//     this->N_t = N_t;
+//     std::vector<int> shape = (dim == 2)
+//         ? std::vector<int>{lenght_network, lenght_network}
+//         : std::vector<int>{lenght_network, lenght_network, lenght_network};
+
+//     const int L = lenght_network;
+//     (void)L;
+//     const int grow_axis = dim - 1;
+
+//     auto valid_coord = [&](std::vector<int>& v)->bool {
+//         for (int j = 0; j < dim; ++j) {
+//             if (j == grow_axis) {
+//                 if (v[j] < 0 || v[j] >= shape[j]) return false; // aberto
+//             } else {
+//                 if (v[j] < 0) v[j] = shape[j] - 1;
+//                 else if (v[j] >= shape[j]) v[j] = 0; // periódico
+//             }
+//         }
+//         return true;
+//     };
+
+//     auto get_gcoord = [&](const std::vector<int>& v)->int {
+//         return v[grow_axis];
+//     };
+//     (void)get_gcoord;
+
+//     const int SX = shape[0];
+//     const int SY = (dim >= 2 ? shape[1] : 1);
+//     const int SZ = (dim == 3 ? shape[2] : 1);
+
+//     auto lin_index = [&](int x, int y, int z)->int {
+//         return x + SX * (y + SY * z);
+//     };
+
+//     // ===== rede =====
+//     NetworkPattern net(dim, shape, num_colors, rho);
+
+//     // ===== séries =====
+//     std::vector<std::vector<double>> p_series(num_colors);
+//     std::vector<std::vector<int>>    Nt_series(num_colors);
+//     std::vector<int>                 M_size_at_perc(num_colors, 0);
+//     (void)M_size_at_perc;
+//     std::vector<int>                 t_list; 
+//     t_list.reserve(num_of_samples);
+//     std::vector<double>              p_curr = p0;
+
+//     const int GRID_N = SX * SY * SZ;
+//     std::vector<std::vector<int>> parent(num_colors, std::vector<int>(GRID_N, -2)); // -2: nunca visto; -1: raiz/seed
+
+//     auto commit_step = [&](int t_k, const std::vector<double>& p_vec, const std::vector<int>& Nt_vec)
+//     {
+//         t_list.push_back(t_k);
+//         for (int c = 0; c < num_colors; ++c) {
+//             p_series[c].push_back(p_vec[c]);
+//             Nt_series[c].push_back(Nt_vec[c]);
+//         }
+//     };
+
+//     // ===== base measure =====
+//     long long base_size = 1;
+//     for (int ax = 0; ax < dim - 1; ++ax) {
+//         base_size *= static_cast<long long>(shape[ax]);
+//     }
+
+//     std::vector<int> seeds_quota(num_colors, 0);
+//     {
+//         const double Nt_target = static_cast<double>(this->N_t);
+//         (void)Nt_target;
+
+//         for (int c = 0; c < num_colors; ++c) {
+//             long long q = std::llround(P0 * rho[c] * lenght_network);  // P0 * rho * L
+//             if (q < 0) q = 0;
+//             if (q > base_size) q = base_size;
+//             seeds_quota[c] = static_cast<int>(q);
+//         }
+//     }
+
+//     std::queue<std::vector<int>> borderland;
+//     std::vector<int> N_current(num_colors, 0);
+
+//     // ===== semeadura (t=0) =====
+//     for (int c = 0; c < num_colors; ++c) {
+//         int activated = 0;
+//         int tries = 0;
+//         const int max_tries = static_cast<int>(base_size) * 20;
+
+//         const int prefer_neg = (num_colors == 1 ? -1 : -(c + 2));
+//         const int active_val = (num_colors == 1 ? 1 : (c + 2));
+
+//         while (activated < seeds_quota[c] && tries < max_tries) {
+//             std::vector<int> coords(dim, 0);
+//             for (int ax = 0; ax < dim - 1; ++ax) {
+//                 coords[ax] = rng.uniform_int(0, shape[ax] - 1);
+//             }
+//             coords[grow_axis] = 0;
+
+//             int idx = lin_index(coords[0], coords[1], coords[2]);
+//             int v = net.get(idx);
+
+//             if (v == prefer_neg || v == -1) {
+//                 net.set(idx, active_val);
+//                 borderland.push(coords);
+//                 ++N_current[c];
+//                 ++activated;
+
+//                 parent[c][idx] = -1;  // Seed/root para shortest path
+//             }
+//             ++tries;
+//         }
+//     }
+
+//     // ===== percolação =====
+//     ps_out.sp_len.assign(num_colors, -1);
+//     ps_out.sp_path_lin.assign(num_colors, {});
+//     commit_step(0, p_curr, N_current);
+
+//     // buffer vizinhos
+//     std::vector<std::vector<int>> neighbor_buffer(2 * dim, std::vector<int>(dim));
+
+//     std::vector<int> max_heights(num_colors, 0);
+//     auto update_max_height = [&](const std::vector<int>& pos, int cor_idx) {
+//         int current_height = pos[grow_axis];
+//         if (current_height > max_heights[cor_idx]) {
+//             max_heights[cor_idx] = current_height;
+//         }
+//     };
+
+//     // ordem real de percolação
+//     ps_out.color_percolation.clear();      // cores em ordem de chegada (1-based)
+//     ps_out.percolation_order.clear();      // 1, 2, 3, ...
+//     int order_ctr = 0;
+//     std::vector<bool> percolated(num_colors, false);
+
+//     // novas flags por cor:
+//     // finished[c] = true se a cor c já "encerrou":
+//     //   - atingiu o topo, ou
+//     //   - ficou sem crescimento N^i(t)=0
+//     std::vector<bool> finished(num_colors, false);
+
+//     // evolução
+//     for (int t = 1; t < num_of_samples; ++t) {
+//         std::fill(N_current.begin(), N_current.end(), 0);
+//         std::queue<std::vector<int>> new_borderland;
+
+//         while (!borderland.empty()) {
+//             std::vector<int> pos = borderland.front();
+//             borderland.pop();
+
+//             int idx = lin_index(pos[0], pos[1], (dim == 3 ? pos[2] : 0));
+//             int a_val = net.get(idx);
+//             if (a_val <= 0) continue;
+
+//             int cor_idx = (num_colors == 1 ? 0 : (std::abs(a_val) - 2));
+//             if (cor_idx < 0 || cor_idx >= num_colors) continue;
+
+//             // não processa mais cores finalizadas
+//             if (finished[cor_idx]) continue;
+
+//             const int new_val = (num_colors == 1 ? 1 : (cor_idx + 2));
+
+//             int v_idx = 0;
+//             for (int ax = 0; ax < dim; ++ax) {
+//                 for (int delta : {-1, 1}) {
+//                     std::vector<int>& viz = neighbor_buffer[v_idx++];
+//                     viz = pos;
+//                     viz[ax] += delta;
+
+//                     if (!valid_coord(viz)) continue;
+
+//                     int viz_idx = lin_index(viz[0], viz[1], (dim == 3 ? viz[2] : 0));
+//                     int vv = net.get(viz_idx);
+//                     if (vv >= 0) continue;
+
+//                     double r = rng.uniform_real(0.0, 1.0);
+
+//                     auto try_activate = [&]() {
+//                         net.set(viz_idx, new_val);
+//                         new_borderland.push(viz);
+//                         ++N_current[cor_idx];
+//                         update_max_height(viz, cor_idx);
+
+//                         // registra evento de percolação no instante da chegada ao topo
+//                         if (!percolated[cor_idx] && viz[grow_axis] == lenght_network - 1) {
+//                             percolated[cor_idx] = true;
+//                             finished[cor_idx] = true; // esta cor encerra ao atingir o topo
+//                             ps_out.color_percolation.push_back(cor_idx + 1);   // 1-based
+//                             ps_out.percolation_order.push_back(++order_ctr);   // 1,2,3,...
+//                         }
+
+//                         parent[cor_idx][viz_idx] = idx;
+//                     };
+
+//                     if (r < p_curr[cor_idx]) {
+//                         try_activate();
+//                     } else {
+//                         // correção: o índice correto é viz_idx, não vv
+//                         net.set(viz_idx, 0);
+//                     }
+//                 }
+//             }
+//         }
+
+//         // cores que não cresceram nesta iteração também encerram
+//         for (int c = 0; c < num_colors; ++c) {
+//             if (!finished[c] && N_current[c] == 0) {
+//                 finished[c] = true;
+//             }
+//         }
+
+//         // critério correto:
+//         // para cada cor, ou ela atingiu o topo, ou ficou sem crescimento.
+//         bool all_finished = true;
+//         for (int c = 0; c < num_colors; ++c) {
+//             if (!finished[c]) {
+//                 all_finished = false;
+//                 break;
+//             }
+//         }
+
+//         if (all_finished) {
+//             BiggestComponent bc;
+//             bc.compute_shortest_paths_to_base(net, dim, shape, grow_axis, num_colors, parent, ps_out);
+
+//             // tamanhos por COR; depois reordenamos para a ORDEM DE EVENTOS
+//             ps_out.M_size_at_perc = bc.largest_cluster_sizes(net, dim, shape, grow_axis, num_colors);
+
+//             std::vector<int> M_sizes_per_event;
+//             M_sizes_per_event.reserve(ps_out.color_percolation.size());
+//             for (int color_1b : ps_out.color_percolation) {
+//                 int c = color_1b - 1;
+//                 M_sizes_per_event.push_back(ps_out.M_size_at_perc[c]);
+//             }
+//             ps_out.M_size_at_perc = std::move(M_sizes_per_event);
+//             break;
+//         }
+
+//         borderland = std::move(new_borderland);
+
+//         std::vector<double> p_next(num_colors);
+//         for (int c = 0; c < num_colors; ++c) {
+//             // mantém p fixo para cores encerradas
+//             if (finished[c]) {
+//                 p_next[c] = p_curr[c];
+//             } else {
+//                 p_next[c] = generate_p(type_N_t, p_curr[c], t, N_current[c], k, a, alpha);
+//             }
+//         }
+
+//         commit_step(t, p_next, N_current);
+
+//         if (t < 10 || t % 100 == 0) {
+//             std::cout << "[" << type_percolation << "] t = " << t;
+//             for (int c = 0; c < num_colors; ++c) {
+//                 std::cout << ", p" << c + 1 << "(t)=" << p_next[c]
+//                           << ", N_t" << c + 1 << "(t)=" << N_current[c]
+//                           << " max" << c + 1 << "(t)=" << max_heights[c];
+//             }
+//             std::cout << std::endl;
+//         }
+
+//         p_curr.swap(p_next);
+//     }
+
+//     // ===== output =====
+//     ts_out.num_colors = num_colors;
+//     ts_out.p_t = std::move(p_series);
+//     ts_out.Nt  = std::move(Nt_series);
+//     ts_out.t   = std::move(t_list);
+
+//     ps_out.rho.clear();
+//     for (int i = 0; i < num_colors; ++i) {
+//         if (i < static_cast<int>(rho.size())) {
+//             ps_out.rho.push_back(rho[i]);
+//         }
+//     }
+
+//     return net;
+// }
+
 NetworkPattern network::create_network(
     const int dim, const int lenght_network, const int num_of_samples,
     const double k, const double N_t, const int type_N_t,
@@ -309,6 +596,13 @@ NetworkPattern network::create_network(
         return x + SX * (y + SY * z);
     };
 
+    auto lin_index_vec = [&](const std::vector<int>& v)->int {
+        const int x = v[0];
+        const int y = (dim >= 2 ? v[1] : 0);
+        const int z = (dim == 3 ? v[2] : 0);
+        return lin_index(x, y, z);
+    };
+
     // ===== rede =====
     NetworkPattern net(dim, shape, num_colors, rho);
 
@@ -317,7 +611,7 @@ NetworkPattern network::create_network(
     std::vector<std::vector<int>>    Nt_series(num_colors);
     std::vector<int>                 M_size_at_perc(num_colors, 0);
     (void)M_size_at_perc;
-    std::vector<int>                 t_list; 
+    std::vector<int>                 t_list;
     t_list.reserve(num_of_samples);
     std::vector<double>              p_curr = p0;
 
@@ -371,8 +665,8 @@ NetworkPattern network::create_network(
             }
             coords[grow_axis] = 0;
 
-            int idx = lin_index(coords[0], coords[1], coords[2]);
-            int v = net.get(idx);
+            const int idx = lin_index_vec(coords);
+            const int v = net.get(idx);
 
             if (v == prefer_neg || v == -1) {
                 net.set(idx, active_val);
@@ -408,8 +702,7 @@ NetworkPattern network::create_network(
     int order_ctr = 0;
     std::vector<bool> percolated(num_colors, false);
 
-    // novas flags por cor:
-    // finished[c] = true se a cor c já "encerrou":
+    // finished[c] = true se a cor c já encerrou:
     //   - atingiu o topo, ou
     //   - ficou sem crescimento N^i(t)=0
     std::vector<bool> finished(num_colors, false);
@@ -423,11 +716,11 @@ NetworkPattern network::create_network(
             std::vector<int> pos = borderland.front();
             borderland.pop();
 
-            int idx = lin_index(pos[0], pos[1], pos[2]);
-            int a_val = net.get(idx);
+            const int idx = lin_index_vec(pos);
+            const int a_val = net.get(idx);
             if (a_val <= 0) continue;
 
-            int cor_idx = (num_colors == 1 ? 0 : (std::abs(a_val) - 2));
+            const int cor_idx = (num_colors == 1 ? 0 : (std::abs(a_val) - 2));
             if (cor_idx < 0 || cor_idx >= num_colors) continue;
 
             // não processa mais cores finalizadas
@@ -444,11 +737,15 @@ NetworkPattern network::create_network(
 
                     if (!valid_coord(viz)) continue;
 
-                    int viz_idx = lin_index(viz[0], viz[1], viz[2]);
-                    int vv = net.get(viz_idx);
+                    const int viz_idx = lin_index_vec(viz);
+                    const int vv = net.get(viz_idx);
                     if (vv >= 0) continue;
 
-                    double r = rng.uniform_real(0.0, 1.0);
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color   = (vv == -1);
+                    if (!same_color && !no_color) continue;
+
+                    const double r = rng.uniform_real(0.0, 1.0);
 
                     auto try_activate = [&]() {
                         net.set(viz_idx, new_val);
@@ -470,8 +767,9 @@ NetworkPattern network::create_network(
                     if (r < p_curr[cor_idx]) {
                         try_activate();
                     } else {
-                        // correção: o índice correto é viz_idx, não vv
-                        net.set(viz_idx, 0);
+                        if (type_percolation == "node") {
+                            net.set(viz_idx, 0);  // corrigido: era net.set(vv, 0)
+                        }
                     }
                 }
             }
@@ -484,8 +782,7 @@ NetworkPattern network::create_network(
             }
         }
 
-        // critério correto:
-        // para cada cor, ou ela atingiu o topo, ou ficou sem crescimento.
+        // para cada cor, ou ela atingiu o topo, ou ficou sem crescimento
         bool all_finished = true;
         for (int c = 0; c < num_colors; ++c) {
             if (!finished[c]) {
@@ -504,7 +801,7 @@ NetworkPattern network::create_network(
             std::vector<int> M_sizes_per_event;
             M_sizes_per_event.reserve(ps_out.color_percolation.size());
             for (int color_1b : ps_out.color_percolation) {
-                int c = color_1b - 1;
+                const int c = color_1b - 1;
                 M_sizes_per_event.push_back(ps_out.M_size_at_perc[c]);
             }
             ps_out.M_size_at_perc = std::move(M_sizes_per_event);
@@ -515,7 +812,6 @@ NetworkPattern network::create_network(
 
         std::vector<double> p_next(num_colors);
         for (int c = 0; c < num_colors; ++c) {
-            // mantém p fixo para cores encerradas
             if (finished[c]) {
                 p_next[c] = p_curr[c];
             } else {
@@ -669,7 +965,7 @@ NetworkPattern network::animate_network(
                 coords[ax] = rng.uniform_int(0, shape[ax] - 1);
             coords[grow_axis] = 0;
 
-            int idx = lin_index(coords[0], coords[1], coords[2]);
+            int idx = lin_index(coords[0], coords[1], (dim == 3 ? coords[2] : 0));
             int v   = net.get(idx);
             if (v == prefer_neg || v == -1) {
                 net.set(idx, active_val);
