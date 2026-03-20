@@ -19,7 +19,7 @@ import numpy as np
 # n_points = 100
 # rho = custom_range(start, stop, n_points)
 nc_lst = 1
-L_lst = [128, 256, 512, 1024, 2048]
+L_lst = [4096]
 f = [round(i, 2) for i in np.arange(0.01, 0.26, 0.01)]
 Nt = [[int(fraction*L**2) for fraction in f] for L in L_lst]
 rho = 1/nc_lst
@@ -36,7 +36,7 @@ multi=True
 for k in k_lst:
         for idx, L in enumerate(L_lst):
                 f0 = [round(i, 4) for i in np.arange(0.01, 0.36, 0.01)]
-                NT_lst = [int(L**2 * f) for f in f0]
+                NT_lst = [int(L * f) for f in f0]
                 
                 for Nt in NT_lst:
                         exec_name = f"NT_{Nt}_L_{L}_k_{k}.sh"
