@@ -12,7 +12,6 @@ import json
 import gc
 from tqdm import tqdm
 
-
 FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
 
 DIR_RE = re.compile(
@@ -46,14 +45,16 @@ PARAM_RE = re.compile(
     re.X
 )
 
-# aceita:
-#   P0_0.10_p0_1.00_seed_123.json
-#   P0_0.10_p0_1.00_seed_123_pcasa.json
-RGX_FLEX = re.compile(
-    rf'^P0_(?P<P0>{FLOAT})_p0_(?P<p0>{FLOAT})_seed_(?P<seed>\d+)(?:_.+)?\.json$'
-)
-SEEDFILE_RE = RGX_FLEX
-SEED_RE = re.compile(r"(?:^|_)seed_(\d+)(?:_|\.json$)")
+# Busca os campos em qualquer posição do basename
+# Mantém P0 em maiúsculo
+RE_P0 = re.compile(rf'(?:^|_)P0_(?P<P0>{FLOAT})(?:_|\.json$)')
+
+# p0 em minúsculo, sem case-insensitive,
+# para NÃO capturar o P0_...
+RE_p0 = re.compile(rf'(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)')
+
+# seed pode continuar flexível
+RE_seed = re.compile(r'(?:^|_)seed_(?P<seed>\d+)(?:_|\.json$)', re.IGNORECASE)
 
 DEFAULT_DESIRED_COLS = [
     'filename', 'P0', 'p0', 'order', 'p_mean', 'p_std', 'p_sem', 'shortest_path', 'S_perc'
@@ -68,26 +69,6 @@ def ensure_dir(path: str | Path) -> Path:
 
 def create_folder(folder_path):
     ensure_dir(folder_path)
-
-
-def write_dat_lines(path: str | Path, values: List[int]) -> Path:
-    path = Path(path)
-    ensure_dir(path.parent)
-    with path.open("w", encoding="utf-8") as f:
-        for v in values:
-            f.write(f"{int(v)}\n")
-    return path
-
-
-def _stats_from_int_values(vals: List[int]) -> Dict[str, Any]:
-    arr = np.asarray(vals, dtype=float)
-    n = int(arr.size)
-    if n == 0:
-        return {"Nsamples": 0, "nc": np.nan, "nc_err": np.nan, "nc_std": np.nan}
-    nc = float(np.mean(arr))
-    nc_std = float(np.std(arr, ddof=1)) if n > 1 else 0.0
-    nc_err = float(nc_std / np.sqrt(n)) if n > 0 else np.nan
-    return {"Nsamples": n, "nc": nc, "nc_err": nc_err, "nc_std": nc_std}
 
 
 def _sem_scalar(vals: List[float]) -> float:
@@ -155,22 +136,27 @@ def _scalar_or_last(x):
     except Exception:
         return np.nan
 
-
 def _extract_seed_from_filename(fp: str) -> int | None:
-    m = SEED_RE.search(os.path.basename(fp))
+    m = RE_seed.search(os.path.basename(fp))
     if not m:
         return None
-    return int(m.group(1))
+    return int(m.group("seed"))
 
 
 def parse_filename(path):
-    m = RGX_FLEX.match(Path(path).name)
-    if not m:
+    name = Path(path).name
+
+    mP0 = RE_P0.search(name)
+    mp0 = RE_p0.search(name)
+    ms = RE_seed.search(name)
+
+    if not (mP0 and mp0 and ms):
         raise ValueError(f"Nome inválido: {path}")
+
     return {
-        "P0": float(m.group("P0")),
-        "p0": float(m.group("p0")),
-        "seed": int(m.group("seed")),
+        "P0": float(mP0.group("P0")),
+        "p0": float(mp0.group("p0")),
+        "seed": int(ms.group("seed")),
     }
 
 
@@ -627,6 +613,26 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
+def _parse_fname(filepath: str) -> Optional[Tuple[float, float, int]]:
+    name = os.path.basename(filepath)
+
+    mP0 = RE_P0.search(name)
+    mp0 = RE_p0.search(name)
+    ms = RE_seed.search(name)
+
+    if not (mP0 and mp0 and ms):
+        return None
+
+    try:
+        return (
+            float(mP0.group("P0")),
+            float(mp0.group("p0")),
+            int(ms.group("seed")),
+        )
+    except Exception:
+        return None
+
+
 def _parse_params_from_path(path: str) -> Optional[Tuple[str, int, int, float, int, float, int]]:
     m = PARAM_RE.search(path.replace("\\", "/"))
     if not m:
@@ -646,17 +652,26 @@ def _parse_params_from_path(path: str) -> Optional[Tuple[str, int, int, float, i
 def _parse_P0_p0_from_seed_used(seed_used: List[str]) -> Tuple[float, float]:
     P0_vals = []
     p0_vals = []
+
     for bn in seed_used:
         bn = os.path.basename(str(bn))
-        m = SEEDFILE_RE.match(bn)
-        if not m:
+
+        mP0 = RE_P0.search(bn)
+        mp0 = RE_p0.search(bn)
+
+        if not (mP0 and mp0):
             continue
-        P0_vals.append(float(m.group("P0")))
-        p0_vals.append(float(m.group("p0")))
+
+        try:
+            P0_vals.append(float(mP0.group("P0")))
+            p0_vals.append(float(mp0.group("p0")))
+        except Exception:
+            continue
+
     if len(P0_vals) == 0:
         return float("nan"), float("nan")
-    return float(np.mean(P0_vals)), float(np.mean(p0_vals))
 
+    return float(np.mean(P0_vals)), float(np.mean(p0_vals))
 
 def _manifest_path(manifest_root: str | Path, rel_group_dir: str | Path) -> Path:
     return Path(manifest_root) / Path(rel_group_dir) / "manifest.json"
@@ -686,8 +701,6 @@ def _save_manifest(manifest_root: str | Path, rel_group_dir: str | Path, manifes
     with path.open("w", encoding="utf-8") as f:
         json.dump(_sanitize_for_json(manifest), f, ensure_ascii=False, indent=2, allow_nan=False)
     return path
-
-
 
 def compute_means_for_folder(
     type_perc: str,
@@ -730,6 +743,7 @@ def compute_means_for_folder(
 
     out_dir = os.path.join(published_root, rel_group)
     ensure_dir(out_dir)
+
     out_path = os.path.join(out_dir, "properties_mean_bundle.json")
     colors_path = os.path.join(out_dir, "colors_percolation.dat")
 
@@ -743,20 +757,48 @@ def compute_means_for_folder(
         manifest["processed_json_files"] = []
         manifest["n_processed_json_files"] = 0
         manifest["summary_file"] = None
-        manifest["colors_file"] = None
         manifest["last_update"] = None
         if verbose:
             print(f"[clear_data] removido: {out_path}")
             print(f"[clear_data] removido: {colors_path}")
 
-    current_seed_files = sorted({
-        os.path.basename(x)
-        for x in glob.glob(os.path.join(data_dir, "*.json"))
-    })
+    all_jsons = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+    if verbose and all_jsons:
+        print("[sample names check]")
+        for fp in all_jsons[:5]:
+            print("   ", os.path.basename(fp), "->", _parse_fname(fp))
+    bad_name_files = []
+    current_seed_files = []
+    for fp in all_jsons:
+        parsed = _parse_fname(fp)
+        if parsed is None:
+            bad_name_files.append(os.path.basename(fp))
+            continue
+        _, p0_file, _ = parsed
+        for p0 in p0_list:
+            if abs(float(p0_file) - float(p0)) < 1e-12:
+                current_seed_files.append(os.path.basename(fp))
+                break
+
+    current_seed_files = sorted(set(current_seed_files))
+
+    if bad_name_files and verbose:
+        print(f"[warn] {data_dir}: {len(bad_name_files)} arquivo(s) com nome fora do padrão flexível")
+        for bn in bad_name_files[:10]:
+            print(f"       - {bn}")
+        if len(bad_name_files) > 10:
+            print("       ...")
+
     processed_files = set(map(str, manifest.get("processed_json_files", [])))
     new_files = [bn for bn in current_seed_files if bn not in processed_files]
 
-    if (not clear_data) and os.path.isfile(out_path) and os.path.isfile(colors_path) and len(new_files) == 0:
+    if verbose:
+        print(
+            f"[group] {rel_group} | total_json={len(all_jsons)} "
+            f"| parseable={len(current_seed_files)} | new={len(new_files)} | clear_data={clear_data}"
+        )
+
+    if (not clear_data) and os.path.isfile(out_path) and len(new_files) == 0:
         if verbose:
             print(f"[skip] atualizado: {out_path}")
         return out_path
@@ -781,11 +823,18 @@ def compute_means_for_folder(
         "p0_groups": [],
     }
 
-    # uma única leitura útil por arquivo para propriedades + número de cores percolantes
-    colors_all_values: List[int] = []
+    colors_per_sample_all: List[int] = []
 
     for p0 in p0_list:
-        files = sorted(glob.glob(os.path.join(data_dir, f"P0_*_p0_{p0:.2f}_seed_*.json")))
+        files = []
+        for fp in all_jsons:
+            parsed = _parse_fname(fp)
+            if parsed is None:
+                continue
+            _, p0_file, _ = parsed
+            if abs(float(p0_file) - float(p0)) < 1e-12:
+                files.append(fp)
+
         if verbose:
             print(f"[debug] data_dir={data_dir} | p0={p0:.2f} | files={len(files)}")
 
@@ -799,19 +848,15 @@ def compute_means_for_folder(
 
         seeds_set: set[int] = set()
         valid_files = 0
-        colors_values_p0: List[int] = []
+        colors_per_sample_this_p0: List[int] = []
 
         for fp in files:
             orders = _load_orders_new(fp)
-            # conta número de ordens efetivamente presentes no sample
-            n_colors_perc = len(orders)
-            colors_values_p0.append(int(n_colors_perc))
-            colors_all_values.append(int(n_colors_perc))
-
-            # mantém a lógica atual: se o arquivo não tiver ordens válidas, não entra nas propriedades
             if not orders:
                 continue
 
+            colors_per_sample_this_p0.append(len(orders))
+            colors_per_sample_all.append(len(orders))
             valid_files += 1
 
             seed = _extract_seed_from_filename(fp)
@@ -819,54 +864,32 @@ def compute_means_for_folder(
                 seeds_set.add(seed)
 
             for ordk, data in orders.items():
-                if x_max is not None and data.get("t") is not None:
-                    t = np.asarray(data["t"], dtype=float)
-                    m = (t <= x_max)
-                    data["t"] = t[m]
-                    if data.get("pt") is not None:
-                        data["pt"] = np.asarray(data["pt"], dtype=float)[m]
-                    if data.get("nt") is not None:
-                        data["nt"] = np.asarray(data["nt"], dtype=float)[m]
+                data_local = dict(data)
 
-                if data.get("t") is not None and data.get("pt") is not None:
-                    t_seed = np.asarray(data["t"], dtype=float)
-                    pt_seed = np.asarray(data["pt"], dtype=float)
+                if x_max is not None and data_local.get("t") is not None:
+                    t = np.asarray(data_local["t"], dtype=float)
+                    m = (t <= x_max)
+                    data_local["t"] = t[m]
+                    if data_local.get("pt") is not None:
+                        data_local["pt"] = np.asarray(data_local["pt"], dtype=float)[m]
+                    if data_local.get("nt") is not None:
+                        data_local["nt"] = np.asarray(data_local["nt"], dtype=float)[m]
+
+                if data_local.get("t") is not None and data_local.get("pt") is not None:
+                    t_seed = np.asarray(data_local["t"], dtype=float)
+                    pt_seed = np.asarray(data_local["pt"], dtype=float)
                     n0 = min(t_seed.size, pt_seed.size)
                     if n0 > 1:
                         per_order_seed_series[ordk].append((t_seed[:n0], pt_seed[:n0]))
 
-                per_order[ordk].append(data)
+                per_order[ordk].append(data_local)
 
-        if len(colors_values_p0) == 0:
-            if verbose:
-                print(f"[warn] p0={p0:.2f}: nenhum arquivo legível para cores -> pulando grupo")
-            continue
-
-        colors_stats = _stats_from_int_values(colors_values_p0)
+        if verbose:
+            print(f"[debug] p0={p0:.2f} | valid_files={valid_files}")
 
         if valid_files == 0:
-            # preserva a informação de cores mesmo se nenhuma ordem válida entrou nas propriedades
-            p0_group = {
-                "p0_value": float(p0),
-                "num_seeds": 0,
-                "orders": [],
-                "pc_sop": {
-                    "mean": None,
-                    "std_boot": None,
-                    "n_seeds": 0,
-                    "n_boot": int(n_boot),
-                    "t0_global": None,
-                    "pc_method": "combine orders of (per-seed autocorr + random-effects)",
-                },
-                "colors_percolation_stats": colors_stats,
-            }
-            bundle["p0_groups"].append(p0_group)
-
             if verbose:
-                print(
-                    f"[warn] p0={p0:.2f}: nenhum arquivo válido para propriedades | "
-                    f"cores={colors_stats['nc']:.6f}±{colors_stats['nc_err']:.6f}"
-                )
+                print(f"[warn] p0={p0:.2f}: nenhum arquivo válido lido -> pulando grupo")
             continue
 
         mean_by_order: Dict[int, Dict[str, Any]] = {}
@@ -902,7 +925,6 @@ def compute_means_for_folder(
                 idx = idx_from_t0(t_seed, t0_global)
                 if idx >= pt_seed.size:
                     continue
-
                 s = tail_mean(pt_seed[idx:], tail_frac=0.2, method="autocorr")
                 if np.isfinite(s["mean"]) and np.isfinite(s["sem"]) and (s["sem"] > 0):
                     runs.append({"mean": float(s["mean"]), "sem": float(s["sem"])})
@@ -911,7 +933,6 @@ def compute_means_for_folder(
             pc_i_mean = float(combo["mean"])
             pc_i_sem = float(combo["se"])
             n_used = int(combo.get("R", 0))
-
             pc_by_order[ordk] = (pc_i_mean, pc_i_sem, n_used)
 
             mean_by_order[ordk]["pc_sop"] = {
@@ -936,10 +957,17 @@ def compute_means_for_folder(
         else:
             pc_mean, pc_sem = float("nan"), float("nan")
 
-        orders_blocks = [
-            {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
-            for ordk in sorted(mean_by_order.keys())
-        ]
+        orders_blocks = [{"order_percolation": int(ordk), "data": mean_by_order[ordk]} for ordk in sorted(mean_by_order.keys())]
+
+        colors_arr = np.asarray(colors_per_sample_this_p0, dtype=float)
+        if colors_arr.size > 0:
+            nc_mean = float(np.mean(colors_arr))
+            nc_std = float(np.std(colors_arr, ddof=1)) if colors_arr.size > 1 else 0.0
+            nc_err = float(nc_std / np.sqrt(colors_arr.size))
+        else:
+            nc_mean = float("nan")
+            nc_std = float("nan")
+            nc_err = float("nan")
 
         p0_group = {
             "p0_value": float(p0),
@@ -953,33 +981,25 @@ def compute_means_for_folder(
                 "t0_global": _safe_float(t0_global),
                 "pc_method": "combine orders of (per-seed autocorr + random-effects)",
             },
-            "colors_percolation_stats": colors_stats,
+            "colors": {
+                "Nsamples": int(colors_arr.size),
+                "nc": _safe_float(nc_mean),
+                "nc_std": _safe_float(nc_std),
+                "nc_err": _safe_float(nc_err),
+            },
         }
 
         bundle["p0_groups"].append(p0_group)
 
-        if verbose:
-            print(
-                f"[ok] p0={p0:.2f}: files={len(files)} valid={valid_files} | "
-                f"seeds={len(seeds_set)} | pc_SOP={pc_mean:.6f}±{pc_sem:.6f} | "
-                f"nc={colors_stats['nc']:.6f}±{colors_stats['nc_err']:.6f}"
-            )
-
-        per_order.clear()
-        per_order_seed_series.clear()
-        mean_by_order.clear()
-        series_mean.clear()
-        seeds_set.clear()
-        gc.collect()
-
     bundle["meta"]["seed_used"] = sorted(seed_used_set)
-    bundle["meta"]["colors_file"] = colors_path
     bundle = _sanitize_for_json(bundle)
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(bundle, f, ensure_ascii=False, indent=2, allow_nan=False)
 
-    write_dat_lines(colors_path, colors_all_values)
+    with open(colors_path, "w", encoding="utf-8") as f:
+        for val in colors_per_sample_all:
+            f.write(f"{int(val)}\n")
 
     manifest.update({
         "group_relpath": rel_group,
@@ -987,16 +1007,11 @@ def compute_means_for_folder(
         "processed_json_files": sorted(current_seed_files),
         "n_processed_json_files": len(current_seed_files),
         "summary_file": out_path,
-        "colors_file": colors_path,
         "last_update": pd.Timestamp.utcnow().isoformat(),
     })
     _save_manifest(manifests_root, rel_group, manifest)
 
-    if verbose:
-        print(f"[salvo] {out_path}")
-        print(f"[salvo] {colors_path}")
     return out_path
-
 
 def build_properties_dataframe(published_root: str, output_file: str | Path) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
@@ -1096,10 +1111,8 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
         ).reset_index(drop=True)
 
     ensure_dir(output_file.parent)
-    df.to_csv(output_file, index=False)
+    df.to_csv(output_file, index=False, sep=" ")
     return df
-
-
 
 
 def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.DataFrame:
@@ -1133,7 +1146,7 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
 
         for g in p0_groups:
             p0_val = _safe_float(g.get("p0_value", float("nan")))
-            cstats = g.get("colors_percolation_stats", {}) if isinstance(g.get("colors_percolation_stats", {}), dict) else {}
+            cstats = g.get("colors", {}) if isinstance(g.get("colors", {}), dict) else {}
 
             rows.append({
                 "L": L,
@@ -1160,7 +1173,6 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
     ensure_dir(output_file.parent)
     df.to_csv(output_file, index=False, sep=" ")
     return df
-
 
 def process_all_data(
     clear_data: bool = False,
@@ -1231,7 +1243,6 @@ def process_all_data(
     if verbose:
         print(f"[write] {os.path.join(sop_root, 'all_colors.dat')} ({len(df_colors)} linhas)")
     return df
-
 
 if __name__ == "__main__":
     process_all_data(clear_data=False)
