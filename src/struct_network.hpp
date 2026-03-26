@@ -2,93 +2,105 @@
 #define STRUCT_NETWORK_HPP
 
 #pragma once
-#include <vector>
-#include <numeric>
-#include <stdexcept>
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iostream>
+#include <numeric>
+#include <stdexcept>
+#include <vector>
+
 #include "rand_utils.hpp"
 
-using namespace std;
-
-#include <vector>
-#include <numeric>
-#include <functional>
-#include <random>
-#include <iostream>
-
-using namespace std;
-
 struct NetworkPattern {
-    int dim;                 // Dimensão da rede (2D ou 3D)
-    int num_colors;          // Número de cores
-    int seed;                // Semente do gerador aleatório
-    std::vector<int> shape;  // Forma da rede, ex: {L, L} ou {L, L, L}
-    std::vector<int> data;   // Estado por sítio
-    std::vector<double> rho; // Fração global por cor (aplicada na rede toda)
+    using state_t = int16_t;
 
-    // Construtores
+    int dim;                        // Dimensão da rede (2D ou 3D)
+    int num_colors;                 // Número de cores
+    int seed;                       // Semente do gerador aleatório
+    std::vector<int> shape;         // Forma da rede, ex: {L, L} ou {L, L, L}
+    std::vector<state_t> data;      // Estado por sítio
+    std::vector<double> rho;        // Fração global por cor (aplicada na rede toda)
+
     NetworkPattern(int dim_, const std::vector<int>& shape_, int num_colors_, const std::vector<double>& rho_)
-        : dim(dim_), shape(shape_), num_colors(num_colors_), rho(rho_) {
+        : dim(dim_),
+          num_colors(num_colors_),
+          seed(-1),
+          shape(shape_),
+          rho(rho_)
+    {
+        if (dim != 2 && dim != 3) {
+            throw std::invalid_argument("NetworkPattern: dim must be 2 or 3.");
+        }
+        if (static_cast<int>(shape.size()) != dim) {
+            throw std::invalid_argument("NetworkPattern: shape size must match dim.");
+        }
 
-        // Tamanho total da rede
-        int total_sites = std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
-        
-        // Inicializa a rede com todos os valores como -1 (sem cor)
-        data.resize(total_sites, -1);
+        const std::size_t total_sites = static_cast<std::size_t>(std::accumulate(
+            shape.begin(), shape.end(), 1LL, std::multiplies<long long>()));
+
+        // Inicializa a rede com todos os valores como -1 (sem cor / inativo sem cor)
+        data.assign(total_sites, static_cast<state_t>(-1));
     }
 
-    // Método para acessar um site específico (getter)
-    int get(int idx) const {
-        return data[idx];
+    inline int get(int idx) const {
+        return static_cast<int>(data[static_cast<std::size_t>(idx)]);
     }
 
-    // Método para modificar um site específico (setter)
-    void set(int idx, int value) {
-        data[idx] = value;
+    inline void set(int idx, int value) {
+        data[static_cast<std::size_t>(idx)] = static_cast<state_t>(value);
     }
 
-    // Método para limpar a rede, preenchendo tudo com -1 (cinza)
-    void clear() {
-        std::fill(data.begin(), data.end(), -1);
+    inline void clear() {
+        std::fill(data.begin(), data.end(), static_cast<state_t>(-1));
     }
 
-    // Função para imprimir a rede (para visualização)
     void print() const {
-        int idx = 0;
-        for (int i = 0; i < shape[0]; ++i) {
-            for (int j = 0; j < shape[1]; ++j) {
-                std::cout << get(idx++) << " ";
+        if (dim == 2) {
+            int idx = 0;
+            for (int i = 0; i < shape[0]; ++i) {
+                for (int j = 0; j < shape[1]; ++j) {
+                    std::cout << get(idx++) << ' ';
+                }
+                std::cout << '\n';
             }
-            std::cout << std::endl;
+            return;
+        }
+
+        const int plane = shape[0] * shape[1];
+        for (int k = 0; k < shape[2]; ++k) {
+            std::cout << "z = " << k << '\n';
+            int base = k * plane;
+            for (int i = 0; i < shape[0]; ++i) {
+                for (int j = 0; j < shape[1]; ++j) {
+                    std::cout << get(base + i * shape[1] + j) << ' ';
+                }
+                std::cout << '\n';
+            }
+            std::cout << '\n';
         }
     }
 
-    // Função para acessar o tamanho da rede
-    int size() const {
-        return data.size();
+    inline int size() const {
+        return static_cast<int>(data.size());
     }
 };
 
-
-
-// Struct to load (t, pt_i) and (t, Nt_i)
 struct TimeSeries {
     int num_colors;
-    vector<vector<double>> p_t;   // [cor][t]
-    vector<vector<int>>    Nt;    // [cor][t]
-    vector<int>            t;     // [t]
+    std::vector<std::vector<double>> p_t;   // [cor][t]
+    std::vector<std::vector<int>> Nt;       // [cor][t]
+    std::vector<int> t;                     // [t]
 };
 
 struct PercolationSeries {
-    vector<int> color_percolation;   // 1-based
-    vector<int> percolation_order;
-    vector<double> rho;              // por cor (0-based)
-    vector<int> M_size_at_perc;      // por evento
-    // SP armazenado internamente (opcional no writer)
-    vector<int>              sp_len;       // [cor] = #nós no caminho (ou -1)
-    vector<vector<int>> sp_path_lin;  // [cor] ids lineares (não será escrito)
+    std::vector<int> color_percolation;     // 1-based
+    std::vector<int> percolation_order;
+    std::vector<double> rho;                // por cor (0-based)
+    std::vector<int> M_size_at_perc;        // por evento
+    std::vector<int> sp_len;                // [cor] = #nós no caminho (ou -1)
+    std::vector<std::vector<int>> sp_path_lin; // [cor] ids lineares
 };
 
-#endif // network_hpp
+#endif // STRUCT_NETWORK_HPP
