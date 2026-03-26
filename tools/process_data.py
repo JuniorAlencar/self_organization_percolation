@@ -633,6 +633,20 @@ def _parse_fname(filepath: str) -> Optional[Tuple[float, float, int]]:
         return None
 
 
+def _discover_p0_values(all_jsons: List[str]) -> List[float]:
+    """Descobre automaticamente os grupos de p0 presentes nos nomes dos arquivos."""
+    found: set[float] = set()
+
+    for fp in all_jsons:
+        parsed = _parse_fname(fp)
+        if parsed is None:
+            continue
+        _, p0_file, _ = parsed
+        found.add(float(p0_file))
+
+    return sorted(found)
+
+
 def _parse_params_from_path(path: str) -> Optional[Tuple[str, int, int, float, int, float, int]]:
     m = PARAM_RE.search(path.replace("\\", "/"))
     if not m:
@@ -767,6 +781,12 @@ def compute_means_for_folder(
         print("[sample names check]")
         for fp in all_jsons[:5]:
             print("   ", os.path.basename(fp), "->", _parse_fname(fp))
+
+    if not p0_list:
+        p0_list = _discover_p0_values(all_jsons)
+        if verbose:
+            print(f"[auto-p0] grupos detectados em {data_dir}: {p0_list}")
+    selected_p0 = [float(p) for p in p0_list]
     bad_name_files = []
     current_seed_files = []
     for fp in all_jsons:
@@ -775,7 +795,7 @@ def compute_means_for_folder(
             bad_name_files.append(os.path.basename(fp))
             continue
         _, p0_file, _ = parsed
-        for p0 in p0_list:
+        for p0 in selected_p0:
             if abs(float(p0_file) - float(p0)) < 1e-12:
                 current_seed_files.append(os.path.basename(fp))
                 break
@@ -819,13 +839,14 @@ def compute_means_for_folder(
             "bootstrap": {"n_boot": int(n_boot), "rng_seed": int(rng_seed)},
             "rolling": {"window": None if window_roll is None else int(window_roll)},
             "seed_used": [],
+            "p0_groups_detected": [float(p) for p in selected_p0],
         },
         "p0_groups": [],
     }
 
     colors_per_sample_all: List[int] = []
 
-    for p0 in p0_list:
+    for p0 in selected_p0:
         files = []
         for fp in all_jsons:
             parsed = _parse_fname(fp)
@@ -1181,8 +1202,10 @@ def process_all_data(
     p0_lst: Optional[List[float]] = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    if p0_lst is None:
-        p0_lst = [1.0]
+    if p0_lst is not None:
+        p0_lst = [float(p) for p in p0_lst]
+        if len(p0_lst) == 0:
+            p0_lst = None
 
     sop_root = os.path.abspath(sop_root)
     raw_root = os.path.join(sop_root, "raw")

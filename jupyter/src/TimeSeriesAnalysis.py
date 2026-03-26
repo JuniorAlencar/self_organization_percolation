@@ -1719,102 +1719,43 @@ def to_serializable(a):
 # ------------------ Parâmetros do caminho ------------------
 base_root = "../Data/bond_percolation"
 
-
-def read_all_data_bundle(path, as_dataframe=False):
+def load_properties_bundle(filepath):
     """
-    Lê um 'all_data_bundle.json' e retorna os dados em um dicionário conveniente.
-    Opcionalmente, retorna também um DataFrame "longo" (uma linha por tempo).
+    Lê properties_mean_bundle.json no formato atual do pipeline.
 
-    Parâmetros
-    ----------
-    path : str | Path
-        Caminho para o arquivo all_data_bundle.json.
-    as_dataframe : bool, padrão False
-        Se True, retorna também um DataFrame com colunas:
-        [num_colors, rho, p0, order, num_samples, t, pt, pt_err].
-
-    Retorno
-    -------
-    bundle : dict
-        {
-          "meta": {"num_colors": int, "rho": float},
-          p0_value(float): {
-            "order_percolation_1": {"num_samples": int, "t": np.array, "pt": np.array, "pt_err": np.array},
-            "order_percolation_2": {...},
-            ...
-          },
-          ...
-        }
-    df (opcional) : pandas.DataFrame
-        Apenas se as_dataframe=True.
-    """
-    path = Path(path)
-    with path.open("r", encoding="utf-8") as f:
-        raw = json.load(f)
-
-    if "meta" not in raw or not isinstance(raw["meta"], dict):
-        raise ValueError("JSON inválido: campo 'meta' ausente ou malformado.")
-
-    meta = raw["meta"]
-    num_colors = meta.get("num_colors", None)
-    rho = meta.get("rho", None)
-
-    # Converter chaves "p0 = X" -> float X
-    p0_pat = re.compile(r"^\s*p0\s*=\s*(.+?)\s*$", re.IGNORECASE)
-
-    bundle = {"meta": {"num_colors": num_colors, "rho": rho}}
-    for k, v in raw.items():
-        if k == "meta":
-            continue
-        m = p0_pat.match(k)
-        if not m:
-            # ignora chaves inesperadas
-            continue
-        p0_val = float(m.group(1))
-
-        # Converte listas para np.array
-        orders_dict = {}
-        for ord_key, payload in v.items():
-            t = np.asarray(payload.get("t", []), dtype=float)
-            pt = np.asarray(payload.get("pt", []), dtype=float)
-            pt_err = np.asarray(payload.get("pt_err", []), dtype=float)
-            n = int(payload.get("num_samples", 0))
-            orders_dict[ord_key] = {
-                "num_samples": n,
-                "t": t,
-                "pt": pt,
-                "pt_err": pt_err
+    Retorna um dict indexado por p0:
+        result[p0] = {
+            "num_seeds": int,
+            "pc_sop": dict,
+            "colors": dict,
+            "orders": {
+                order_percolation: {
+                    ... dados de 'data' ...
+                }
             }
-        bundle[p0_val] = orders_dict
+        }
+    """
+    with open(filepath, "r", encoding="utf-8") as f:
+        js = json.load(f)
 
-    if not as_dataframe:
-        return bundle
+    result = {}
 
-    # Construir DataFrame longo
-    rows = []
-    for p0_val, orders in bundle.items():
-        if p0_val == "meta":
-            continue
-        for ord_key, d in orders.items():
-            n = d["num_samples"]
-            t = d["t"]
-            pt = d["pt"]
-            pt_err = d["pt_err"]
-            if len(t) != len(pt) or len(t) != len(pt_err):
-                raise ValueError(f"Tamanhos inconsistentes em {ord_key} para p0={p0_val}.")
-            for ti, vi, ei in zip(t, pt, pt_err):
-                rows.append({
-                    "num_colors": num_colors,
-                    "rho": rho,
-                    "p0": p0_val,
-                    "order": ord_key,
-                    "num_samples": n,
-                    "t": ti,
-                    "pt": vi,
-                    "pt_err": ei
-                })
-    df = pd.DataFrame(rows, columns=["num_colors","rho","p0","order","num_samples","t","pt","pt_err"])
-    return bundle, df
+    for group in js.get("p0_groups", []):
+        p0 = float(group["p0_value"])
+
+        orders_dict = {}
+        for ob in group.get("orders", []):
+            order = int(ob["order_percolation"])
+            orders_dict[order] = ob.get("data", {})
+
+        result[p0] = {
+            "num_seeds": int(group.get("num_seeds", 0)),
+            "pc_sop": group.get("pc_sop", {}),
+            "colors": group.get("colors", {}),
+            "orders": orders_dict,
+        }
+
+    return result
 
 
 import os

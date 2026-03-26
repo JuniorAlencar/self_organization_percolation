@@ -55,21 +55,33 @@ struct GridRegular {
 
     inline int neighbor_xm(const int idx) const {
         const int x = idx % SX;
+        if (grow_axis == 0) {
+            return (x == 0) ? -1 : (idx - 1);
+        }
         return (x == 0) ? (idx + (SX - 1)) : (idx - 1);
     }
 
     inline int neighbor_xp(const int idx) const {
         const int x = idx % SX;
+        if (grow_axis == 0) {
+            return (x == SX - 1) ? -1 : (idx + 1);
+        }
         return (x == SX - 1) ? (idx - (SX - 1)) : (idx + 1);
     }
 
     inline int neighbor_ym(const int idx) const {
         const int y = (idx / SX) % SY;
+        if (grow_axis == 1) {
+            return (y == 0) ? -1 : (idx - SX);
+        }
         return (y == 0) ? (idx + SX * (SY - 1)) : (idx - SX);
     }
 
     inline int neighbor_yp(const int idx) const {
         const int y = (idx / SX) % SY;
+        if (grow_axis == 1) {
+            return (y == SY - 1) ? -1 : (idx + SX);
+        }
         return (y == SY - 1) ? (idx - SX * (SY - 1)) : (idx + SX);
     }
 
@@ -88,12 +100,16 @@ struct GridRegular {
     }
 
     inline void for_each_neighbor(const int idx, const std::function<void(int)>& fn) const {
-        fn(neighbor_xm(idx));
-        fn(neighbor_xp(idx));
+        const int xm = neighbor_xm(idx);
+        const int xp = neighbor_xp(idx);
+        if (xm >= 0) fn(xm);
+        if (xp >= 0) fn(xp);
 
         if (dim >= 2) {
-            fn(neighbor_ym(idx));
-            fn(neighbor_yp(idx));
+            const int ym = neighbor_ym(idx);
+            const int yp = neighbor_yp(idx);
+            if (ym >= 0) fn(ym);
+            if (yp >= 0) fn(yp);
         }
 
         if (dim == 3) {
