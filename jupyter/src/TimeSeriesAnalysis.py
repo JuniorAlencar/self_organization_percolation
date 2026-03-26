@@ -1817,29 +1817,66 @@ def read_all_data_bundle(path, as_dataframe=False):
     return bundle, df
 
 
+import os
+import glob
+import random
+import re
+from typing import Optional
+
+FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+RE_P0 = re.compile(rf'P0_(?P<P0>{FLOAT})')
+RE_p0 = re.compile(rf'p0_(?P<p0>{FLOAT})')
+RE_seed = re.compile(r'seed_(?P<seed>\d+)', re.IGNORECASE)
+
+
 def select_random_json(directory: str, p0: float) -> Optional[str]:
     """
     Seleciona aleatoriamente um arquivo .json dentro de 'directory' cujo nome
-    contenha o p0 especificado no padrão:
-      P0_{P0:.2f}_p0_{p0:.2f}_seed_{seed}.json
+    contenha o p0 especificado, aceitando tanto o formato antigo quanto o novo.
+
+    Exemplos aceitos:
+      P0_0.10_p0_1.00_seed_123.json
+      light_seed_123_ts_20260319T135046_P0_0.10_p0_1.00.json
+      apolo1_seed_777_ts_..._P0_0.10_p0_1.00.json
 
     :param directory: Diretório onde estão os .json
-    :param p0: Valor de p0 a filtrar (será formatado em 2 casas decimais)
+    :param p0: Valor de p0 a filtrar
     :return: Caminho absoluto do .json selecionado, ou None se não encontrar
     """
     directory_abs = os.path.abspath(os.path.expanduser(directory))
     if not os.path.isdir(directory_abs):
         raise NotADirectoryError(f"Diretório inválido: {directory_abs}")
 
-    p0_str = f"{float(p0):.2f}"
-    pattern = os.path.join(directory_abs, f"P0_*_p0_{p0_str}_seed_*.json")
-    files = [f for f in glob.glob(pattern) if os.path.isfile(f)]
+    target_p0 = float(p0)
+    candidates = []
 
-    if not files:
-        print(f"Nenhum arquivo encontrado com p0={p0_str} em {directory_abs}.")
+    for f in glob.glob(os.path.join(directory_abs, "*.json")):
+        if not os.path.isfile(f):
+            continue
+
+        name = os.path.basename(f)
+
+        mP0 = RE_P0.search(name)
+        mp0 = RE_p0.search(name)
+        ms = RE_seed.search(name)
+
+        # exige que o arquivo tenha os três campos
+        if not (mP0 and mp0 and ms):
+            continue
+
+        try:
+            p0_file = float(mp0.group("p0"))
+        except Exception:
+            continue
+
+        if abs(p0_file - target_p0) < 1e-12:
+            candidates.append(f)
+
+    if not candidates:
+        print(f"Nenhum arquivo encontrado com p0={target_p0:.2f} em {directory_abs}.")
         return None
 
-    return os.path.abspath(random.choice(files))
+    return os.path.abspath(random.choice(candidates))
 
 def rolling_weighted_mean(y, sem, w):
     y = np.asarray(y, dtype=float)
@@ -1874,9 +1911,10 @@ def rolling_weighted_mean(y, sem, w):
         chi2r[i] = chi2ri
 
     return mu, se, chi2r
+
 def read_mean_json(N_COLORS:int, DIM:int, L:int, NT:int, K:float, RHO:float):
     filename = (
-        f"../Data/bond_percolation/num_colors_{N_COLORS}/dim_{DIM}/"
+        f"../SOP_data/published/bond_percolation/num_colors_{N_COLORS}/dim_{DIM}/"
         f"L_{L}/NT_constant/NT_{NT}/k_{K:.1e}/rho_{RHO:.4e}/properties_mean_bundle.json"
     )
     with open(filename, "r", encoding="utf-8") as f:

@@ -19,50 +19,42 @@ def read_network(path_dir, filename):
     shape      = tuple(data["shape"])
     rho        = data["rho"]
 
-    # matriz 3D (estava salva achatada em 'data')
-    mat3d = data["data"].reshape(shape)  # shape = (L, L, L)
+    # matriz reconstruída com a mesma convenção de indexação do C++
+    mat3d = data["data"].reshape(shape, order="F")
     return mat3d
 
-def convert_positions(path_dir, filename, output_filename ,dim):
-    fname = path_dir + filename
+def convert_positions(path_dir, filename, output_filename, dim):
     network = read_network(path_dir, filename)
 
-    # valores únicos só pra conferência (opcional)
     valores_unicos, contagens = np.unique(network, return_counts=True)
-    print(valores_unicos)
-    # índices de todos os sítios ativos (valor != -1)
-    coords_zyx = np.argwhere(network != -1)  # (z, y, x)
+    print("valores únicos:", valores_unicos)
+    print("contagens:", contagens)
 
-    # valores (cores) correspondentes
-    colors = network[network != -1]
+    coords = np.argwhere(network > 0)
+    colors = network[network > 0]
 
-    # mapeando para o sistema físico: x,y base; z altura
-
-    if(dim==3):
-        x = coords_zyx[:, 2]   # eixo 2 -> x
-        y = coords_zyx[:, 1]   # eixo 1 -> y
-        z = coords_zyx[:, 0]   # eixo 0 -> z
-
+    if dim == 3:
         df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "z": z,
-            "color": colors
+            "x": coords[:, 0].astype(int),
+            "y": coords[:, 1].astype(int),
+            "z": coords[:, 2].astype(int),
+            "color": colors.astype(int)
         })
-    
     else:
-        y = coords_zyx[:, 0]
-        x = coords_zyx[:, 1]
         df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "color": colors
+            "x": coords[:, 0].astype(int),
+            "y": coords[:, 1].astype(int),
+            "color": colors.astype(int)
         })
-    save_out = path_dir + output_filename
+
+    save_out = os.path.join(path_dir, output_filename)
+    if not save_out.endswith(".parquet"):
+        save_out += ".parquet"
 
     print(df_points.head())
-    print("Total de pontos ativos:", len(df_points))
-    df_points.to_csv(save_out, sep=',', index=False)
+    print("Total de pontos salvos:", len(df_points))
+
+    df_points.to_parquet(save_out, engine="pyarrow", compression="snappy", index=False)
 
 def convert_positions_sp(path_dir, filename, output_filename, dim):
     fname = path_dir + filename
@@ -247,123 +239,140 @@ def plot_3D_cut(dim, L, nc, rho, k, NT):
     print(f"network save in {path_out_network}")
     mlab.show()
 
+def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
+                 specific_color=None, show_base=False):
+    fn = path_dir + file_positions
 
-def plot_3D_full(dim, L, nc, rho, k, NT, seed, P0, specific_color=None):
-    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
-
-    file_positions = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/network_positions_P0_{P0:.2f}.csv"
-    seed = 1
-
-    # Create file positions, if dont exist
-    if not os.path.exists(file_positions):
+    if not os.path.exists(fn):
         print("file positions don't exist, create it...")
-        convert_positions(path_dir, f"P0_0.10_p0_1.00_seed_{seed}.npz", f"network_positions_P0_{P0:.2f}.csv", dim)
+        convert_positions(
+            path_dir,
+            filename,
+            f"network_positions_P0_{P0:.2f}.parquet",
+            3
+        )
         print("File with positions created")
 
     a = 0
     b = 0
-    seed = 1
 
-    df = pd.read_csv(path_dir + f"network_positions_P0_{P0:.2f}.csv")
+    df = pd.read_parquet(fn).copy()
 
-    cut = L * (1/2)
+    # garante inteiros e periodicidade transversal
+    df["x"] = ((df["x"].astype(int) + a) % L).astype(int)
+    df["y"] = ((df["y"].astype(int) + b) % L).astype(int)
+    df["z"] = df["z"].astype(int)
+    df["color"] = df["color"].astype(int)
 
-    # Ajuste as coordenadas x e y para levar em conta a e b
-    df['x'] = (df['x'] + a) % L
-    df['y'] = (df['y'] + b) % L
+    # se quiser garantir apenas sítios ativos
+    df = df[df["color"] > 0].copy()
 
     figure_size = (800, 800)
+    mlab.clf()
     mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
 
-    colors = [i+2 for i in range(nc)]
-    
+    colors = [i + 2 for i in range(nc)]
+
     colors_used = [
-        (0.9, 0.1, 0.1),   # 2 - red
-        (1.0, 0.5, 0.0),   # 3 - orange
-        (0.1, 0.9, 0.1),   # 4 - green
-        (0.1, 0.1, 0.9),   # 5 - blue
-        (0.8, 0.2, 0.8),   # 6 - purple
-        (0.2, 0.8, 0.8),   # 7 - teal
-        (1.0, 1.0, 0.0),   # 8 - yellow
-        (0.6, 0.4, 0.2),   # 9 - brown
-        (0.0, 0.0, 0.0),   # 10 - black
-        (0.65, 0.65, 0.65) # 11 - gray
+        (0.9, 0.1, 0.1),    # 2 - red
+        (1.0, 0.5, 0.0),    # 3 - orange
+        (0.1, 0.9, 0.1),    # 4 - green
+        (0.1, 0.1, 0.9),    # 5 - blue
+        (0.8, 0.2, 0.8),    # 6 - purple
+        (0.2, 0.8, 0.8),    # 7 - teal
+        (1.0, 1.0, 0.0),    # 8 - yellow
+        (0.6, 0.4, 0.2),    # 9 - brown
+        (0.0, 0.0, 0.0),    # 10 - black
+        (0.65, 0.65, 0.65)  # 11 - gray
     ]
 
-    if(specific_color==None):
+    if specific_color is None:
         for idx, color in enumerate(colors):
-                df_color = df[df['color'] == color]
+            df_color = df[df["color"] == color]
 
-                x = df_color['x']
-                y = df_color['y']
-                z = df_color['z']
-                
-                if len(x) > 0:
-                    pts = mlab.points3d(
-                    x, y, z,
-                    color=colors_used[idx],
-                    scale_factor=1,
-                    opacity=1.0,
-                    mode='cube'
-                )
-                # Ativar contorno preto nos cubos
-                pts.actor.property.edge_visibility = True
-                pts.actor.property.edge_color = (0, 0, 0)   # preto
-                pts.actor.property.line_width = 0.00         # espessura da borda (ajuste se quiser)
-        
-        path_out_network = path_dir + f"L{L}_seed{seed}_all.png"
-    
-    else:
-        if(specific_color not in colors):
-            print(f"color not accept, please enter with any color in list {colors}")
-        
-        else:
-            df_color = df[df['color'] == specific_color]
-            x = df_color['x']
-            y = df_color['y']
-            z = df_color['z']
+            if df_color.empty:
+                continue
 
-            if len(x) > 0:
-                pts = mlab.points3d(
+            x = df_color["x"].to_numpy()
+            y = df_color["y"].to_numpy()
+            z = df_color["z"].to_numpy()
+
+            pts = mlab.points3d(
                 x, y, z,
+                np.ones_like(x),
                 color=colors_used[idx],
-                scale_factor=1,
+                scale_factor=1.0,
                 opacity=1.0,
-                mode='cube'
+                mode="cube"
             )
-            # Ativar contorno preto nos cubos
             pts.actor.property.edge_visibility = True
-            pts.actor.property.edge_color = (0, 0, 0)   # preto
-            pts.actor.property.line_width = 0.00         # espessura da borda (ajuste se quiser)
+            pts.actor.property.edge_color = (0, 0, 0)
+            pts.actor.property.line_width = 0.00
+
+        if show_base:
+            path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}base.png"
+        else:
+            path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}all.png"
+
+    else:
+        if specific_color not in colors:
+            print(f"color not accept, please enter with any color in list {colors}")
+            return
+
+        idx = colors.index(specific_color)
+        df_color = df[df["color"] == specific_color]
+
+        if df_color.empty:
+            print(f"No points found for color {specific_color}")
+            return
+
+        x = df_color["x"].to_numpy()
+        y = df_color["y"].to_numpy()
+        z = df_color["z"].to_numpy()
+
+        pts = mlab.points3d(
+            x, y, z,
+            np.ones_like(x),
+            color=colors_used[idx],
+            scale_factor=1.0,
+            opacity=1.0,
+            mode="cube"
+        )
+        pts.actor.property.edge_visibility = True
+        pts.actor.property.edge_color = (0, 0, 0)
+        pts.actor.property.line_width = 0.00
+
+        if show_base:
+            path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}_base.png"
+        else:
             path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}.png"
-    
-    # Depois de plotar os pontos3d, lá no final, antes do mlab.show()
+
     mlab.outline(
-        extent=[0, L, 0, L, 0, L],  # [xmin, xmax, ymin, ymax, zmin, zmax]
-        color=(0, 0, 0),            # contorno preto
-        line_width=2.0              # espessura da linha
+        extent=[0, L, 0, L, 0, L],
+        color=(0, 0, 0),
+        line_width=2.0
     )
 
-    center = (L/2, L/2, L/2)
-
-    mlab.view(
-        azimuth=70,
-        elevation=65,
-        distance=3.1 * L,      # bem mais perto que 3.25*L
-        focalpoint=center      # olha pro centro da rede
-    )
+    if show_base:
+        mlab.view(
+            azimuth=0,
+            elevation=-90,
+            distance=2.8 * L,
+            focalpoint=(L / 2, L / 2, 0)
+        )
+    else:
+        mlab.view(
+            azimuth=70,
+            elevation=65,
+            distance=3.1 * L,
+            focalpoint=(L / 2, L / 2, L / 2)
+        )
 
     mlab.savefig(path_out_network, magnification=4)
     print(f"network save in {path_out_network}")
     mlab.show()
 
-
-def plot_3D_full_with_planes(dim, L, nc, rho, k, NT, specific_color=None):
-    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
-
-    file_positions = f"{path_dir}network_positions.csv"
-    seed = 1
-
+def plot_3D_full_with_planes(path_dir, file_positions, specific_color=None):
     # Create file positions, if dont exist
     if not os.path.exists(file_positions):
         print("file positions don't exist, create it...")
@@ -566,10 +575,8 @@ def convert_positions_animation(path_dir, filename, dim, time_base=TIME_BASE_3D)
 
 from matplotlib import patches  # coloque no topo do arquivo
 
-def plot_projection(dim, L, nc, rho, k, NT , P0, z_level):
-    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.2f}_k{k:.1e}_Nt{NT}/"
-    file_positions = f"{path_dir}network_positions_P0_{P0:.2f}.csv"
-    seed = 1
+def plot_projection(path_dir, file_positions, L, P0, seed, filename, z_level):
+    fn = path_dir + file_positions
 
     colors_used = [
         (0.9, 0.1, 0.1),  # 2 - red
@@ -582,20 +589,17 @@ def plot_projection(dim, L, nc, rho, k, NT , P0, z_level):
         (0.6, 0.4, 0.2),  # 9 - brown
     ]
 
-    if not os.path.exists(file_positions):
+    if not os.path.exists(fn):
         print("file positions don't exist, create it...")
-        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz",f"network_positions_P0_{P0:.2f}.csv", dim)
+        convert_positions(path_dir, filename, f"network_positions_P0_{P0:.2f}.parquet", 3)
         print("File with positions created")
-    df = pd.read_csv(file_positions)
 
-    df_sub = df[df['z'] == z_level].copy()
+    df = pd.read_parquet(fn)
+    df_sub = df[df["z"] == z_level].copy()
 
     a, b = 0, 0
-    df_sub.loc[:, "x"] = (df_sub["x"] + a) % L
-    df_sub.loc[:, "y"] = (df_sub["y"] + b) % L
-
-    df_sub["x"] = df_sub["x"].astype(int)
-    df_sub["y"] = df_sub["y"].astype(int)
+    df_sub.loc[:, "x"] = ((df_sub["x"] + a) % L).astype(int)
+    df_sub.loc[:, "y"] = ((df_sub["y"] + b) % L).astype(int)
 
     color_values = sorted(df_sub["color"].unique())
 
@@ -606,33 +610,37 @@ def plot_projection(dim, L, nc, rho, k, NT , P0, z_level):
         mask = (df_sub["color"] == c)
         xs = df_sub.loc[mask, "x"].to_numpy()
         ys = df_sub.loc[mask, "y"].to_numpy()
-        img[ys, xs] = idx
+        img[xs, ys] = idx
 
     cmap = ListedColormap([(1.0, 1.0, 1.0)] + colors_used[:len(color_values)])
 
     fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
-    im = ax.imshow(
-        img,
+    ax.imshow(
+        img.T,
         origin="lower",
         cmap=cmap,
-        interpolation="nearest"
+        interpolation="nearest",
+        vmin=0,
+        vmax=len(color_values)
     )
 
-    # --- Moldura preta em torno da imagem ---
-    height, width = img.shape
     rect = patches.Rectangle(
-        (-0.5, -0.5),       # canto inferior esquerdo
-        width, height,      # largura, altura
+        (-0.5, -0.5),
+        L,
+        L,
         linewidth=1.5,
         edgecolor="black",
         facecolor="none"
     )
     ax.add_patch(rect)
-    # ----------------------------------------
 
     ax.set_axis_off()
     plt.tight_layout(pad=0)
-    plt.savefig(path_dir + f"projection_z_{z_level}.png", bbox_inches="tight", pad_inches=0)
+    plt.savefig(
+        path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}_projectionz_{z_level}.png",
+        bbox_inches="tight",
+        pad_inches=0
+    )
     plt.show()
 
     
