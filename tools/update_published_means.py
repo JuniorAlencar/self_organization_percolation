@@ -25,7 +25,8 @@ def main() -> None:
     parser.add_argument("--sop-root", default=str(default_sop_root()))
     parser.add_argument("--clear-data", action="store_true")
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--p0", nargs="*", type=float, default=[1.0])
+    parser.add_argument("--p0", nargs="*", type=float, default=None,
+                        help="Lista explícita de p0 a processar. Se omitido, detecta automaticamente todos os p0 presentes em cada pasta.")
 
     args = parser.parse_args()
     sop_root = Path(args.sop_root).expanduser().resolve()

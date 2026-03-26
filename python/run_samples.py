@@ -18,13 +18,14 @@ import numpy as np
 # stop = 1/nc
 # n_points = 100
 # rho = custom_range(start, stop, n_points)
-nc = 2
+nc = 1
 L_lst = [128, 256, 512, 1024]
 f = [round(i, 2) for i in np.arange(0.01, 0.26, 0.01)]
 #Nt = [[int(fraction*L**2) for fraction in f] for L in L_lst]
-#start = 0.001
-#stop = 1/nc
-#n_points = 50
+#f0 = 0.02
+start = 0.33
+stop = 1/nc
+n_points = 25
 #rho = custom_range(start, stop, n_points)
 rho = 1/nc
 f0 = 0.02
@@ -36,12 +37,12 @@ seed = -1
 dim = 3
 #nc=2
 P0 = 0.1
-num_threads = [11, 11, 11, 1]
+num_threads = [20, 20, 20, 9]
 multi=True
 
 for idx, L in enumerate(L_lst):
-        Nt_lst = [int(f0*L**2) for f0 in f]  
-        for NT in Nt_lst:
+        NT_lst = [int(f0*L**2) for f0 in f]
+        for NT in NT_lst:
             exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}.sh"
             shell_data(L, type_perc, p0, seed, k, NT, dim,
                     nc, num_runs[idx], [rho], exec_name, P0, num_threads[idx], multi)

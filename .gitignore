@@ -11,6 +11,9 @@
 /network
 /results
 
+.pyenv
+
 shells/*.sh
 !shells/run_all.sh
+!shells/install_python_dependencies.sh
 shells/after/

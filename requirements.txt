@@ -1,0 +1,11 @@
+IPython
+Pillow
+PyYAML
+imageio
+matplotlib
+mayavi
+mpl_tools
+numpy
+pandas
+scipy
+tqdm

@@ -5,6 +5,10 @@ shopt -s nullglob
 
 self="$(realpath "$0")"
 
+EXCLUDED_SCRIPTS=(
+  "install_python_dependencies.sh"
+)
+
 LIMIT_CPU_CLOCK="${LIMIT_CPU_CLOCK:-1}"
 CPU_MAX_FREQ="${CPU_MAX_FREQ:-4.0GHz}"
 CPU_GOVERNOR="${CPU_GOVERNOR:-ondemand}"
@@ -90,6 +94,14 @@ apply_cpu_limit() {
   echo "[INFO] CPU clock limit applied successfully."
 }
 
+is_excluded_script() {
+  local name="$1"
+  for excluded in "${EXCLUDED_SCRIPTS[@]}"; do
+    [[ "$name" == "$excluded" ]] && return 0
+  done
+  return 1
+}
+
 trap cleanup EXIT
 
 apply_cpu_limit
@@ -97,7 +109,10 @@ apply_cpu_limit
 mapfile -t scripts < <(printf '%s\n' ./*.sh | sort -V)
 
 for f in "${scripts[@]}"; do
+  base="$(basename "$f")"
+
   [[ "$(realpath "$f")" == "$self" ]] && continue
+  is_excluded_script "$base" && continue
 
   echo ">> Running $f"
   if ! "$f"; then
