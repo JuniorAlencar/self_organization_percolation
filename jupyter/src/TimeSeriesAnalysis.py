@@ -1770,10 +1770,16 @@ RE_p0 = re.compile(rf'p0_(?P<p0>{FLOAT})')
 RE_seed = re.compile(r'seed_(?P<seed>\d+)', re.IGNORECASE)
 
 
-def select_random_json(directory: str, p0: float) -> Optional[str]:
+import os
+import glob
+import random
+from typing import Optional, Set
+
+def select_random_json(directory: str, p0: float, used_files: Optional[Set[str]] = None) -> Optional[str]:
     """
     Seleciona aleatoriamente um arquivo .json dentro de 'directory' cujo nome
-    contenha o p0 especificado, aceitando tanto o formato antigo quanto o novo.
+    contenha o p0 especificado, aceitando tanto o formato antigo quanto o novo,
+    evitando repetir arquivos já sorteados em 'used_files'.
 
     Exemplos aceitos:
       P0_0.10_p0_1.00_seed_123.json
@@ -1782,11 +1788,15 @@ def select_random_json(directory: str, p0: float) -> Optional[str]:
 
     :param directory: Diretório onde estão os .json
     :param p0: Valor de p0 a filtrar
+    :param used_files: Conjunto de arquivos já usados; esses serão ignorados
     :return: Caminho absoluto do .json selecionado, ou None se não encontrar
     """
     directory_abs = os.path.abspath(os.path.expanduser(directory))
     if not os.path.isdir(directory_abs):
         raise NotADirectoryError(f"Diretório inválido: {directory_abs}")
+
+    if used_files is None:
+        used_files = set()
 
     target_p0 = float(p0)
     candidates = []
@@ -1795,7 +1805,13 @@ def select_random_json(directory: str, p0: float) -> Optional[str]:
         if not os.path.isfile(f):
             continue
 
-        name = os.path.basename(f)
+        f_abs = os.path.abspath(f)
+
+        # ignora arquivos já usados
+        if f_abs in used_files:
+            continue
+
+        name = os.path.basename(f_abs)
 
         mP0 = RE_P0.search(name)
         mp0 = RE_p0.search(name)
@@ -1811,13 +1827,19 @@ def select_random_json(directory: str, p0: float) -> Optional[str]:
             continue
 
         if abs(p0_file - target_p0) < 1e-12:
-            candidates.append(f)
+            candidates.append(f_abs)
 
     if not candidates:
-        print(f"Nenhum arquivo encontrado com p0={target_p0:.2f} em {directory_abs}.")
+        print(
+            f"Nenhum arquivo novo encontrado com p0={target_p0:.2f} "
+            f"em {directory_abs}."
+        )
         return None
 
-    return os.path.abspath(random.choice(candidates))
+    chosen = random.choice(candidates)
+    used_files.add(chosen)
+
+    return chosen
 
 def rolling_weighted_mean(y, sem, w):
     y = np.asarray(y, dtype=float)
