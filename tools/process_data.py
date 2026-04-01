@@ -432,16 +432,16 @@ def _sanitize_for_json(obj: Any) -> Any:
     return obj
 
 
-def _load_orders_new(fp: str) -> dict[int, dict]:
+def _load_orders_new(fp: str) -> Optional[dict[int, dict]]:
     try:
         with open(fp, "r", encoding="utf-8") as f:
             js = json.load(f)
     except json.JSONDecodeError:
         print(f"[warn] JSON inválido ignorado: {fp}")
-        return {}
+        return None
     except OSError as ex:
         print(f"[warn] Falha ao abrir {fp}: {ex}")
-        return {}
+        return None
 
     results = js.get("results", {})
     if not isinstance(results, dict):
@@ -868,19 +868,31 @@ def compute_means_for_folder(
         per_order_seed_series: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = defaultdict(list)
 
         seeds_set: set[int] = set()
+        seeds_total_set: set[int] = set()
+        seeds_non_perc_set: set[int] = set()
         valid_files = 0
         colors_per_sample_this_p0: List[int] = []
 
         for fp in files:
             orders = _load_orders_new(fp)
-            if not orders:
+            if orders is None:
                 continue
 
-            colors_per_sample_this_p0.append(len(orders))
-            colors_per_sample_all.append(len(orders))
-            valid_files += 1
+            n_orders = len(orders)
+            colors_per_sample_this_p0.append(n_orders)
+            colors_per_sample_all.append(n_orders)
 
             seed = _extract_seed_from_filename(fp)
+            if seed is not None:
+                seeds_total_set.add(seed)
+
+            if not orders:
+                if seed is not None:
+                    seeds_non_perc_set.add(seed)
+                continue
+
+            valid_files += 1
+
             if seed is not None:
                 seeds_set.add(seed)
 
@@ -905,17 +917,20 @@ def compute_means_for_folder(
 
                 per_order[ordk].append(data_local)
 
-        if verbose:
-            print(f"[debug] p0={p0:.2f} | valid_files={valid_files}")
+        total_files_this_p0 = len(colors_per_sample_this_p0)
 
-        if valid_files == 0:
-            if verbose:
-                print(f"[warn] p0={p0:.2f}: nenhum arquivo válido lido -> pulando grupo")
-            continue
+        if verbose:
+            print(
+                f"[debug] p0={p0:.2f} | total_files={total_files_this_p0} "
+                f"| valid_files={valid_files} | non_perc={total_files_this_p0 - valid_files}"
+            )
 
         mean_by_order: Dict[int, Dict[str, Any]] = {}
         for ordk, lst in per_order.items():
             mean_by_order[ordk] = _average_by_order_new(lst)
+            mean_by_order[ordk]["n_samples_perc"] = int(len(lst))
+            mean_by_order[ordk]["n_samples_total"] = int(total_files_this_p0)
+            mean_by_order[ordk]["n_samples_non_perc"] = int(total_files_this_p0 - len(lst))
 
         series_mean = []
         for ordk in sorted(mean_by_order.keys()):
@@ -993,6 +1008,11 @@ def compute_means_for_folder(
         p0_group = {
             "p0_value": float(p0),
             "num_seeds": len(seeds_set),
+            "num_seeds_total": len(seeds_total_set),
+            "num_seeds_non_percolating": len(seeds_non_perc_set),
+            "num_samples_total": int(total_files_this_p0),
+            "num_samples_percolating_any_order": int(valid_files),
+            "num_samples_non_percolating": int(total_files_this_p0 - valid_files),
             "orders": orders_blocks,
             "pc_sop": {
                 "mean": _safe_float(pc_mean),
@@ -1072,7 +1092,10 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
 
         for g in p0_groups:
             p0_val = _safe_float(g.get("p0_value", float("nan")))
-            N_samples = int(g.get("num_seeds", 0) or 0)
+            colors_block = g.get("colors", {}) if isinstance(g.get("colors", {}), dict) else {}
+            N_samples = int(
+                g.get("num_samples_total", colors_block.get("Nsamples", g.get("num_seeds_total", g.get("num_seeds", 0)))) or 0
+            )
 
             orders = g.get("orders", [])
             if not isinstance(orders, list) or len(orders) == 0:
@@ -1085,6 +1108,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
 
                 order = int(ordk) + 1
                 d = ob.get("data", {}) or {}
+                N_samples_perc = int(d.get("n_samples_perc", 0) or 0)
 
                 pc_block = d.get("pc_sop", {}) if isinstance(d.get("pc_sop", {}), dict) else {}
                 p_mean = _safe_float(pc_block.get("mean", float("nan")))
@@ -1108,6 +1132,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
                     "P0": P0_mean,
                     "order": order,
                     "N_samples": N_samples,
+                    "N_samples_perc": N_samples_perc,
                     "p_mean": p_mean,
                     "p_err": p_err,
                     "shortest_path": shortest_path,
@@ -1118,7 +1143,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
 
     cols = [
         "type_perc", "dim", "L", "Nt", "k", "nc", "rho", "p0", "P0",
-        "order", "N_samples",
+        "order", "N_samples", "N_samples_perc",
         "p_mean", "p_err",
         "shortest_path", "shortest_path_err",
         "S_perc", "S_perc_err",
