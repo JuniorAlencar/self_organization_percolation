@@ -64,3 +64,13 @@ lines.markeredgewidth : 0.8
 
 #--- Thickness of box plot----
 axes.linewidth : 2.0
+
+legend.handlelength  : 0.8
+legend.handletextpad : 0.35
+legend.labelspacing  : 0.25
+legend.borderpad     : 0.20
+legend.borderaxespad : 0.20
+legend.columnspacing : 0.60
+legend.markerscale   : 1.0
+legend.numpoints     : 1
+legend.scatterpoints : 1
