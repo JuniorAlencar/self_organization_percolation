@@ -1775,11 +1775,17 @@ import glob
 import random
 from typing import Optional, Set
 
-def select_random_json(directory: str, p0: float, used_files: Optional[Set[str]] = None) -> Optional[str]:
+def select_random_json(
+    directory: str,
+    p0: float,
+    P0: float,
+    used_files: Optional[Set[str]] = None
+) -> Optional[str]:
     """
     Seleciona aleatoriamente um arquivo .json dentro de 'directory' cujo nome
-    contenha o p0 especificado, aceitando tanto o formato antigo quanto o novo,
-    evitando repetir arquivos já sorteados em 'used_files'.
+    contenha simultaneamente os valores especificados de P0 e p0, aceitando
+    tanto o formato antigo quanto o novo, e evitando repetir arquivos já
+    sorteados em 'used_files'.
 
     Exemplos aceitos:
       P0_0.10_p0_1.00_seed_123.json
@@ -1788,6 +1794,7 @@ def select_random_json(directory: str, p0: float, used_files: Optional[Set[str]]
 
     :param directory: Diretório onde estão os .json
     :param p0: Valor de p0 a filtrar
+    :param P0: Valor de P0 a filtrar
     :param used_files: Conjunto de arquivos já usados; esses serão ignorados
     :return: Caminho absoluto do .json selecionado, ou None se não encontrar
     """
@@ -1799,6 +1806,7 @@ def select_random_json(directory: str, p0: float, used_files: Optional[Set[str]]
         used_files = set()
 
     target_p0 = float(p0)
+    target_P0 = float(P0)
     candidates = []
 
     for f in glob.glob(os.path.join(directory_abs, "*.json")):
@@ -1822,17 +1830,18 @@ def select_random_json(directory: str, p0: float, used_files: Optional[Set[str]]
             continue
 
         try:
+            P0_file = float(mP0.group("P0"))
             p0_file = float(mp0.group("p0"))
         except Exception:
             continue
 
-        if abs(p0_file - target_p0) < 1e-12:
+        if abs(P0_file - target_P0) < 1e-12 and abs(p0_file - target_p0) < 1e-12:
             candidates.append(f_abs)
 
     if not candidates:
         print(
-            f"Nenhum arquivo novo encontrado com p0={target_p0:.2f} "
-            f"em {directory_abs}."
+            f"Nenhum arquivo novo encontrado com P0={target_P0:.2f} "
+            f"e p0={target_p0:.2f} em {directory_abs}."
         )
         return None
 

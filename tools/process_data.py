@@ -633,18 +633,44 @@ def _parse_fname(filepath: str) -> Optional[Tuple[float, float, int]]:
         return None
 
 
-def _discover_p0_values(all_jsons: List[str]) -> List[float]:
-    """Descobre automaticamente os grupos de p0 presentes nos nomes dos arquivos."""
-    found: set[float] = set()
+def _discover_sample_groups(
+    all_jsons: List[str],
+    *,
+    p0_filter: Optional[List[float]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Agrupa os arquivos pelo par exato (P0, p0) lido diretamente do nome do arquivo.
+
+    Isso evita misturar amostras que compartilham o mesmo diretório físico, mas têm
+    valores diferentes de P0. O problema observado em all_data.dat vinha justamente
+    de colapsar tudo apenas por p0 e depois reconstruir P0 por média dos filenames.
+    """
+    groups: Dict[Tuple[float, float], List[str]] = defaultdict(list)
 
     for fp in all_jsons:
         parsed = _parse_fname(fp)
         if parsed is None:
             continue
-        _, p0_file, _ = parsed
-        found.add(float(p0_file))
 
-    return sorted(found)
+        P0_file, p0_file, _ = parsed
+
+        if p0_filter is not None:
+            keep = any(abs(float(p0_file) - float(p0_sel)) < 1e-12 for p0_sel in p0_filter)
+            if not keep:
+                continue
+
+        groups[(float(P0_file), float(p0_file))].append(fp)
+
+    out: List[Dict[str, Any]] = []
+    for (P0_val, p0_val), files in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        out.append({
+            "P0": float(P0_val),
+            "p0": float(p0_val),
+            "files": sorted(files),
+            "n_files": len(files),
+        })
+
+    return out
 
 
 def _parse_params_from_path(path: str) -> Optional[Tuple[str, int, int, float, int, float, int]]:
@@ -686,6 +712,58 @@ def _parse_P0_p0_from_seed_used(seed_used: List[str]) -> Tuple[float, float]:
         return float("nan"), float("nan")
 
     return float(np.mean(P0_vals)), float(np.mean(p0_vals))
+
+
+def _tail_stats_from_mean_series(
+    t: np.ndarray,
+    y: np.ndarray,
+    sem: np.ndarray,
+    t0: float,
+) -> Tuple[float, float, int]:
+    """
+    Calcula o valor assintótico a partir da série média y(t) e de seu erro padrão.
+
+    A partir de t0, usa média ponderada por 1/sem^2 quando houver sem finito e
+    positivo; caso contrário, cai para a média simples da cauda.
+    """
+    t = np.asarray(t, dtype=float)
+    y = np.asarray(y, dtype=float)
+    sem = np.asarray(sem, dtype=float)
+
+    if t.size == 0 or y.size == 0 or sem.size == 0 or not np.isfinite(t0):
+        return float("nan"), float("nan"), 0
+
+    n = min(t.size, y.size, sem.size)
+    t = t[:n]
+    y = y[:n]
+    sem = sem[:n]
+
+    idx = idx_from_t0(t, t0)
+    if idx >= n:
+        return float("nan"), float("nan"), 0
+
+    t_tail = t[idx:]
+    y_tail = y[idx:]
+    sem_tail = sem[idx:]
+
+    mask = np.isfinite(t_tail) & np.isfinite(y_tail)
+    y_tail = y_tail[mask]
+    sem_tail = sem_tail[mask]
+
+    if y_tail.size == 0:
+        return float("nan"), float("nan"), 0
+
+    sem_mask = np.isfinite(sem_tail) & (sem_tail > 0)
+    if np.any(sem_mask):
+        mu, se = weighted_mean_and_sem(y_tail[sem_mask], sem_tail[sem_mask])
+        return float(mu), float(se), int(np.count_nonzero(sem_mask))
+
+    mu = float(np.mean(y_tail))
+    if y_tail.size > 1:
+        se = float(np.std(y_tail, ddof=1) / np.sqrt(y_tail.size))
+    else:
+        se = 0.0
+    return mu, se, int(y_tail.size)
 
 def _manifest_path(manifest_root: str | Path, rel_group_dir: str | Path) -> Path:
     return Path(manifest_root) / Path(rel_group_dir) / "manifest.json"
@@ -782,25 +860,19 @@ def compute_means_for_folder(
         for fp in all_jsons[:5]:
             print("   ", os.path.basename(fp), "->", _parse_fname(fp))
 
-    if not p0_list:
-        p0_list = _discover_p0_values(all_jsons)
-        if verbose:
-            print(f"[auto-p0] grupos detectados em {data_dir}: {p0_list}")
-    selected_p0 = [float(p) for p in p0_list]
-    bad_name_files = []
-    current_seed_files = []
-    for fp in all_jsons:
-        parsed = _parse_fname(fp)
-        if parsed is None:
-            bad_name_files.append(os.path.basename(fp))
-            continue
-        _, p0_file, _ = parsed
-        for p0 in selected_p0:
-            if abs(float(p0_file) - float(p0)) < 1e-12:
-                current_seed_files.append(os.path.basename(fp))
-                break
+    selected_p0_filter = None if not p0_list else [float(p) for p in p0_list]
+    selected_groups = _discover_sample_groups(all_jsons, p0_filter=selected_p0_filter)
 
-    current_seed_files = sorted(set(current_seed_files))
+    if verbose:
+        detected_pairs = [(g["P0"], g["p0"]) for g in selected_groups]
+        print(f"[auto-groups] grupos detectados em {data_dir}: {detected_pairs}")
+
+    bad_name_files = []
+    for fp in all_jsons:
+        if _parse_fname(fp) is None:
+            bad_name_files.append(os.path.basename(fp))
+
+    current_seed_files = sorted({os.path.basename(fp) for g in selected_groups for fp in g["files"]})
 
     if bad_name_files and verbose:
         print(f"[warn] {data_dir}: {len(bad_name_files)} arquivo(s) com nome fora do padrão flexível")
@@ -839,39 +911,45 @@ def compute_means_for_folder(
             "bootstrap": {"n_boot": int(n_boot), "rng_seed": int(rng_seed)},
             "rolling": {"window": None if window_roll is None else int(window_roll)},
             "seed_used": [],
-            "p0_groups_detected": [float(p) for p in selected_p0],
+            "p0_groups_detected": sorted({float(g["p0"]) for g in selected_groups}),
+            "P0_groups_detected": sorted({float(g["P0"]) for g in selected_groups}),
+            "sample_groups_detected": [
+                {
+                    "P0_value": float(g["P0"]),
+                    "p0_value": float(g["p0"]),
+                    "n_files": int(g["n_files"]),
+                }
+                for g in selected_groups
+            ],
         },
         "p0_groups": [],
     }
 
     colors_per_sample_all: List[int] = []
 
-    for p0 in selected_p0:
-        files = []
-        for fp in all_jsons:
-            parsed = _parse_fname(fp)
-            if parsed is None:
-                continue
-            _, p0_file, _ = parsed
-            if abs(float(p0_file) - float(p0)) < 1e-12:
-                files.append(fp)
+    for group in selected_groups:
+        P0_value = float(group["P0"])
+        p0_value = float(group["p0"])
+        files = list(group["files"])
 
         if verbose:
-            print(f"[debug] data_dir={data_dir} | p0={p0:.2f} | files={len(files)}")
+            print(
+                f"[debug] data_dir={data_dir} | P0={P0_value:.2f} | "
+                f"p0={p0_value:.2f} | files={len(files)}"
+            )
 
         if not files:
             if verbose:
-                print(f"[aviso] Sem arquivos para p0={p0:.2f}")
+                print(f"[aviso] Sem arquivos para P0={P0_value:.2f}, p0={p0_value:.2f}")
             continue
 
         per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
-        per_order_seed_series: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = defaultdict(list)
 
         seeds_set: set[int] = set()
         seeds_total_set: set[int] = set()
         seeds_non_perc_set: set[int] = set()
         valid_files = 0
-        colors_per_sample_this_p0: List[int] = []
+        colors_per_sample_this_group: List[int] = []
 
         for fp in files:
             orders = _load_orders_new(fp)
@@ -879,7 +957,7 @@ def compute_means_for_folder(
                 continue
 
             n_orders = len(orders)
-            colors_per_sample_this_p0.append(n_orders)
+            colors_per_sample_this_group.append(n_orders)
             colors_per_sample_all.append(n_orders)
 
             seed = _extract_seed_from_filename(fp)
@@ -908,76 +986,86 @@ def compute_means_for_folder(
                     if data_local.get("nt") is not None:
                         data_local["nt"] = np.asarray(data_local["nt"], dtype=float)[m]
 
-                if data_local.get("t") is not None and data_local.get("pt") is not None:
-                    t_seed = np.asarray(data_local["t"], dtype=float)
-                    pt_seed = np.asarray(data_local["pt"], dtype=float)
-                    n0 = min(t_seed.size, pt_seed.size)
-                    if n0 > 1:
-                        per_order_seed_series[ordk].append((t_seed[:n0], pt_seed[:n0]))
-
                 per_order[ordk].append(data_local)
 
-        total_files_this_p0 = len(colors_per_sample_this_p0)
+        total_files_this_group = len(colors_per_sample_this_group)
 
         if verbose:
             print(
-                f"[debug] p0={p0:.2f} | total_files={total_files_this_p0} "
-                f"| valid_files={valid_files} | non_perc={total_files_this_p0 - valid_files}"
+                f"[debug] P0={P0_value:.2f} | p0={p0_value:.2f} | total_files={total_files_this_group} "
+                f"| valid_files={valid_files} | non_perc={total_files_this_group - valid_files}"
             )
 
         mean_by_order: Dict[int, Dict[str, Any]] = {}
         for ordk, lst in per_order.items():
             mean_by_order[ordk] = _average_by_order_new(lst)
             mean_by_order[ordk]["n_samples_perc"] = int(len(lst))
-            mean_by_order[ordk]["n_samples_total"] = int(total_files_this_p0)
-            mean_by_order[ordk]["n_samples_non_perc"] = int(total_files_this_p0 - len(lst))
+            mean_by_order[ordk]["n_samples_total"] = int(total_files_this_group)
+            mean_by_order[ordk]["n_samples_non_perc"] = int(total_files_this_group - len(lst))
 
-        series_mean = []
+        t0_by_order: Dict[int, float] = {}
         for ordk in sorted(mean_by_order.keys()):
             d = mean_by_order[ordk]
             if not d.get("time") or not d.get("pt_mean") or not d.get("pt_sem"):
                 continue
+
             t = np.asarray(d["time"], dtype=float)
             pt = np.asarray(d["pt_mean"], dtype=float)
             pt_sem = np.asarray(d["pt_sem"], dtype=float)
-            if t.size > 0:
-                series_mean.append((ordk, t, pt, pt_sem))
+            n0 = min(t.size, pt.size, pt_sem.size)
+            if n0 == 0:
+                continue
 
-        t0_list = []
-        for (_, t, pt, pt_sem) in series_mean:
+            t = t[:n0]
+            pt = pt[:n0]
+            pt_sem = pt_sem[:n0]
+
             idx0 = detect_equilibrium_start_with_errors(
-                t, pt, pt_sem, w=40, consec=6, z=2.0, chi2r_max=2.0
+                t,
+                pt,
+                pt_sem,
+                w=40,
+                consec=6,
+                z=2.0,
+                chi2r_max=2.0,
             )
             idx0 = int(np.clip(idx0, 0, len(t) - 1))
-            t0_list.append(float(t[idx0]))
-        t0_global = float(max(t0_list)) if t0_list else float("nan")
+            t0_by_order[ordk] = float(t[idx0])
+            mean_by_order[ordk]["t_eq"] = float(t[idx0])
+            mean_by_order[ordk]["t_eq_source"] = "detected from ensemble-mean pt"
+
+        t0_global = float(max(t0_by_order.values())) if t0_by_order else float("nan")
 
         pc_by_order: Dict[int, Tuple[float, float, int]] = {}
         for ordk in sorted(mean_by_order.keys()):
-            runs = []
-            for (t_seed, pt_seed) in per_order_seed_series.get(ordk, []):
-                if not np.isfinite(t0_global):
-                    continue
-                idx = idx_from_t0(t_seed, t0_global)
-                if idx >= pt_seed.size:
-                    continue
-                s = tail_mean(pt_seed[idx:], tail_frac=0.2, method="autocorr")
-                if np.isfinite(s["mean"]) and np.isfinite(s["sem"]) and (s["sem"] > 0):
-                    runs.append({"mean": float(s["mean"]), "sem": float(s["sem"])})
+            d = mean_by_order[ordk]
+            if not d.get("time") or not d.get("pt_mean") or not d.get("pt_sem"):
+                pc_by_order[ordk] = (float("nan"), float("nan"), 0)
+                continue
 
-            combo = combine_tail_means(runs, random_effects=True)
-            pc_i_mean = float(combo["mean"])
-            pc_i_sem = float(combo["se"])
-            n_used = int(combo.get("R", 0))
-            pc_by_order[ordk] = (pc_i_mean, pc_i_sem, n_used)
+            t = np.asarray(d["time"], dtype=float)
+            pt = np.asarray(d["pt_mean"], dtype=float)
+            pt_sem = np.asarray(d["pt_sem"], dtype=float)
+            n0 = min(t.size, pt.size, pt_sem.size)
+            if n0 == 0:
+                pc_by_order[ordk] = (float("nan"), float("nan"), 0)
+                continue
+
+            pc_i_mean, pc_i_sem, n_tail = _tail_stats_from_mean_series(
+                t[:n0],
+                pt[:n0],
+                pt_sem[:n0],
+                t0_global,
+            )
+            pc_by_order[ordk] = (pc_i_mean, pc_i_sem, n_tail)
 
             mean_by_order[ordk]["pc_sop"] = {
                 "mean": _safe_float(pc_i_mean),
                 "std_boot": _safe_float(pc_i_sem),
-                "n_seeds": int(n_used),
+                "n_tail_points": int(n_tail),
                 "n_boot": int(n_boot),
                 "t0": _safe_float(t0_global),
-                "pc_method": "per-seed tail_mean(autocorr) + random-effects",
+                "pc_method": "ensemble-mean tail after t_eq from ensemble-mean pt",
             }
 
         mean_eq_list = []
@@ -993,9 +1081,12 @@ def compute_means_for_folder(
         else:
             pc_mean, pc_sem = float("nan"), float("nan")
 
-        orders_blocks = [{"order_percolation": int(ordk), "data": mean_by_order[ordk]} for ordk in sorted(mean_by_order.keys())]
+        orders_blocks = [
+            {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
+            for ordk in sorted(mean_by_order.keys())
+        ]
 
-        colors_arr = np.asarray(colors_per_sample_this_p0, dtype=float)
+        colors_arr = np.asarray(colors_per_sample_this_group, dtype=float)
         if colors_arr.size > 0:
             nc_mean = float(np.mean(colors_arr))
             nc_std = float(np.std(colors_arr, ddof=1)) if colors_arr.size > 1 else 0.0
@@ -1006,13 +1097,14 @@ def compute_means_for_folder(
             nc_err = float("nan")
 
         p0_group = {
-            "p0_value": float(p0),
+            "P0_value": float(P0_value),
+            "p0_value": float(p0_value),
             "num_seeds": len(seeds_set),
             "num_seeds_total": len(seeds_total_set),
             "num_seeds_non_percolating": len(seeds_non_perc_set),
-            "num_samples_total": int(total_files_this_p0),
+            "num_samples_total": int(total_files_this_group),
             "num_samples_percolating_any_order": int(valid_files),
-            "num_samples_non_percolating": int(total_files_this_p0 - valid_files),
+            "num_samples_non_percolating": int(total_files_this_group - valid_files),
             "orders": orders_blocks,
             "pc_sop": {
                 "mean": _safe_float(pc_mean),
@@ -1020,7 +1112,7 @@ def compute_means_for_folder(
                 "n_seeds": len(seeds_set),
                 "n_boot": int(n_boot),
                 "t0_global": _safe_float(t0_global),
-                "pc_method": "combine orders of (per-seed autocorr + random-effects)",
+                "pc_method": "combine orders of ensemble-mean tails after global t_eq",
             },
             "colors": {
                 "Nsamples": int(colors_arr.size),
@@ -1088,10 +1180,11 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
         if not isinstance(p0_groups, list) or len(p0_groups) == 0:
             continue
 
-        P0_mean, _ = _parse_P0_p0_from_seed_used(seed_used)
-
         for g in p0_groups:
             p0_val = _safe_float(g.get("p0_value", float("nan")))
+            P0_val = _safe_float(g.get("P0_value", float("nan")))
+            if P0_val is None:
+                P0_val, _ = _parse_P0_p0_from_seed_used(seed_used)
             colors_block = g.get("colors", {}) if isinstance(g.get("colors", {}), dict) else {}
             N_samples = int(
                 g.get("num_samples_total", colors_block.get("Nsamples", g.get("num_seeds_total", g.get("num_seeds", 0)))) or 0
@@ -1129,7 +1222,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
                     "nc": nc,
                     "rho": rho,
                     "p0": p0_val,
-                    "P0": P0_mean,
+                    "P0": P0_val,
                     "order": order,
                     "N_samples": N_samples,
                     "N_samples_perc": N_samples_perc,
@@ -1153,7 +1246,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
 
     if not df.empty:
         df = df.sort_values(
-            by=["type_perc", "dim", "nc", "rho", "k", "Nt", "L", "p0", "order"]
+            by=["type_perc", "dim", "nc", "rho", "k", "Nt", "L", "P0", "p0", "order"]
         ).reset_index(drop=True)
 
     ensure_dir(output_file.parent)
@@ -1192,6 +1285,7 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
 
         for g in p0_groups:
             p0_val = _safe_float(g.get("p0_value", float("nan")))
+            P0_val = _safe_float(g.get("P0_value", float("nan")))
             cstats = g.get("colors", {}) if isinstance(g.get("colors", {}), dict) else {}
 
             rows.append({
@@ -1200,6 +1294,7 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
                 "Nt": Nt,
                 "k": k,
                 "num_colors": nc_model,
+                "P0": P0_val,
                 "p0": p0_val,
                 "Nsamples": int(cstats.get("Nsamples", 0) or 0),
                 "rho": rho,
@@ -1208,12 +1303,12 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
                 "nc_std": _safe_float(cstats.get("nc_std", float("nan"))),
             })
 
-    cols = ["L", "dim", "Nt", "k", "num_colors", "p0", "Nsamples", "rho", "nc", "nc_err", "nc_std"]
+    cols = ["L", "dim", "Nt", "k", "num_colors", "P0", "p0", "Nsamples", "rho", "nc", "nc_err", "nc_std"]
     df = pd.DataFrame(rows, columns=cols)
 
     if not df.empty:
         df = df.sort_values(
-            by=["dim", "num_colors", "rho", "k", "Nt", "L", "p0"]
+            by=["dim", "num_colors", "rho", "k", "Nt", "L", "P0", "p0"]
         ).reset_index(drop=True)
 
     ensure_dir(output_file.parent)
