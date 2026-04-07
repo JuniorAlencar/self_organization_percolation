@@ -12,6 +12,14 @@ set -euo pipefail
 #
 # Ambiente virtual criado em:
 #   ./.pyenv
+#
+# Comportamento do Mayavi:
+#   - INSTALL_MAYAVI=auto   -> tenta instalar só se Python < 3.12
+#   - INSTALL_MAYAVI=true   -> força tentativa via pip
+#   - INSTALL_MAYAVI=false  -> pula Mayavi
+#
+# Exemplo:
+#   INSTALL_MAYAVI=true ./shells/install_python_dependencies.sh
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,11 +35,25 @@ PROJECT_NAME="$(basename "${PROJECT_ROOT}")"
 KERNEL_NAME="${PROJECT_NAME}_pyenv"
 KERNEL_DISPLAY_NAME="Python (${PROJECT_NAME})"
 
+INSTALL_MAYAVI="${INSTALL_MAYAVI:-auto}"      # auto | true | false
+MAYAVI_QT_PACKAGE="${MAYAVI_QT_PACKAGE:-PyQt5}"
+
+FILTERED_REQUIREMENTS=""
+MAYAVI_STATUS="não instalado"
+
+cleanup() {
+    if [[ -n "${FILTERED_REQUIREMENTS}" && -f "${FILTERED_REQUIREMENTS}" ]]; then
+        rm -f "${FILTERED_REQUIREMENTS}"
+    fi
+}
+trap cleanup EXIT
+
 echo "========================================"
 echo "Projeto       : ${PROJECT_ROOT}"
 echo "Pasta do venv : ${VENV_DIR}"
 echo "Python usado  : ${PYTHON_BIN}"
 echo "Kernel Jupyter: ${KERNEL_NAME}"
+echo "INSTALL_MAYAVI: ${INSTALL_MAYAVI}"
 echo "========================================"
 
 # ---------- verifica python ----------
@@ -98,17 +120,94 @@ source "${VENV_DIR}/bin/activate"
 echo "Python ativo: $(which python)"
 echo "Pip ativo   : $(which pip)"
 
+PYTHON_VERSION_FULL="$(python - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+PY
+)"
+
+PYTHON_VERSION_MM="$(python - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+
+echo "Versão do Python no venv: ${PYTHON_VERSION_FULL}"
+
+is_python_ge_312() {
+    python - <<'PY'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+PY
+}
+
+install_mayavi_with_pip() {
+    echo "Instalando toolkit Qt para Mayavi (${MAYAVI_QT_PACKAGE}) ..."
+    python -m pip install "${MAYAVI_QT_PACKAGE}"
+
+    echo "Tentando instalar Mayavi via pip ..."
+    python -m pip install mayavi
+
+    python - <<'PY'
+from mayavi import mlab
+print("Mayavi importado com sucesso.")
+PY
+}
+
 # ---------- garante pip ----------
 python -m ensurepip --upgrade || true
 python -m pip install --upgrade pip setuptools wheel
 
-# ---------- instala dependências ----------
-echo "Instalando dependências do projeto ..."
-pip install -r "${REQUIREMENTS_FILE}"
+# ---------- instala dependências base ----------
+# Remove mayavi / PyQt do requirements para tratar separadamente.
+FILTERED_REQUIREMENTS="$(mktemp)"
+
+grep -Eiv '^[[:space:]]*(mayavi|pyqt5|pyqt6)([[:space:]]*([<>=!~]=?|===).*)?$' \
+    "${REQUIREMENTS_FILE}" > "${FILTERED_REQUIREMENTS}" || true
+
+echo "Instalando dependências base do projeto ..."
+python -m pip install -r "${FILTERED_REQUIREMENTS}"
 
 # ---------- suporte a Jupyter ----------
 echo "Instalando suporte ao Jupyter ..."
-pip install jupyter ipykernel
+python -m pip install jupyter jupyterlab ipykernel
+
+# ---------- instala Mayavi separadamente ----------
+case "${INSTALL_MAYAVI,,}" in
+    auto)
+        if is_python_ge_312; then
+            echo
+            echo "Aviso: Mayavi foi pulado automaticamente no Python ${PYTHON_VERSION_MM}."
+            echo "Motivo: builds via pip estão instáveis/quebrando nesse stack."
+            echo "Sugestão: use Python 3.11 para o venv, ou um ambiente conda/micromamba separado."
+            MAYAVI_STATUS="pulado automaticamente em Python >= 3.12"
+        else
+            echo "Tentando instalar Mayavi automaticamente ..."
+            if install_mayavi_with_pip; then
+                MAYAVI_STATUS="instalado com sucesso"
+            else
+                echo
+                echo "Aviso: falha ao instalar Mayavi via pip."
+                echo "O restante do ambiente foi instalado com sucesso."
+                echo "Sugestão: tente com Python 3.11 ou use conda/micromamba para o Mayavi."
+                MAYAVI_STATUS="falhou na instalação via pip"
+            fi
+        fi
+        ;;
+    true|1|yes)
+        echo "INSTALL_MAYAVI=${INSTALL_MAYAVI}: forçando instalação do Mayavi via pip ..."
+        install_mayavi_with_pip
+        MAYAVI_STATUS="instalado com sucesso"
+        ;;
+    false|0|no|skip)
+        echo "Mayavi pulado por configuração."
+        MAYAVI_STATUS="pulado por configuração"
+        ;;
+    *)
+        echo "Erro: INSTALL_MAYAVI deve ser auto, true ou false."
+        exit 1
+        ;;
+esac
 
 # ---------- registra kernel ----------
 echo "Registrando kernel do Jupyter ..."
@@ -117,7 +216,9 @@ python -m ipykernel install --user \
     --display-name "${KERNEL_DISPLAY_NAME}"
 
 echo "========================================"
-echo "Instalação concluída com sucesso."
+echo "Instalação concluída."
+echo "Python        : ${PYTHON_VERSION_FULL}"
+echo "Mayavi        : ${MAYAVI_STATUS}"
 echo
 echo "Para ativar o ambiente manualmente:"
 echo "  source \"${VENV_DIR}/bin/activate\""
@@ -130,4 +231,9 @@ echo "  jupyter lab"
 echo
 echo "Kernel registrado como:"
 echo "  ${KERNEL_DISPLAY_NAME}"
+echo
+echo "Exemplos úteis:"
+echo "  PYTHON_BIN=python3.11 ./shells/install_python_dependencies.sh"
+echo "  INSTALL_MAYAVI=false ./shells/install_python_dependencies.sh"
+echo "  INSTALL_MAYAVI=true  ./shells/install_python_dependencies.sh"
 echo "========================================"

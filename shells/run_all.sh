@@ -7,6 +7,7 @@ self="$(realpath "$0")"
 
 EXCLUDED_SCRIPTS=(
   "install_python_dependencies.sh"
+  "run_python.sh"
 )
 
 LIMIT_CPU_CLOCK="${LIMIT_CPU_CLOCK:-1}"

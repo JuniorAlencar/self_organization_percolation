@@ -263,15 +263,15 @@ int main(int argc, char* argv[]){
         
         
         // 1) rede (Numpy .npy)
-        // saver.save_network_as_npz(net, net_filename);
+        saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //sort_by_order = true para ordenar por percolation_order
         saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
 
         // 3) save shortest map(Numpy .npy)
-        //NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
-        //saver.save_network_as_npz(sp_net, shotest_filename);
+        NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
+        saver.save_network_as_npz(sp_net, shortest_filename);
         
         // TESTS ----------------
 
