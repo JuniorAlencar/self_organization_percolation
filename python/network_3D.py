@@ -25,18 +25,27 @@ dim = 3
 nc = 8
 rho = 1/nc
 k = 1.0e-06
-NT = 655
+
 p0 = 1.0
 seed = 42
 z_level = 0
-path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.3f}_k{k:.1e}_Nt{NT}/"
+
 
 P0 = 0.1
+NT = 655
+path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.3f}_k{k:.1e}_Nt{NT}/"
 filename = f"complex_seed_42_ts_20260407T083457_P0_0.10_p0_1.00.npz"
 file_positions = f"network_positions_P0_{P0:.2f}.parquet"
-convert_positions(path_dir, filename, file_positions , dim)
+#convert_positions(path_dir, filename, file_positions , dim)
+#====
+# NT = 3276
+# path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.3f}_k{k:.1e}_Nt{NT}/"
+# filename = f"complex_seed_42_ts_20260407T083857_P0_0.10_p0_1.00.npz"
+# file_positions = f"network_positions_P0_{P0:.2f}.parquet"
+#convert_positions(path_dir, filename, file_positions , dim)
+
 #plot_projection(path_dir, file_positions, L, P0, seed, filename, z_level)
-#plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename, specific_color=None, show_base=False)
+plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename, specific_color=None, show_base=False)
 
 # P0 = 0.1
 # filename = f"light_seed_1_ts_20260325T213653_P0_0.10_p0_1.00.npz"

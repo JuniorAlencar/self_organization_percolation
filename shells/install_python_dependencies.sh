@@ -13,13 +13,11 @@ set -euo pipefail
 # Ambiente virtual criado em:
 #   ./.pyenv
 #
-# Comportamento do Mayavi:
-#   - INSTALL_MAYAVI=auto   -> tenta instalar só se Python < 3.12
-#   - INSTALL_MAYAVI=true   -> força tentativa via pip
-#   - INSTALL_MAYAVI=false  -> pula Mayavi
-#
-# Exemplo:
-#   INSTALL_MAYAVI=true ./shells/install_python_dependencies.sh
+# Abordagem adotada:
+#   - instala dependências base do requirements.txt
+#   - trata Qt/VTK separadamente
+#   - instala PyQt5 + vtk fixo
+#   - NÃO tenta instalar mayavi via pip
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,16 +28,17 @@ REQ_FILE_1="${PROJECT_ROOT}/requirements.txt"
 REQ_FILE_2="${PROJECT_ROOT}/requeriments.txt"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-
 PROJECT_NAME="$(basename "${PROJECT_ROOT}")"
 KERNEL_NAME="${PROJECT_NAME}_pyenv"
 KERNEL_DISPLAY_NAME="Python (${PROJECT_NAME})"
 
-INSTALL_MAYAVI="${INSTALL_MAYAVI:-auto}"      # auto | true | false
-MAYAVI_QT_PACKAGE="${MAYAVI_QT_PACKAGE:-PyQt5}"
+VTK_VERSION="${VTK_VERSION:-9.4.2}"
+QT_PACKAGE="${QT_PACKAGE:-PyQt5}"
+INSTALL_VTK="${INSTALL_VTK:-true}"
 
 FILTERED_REQUIREMENTS=""
-MAYAVI_STATUS="não instalado"
+VTK_STATUS="não instalado"
+MAYAVI_STATUS="não verificado"
 
 cleanup() {
     if [[ -n "${FILTERED_REQUIREMENTS}" && -f "${FILTERED_REQUIREMENTS}" ]]; then
@@ -48,26 +47,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "========================================"
-echo "Projeto       : ${PROJECT_ROOT}"
-echo "Pasta do venv : ${VENV_DIR}"
-echo "Python usado  : ${PYTHON_BIN}"
-echo "Kernel Jupyter: ${KERNEL_NAME}"
-echo "INSTALL_MAYAVI: ${INSTALL_MAYAVI}"
-echo "========================================"
+log() {
+    echo "[install_python_dependencies] $*"
+}
+
+log "========================================"
+log "Projeto        : ${PROJECT_ROOT}"
+log "Pasta do venv  : ${VENV_DIR}"
+log "Python usado   : ${PYTHON_BIN}"
+log "Kernel Jupyter : ${KERNEL_NAME}"
+log "Qt package     : ${QT_PACKAGE}"
+log "VTK version    : ${VTK_VERSION}"
+log "INSTALL_VTK    : ${INSTALL_VTK}"
+log "========================================"
 
 # ---------- verifica python ----------
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-    echo "Erro: ${PYTHON_BIN} não foi encontrado no sistema."
+    log "Erro: ${PYTHON_BIN} não foi encontrado no sistema."
     exit 1
 fi
 
 # ---------- verifica venv do sistema ----------
 if ! "${PYTHON_BIN}" -m venv --help >/dev/null 2>&1; then
-    echo "Erro: o módulo venv não está disponível para ${PYTHON_BIN}."
-    echo "No Ubuntu, instale por exemplo:"
-    echo "  sudo apt update"
-    echo "  sudo apt install python3-venv"
+    log "Erro: o módulo venv não está disponível para ${PYTHON_BIN}."
+    log "No Ubuntu, instale por exemplo:"
+    log "  sudo apt update"
+    log "  sudo apt install python3-venv"
     exit 1
 fi
 
@@ -77,17 +82,17 @@ if [[ -f "${REQ_FILE_1}" ]]; then
 elif [[ -f "${REQ_FILE_2}" ]]; then
     REQUIREMENTS_FILE="${REQ_FILE_2}"
 else
-    echo "Erro: não encontrei nem:"
-    echo "  - ${REQ_FILE_1}"
-    echo "  - ${REQ_FILE_2}"
+    log "Erro: não encontrei nem:"
+    log "  - ${REQ_FILE_1}"
+    log "  - ${REQ_FILE_2}"
     exit 1
 fi
 
-echo "Arquivo de dependências: ${REQUIREMENTS_FILE}"
+log "Arquivo de dependências: ${REQUIREMENTS_FILE}"
 
 # ---------- cria/recria venv ----------
 create_or_recreate_venv() {
-    echo "Criando ambiente virtual em ${VENV_DIR} ..."
+    log "Criando ambiente virtual em ${VENV_DIR} ..."
     rm -rf "${VENV_DIR}"
     "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 }
@@ -95,21 +100,19 @@ create_or_recreate_venv() {
 if [[ ! -d "${VENV_DIR}" ]]; then
     create_or_recreate_venv
 else
-    echo "Ambiente virtual já existe. Validando estrutura..."
+    log "Ambiente virtual já existe. Validando estrutura..."
 fi
 
-# se estiver incompleto, recria
 if [[ ! -f "${VENV_DIR}/bin/activate" ]] || [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-    echo "Ambiente virtual incompleto ou corrompido. Recriando..."
+    log "Ambiente virtual incompleto ou corrompido. Recriando..."
     create_or_recreate_venv
 fi
 
-# valida novamente após criação
 if [[ ! -f "${VENV_DIR}/bin/activate" ]] || [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-    echo "Erro: falha ao criar ambiente virtual corretamente."
-    echo "Esperado:"
-    echo "  - ${VENV_DIR}/bin/activate"
-    echo "  - ${VENV_DIR}/bin/python"
+    log "Erro: falha ao criar ambiente virtual corretamente."
+    log "Esperado:"
+    log "  - ${VENV_DIR}/bin/activate"
+    log "  - ${VENV_DIR}/bin/python"
     exit 1
 fi
 
@@ -117,8 +120,8 @@ fi
 # shellcheck disable=SC1091
 source "${VENV_DIR}/bin/activate"
 
-echo "Python ativo: $(which python)"
-echo "Pip ativo   : $(which pip)"
+log "Python ativo: $(which python)"
+log "Pip ativo   : $(which pip)"
 
 PYTHON_VERSION_FULL="$(python - <<'PY'
 import sys
@@ -126,114 +129,93 @@ print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micr
 PY
 )"
 
-PYTHON_VERSION_MM="$(python - <<'PY'
-import sys
-print(f"{sys.version_info.major}.{sys.version_info.minor}")
-PY
-)"
-
-echo "Versão do Python no venv: ${PYTHON_VERSION_FULL}"
-
-is_python_ge_312() {
-    python - <<'PY'
-import sys
-raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
-PY
-}
-
-install_mayavi_with_pip() {
-    echo "Instalando toolkit Qt para Mayavi (${MAYAVI_QT_PACKAGE}) ..."
-    python -m pip install "${MAYAVI_QT_PACKAGE}"
-
-    echo "Tentando instalar Mayavi via pip ..."
-    python -m pip install mayavi
-
-    python - <<'PY'
-from mayavi import mlab
-print("Mayavi importado com sucesso.")
-PY
-}
+log "Versão do Python no venv: ${PYTHON_VERSION_FULL}"
 
 # ---------- garante pip ----------
 python -m ensurepip --upgrade || true
 python -m pip install --upgrade pip setuptools wheel
 
 # ---------- instala dependências base ----------
-# Remove mayavi / PyQt do requirements para tratar separadamente.
+# Remove mayavi / vtk / Qt do requirements para tratar separadamente.
 FILTERED_REQUIREMENTS="$(mktemp)"
 
-grep -Eiv '^[[:space:]]*(mayavi|pyqt5|pyqt6)([[:space:]]*([<>=!~]=?|===).*)?$' \
+grep -Eiv '^[[:space:]]*(mayavi|vtk|pyqt5|pyqt6|pyside2|pyside6)([[:space:]]*([<>=!~]=?|===).*)?$' \
     "${REQUIREMENTS_FILE}" > "${FILTERED_REQUIREMENTS}" || true
 
-echo "Instalando dependências base do projeto ..."
-python -m pip install -r "${FILTERED_REQUIREMENTS}"
+log "Instalando dependências base do projeto ..."
+python -m pip install --upgrade --force-reinstall -r "${FILTERED_REQUIREMENTS}"
 
 # ---------- suporte a Jupyter ----------
-echo "Instalando suporte ao Jupyter ..."
-python -m pip install jupyter jupyterlab ipykernel
+log "Instalando suporte ao Jupyter ..."
+python -m pip install --upgrade jupyter jupyterlab ipykernel
 
-# ---------- instala Mayavi separadamente ----------
-case "${INSTALL_MAYAVI,,}" in
-    auto)
-        if is_python_ge_312; then
-            echo
-            echo "Aviso: Mayavi foi pulado automaticamente no Python ${PYTHON_VERSION_MM}."
-            echo "Motivo: builds via pip estão instáveis/quebrando nesse stack."
-            echo "Sugestão: use Python 3.11 para o venv, ou um ambiente conda/micromamba separado."
-            MAYAVI_STATUS="pulado automaticamente em Python >= 3.12"
-        else
-            echo "Tentando instalar Mayavi automaticamente ..."
-            if install_mayavi_with_pip; then
-                MAYAVI_STATUS="instalado com sucesso"
-            else
-                echo
-                echo "Aviso: falha ao instalar Mayavi via pip."
-                echo "O restante do ambiente foi instalado com sucesso."
-                echo "Sugestão: tente com Python 3.11 ou use conda/micromamba para o Mayavi."
-                MAYAVI_STATUS="falhou na instalação via pip"
-            fi
-        fi
-        ;;
-    true|1|yes)
-        echo "INSTALL_MAYAVI=${INSTALL_MAYAVI}: forçando instalação do Mayavi via pip ..."
-        install_mayavi_with_pip
-        MAYAVI_STATUS="instalado com sucesso"
-        ;;
-    false|0|no|skip)
-        echo "Mayavi pulado por configuração."
-        MAYAVI_STATUS="pulado por configuração"
-        ;;
-    *)
-        echo "Erro: INSTALL_MAYAVI deve ser auto, true ou false."
-        exit 1
-        ;;
-esac
+# ---------- instala Qt + VTK ----------
+if [[ "${INSTALL_VTK,,}" == "true" || "${INSTALL_VTK,,}" == "1" || "${INSTALL_VTK,,}" == "yes" ]]; then
+    log "Instalando toolkit Qt (${QT_PACKAGE}) ..."
+    python -m pip install --upgrade --force-reinstall "${QT_PACKAGE}"
+
+    log "Instalando vtk==${VTK_VERSION} ..."
+    python -m pip install --upgrade --force-reinstall "vtk==${VTK_VERSION}"
+
+    python - <<PY
+import vtk
+print("VTK importado com sucesso:", vtk.vtkVersion.GetVTKVersion())
+PY
+
+    VTK_STATUS="instalado com sucesso (vtk==${VTK_VERSION})"
+else
+    log "Instalação de VTK pulada por configuração."
+    VTK_STATUS="pulado por configuração"
+fi
+
+# ---------- verifica mayavi apenas se já existir ----------
+python - <<'PY'
+try:
+    import mayavi  # noqa: F401
+    print("Mayavi já está disponível no ambiente.")
+except Exception:
+    print("Mayavi não está instalado neste ambiente.")
+PY
+
+if python - <<'PY'
+try:
+    import mayavi  # noqa: F401
+    raise SystemExit(0)
+except Exception:
+    raise SystemExit(1)
+PY
+then
+    MAYAVI_STATUS="já presente no ambiente"
+else
+    MAYAVI_STATUS="não instalado"
+fi
 
 # ---------- registra kernel ----------
-echo "Registrando kernel do Jupyter ..."
+log "Registrando kernel do Jupyter ..."
 python -m ipykernel install --user \
     --name "${KERNEL_NAME}" \
     --display-name "${KERNEL_DISPLAY_NAME}"
 
-echo "========================================"
-echo "Instalação concluída."
-echo "Python        : ${PYTHON_VERSION_FULL}"
-echo "Mayavi        : ${MAYAVI_STATUS}"
-echo
-echo "Para ativar o ambiente manualmente:"
-echo "  source \"${VENV_DIR}/bin/activate\""
-echo
-echo "Para abrir o Jupyter:"
-echo "  source \"${VENV_DIR}/bin/activate\""
-echo "  jupyter notebook"
-echo "ou"
-echo "  jupyter lab"
-echo
-echo "Kernel registrado como:"
-echo "  ${KERNEL_DISPLAY_NAME}"
-echo
-echo "Exemplos úteis:"
-echo "  PYTHON_BIN=python3.11 ./shells/install_python_dependencies.sh"
-echo "  INSTALL_MAYAVI=false ./shells/install_python_dependencies.sh"
-echo "  INSTALL_MAYAVI=true  ./shells/install_python_dependencies.sh"
-echo "========================================"
+log "========================================"
+log "Instalação concluída."
+log "Python        : ${PYTHON_VERSION_FULL}"
+log "VTK           : ${VTK_STATUS}"
+log "Mayavi        : ${MAYAVI_STATUS}"
+log ""
+log "Para ativar o ambiente manualmente:"
+log "  source \"${VENV_DIR}/bin/activate\""
+log ""
+log "Para abrir o Jupyter:"
+log "  source \"${VENV_DIR}/bin/activate\""
+log "  jupyter notebook"
+log "ou"
+log "  jupyter lab"
+log ""
+log "Kernel registrado como:"
+log "  ${KERNEL_DISPLAY_NAME}"
+log ""
+log "Exemplos úteis:"
+log "  PYTHON_BIN=python3.11 ./shells/install_python_dependencies.sh"
+log "  VTK_VERSION=9.4.2 ./shells/install_python_dependencies.sh"
+log "  INSTALL_VTK=false ./shells/install_python_dependencies.sh"
+log "========================================"
