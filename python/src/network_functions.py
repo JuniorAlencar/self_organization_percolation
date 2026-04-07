@@ -6,45 +6,106 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib import patches  # coloque no topo do arquivo
 
-def read_network(path_dir, filename):
-    fname = path_dir + filename
-    
-    data = np.load(fname)
+def read_network(path_dir, filename, return_metadata=False):
+    fn = os.path.join(path_dir, filename)
 
-    print("chaves dentro do arquivo:", data.files)
+    with np.load(fn, allow_pickle=True) as npz:
+        keys = list(npz.keys())
+        print("chaves dentro do arquivo:", keys)
 
-    dim        = int(data["dim"])
-    num_colors = int(data["num_colors"])
-    seed       = int(data["seed"])
-    shape      = tuple(data["shape"])
-    rho        = data["rho"]
+        if "data" not in npz:
+            raise KeyError(f"O arquivo {fn} não possui a chave 'data'.")
 
-    # matriz reconstruída com a mesma convenção de indexação do C++
-    mat3d = data["data"].reshape(shape, order="F")
-    return mat3d
+        if "dim" not in npz:
+            raise KeyError(f"O arquivo {fn} não possui a chave 'dim'.")
 
-def convert_positions(path_dir, filename, output_filename, dim):
-    network = read_network(path_dir, filename)
+        raw = np.asarray(npz["data"])
+        dim = int(np.asarray(npz["dim"]).item())
+
+        if "shape" in npz:
+            shape_arr = np.asarray(npz["shape"]).astype(int).ravel()
+            shape = tuple(shape_arr.tolist())
+        else:
+            raise KeyError(f"O arquivo {fn} não possui a chave 'shape'.")
+
+        if dim not in (2, 3):
+            raise ValueError(f"dim inválido no arquivo: {dim}")
+
+        if dim == 2:
+            if len(shape) != 2:
+                raise ValueError(f"Para dim=2, shape deveria ter 2 entradas. shape={shape}")
+            SX, SY = shape
+
+            if raw.size != SX * SY:
+                raise ValueError(
+                    f"Tamanho inconsistente: raw.size={raw.size}, "
+                    f"mas SX*SY={SX*SY}"
+                )
+
+            # idx = x + SX*y  -> reshape Fortran
+            network = raw.reshape((SX, SY), order="F")
+
+        else:  # dim == 3
+            if len(shape) != 3:
+                raise ValueError(f"Para dim=3, shape deveria ter 3 entradas. shape={shape}")
+            SX, SY, SZ = shape
+
+            if raw.size != SX * SY * SZ:
+                raise ValueError(
+                    f"Tamanho inconsistente: raw.size={raw.size}, "
+                    f"mas SX*SY*SZ={SX*SY*SZ}"
+                )
+
+            # idx = x + SX*(y + SY*z)  -> reshape Fortran
+            network = raw.reshape((SX, SY, SZ), order="F")
+
+        metadata = {
+            "dim": dim,
+            "shape": shape,
+            "keys": keys
+        }
+
+        for extra_key in ("num_colors", "seed", "rho"):
+            if extra_key in npz:
+                metadata[extra_key] = npz[extra_key]
+
+    if return_metadata:
+        return network, metadata
+    return network
+
+def convert_positions(path_dir, filename, output_filename, dim=None):
+    network, meta = read_network(path_dir, filename, return_metadata=True)
+
+    dim_file = meta["dim"]
+    if dim is not None and dim != dim_file:
+        raise ValueError(
+            f"dim informado ({dim}) difere do dim do arquivo ({dim_file})."
+        )
+
+    dim = dim_file
 
     valores_unicos, contagens = np.unique(network, return_counts=True)
     print("valores únicos:", valores_unicos)
     print("contagens:", contagens)
 
-    coords = np.argwhere(network > 0)
-    colors = network[network > 0]
+    mask = network > 0
+    coords = np.argwhere(mask)
+    colors = network[mask]
 
     if dim == 3:
+        # Com reshape(order="F"), coords[:,0], coords[:,1], coords[:,2]
+        # correspondem exatamente a x, y, z.
         df_points = pd.DataFrame({
-            "x": coords[:, 0].astype(int),
-            "y": coords[:, 1].astype(int),
-            "z": coords[:, 2].astype(int),
-            "color": colors.astype(int)
+            "x": coords[:, 0].astype(np.int32),
+            "y": coords[:, 1].astype(np.int32),
+            "z": coords[:, 2].astype(np.int32),
+            "color": colors.astype(np.int16)
         })
     else:
         df_points = pd.DataFrame({
-            "x": coords[:, 0].astype(int),
-            "y": coords[:, 1].astype(int),
-            "color": colors.astype(int)
+            "x": coords[:, 0].astype(np.int32),
+            "y": coords[:, 1].astype(np.int32),
+            "color": colors.astype(np.int16)
         })
 
     save_out = os.path.join(path_dir, output_filename)
@@ -54,7 +115,14 @@ def convert_positions(path_dir, filename, output_filename, dim):
     print(df_points.head())
     print("Total de pontos salvos:", len(df_points))
 
-    df_points.to_parquet(save_out, engine="pyarrow", compression="snappy", index=False)
+    df_points.to_parquet(
+        save_out,
+        engine="pyarrow",
+        compression="snappy",
+        index=False
+    )
+
+    print(f"Arquivo salvo em: {save_out}")
 
 def convert_positions_sp(path_dir, filename, output_filename, dim):
     fname = path_dir + filename
@@ -239,6 +307,139 @@ def plot_3D_cut(dim, L, nc, rho, k, NT):
     print(f"network save in {path_out_network}")
     mlab.show()
 
+# def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
+#                  specific_color=None, show_base=False):
+#     fn = path_dir + file_positions
+
+#     if not os.path.exists(fn):
+#         print("file positions don't exist, create it...")
+#         convert_positions(
+#             path_dir,
+#             filename,
+#             f"network_positions_P0_{P0:.2f}.parquet",
+#             3
+#         )
+#         print("File with positions created")
+
+#     a = 0
+#     b = 0
+
+#     df = pd.read_parquet(fn).copy()
+
+#     # garante inteiros e periodicidade transversal
+#     df["x"] = ((df["x"].astype(int) + a) % L).astype(int)
+#     df["y"] = ((df["y"].astype(int) + b) % L).astype(int)
+#     df["z"] = df["z"].astype(int)
+#     df["color"] = df["color"].astype(int)
+
+#     # se quiser garantir apenas sítios ativos
+#     df = df[df["color"] > 0].copy()
+
+#     figure_size = (800, 800)
+#     mlab.clf()
+#     mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
+
+#     colors = [i + 2 for i in range(nc)]
+
+#     colors_used = [
+#         (0.9, 0.1, 0.1),    # 2 - red
+#         (1.0, 0.5, 0.0),    # 3 - orange
+#         (0.1, 0.9, 0.1),    # 4 - green
+#         (0.1, 0.1, 0.9),    # 5 - blue
+#         (0.8, 0.2, 0.8),    # 6 - purple
+#         (0.2, 0.8, 0.8),    # 7 - teal
+#         (1.0, 1.0, 0.0),    # 8 - yellow
+#         (0.6, 0.4, 0.2),    # 9 - brown
+#         (0.0, 0.0, 0.0),    # 10 - black
+#         (0.65, 0.65, 0.65)  # 11 - gray
+#     ]
+
+#     if specific_color is None:
+#         for idx, color in enumerate(colors):
+#             df_color = df[df["color"] == color]
+
+#             if df_color.empty:
+#                 continue
+
+#             x = df_color["x"].to_numpy()
+#             y = df_color["y"].to_numpy()
+#             z = df_color["z"].to_numpy()
+
+#             pts = mlab.points3d(
+#                 x, y, z,
+#                 np.ones_like(x),
+#                 color=colors_used[idx],
+#                 scale_factor=1.0,
+#                 opacity=1.0,
+#                 mode="cube"
+#             )
+#             pts.actor.property.edge_visibility = True
+#             pts.actor.property.edge_color = (0, 0, 0)
+#             pts.actor.property.line_width = 0.00
+
+#         if show_base:
+#             path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}base.png"
+#         else:
+#             path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}all.png"
+
+#     else:
+#         if specific_color not in colors:
+#             print(f"color not accept, please enter with any color in list {colors}")
+#             return
+
+#         idx = colors.index(specific_color)
+#         df_color = df[df["color"] == specific_color]
+
+#         if df_color.empty:
+#             print(f"No points found for color {specific_color}")
+#             return
+
+#         x = df_color["x"].to_numpy()
+#         y = df_color["y"].to_numpy()
+#         z = df_color["z"].to_numpy()
+
+#         pts = mlab.points3d(
+#             x, y, z,
+#             np.ones_like(x),
+#             color=colors_used[idx],
+#             scale_factor=1.0,
+#             opacity=1.0,
+#             mode="cube"
+#         )
+#         pts.actor.property.edge_visibility = True
+#         pts.actor.property.edge_color = (0, 0, 0)
+#         pts.actor.property.line_width = 0.00
+
+#         if show_base:
+#             path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}_base.png"
+#         else:
+#             path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}.png"
+
+#     mlab.outline(
+#         extent=[0, L, 0, L, 0, L],
+#         color=(0, 0, 0),
+#         line_width=2.0
+#     )
+
+#     if show_base:
+#         mlab.view(
+#             azimuth=0,
+#             elevation=-90,
+#             distance=2.8 * L,
+#             focalpoint=(L / 2, L / 2, 0)
+#         )
+#     else:
+#         mlab.view(
+#             azimuth=70,
+#             elevation=65,
+#             distance=3.1 * L,
+#             focalpoint=(L / 2, L / 2, L / 2)
+#         )
+
+#     mlab.savefig(path_out_network, magnification=4)
+#     print(f"network save in {path_out_network}")
+#     mlab.show()
+
 def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
                  specific_color=None, show_base=False):
     fn = path_dir + file_positions
@@ -264,12 +465,22 @@ def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
     df["z"] = df["z"].astype(int)
     df["color"] = df["color"].astype(int)
 
-    # se quiser garantir apenas sítios ativos
+    # mantém apenas sítios ativos
     df = df[df["color"] > 0].copy()
 
     figure_size = (800, 800)
-    mlab.clf()
-    mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
+
+    # ========= mudança importante =========
+    # em vez de mlab.clf() solto ou mlab.close(all=False),
+    # cria/reutiliza uma figura nomeada e limpa essa figura
+    fig = mlab.figure(
+        figure="network3d",
+        size=figure_size,
+        bgcolor=(1, 1, 1),
+        fgcolor=(0, 0, 0)
+    )
+    mlab.clf(figure=fig)
+    # =====================================
 
     colors = [i + 2 for i in range(nc)]
 
@@ -353,6 +564,7 @@ def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
         line_width=2.0
     )
 
+    # ========= mantém EXATAMENTE o ângulo original =========
     if show_base:
         mlab.view(
             azimuth=0,
@@ -367,6 +579,9 @@ def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
             distance=3.1 * L,
             focalpoint=(L / 2, L / 2, L / 2)
         )
+    # ======================================================
+
+    fig.scene.render()
 
     mlab.savefig(path_out_network, magnification=4)
     print(f"network save in {path_out_network}")

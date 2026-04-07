@@ -36,6 +36,7 @@ NT = 655
 path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.3f}_k{k:.1e}_Nt{NT}/"
 filename = f"complex_seed_42_ts_20260407T083457_P0_0.10_p0_1.00.npz"
 file_positions = f"network_positions_P0_{P0:.2f}.parquet"
+plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename, specific_color=None, show_base=False)
 #convert_positions(path_dir, filename, file_positions , dim)
 #====
 # NT = 3276
