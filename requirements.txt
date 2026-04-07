@@ -1,11 +1,16 @@
-IPython
-Pillow
-PyYAML
+ipython
+pillow
+pyyaml
 imageio
 matplotlib
-mayavi
 mpl_tools
 numpy
 pandas
 scipy
 tqdm
+
+# O Mayavi é tratado separadamente no script de instalação.
+# Motivo: em Python 3.12+ a instalação via pip está instável.
+# Se necessário, o script tenta instalar Mayavi automaticamente
+# apenas quando o Python do venv for < 3.12, ou quando for forçado
+# com INSTALL_MAYAVI=true.
