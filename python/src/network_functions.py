@@ -13,56 +13,61 @@ def read_network(path_dir, filename, return_metadata=False):
         keys = list(npz.keys())
         print("chaves dentro do arquivo:", keys)
 
-        if "data" not in npz:
-            raise KeyError(f"O arquivo {fn} não possui a chave 'data'.")
+        required = ("dim", "shape", "data")
+        missing = [k for k in required if k not in npz]
+        if missing:
+            raise KeyError(f"Arquivo {fn} sem as chaves obrigatórias: {missing}")
 
-        if "dim" not in npz:
-            raise KeyError(f"O arquivo {fn} não possui a chave 'dim'.")
-
-        raw = np.asarray(npz["data"])
         dim = int(np.asarray(npz["dim"]).item())
+        shape = tuple(np.asarray(npz["shape"], dtype=np.int64).tolist())
 
-        if "shape" in npz:
-            shape_arr = np.asarray(npz["shape"]).astype(int).ravel()
-            shape = tuple(shape_arr.tolist())
-        else:
-            raise KeyError(f"O arquivo {fn} não possui a chave 'shape'.")
-
-        if dim not in (2, 3):
-            raise ValueError(f"dim inválido no arquivo: {dim}")
+        # IMPORTANTE:
+        # data.npy foi salvo com fortran_order=False e shape=net.shape,
+        # mas o buffer linear net.data segue idx = x + SX*(y + SY*z).
+        # Então a forma segura é recuperar o buffer linear original:
+        raw = np.asarray(npz["data"], dtype=np.int32).ravel(order="C")
 
         if dim == 2:
             if len(shape) != 2:
-                raise ValueError(f"Para dim=2, shape deveria ter 2 entradas. shape={shape}")
-            SX, SY = shape
+                raise ValueError(f"dim=2, mas shape={shape}")
 
-            if raw.size != SX * SY:
+            SX, SY = map(int, shape)
+
+            expected = SX * SY
+            if raw.size != expected:
                 raise ValueError(
-                    f"Tamanho inconsistente: raw.size={raw.size}, "
-                    f"mas SX*SY={SX*SY}"
+                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
                 )
 
-            # idx = x + SX*y  -> reshape Fortran
-            network = raw.reshape((SX, SY), order="F")
+            # idx = x + SX*y
+            # array C-order com shape (SY, SX) dá arr[y, x]
+            # depois transpomos para obter network[x, y]
+            network = raw.reshape((SY, SX), order="C").T
 
-        else:  # dim == 3
+        elif dim == 3:
             if len(shape) != 3:
-                raise ValueError(f"Para dim=3, shape deveria ter 3 entradas. shape={shape}")
-            SX, SY, SZ = shape
+                raise ValueError(f"dim=3, mas shape={shape}")
 
-            if raw.size != SX * SY * SZ:
+            SX, SY, SZ = map(int, shape)
+
+            expected = SX * SY * SZ
+            if raw.size != expected:
                 raise ValueError(
-                    f"Tamanho inconsistente: raw.size={raw.size}, "
-                    f"mas SX*SY*SZ={SX*SY*SZ}"
+                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
                 )
 
-            # idx = x + SX*(y + SY*z)  -> reshape Fortran
-            network = raw.reshape((SX, SY, SZ), order="F")
+            # idx = x + SX*(y + SY*z)
+            # array C-order com shape (SZ, SY, SX) dá arr[z, y, x]
+            # depois transpomos para obter network[x, y, z]
+            network = raw.reshape((SZ, SY, SX), order="C").transpose(2, 1, 0)
+
+        else:
+            raise ValueError(f"dim inválido em {fn}: {dim}")
 
         metadata = {
             "dim": dim,
             "shape": shape,
-            "keys": keys
+            "keys": keys,
         }
 
         for extra_key in ("num_colors", "seed", "rho"):
@@ -79,7 +84,7 @@ def convert_positions(path_dir, filename, output_filename, dim=None):
     dim_file = meta["dim"]
     if dim is not None and dim != dim_file:
         raise ValueError(
-            f"dim informado ({dim}) difere do dim do arquivo ({dim_file})."
+            f"dim informado ({dim}) difere do dim do arquivo ({dim_file})"
         )
 
     dim = dim_file
@@ -93,19 +98,19 @@ def convert_positions(path_dir, filename, output_filename, dim=None):
     colors = network[mask]
 
     if dim == 3:
-        # Com reshape(order="F"), coords[:,0], coords[:,1], coords[:,2]
-        # correspondem exatamente a x, y, z.
+        # read_network já devolve network[x, y, z]
         df_points = pd.DataFrame({
             "x": coords[:, 0].astype(np.int32),
             "y": coords[:, 1].astype(np.int32),
             "z": coords[:, 2].astype(np.int32),
-            "color": colors.astype(np.int16)
+            "color": colors.astype(np.int16),
         })
     else:
+        # read_network já devolve network[x, y]
         df_points = pd.DataFrame({
             "x": coords[:, 0].astype(np.int32),
             "y": coords[:, 1].astype(np.int32),
-            "color": colors.astype(np.int16)
+            "color": colors.astype(np.int16),
         })
 
     save_out = os.path.join(path_dir, output_filename)
@@ -119,7 +124,7 @@ def convert_positions(path_dir, filename, output_filename, dim=None):
         save_out,
         engine="pyarrow",
         compression="snappy",
-        index=False
+        index=False,
     )
 
     print(f"Arquivo salvo em: {save_out}")
@@ -140,9 +145,9 @@ def convert_positions_sp(path_dir, filename, output_filename, dim):
 
     if dim == 3:
         # mapeando para o sistema físico: x,y base; z altura
-        x = coords_zyx[:, 2]   # eixo 2 -> x
+        x = coords_zyx[:, 0]   # eixo 2 -> x
         y = coords_zyx[:, 1]   # eixo 1 -> y
-        z = coords_zyx[:, 0]   # eixo 0 -> z
+        z = coords_zyx[:, 2]   # eixo 0 -> z
 
         df_points = pd.DataFrame({
             "x": x,
@@ -582,10 +587,10 @@ def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
     # ======================================================
 
     fig.scene.render()
-
+    
     mlab.savefig(path_out_network, magnification=4)
     print(f"network save in {path_out_network}")
-    mlab.show()
+    mlab.close()
 
 def plot_3D_full_with_planes(path_dir, file_positions, specific_color=None):
     # Create file positions, if dont exist
