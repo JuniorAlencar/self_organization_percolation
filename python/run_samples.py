@@ -12,39 +12,41 @@ import numpy as np
 # num_runs = [500, 75 ,100, 50, 30, 10]
 # L_lst = [128, 192, 256, 384, 512, 768, 1024]
 
+#L_lst = [256, 384, 512, 768, 1024]
+nc = 8
 
+if nc == 2:
+    f = 0.03
+elif nc == 4:
+    f = 0.02
+elif nc == 8:
+    f = 0.01
 
-# start = 0.001
-# stop = 1/nc
-# n_points = 100
-# rho = custom_range(start, stop, n_points)
-nc = 2
-L_lst = [512, 1024]
-f = [round(i, 2) for i in np.arange(0.01, 0.26, 0.01)]
 #Nt = [[int(fraction*L**2) for fraction in f] for L in L_lst]
 #f0 = 0.02
-start = 0.33
-stop = 1/nc
-n_points = 25
-#rho = custom_range(start, stop, n_points)
-rho = 1/nc
-f0 = 0.02
-k_lst = [1.0e-06]
-num_runs = [30, 10]
-type_perc = 'bond'
+#rho = 1/nc
+k = 1.0e-06
 p0 = 1.0
 seed = -1
 dim = 3
 #nc=2
 P0 = 0.1
-num_threads = 11
+type_perc = 'bond'
+L_lst =       [304, 362, 430, 608, 724, 861]
+num_runs =    [250, 150, 150, 50, 25, 15]
+num_threads = [11 , 11 , 11 , 11, 9, 8]
 multi=True
 
-for k in k_lst:
-    for idx, L in enumerate(L_lst):
-            base = L**(dim-1)
-            NT_lst = [int(f0*base) for f0 in f]
-            for NT in NT_lst:
-                    exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}.sh"
-                    shell_data(L, type_perc, p0, seed, k, NT, dim,
-                            nc, num_runs[idx], [rho], exec_name, P0, num_threads, multi)
+for idx, L in enumerate(L_lst):
+        base = L**(dim-1)
+        NT = int(f*base)
+        # start = 1/(P0*L**2)
+        # print(start)
+        # stop = 1/(2*nc)
+        # n_points = 50
+        # rho = custom_range(start, stop, n_points)
+        rho = [1/nc]
+        exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}.sh"
+        
+        shell_data(L, type_perc, p0, seed, k, NT, dim,
+                nc, num_runs[idx], rho, exec_name, P0, num_threads[idx], multi)
