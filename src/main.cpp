@@ -197,18 +197,18 @@ int main(int argc, char* argv[]){
         network net_generator(N_samples, num_colors);
 
         // gera rede e séries
-        NetworkPattern net = net_generator.create_network(
-            dim, L, N_samples, k, N_t, type_N_t,
-            p0, P0, a, alpha, type_percolation,
-            num_colors, rho, ts, ps, rng
-        );
-        
-        // Data to animate network
-        // NetworkPattern net = net_generator.animate_network(
+        // NetworkPattern net = net_generator.create_network(
         //     dim, L, N_samples, k, N_t, type_N_t,
         //     p0, P0, a, alpha, type_percolation,
         //     num_colors, rho, ts, ps, rng
         // );
+        
+        // Data to animate network
+        NetworkPattern net_animation = net_generator.animate_network(
+            dim, L, N_samples, k, N_t, type_N_t,
+            p0, P0, a, alpha, type_percolation,
+            num_colors, rho, ts, ps, rng
+        );
         // UNCOMENT BELOW TO CHECK INITIAL NETWORK===============
         // NetworkPattern net = net_generator.initialize_network(
         //                 dim,               // dimensão (2D/3D)
@@ -256,6 +256,7 @@ int main(int argc, char* argv[]){
 
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         std::string net_filename  = network_dir + "/" + sample_base + ".npz";
+        std::string net_animation_filename  = network_dir + "/" + sample_base + "_animation.npz";
         std::string shortest_filename = network_dir + "/map_shortest_" + sample_base + ".npz";
 
         // // salvar (novo writer JSON)
@@ -263,15 +264,15 @@ int main(int argc, char* argv[]){
         
         
         // 1) rede (Numpy .npy)
-        saver.save_network_as_npz(net, net_filename);
+        saver.save_network_as_npz(net_animation, net_animation_filename);
 
         // 2) resultados (JSON novo)
         //sort_by_order = true para ordenar por percolation_order
-        saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
+       saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
 
         // 3) save shortest map(Numpy .npy)
-        NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
-        saver.save_network_as_npz(sp_net, shortest_filename);
+        // NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
+        // saver.save_network_as_npz(sp_net, shortest_filename);
         
         // TESTS ----------------
 

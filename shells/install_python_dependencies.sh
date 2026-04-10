@@ -1,25 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ============================================================
-# Script: install_python_dependencies.sh
-# Local esperado:
-#   ./shells/install_python_dependencies.sh
-#
-# Estrutura esperada:
-#   ./shells/install_python_dependencies.sh
-#   ./requirements.txt   ou   ./requeriments.txt
-#
-# Ambiente virtual criado em:
-#   ./.pyenv
-#
-# Abordagem adotada:
-#   - instala dependências base do requirements.txt
-#   - trata Qt/VTK separadamente
-#   - instala PyQt5 + vtk fixo
-#   - NÃO tenta instalar mayavi via pip
-# ============================================================
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
@@ -35,10 +16,11 @@ KERNEL_DISPLAY_NAME="Python (${PROJECT_NAME})"
 VTK_VERSION="${VTK_VERSION:-9.4.2}"
 QT_PACKAGE="${QT_PACKAGE:-PyQt5}"
 INSTALL_VTK="${INSTALL_VTK:-true}"
+INSTALL_MAYAVI="${INSTALL_MAYAVI:-true}"
 
 FILTERED_REQUIREMENTS=""
 VTK_STATUS="não instalado"
-MAYAVI_STATUS="não verificado"
+MAYAVI_STATUS="não instalado"
 
 cleanup() {
     if [[ -n "${FILTERED_REQUIREMENTS}" && -f "${FILTERED_REQUIREMENTS}" ]]; then
@@ -59,15 +41,14 @@ log "Kernel Jupyter : ${KERNEL_NAME}"
 log "Qt package     : ${QT_PACKAGE}"
 log "VTK version    : ${VTK_VERSION}"
 log "INSTALL_VTK    : ${INSTALL_VTK}"
+log "INSTALL_MAYAVI : ${INSTALL_MAYAVI}"
 log "========================================"
 
-# ---------- verifica python ----------
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
     log "Erro: ${PYTHON_BIN} não foi encontrado no sistema."
     exit 1
 fi
 
-# ---------- verifica venv do sistema ----------
 if ! "${PYTHON_BIN}" -m venv --help >/dev/null 2>&1; then
     log "Erro: o módulo venv não está disponível para ${PYTHON_BIN}."
     log "No Ubuntu, instale por exemplo:"
@@ -76,7 +57,6 @@ if ! "${PYTHON_BIN}" -m venv --help >/dev/null 2>&1; then
     exit 1
 fi
 
-# ---------- escolhe arquivo de dependências ----------
 if [[ -f "${REQ_FILE_1}" ]]; then
     REQUIREMENTS_FILE="${REQ_FILE_1}"
 elif [[ -f "${REQ_FILE_2}" ]]; then
@@ -90,7 +70,6 @@ fi
 
 log "Arquivo de dependências: ${REQUIREMENTS_FILE}"
 
-# ---------- cria/recria venv ----------
 create_or_recreate_venv() {
     log "Criando ambiente virtual em ${VENV_DIR} ..."
     rm -rf "${VENV_DIR}"
@@ -110,13 +89,9 @@ fi
 
 if [[ ! -f "${VENV_DIR}/bin/activate" ]] || [[ ! -x "${VENV_DIR}/bin/python" ]]; then
     log "Erro: falha ao criar ambiente virtual corretamente."
-    log "Esperado:"
-    log "  - ${VENV_DIR}/bin/activate"
-    log "  - ${VENV_DIR}/bin/python"
     exit 1
 fi
 
-# ---------- ativa venv ----------
 # shellcheck disable=SC1091
 source "${VENV_DIR}/bin/activate"
 
@@ -131,25 +106,19 @@ PY
 
 log "Versão do Python no venv: ${PYTHON_VERSION_FULL}"
 
-# ---------- garante pip ----------
 python -m ensurepip --upgrade || true
-python -m pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade pip setuptools wheel Cython
 
-# ---------- instala dependências base ----------
-# Remove mayavi / vtk / Qt do requirements para tratar separadamente.
 FILTERED_REQUIREMENTS="$(mktemp)"
-
 grep -Eiv '^[[:space:]]*(mayavi|vtk|pyqt5|pyqt6|pyside2|pyside6)([[:space:]]*([<>=!~]=?|===).*)?$' \
     "${REQUIREMENTS_FILE}" > "${FILTERED_REQUIREMENTS}" || true
 
 log "Instalando dependências base do projeto ..."
 python -m pip install --upgrade --force-reinstall -r "${FILTERED_REQUIREMENTS}"
 
-# ---------- suporte a Jupyter ----------
 log "Instalando suporte ao Jupyter ..."
 python -m pip install --upgrade jupyter jupyterlab ipykernel
 
-# ---------- instala Qt + VTK ----------
 if [[ "${INSTALL_VTK,,}" == "true" || "${INSTALL_VTK,,}" == "1" || "${INSTALL_VTK,,}" == "yes" ]]; then
     log "Instalando toolkit Qt (${QT_PACKAGE}) ..."
     python -m pip install --upgrade --force-reinstall "${QT_PACKAGE}"
@@ -157,40 +126,31 @@ if [[ "${INSTALL_VTK,,}" == "true" || "${INSTALL_VTK,,}" == "1" || "${INSTALL_VT
     log "Instalando vtk==${VTK_VERSION} ..."
     python -m pip install --upgrade --force-reinstall "vtk==${VTK_VERSION}"
 
-    python - <<PY
+    python - <<'PY'
 import vtk
 print("VTK importado com sucesso:", vtk.vtkVersion.GetVTKVersion())
 PY
 
     VTK_STATUS="instalado com sucesso (vtk==${VTK_VERSION})"
 else
-    log "Instalação de VTK pulada por configuração."
     VTK_STATUS="pulado por configuração"
 fi
 
-# ---------- verifica mayavi apenas se já existir ----------
-python - <<'PY'
-try:
-    import mayavi  # noqa: F401
-    print("Mayavi já está disponível no ambiente.")
-except Exception:
-    print("Mayavi não está instalado neste ambiente.")
+if [[ "${INSTALL_MAYAVI,,}" == "true" || "${INSTALL_MAYAVI,,}" == "1" || "${INSTALL_MAYAVI,,}" == "yes" ]]; then
+    log "Instalando mayavi ..."
+    python -m pip uninstall -y mayavi >/dev/null 2>&1 || true
+    python -m pip install --no-build-isolation --no-cache-dir mayavi
+
+    python - <<'PY'
+from mayavi import mlab
+print("Mayavi importado com sucesso.")
 PY
 
-if python - <<'PY'
-try:
-    import mayavi  # noqa: F401
-    raise SystemExit(0)
-except Exception:
-    raise SystemExit(1)
-PY
-then
-    MAYAVI_STATUS="já presente no ambiente"
+    MAYAVI_STATUS="instalado com sucesso"
 else
-    MAYAVI_STATUS="não instalado"
+    MAYAVI_STATUS="pulado por configuração"
 fi
 
-# ---------- registra kernel ----------
 log "Registrando kernel do Jupyter ..."
 python -m ipykernel install --user \
     --name "${KERNEL_NAME}" \
@@ -213,9 +173,4 @@ log "  jupyter lab"
 log ""
 log "Kernel registrado como:"
 log "  ${KERNEL_DISPLAY_NAME}"
-log ""
-log "Exemplos úteis:"
-log "  PYTHON_BIN=python3.11 ./shells/install_python_dependencies.sh"
-log "  VTK_VERSION=9.4.2 ./shells/install_python_dependencies.sh"
-log "  INSTALL_VTK=false ./shells/install_python_dependencies.sh"
 log "========================================"
