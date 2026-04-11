@@ -14,7 +14,7 @@
 #include "rand_utils.hpp"
 
 struct NetworkPattern {
-    using state_t = int16_t;
+    using state_t = int32_t;
 
     int dim;                        // Dimensão da rede (2D ou 3D)
     int num_colors;                 // Número de cores

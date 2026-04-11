@@ -42,9 +42,10 @@ Arguments:
   num_colors       : Number of colors in network >= 1 (int)
   rho_val          : Density for each color (double)  [IMPORTANT => num_colors * rho_val <= 1.0]
   P0               : Fraction of active nodes in base [0 < P0 <= 1.0]
+  Equilibration    : Return network with encoded time activation ['true' or 'false']
 Examples:
-  ./SOP 1000 0.10 -1 bond 1.0e-05 200 2 2 0.30 0.1
-  ./SOP  500  0.05 42 node 1.0e-04 100 3 3 0.25 0.5
+  ./SOP 2000 1.0 -1 bond 1.0e-04 200 2 1 1.0 0.1 true
+  ./SOP  500  0.05 42 node 1.0e-04 100 3 3 0.25 0.5 false
 
 Tips:
   - Use seed = -1 to auto-generate a random seed.
@@ -124,7 +125,7 @@ int main(int argc, char* argv[]){
         if (is_help_token(argv[1])) { print_help(argv[0]); return 0; }
         if (std::strcmp(argv[1],"--version")==0) { print_version(); return 0; }
     }
-    if (argc != 11) {
+    if (argc != 12) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc-1 << ").\n";
         print_help(argv[0]);
         return 1;
@@ -141,6 +142,18 @@ int main(int argc, char* argv[]){
         int num_colors = std::stoi(argv[8]);
         double rho_val = std::stod(argv[9]);
         double P0 = std::stod(argv[10]);
+        string equilibration = argv[11];
+        
+        bool animation;
+
+        if (equilibration == "true" || equilibration == "1") {
+            animation = true;
+        } else if (equilibration == "false" || equilibration == "0") {
+            animation = false;
+        } else {
+            std::cerr << "Valor invalido para bool: " << equilibration << "\n";
+            return 1;
+        }
 
         int type_N_t = 0;   // 0 => Nt constante; 1 => Nt = a * t^alpha
         double a = 0.0;
@@ -178,13 +191,6 @@ int main(int argc, char* argv[]){
         // gerador
         all_random rng(seed);
 
-        // cria pastas Data
-        FolderCreator creator("./SOP_data");
-        auto [network_dir, data_dir] = creator.create_structure(
-            dim, type_N_t, N_t, k, L, num_colors, a, alpha,
-            type_percolation, pp0, P0, rho_val
-        );
-
         // estruturas de saída
         TimeSeries ts;
         PercolationSeries ps;
@@ -193,40 +199,30 @@ int main(int argc, char* argv[]){
         std::vector<double> rho(num_colors, rho_val);
         // prob. inicial por cor
         std::vector<double> p0(num_colors, pp0);
-        int N_samples = 10000000;
+        int N_samples = 100000;
         network net_generator(N_samples, num_colors);
-
-        // gera rede e séries
-        // NetworkPattern net = net_generator.create_network(
-        //     dim, L, N_samples, k, N_t, type_N_t,
-        //     p0, P0, a, alpha, type_percolation,
-        //     num_colors, rho, ts, ps, rng
-        // );
         
-        // Data to animate network
-        NetworkPattern net_animation = net_generator.animate_network(
-            dim, L, N_samples, k, N_t, type_N_t,
-            p0, P0, a, alpha, type_percolation,
-            num_colors, rho, ts, ps, rng
+        // select if I used animation or just create
+        // bool animation = false;
+
+        NetworkPattern net = animation
+            ? net_generator.animate_network(
+                dim, L, N_samples, k, N_t, type_N_t,
+                p0, P0, a, alpha, type_percolation,
+                num_colors, rho, ts, ps, rng
+            )
+            : net_generator.create_network(
+                dim, L, N_samples, k, N_t, type_N_t,
+                p0, P0, a, alpha, type_percolation,
+                num_colors, rho, ts, ps, rng
+            );
+
+        // cria pastas Data
+        FolderCreator creator("./SOP_data");
+        auto [network_dir, data_dir] = creator.create_structure(
+            dim, type_N_t, N_t, k, L, num_colors, a, alpha,
+            type_percolation, pp0, P0, rho_val, animation
         );
-        // UNCOMENT BELOW TO CHECK INITIAL NETWORK===============
-        // NetworkPattern net = net_generator.initialize_network(
-        //                 dim,               // dimensão (2D/3D)
-        //                 L,                 // length_network
-        //                 num_colors,        // número de cores
-        //                 P0,                // fração a ativar na BASE
-        //                 rho,               // densidade por cor na BASE
-        //                 p0,                // fração de ativação por cor (na BASE)
-        //                 rng.get_seed()     // seed para o gerador
-        //             );
-        
-        // helpers prints;
-        // // Resumo da BASE (contagens)
-        // prints.print_base_summary(net);
-
-        // // Visual (fatia do nível 0 — a base)
-        // prints.print_slice(net, /*g_level=*/0);
-        // ========================================================
         
         std::cerr << "[DBG] ps sizes -> "
                   << "order=" << ps.percolation_order.size()
@@ -253,18 +249,15 @@ int main(int argc, char* argv[]){
                 << "_p0_" << std::fixed << std::setprecision(2) << pp0;
 
         const std::string sample_base = base_name.str();
-
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         std::string net_filename  = network_dir + "/" + sample_base + ".npz";
-        std::string net_animation_filename  = network_dir + "/" + sample_base + "_animation.npz";
         std::string shortest_filename = network_dir + "/map_shortest_" + sample_base + ".npz";
 
         // // salvar (novo writer JSON)
         save_data saver;
         
-        
         // 1) rede (Numpy .npy)
-        saver.save_network_as_npz(net_animation, net_animation_filename);
+        saver.save_network_as_npz(net, net_filename);
 
         // 2) resultados (JSON novo)
         //sort_by_order = true para ordenar por percolation_order

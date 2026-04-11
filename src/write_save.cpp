@@ -325,3 +325,41 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "  }\n";
     ofs << "}\n";
 }
+
+void save_data::save_reanalysis_json(const ReanalysisResult& result,
+                                     const std::string& filename_json) const
+{
+    std::ofstream ofs(filename_json);
+    if (!ofs) {
+        throw std::runtime_error(
+            std::string("[save_reanalysis_json] não abriu: ") + filename_json);
+    }
+
+    ofs << "{\n";
+    ofs << "  \"t_eq\": " << result.t_eq << ",\n";
+
+    ofs << "  \"color_percolation\": ";
+    write_json_array(ofs, result.color_percolation);
+    ofs << ",\n";
+
+    ofs << "  \"percolation_order\": ";
+    write_json_array(ofs, result.percolation_order);
+    ofs << ",\n";
+
+    ofs << "  \"largest_component\": ";
+    write_json_array(ofs, result.largest_component);
+    ofs << ",\n";
+
+    ofs << "  \"sp_len\": ";
+    write_json_array(ofs, result.sp_len);
+    ofs << ",\n";
+
+    ofs << "  \"sp_path_lin\": [";
+    for (size_t i = 0; i < result.sp_path_lin.size(); ++i) {
+        write_json_array(ofs, result.sp_path_lin[i]);
+        if (i + 1 < result.sp_path_lin.size()) ofs << ", ";
+    }
+    ofs << "]\n";
+
+    ofs << "}\n";
+}

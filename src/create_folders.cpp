@@ -18,12 +18,17 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
     std::string type_percolation,
     double /* p0 */,
     double /* P0 */,
-    double rho) {
+    double rho,
+    bool animation) {
 
     char main_folder[256];
-    sprintf(main_folder, "%s/raw/%s_percolation/num_colors_%d/dim_%d/L_%d",
+    if(animation==false)
+        sprintf(main_folder, "%s/raw/%s_percolation/num_colors_%d/dim_%d/L_%d",
+                base_path.c_str(), type_percolation.c_str(), n_colors ,dim, L);
+    else
+        sprintf(main_folder, "%s/raw/%s_percolation_animation/num_colors_%d/dim_%d/L_%d",
             base_path.c_str(), type_percolation.c_str(), n_colors ,dim, L);
-
+    
     std::string full_path;
 
     if (type_Nt == 0) {
@@ -43,9 +48,7 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
     fs::create_directories(network_path);
     fs::create_directories(data_path);
     
-
     return {network_path, data_path};
 }
-
 
 
