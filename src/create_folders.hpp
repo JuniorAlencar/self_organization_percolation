@@ -25,7 +25,8 @@ class FolderCreator {
             std::string type_percolation,
             double p0,
             double P0,
-            double rho
+            double rho,
+            bool animation
         );
 
     private:

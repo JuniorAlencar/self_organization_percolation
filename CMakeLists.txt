@@ -5,113 +5,102 @@ project(SelfOrganizationPercolation CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Ativar suporte a OpenMP
 find_package(OpenMP REQUIRED)
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
-file(GLOB SOURCES ${SRC_DIR}/*.cpp)
-file(GLOB HEADERS ${SRC_DIR}/*.hpp)
+set(ANALYSIS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/analysis_equilibration)
 
-if(SOURCES STREQUAL "")
+file(GLOB SRC_CPP ${SRC_DIR}/*.cpp)
+file(GLOB SRC_HPP ${SRC_DIR}/*.hpp)
+
+file(GLOB ANALYSIS_CPP ${ANALYSIS_DIR}/*.cpp)
+file(GLOB ANALYSIS_HPP ${ANALYSIS_DIR}/*.hpp)
+
+if(SRC_CPP STREQUAL "")
     message(FATAL_ERROR "Nenhum arquivo .cpp encontrado em ${SRC_DIR}")
 endif()
 
-# Adicionar o executável
-add_executable(SOP ${SOURCES} ${HEADERS})
+if(ANALYSIS_CPP STREQUAL "")
+    message(WARNING "Nenhum arquivo .cpp encontrado em ${ANALYSIS_DIR}")
+endif()
 
-# Incluir diretórios
-target_include_directories(SOP PRIVATE
+# mains
+set(MAIN_SOP ${SRC_DIR}/main.cpp)
+set(MAIN_REANALYSIS ${ANALYSIS_DIR}/main_animation_reanalysis.cpp)
+
+# fontes comuns do core
+set(CORE_SOURCES ${SRC_CPP})
+list(REMOVE_ITEM CORE_SOURCES ${MAIN_SOP})
+
+# se por acaso analysis_animation tiver mais arquivos cpp além do main,
+# eles entram no executável de reanalysis, não no core
+set(REANALYSIS_SOURCES ${ANALYSIS_CPP})
+list(REMOVE_ITEM REANALYSIS_SOURCES ${MAIN_REANALYSIS})
+
+# biblioteca compartilhada do projeto
+add_library(sop_core STATIC
+    ${CORE_SOURCES}
+    ${SRC_HPP}
+)
+
+target_include_directories(sop_core PUBLIC
     ${SRC_DIR}
+    ${ANALYSIS_DIR}
     /usr/local/include
 )
 
-# RPATH para bibliotecas
-set_target_properties(SOP PROPERTIES
-    BUILD_RPATH /usr/local/lib
+target_link_directories(sop_core PUBLIC
+    /usr/local/lib
 )
 
-link_directories(/usr/local/lib)
-
-# Vincular bibliotecas
-target_link_libraries(SOP
+target_link_libraries(sop_core PUBLIC
     cnpy
     zip
     OpenMP::OpenMP_CXX
 )
 
-# Opcional: embutir versão no executável (altere conforme desejar)
+# executável principal
+add_executable(SOP ${MAIN_SOP})
+
+target_include_directories(SOP PRIVATE
+    ${SRC_DIR}
+    ${ANALYSIS_DIR}
+    /usr/local/include
+)
+
+target_link_libraries(SOP PRIVATE
+    sop_core
+)
+
+# executável de reanálise
+add_executable(EquilibrationReanalysis
+    ${MAIN_REANALYSIS}
+    ${REANALYSIS_SOURCES}
+    ${ANALYSIS_HPP}
+)
+
+target_include_directories(EquilibrationReanalysis PRIVATE
+    ${SRC_DIR}
+    ${ANALYSIS_DIR}
+    /usr/local/include
+)
+
+target_link_libraries(EquilibrationReanalysis PRIVATE
+    sop_core
+)
+
+# ambos os executáveis saem direto em build/
+set_target_properties(SOP PROPERTIES
+    BUILD_RPATH /usr/local/lib
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+set_target_properties(EquilibrationReanalysis PROPERTIES
+    BUILD_RPATH /usr/local/lib
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# versão
 set(SOP_VERSION "1.0.0")
 target_compile_definitions(SOP PRIVATE SOP_VERSION="${SOP_VERSION}")
-
-# --
-
-# cmake_minimum_required(VERSION 3.10)
-
-# project(SelfOrganizationPercolation CXX)
-
-# set(CMAKE_CXX_STANDARD 17)
-# set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# # ===== Opções de build =====
-# # Debug por padrão (pode sobrescrever via -DCMAKE_BUILD_TYPE=Release)
-# if(NOT CMAKE_BUILD_TYPE)
-#   set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
-# endif()
-
-# option(ENABLE_SANITIZERS "Enable Address/Undefined sanitizers" ON)
-
-# # Para gerar compile_commands.json (útil para IDEs/clangd)
-# set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# # ===== OpenMP =====
-# find_package(OpenMP REQUIRED)
-
-# set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# file(GLOB SOURCES ${SRC_DIR}/*.cpp)
-# file(GLOB HEADERS ${SRC_DIR}/*.hpp)
-
-# if(SOURCES STREQUAL "")
-#     message(FATAL_ERROR "Nenhum arquivo .cpp encontrado em ${SRC_DIR}")
-# endif()
-
-# add_executable(SOP ${SOURCES} ${HEADERS})
-
-# target_include_directories(SOP PRIVATE
-#     ${SRC_DIR}
-#     /usr/local/include
-# )
-
-# set_target_properties(SOP PROPERTIES
-#     BUILD_RPATH /usr/local/lib
-# )
-
-# link_directories(/usr/local/lib)
-
-# target_link_libraries(SOP
-#     cnpy
-#     zip
-#     OpenMP::OpenMP_CXX
-# )
-
-# # ===== Flags de Debug úteis =====
-# # -O0 e -g só no Debug; -fno-omit-frame-pointer ajuda stacktraces do ASan
-# if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-#   target_compile_options(SOP PRIVATE
-#     $<$<CONFIG:Debug>:-O0 -g -fno-omit-frame-pointer>
-#   )
-# elseif(MSVC)
-#   target_compile_options(SOP PRIVATE
-#     $<$<CONFIG:Debug>:/Od /Zi>
-#   )
-# endif()
-
-# # ===== Sanitizers (GNU/Clang) =====
-# if(ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-#   message(STATUS "Sanitizers habilitados (Address + Undefined)")
-#   target_compile_options(SOP PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-#   target_link_options(SOP    PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-# endif()
-
-# # Versão embutida
-# set(SOP_VERSION "1.0.0")
-# target_compile_definitions(SOP PRIVATE SOP_VERSION="${SOP_VERSION}")
+target_compile_definitions(EquilibrationReanalysis PRIVATE SOP_VERSION="${SOP_VERSION}")

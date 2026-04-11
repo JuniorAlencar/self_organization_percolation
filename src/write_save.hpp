@@ -5,6 +5,7 @@
 
 #include "network.hpp"
 #include "struct_network.hpp"
+#include "animation_reanalysis.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -26,6 +27,8 @@ public:
                                const TimeSeries& ts,
                                const std::string& filename_json,
                                bool sort_by_order = true) const;
+    void save_reanalysis_json(const ReanalysisResult& result,
+        const std::string& filename_json) const;
 };
 
 #endif // WRITE_SAVE_HPP
