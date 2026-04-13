@@ -9,8 +9,8 @@ import numpy as np
 # L = 768 => Ns = 50
 # L = 1024 => Ns = 20
 
-# num_runs = [500, 75 ,100, 50, 30, 10]
-# L_lst = [128, 192, 256, 384, 512, 768, 1024]
+# num_runs = [500, 75 , 100,  50,  30, 10]
+# L_lst =    [128, 192, 256, 384, 512, 768, 1024]
 
 #L_lst = [256, 384, 512, 768, 1024]
 # nc = 8
@@ -52,37 +52,31 @@ type_perc = 'bond'
 #         shell_data(L, type_perc, p0, seed, k, NT, dim,
 #                 nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
 
-L_lst =       [1024]
-num_runs =    [10]
-num_threads = [3]
+L_lst =       [256, 512]
+num_runs =    [250, 50]
+num_threads = [11, 11]
 multi=True
 Equilibration = 'false'
-nc = 4
-p0 = 0.3
+nc = 8
+p0_lst = [0.3, 0.7, 1.0]
 if nc == 2:
     f = 0.03
 elif nc == 4:
-    f = 0.01
+    f = 0.02
 elif nc == 8:
     f = 0.01
 
-# if nc == 2:
-#     f = 0.03
-# elif nc == 4:
-#     f = 0.02
-# elif nc == 8:
-#     f = 0.01
-
-for idx, L in enumerate(L_lst):
-        base = L**(dim-1)
-        NT = int(f*base)
-        # start = 1/(P0*L**2)
-        # print(start)
-        # stop = 1/(2*nc)
-        # n_points = 50
-        # rho = custom_range(start, stop, n_points)
-        rho = [1/nc]
-        exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
-        
-        shell_data(L, type_perc, p0, seed, k, NT, dim,
-                nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
+for p0 in p0_lst:
+    for idx, L in enumerate(L_lst):
+            base = L**(dim-1)
+            NT = int(f*base)
+            # start = 1/(P0*L**2)
+            # print(start)
+            # stop = 1/(2*nc)
+            # n_points = 50
+            # rho = custom_range(start, stop, n_points)
+            rho = [1/nc]
+            exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
+            
+            shell_data(L, type_perc, p0, seed, k, NT, dim,
+                    nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
