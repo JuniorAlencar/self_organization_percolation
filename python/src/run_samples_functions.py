@@ -9,7 +9,7 @@ import textwrap
 
 def shell_data(L:int, type_perc:str, p0:float,
                seed:int, k:float, NT:int, dim:int, num_colors:int,
-               num_runs:int, rho:list, exec_name:str, P0:float,
+               num_runs:int, rho:list, exec_name:str, P0:float, equlibration,
                num_threads: int = 4,
                multi: bool = False):
     """
@@ -51,6 +51,7 @@ NT={NT}
 dim={dim}
 num_colors={num_colors}
 P0={P0}
+Equilibration={equlibration}
 JOBS={num_threads}
 
 # --- check GNU parallel ---
@@ -59,13 +60,13 @@ if ! command -v parallel >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type k NT dim num_colors P0
+export L p0 seed type k NT dim num_colors P0 Equilibration
 
 # --- run Cartesian product: rho × runs, with progress bar ---
 parallel -j "$JOBS" --bar --halt soon,fail=1 '
   RHO={{1}}
   RUN={{2}}
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0"
+  ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration"
 ' ::: "${{rho[@]}}" ::: $(seq 1 "$num_runs")
 """
     else:
@@ -87,6 +88,7 @@ k={k}
 NT={NT}
 dim={dim}
 num_colors={num_colors}
+Equilibration={equlibration}
 P0={P0}
 
 # --- pretty progress bar (single-line) ---
@@ -118,9 +120,9 @@ for ((run=1; run<=num_runs; run++)); do
     if [[ "$VERBOSE" -eq 1 ]]; then
       echo
       echo "./build/SOP $L $p0 $seed $type $k $NT $dim $num_colors $RHO $P0"
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0"
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration"
     else
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0" >/dev/null
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" >/dev/null
     fi
   done
 done

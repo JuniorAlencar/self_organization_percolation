@@ -29,7 +29,7 @@
 static void print_help(const char* prog){
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val> <P0>
+  ./SOP <L> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val> <P0> <Equilibration>
 
 Arguments:
   L                : Length of network (int)
@@ -219,7 +219,7 @@ int main(int argc, char* argv[]){
 
         // cria pastas Data
         FolderCreator creator("./SOP_data");
-        auto [network_dir, data_dir] = creator.create_structure(
+        auto [network_dir, data_dir, equilibration_dir] = creator.create_structure(
             dim, type_N_t, N_t, k, L, num_colors, a, alpha,
             type_percolation, pp0, P0, rho_val, animation
         );
@@ -250,14 +250,16 @@ int main(int argc, char* argv[]){
 
         const std::string sample_base = base_name.str();
         std::string json_filename = data_dir + "/" + sample_base + ".json";
-        std::string net_filename  = network_dir + "/" + sample_base + ".npz";
-        std::string shortest_filename = network_dir + "/map_shortest_" + sample_base + ".npz";
-
+        
         // // salvar (novo writer JSON)
         save_data saver;
-        
         // 1) rede (Numpy .npy)
-        saver.save_network_as_npz(net, net_filename);
+        if(animation==true){
+            std::string net_filename  = network_dir + "/" + sample_base + ".npz";
+            saver.save_network_as_npz(net, net_filename);
+            std::string shortest_filename = network_dir + "/map_shortest_" + sample_base + ".npz";
+        }
+    
 
         // 2) resultados (JSON novo)
         //sort_by_order = true para ordenar por percolation_order

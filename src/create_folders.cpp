@@ -6,7 +6,7 @@ namespace fs = std::filesystem;
 FolderCreator::FolderCreator(const std::string& base_path)
     : base_path(base_path) {}
 
-std::tuple<std::string, std::string> FolderCreator::create_structure(
+std::tuple<std::string, std::string, std::string> FolderCreator::create_structure(
     int dim,
     int type_Nt,
     double N_t,
@@ -19,21 +19,24 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
     double /* p0 */,
     double /* P0 */,
     double rho,
-    bool animation) {
-
+    bool animation)
+{
     char main_folder[256];
-    if(animation==false)
+
+    if (animation == false) {
         sprintf(main_folder, "%s/raw/%s_percolation/num_colors_%d/dim_%d/L_%d",
-                base_path.c_str(), type_percolation.c_str(), n_colors ,dim, L);
-    else
-        sprintf(main_folder, "%s/raw/%s_percolation_animation/num_colors_%d/dim_%d/L_%d",
-            base_path.c_str(), type_percolation.c_str(), n_colors ,dim, L);
-    
+                base_path.c_str(), type_percolation.c_str(), n_colors, dim, L);
+    } else {
+        sprintf(main_folder, "%s/raw/%s_percolation_equilibration/num_colors_%d/dim_%d/L_%d",
+                base_path.c_str(), type_percolation.c_str(), n_colors, dim, L);
+    }
+
     std::string full_path;
 
     if (type_Nt == 0) {
         char sub[512];
-        sprintf(sub, "%s/NT_constant/NT_%.0f/k_%.1e/rho_%.4e", main_folder, N_t, k, rho);
+        sprintf(sub, "%s/NT_constant/NT_%.0f/k_%.1e/rho_%.4e",
+                main_folder, N_t, k, rho);
         full_path = std::string(sub);
     } else {
         char sub[512];
@@ -44,11 +47,17 @@ std::tuple<std::string, std::string> FolderCreator::create_structure(
 
     std::string network_path = full_path + "/network";
     std::string data_path = full_path + "/data";
-    
+    std::string data_path_equilibration = "";
+
     fs::create_directories(network_path);
     fs::create_directories(data_path);
-    
-    return {network_path, data_path};
+
+    if (animation == true) {
+        data_path_equilibration = full_path + "/data_equilibration";
+        fs::create_directories(data_path_equilibration);
+    }
+
+    return {network_path, data_path, data_path_equilibration};
 }
 
 
