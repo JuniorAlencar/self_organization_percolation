@@ -13,29 +13,65 @@ import numpy as np
 # L_lst = [128, 192, 256, 384, 512, 768, 1024]
 
 #L_lst = [256, 384, 512, 768, 1024]
-nc = 8
+# nc = 8
 
-if nc == 2:
-    f = 0.03
-elif nc == 4:
-    f = 0.02
-elif nc == 8:
-    f = 0.01
+# if nc == 2:
+#     f = 0.03
+# elif nc == 4:
+#     f = 0.02
+# elif nc == 8:
+#     f = 0.01
 
 #Nt = [[int(fraction*L**2) for fraction in f] for L in L_lst]
 #f0 = 0.02
 #rho = 1/nc
 k = 1.0e-06
-p0 = 1.0
+#p0 = 1.0
 seed = -1
 dim = 3
 #nc=2
 P0 = 0.1
 type_perc = 'bond'
-L_lst =       [304, 362, 430, 608, 724, 861]
-num_runs =    [250, 150, 150, 50, 25, 15]
-num_threads = [11 , 11 , 11 , 11, 9, 8]
+# L_lst =       [256, 304, 362, 430, 512, 608, 724, 861, 1024]
+# num_runs =    [300, 250, 150, 150, 80 , 50 , 25 , 15 , 10]
+# num_threads = [11 , 11 , 11 , 11 , 9  , 11 , 11 , 6  , 3]
+# multi=True
+# Equilibration = 'true'
+
+# for idx, L in enumerate(L_lst):
+#         base = L**(dim-1)
+#         NT = int(f*base)
+#         # start = 1/(P0*L**2)
+#         # print(start)
+#         # stop = 1/(2*nc)
+#         # n_points = 50
+#         # rho = custom_range(start, stop, n_points)
+#         rho = [1/nc]
+#         exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}.sh"
+        
+#         shell_data(L, type_perc, p0, seed, k, NT, dim,
+#                 nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
+
+L_lst =       [1024]
+num_runs =    [10]
+num_threads = [3]
 multi=True
+Equilibration = 'false'
+nc = 4
+p0 = 0.3
+if nc == 2:
+    f = 0.03
+elif nc == 4:
+    f = 0.01
+elif nc == 8:
+    f = 0.01
+
+# if nc == 2:
+#     f = 0.03
+# elif nc == 4:
+#     f = 0.02
+# elif nc == 8:
+#     f = 0.01
 
 for idx, L in enumerate(L_lst):
         base = L**(dim-1)
@@ -46,7 +82,7 @@ for idx, L in enumerate(L_lst):
         # n_points = 50
         # rho = custom_range(start, stop, n_points)
         rho = [1/nc]
-        exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}.sh"
+        exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
         
         shell_data(L, type_perc, p0, seed, k, NT, dim,
-                nc, num_runs[idx], rho, exec_name, P0, num_threads[idx], multi)
+                nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)

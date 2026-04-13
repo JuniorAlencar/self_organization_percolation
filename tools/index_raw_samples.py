@@ -13,7 +13,12 @@ def build_index(cfg_path: str = "../config/sop_data_config.yaml") -> None:
 
     for group_dir in get_group_dirs(dirs["raw"]):
         group_relpath = group_dir.relative_to(dirs["raw"])
-        group_dict = parse_group_relpath(group_relpath)
+
+        try:
+            group_dict = parse_group_relpath(group_relpath)
+        except ValueError:
+            print(f"[skip] caminho ignorado: {group_relpath}")
+            continue
 
         data_dir = group_dir / "data"
         json_files = sorted([p.name for p in data_dir.glob("*.json")]) if data_dir.is_dir() else []

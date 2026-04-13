@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
         const double alpha = 0.0;
 
         FolderCreator folder_creator(base_path);
-        const auto [network_path, data_path] = folder_creator.create_structure(
+        const auto [network_path, data_path, equilibration_dir] = folder_creator.create_structure(
             dim,
             type_Nt,
             N_t,

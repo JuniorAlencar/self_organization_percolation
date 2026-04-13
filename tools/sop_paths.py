@@ -116,15 +116,28 @@ def group_dict_to_key(group: Dict[str, str]) -> str:
 
 def get_group_dirs(raw_dir: Path) -> List[Path]:
     """
-    Retorna diretórios de grupo-base, isto é, diretórios rho_* que possuem data/.
-    Ignora network/, pois o pipeline atual processa apenas os jsons em data/.
+    Retorna diretórios de grupo-base válidos, isto é, diretórios rho_* que possuem data/
+    e cujo caminho relativo siga exatamente o padrão esperado pelo pipeline:
+
+    bond_percolation/num_colors_4/dim_3/L_256/NT_constant/NT_3000/k_1.0e-06/rho_2.5000e-01
+
+    Diretórios auxiliares, como bond_percolation_equilibration, são ignorados.
     """
     groups = []
+
     for rho_dir in raw_dir.rglob("rho_*"):
         if not rho_dir.is_dir():
             continue
-        has_data = (rho_dir / "data").is_dir()
-        if has_data:
-            groups.append(rho_dir)
+
+        if not (rho_dir / "data").is_dir():
+            continue
+
+        try:
+            relpath = rho_dir.relative_to(raw_dir)
+            parse_group_relpath(relpath)
+        except Exception:
+            continue
+
+        groups.append(rho_dir)
 
     return sorted(set(groups))
