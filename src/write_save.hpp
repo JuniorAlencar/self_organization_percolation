@@ -5,7 +5,7 @@
 
 #include "network.hpp"
 #include "struct_network.hpp"
-#include "animation_reanalysis.hpp"
+#include "../analysis_equilibration/animation_reanalysis.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -28,7 +28,11 @@ public:
                                const std::string& filename_json,
                                bool sort_by_order = true) const;
     void save_reanalysis_json(const ReanalysisResult& result,
-        const std::string& filename_json) const;
+                              const std::string& filename_json) const;
+
+    void save_reanalysis_networks(const ReanalysisResult& result,
+                                const std::string& filename_preteq_npz,
+                                const std::string& filename_posteq_npz) const;
 };
 
 #endif // WRITE_SAVE_HPP

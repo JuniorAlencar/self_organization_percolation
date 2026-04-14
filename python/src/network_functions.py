@@ -312,140 +312,7 @@ def plot_3D_cut(dim, L, nc, rho, k, NT):
     print(f"network save in {path_out_network}")
     mlab.show()
 
-# def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
-#                  specific_color=None, show_base=False):
-#     fn = path_dir + file_positions
-
-#     if not os.path.exists(fn):
-#         print("file positions don't exist, create it...")
-#         convert_positions(
-#             path_dir,
-#             filename,
-#             f"network_positions_P0_{P0:.2f}.parquet",
-#             3
-#         )
-#         print("File with positions created")
-
-#     a = 0
-#     b = 0
-
-#     df = pd.read_parquet(fn).copy()
-
-#     # garante inteiros e periodicidade transversal
-#     df["x"] = ((df["x"].astype(int) + a) % L).astype(int)
-#     df["y"] = ((df["y"].astype(int) + b) % L).astype(int)
-#     df["z"] = df["z"].astype(int)
-#     df["color"] = df["color"].astype(int)
-
-#     # se quiser garantir apenas sítios ativos
-#     df = df[df["color"] > 0].copy()
-
-#     figure_size = (800, 800)
-#     mlab.clf()
-#     mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
-
-#     colors = [i + 2 for i in range(nc)]
-
-#     colors_used = [
-#         (0.9, 0.1, 0.1),    # 2 - red
-#         (1.0, 0.5, 0.0),    # 3 - orange
-#         (0.1, 0.9, 0.1),    # 4 - green
-#         (0.1, 0.1, 0.9),    # 5 - blue
-#         (0.8, 0.2, 0.8),    # 6 - purple
-#         (0.2, 0.8, 0.8),    # 7 - teal
-#         (1.0, 1.0, 0.0),    # 8 - yellow
-#         (0.6, 0.4, 0.2),    # 9 - brown
-#         (0.0, 0.0, 0.0),    # 10 - black
-#         (0.65, 0.65, 0.65)  # 11 - gray
-#     ]
-
-#     if specific_color is None:
-#         for idx, color in enumerate(colors):
-#             df_color = df[df["color"] == color]
-
-#             if df_color.empty:
-#                 continue
-
-#             x = df_color["x"].to_numpy()
-#             y = df_color["y"].to_numpy()
-#             z = df_color["z"].to_numpy()
-
-#             pts = mlab.points3d(
-#                 x, y, z,
-#                 np.ones_like(x),
-#                 color=colors_used[idx],
-#                 scale_factor=1.0,
-#                 opacity=1.0,
-#                 mode="cube"
-#             )
-#             pts.actor.property.edge_visibility = True
-#             pts.actor.property.edge_color = (0, 0, 0)
-#             pts.actor.property.line_width = 0.00
-
-#         if show_base:
-#             path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}base.png"
-#         else:
-#             path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}all.png"
-
-#     else:
-#         if specific_color not in colors:
-#             print(f"color not accept, please enter with any color in list {colors}")
-#             return
-
-#         idx = colors.index(specific_color)
-#         df_color = df[df["color"] == specific_color]
-
-#         if df_color.empty:
-#             print(f"No points found for color {specific_color}")
-#             return
-
-#         x = df_color["x"].to_numpy()
-#         y = df_color["y"].to_numpy()
-#         z = df_color["z"].to_numpy()
-
-#         pts = mlab.points3d(
-#             x, y, z,
-#             np.ones_like(x),
-#             color=colors_used[idx],
-#             scale_factor=1.0,
-#             opacity=1.0,
-#             mode="cube"
-#         )
-#         pts.actor.property.edge_visibility = True
-#         pts.actor.property.edge_color = (0, 0, 0)
-#         pts.actor.property.line_width = 0.00
-
-#         if show_base:
-#             path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}_base.png"
-#         else:
-#             path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}.png"
-
-#     mlab.outline(
-#         extent=[0, L, 0, L, 0, L],
-#         color=(0, 0, 0),
-#         line_width=2.0
-#     )
-
-#     if show_base:
-#         mlab.view(
-#             azimuth=0,
-#             elevation=-90,
-#             distance=2.8 * L,
-#             focalpoint=(L / 2, L / 2, 0)
-#         )
-#     else:
-#         mlab.view(
-#             azimuth=70,
-#             elevation=65,
-#             distance=3.1 * L,
-#             focalpoint=(L / 2, L / 2, L / 2)
-#         )
-
-#     mlab.savefig(path_out_network, magnification=4)
-#     print(f"network save in {path_out_network}")
-#     mlab.show()
-
-def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
+def plot_3D_full(path_dir, file_positions, p0, P0, L, nc, seed, filename,
                  specific_color=None, show_base=False):
     fn = path_dir + file_positions
 
@@ -454,7 +321,7 @@ def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
         convert_positions(
             path_dir,
             filename,
-            f"network_positions_P0_{P0:.2f}.parquet",
+            f"network_positions_p0_{p0:.1f}_P0_{P0:.2f}.parquet",
             3
         )
         print("File with positions created")
@@ -526,9 +393,9 @@ def plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename,
             pts.actor.property.line_width = 0.00
 
         if show_base:
-            path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}base.png"
+            path_out_network = path_dir + f"L{L}_seed{seed}_p0_{p0:.1f}_P0_{P0:.2f}base.png"
         else:
-            path_out_network = path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}all.png"
+            path_out_network = path_dir + f"L{L}_seed{seed}_p0_{p0:.1f}_P0_{P0:.2f}all.png"
 
     else:
         if specific_color not in colors:
@@ -808,10 +675,9 @@ def plot_projection(path_dir, file_positions, L, P0, seed, filename, z_level):
         (1.0, 1.0, 0.0),  # 8 - yellow
         (0.6, 0.4, 0.2),  # 9 - brown
     ]
-
     if not os.path.exists(fn):
         print("file positions don't exist, create it...")
-        convert_positions(path_dir, filename, f"network_positions_P0_{P0:.2f}.parquet", 3)
+        convert_positions(path_dir, filename, f"network_positions_p0_{p0}_P0_{P0:.2f}.parquet", 3)
         print("File with positions created")
 
     df = pd.read_parquet(fn)
