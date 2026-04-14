@@ -332,15 +332,31 @@ bool shortest_path_single_color(
 {
     const int active_val = color_to_active_value(net.num_colors, color_idx);
     const int N = static_cast<int>(net.data.size());
+    const int top_coord = (grid.dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
 
     std::vector<char> visited(N, 0);
     std::vector<int> parent(N, -1);
     std::vector<int> dist(N, -1);
     std::queue<int> q;
 
+    int base_subgraph = std::numeric_limits<int>::max();
+    bool has_active_nodes = false;
+
     for (int idx = 0; idx < N; ++idx) {
-        if (grid.grow_coord(idx) != 0) continue;
         if (static_cast<int>(net.data[idx]) != active_val) continue;
+        has_active_nodes = true;
+        base_subgraph = std::min(base_subgraph, grid.grow_coord(idx));
+    }
+
+    if (!has_active_nodes) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
+    for (int idx = 0; idx < N; ++idx) {
+        if (static_cast<int>(net.data[idx]) != active_val) continue;
+        if (grid.grow_coord(idx) != base_subgraph) continue;
 
         visited[idx] = 1;
         dist[idx] = 0;
@@ -354,7 +370,7 @@ bool shortest_path_single_color(
         const int u = q.front();
         q.pop();
 
-        if (grid.grow_coord(u) == ((grid.dim == 2) ? (grid.SY - 1) : (grid.SZ - 1))) {
+        if (grid.grow_coord(u) == top_coord) {
             target = u;
             break;
         }
@@ -393,31 +409,168 @@ TimeSeries load_timeseries_from_json(const std::string& json_path) {
     json j;
     fin >> j;
 
-    const json* root = &j;
-    if (j.contains("time_series")) {
-        root = &j["time_series"];
-    } else if (j.contains("ts_out")) {
-        root = &j["ts_out"];
-    }
-
-    if (!root->contains("t") || !root->contains("p_t")) {
-        throw std::runtime_error("JSON nao contem chaves 't' e 'p_t'");
-    }
-
     TimeSeries ts;
-    ts.t = (*root)["t"].get<std::vector<int>>();
-    ts.p_t = (*root)["p_t"].get<std::vector<std::vector<double>>>();
 
-    if (root->contains("Nt")) {
-        ts.Nt = (*root)["Nt"].get<std::vector<std::vector<int>>>();
-    } else {
-        ts.Nt.assign(ts.p_t.size(), std::vector<int>(ts.t.size(), 0));
+    // =========================================================
+    // FORMATO ANTIGO
+    //   {
+    //     "time_series": { "t": ..., "p_t": ..., "Nt": ... }
+    //   }
+    // ou
+    //   {
+    //     "ts_out": { "t": ..., "p_t": ..., "Nt": ... }
+    //   }
+    // =========================================================
+    if (j.contains("time_series") || j.contains("ts_out")) {
+        const json* root = nullptr;
+
+        if (j.contains("time_series")) {
+            root = &j["time_series"];
+        } else {
+            root = &j["ts_out"];
+        }
+
+        if (!root->contains("t") || !root->contains("p_t")) {
+            throw std::runtime_error(
+                "JSON antigo encontrado, mas sem chaves 't' e 'p_t': " + json_path);
+        }
+
+        ts.t = (*root)["t"].get<std::vector<int>>();
+        ts.p_t = (*root)["p_t"].get<std::vector<std::vector<double>>>();
+
+        if (root->contains("Nt")) {
+            ts.Nt = (*root)["Nt"].get<std::vector<std::vector<int>>>();
+        } else {
+            ts.Nt.assign(ts.p_t.size(), std::vector<int>(ts.t.size(), 0));
+        }
+
+        if (root->contains("num_colors")) {
+            ts.num_colors = (*root)["num_colors"].get<int>();
+        } else {
+            ts.num_colors = static_cast<int>(ts.p_t.size());
+        }
+
+        return ts;
     }
 
-    if (root->contains("num_colors")) {
-        ts.num_colors = (*root)["num_colors"].get<int>();
+    // =========================================================
+    // FORMATO NOVO
+    //   {
+    //     "meta": { "num_colors": ..., "rho": [...] },
+    //     "results": {
+    //       "order_percolation 1": {
+    //         "data": {
+    //           "color": 7,
+    //           "time": [...],
+    //           "pt": [...],
+    //           "nt": [...]
+    //         }
+    //       },
+    //       ...
+    //     }
+    //   }
+    // =========================================================
+    if (!j.contains("results") || !j["results"].is_object()) {
+        throw std::runtime_error(
+            "JSON em formato nao suportado (sem 'time_series', 'ts_out' ou 'results'): " + json_path);
+    }
+
+    const json& results = j["results"];
+
+    int num_colors = 0;
+    if (j.contains("meta") && j["meta"].contains("num_colors")) {
+        num_colors = j["meta"]["num_colors"].get<int>();
     } else {
-        ts.num_colors = static_cast<int>(ts.p_t.size());
+        for (auto it = results.begin(); it != results.end(); ++it) {
+            if (!it.value().contains("data")) continue;
+            const json& data = it.value()["data"];
+            if (!data.contains("color")) continue;
+            num_colors = std::max(num_colors, data["color"].get<int>());
+        }
+    }
+
+    if (num_colors <= 0) {
+        throw std::runtime_error(
+            "Nao foi possivel determinar num_colors no JSON: " + json_path);
+    }
+
+    ts.num_colors = num_colors;
+    ts.p_t.assign(num_colors, {});
+    ts.Nt.assign(num_colors, {});
+    std::vector<char> color_found(num_colors, 0);
+
+    bool t_initialized = false;
+
+    for (auto it = results.begin(); it != results.end(); ++it) {
+        if (!it.value().contains("data")) {
+            continue;
+        }
+
+        const json& data = it.value()["data"];
+
+        if (!data.contains("color") || !data.contains("time") || !data.contains("pt")) {
+            throw std::runtime_error(
+                "Bloco em 'results' sem chaves obrigatorias ('color', 'time', 'pt'): " + it.key());
+        }
+
+        const int color_1b = data["color"].get<int>();
+        const int color_idx = color_1b - 1;
+
+        if (color_idx < 0 || color_idx >= num_colors) {
+            throw std::runtime_error(
+                "Cor invalida no JSON: color = " + std::to_string(color_1b));
+        }
+
+        const std::vector<int> time = data["time"].get<std::vector<int>>();
+        const std::vector<double> pt = data["pt"].get<std::vector<double>>();
+
+        std::vector<int> nt;
+        if (data.contains("nt")) {
+            nt = data["nt"].get<std::vector<int>>();
+        } else {
+            nt.assign(time.size(), 0);
+        }
+
+        if (time.size() != pt.size()) {
+            throw std::runtime_error(
+                "Comprimentos incompatíveis entre 'time' e 'pt' para color = " + std::to_string(color_1b));
+        }
+
+        if (time.size() != nt.size()) {
+            throw std::runtime_error(
+                "Comprimentos incompatíveis entre 'time' e 'nt' para color = " + std::to_string(color_1b));
+        }
+
+        if (!t_initialized) {
+            ts.t = time;
+            t_initialized = true;
+        } else {
+            if (time.size() != ts.t.size()) {
+                throw std::runtime_error(
+                    "Series 'time' com tamanhos diferentes entre cores no JSON: " + json_path);
+            }
+            if (time != ts.t) {
+                throw std::runtime_error(
+                    "Series 'time' diferentes entre cores no JSON: " + json_path);
+            }
+        }
+
+        ts.p_t[color_idx] = pt;
+        ts.Nt[color_idx] = nt;
+        color_found[color_idx] = 1;
+    }
+
+    if (!t_initialized) {
+        throw std::runtime_error(
+            "Nenhum bloco valido encontrado em 'results' no JSON: " + json_path);
+    }
+
+    // Se alguma cor nao aparecer no JSON, preenche com zeros
+    for (int c = 0; c < num_colors; ++c) {
+        if (!color_found[c]) {
+            ts.p_t[c].assign(ts.t.size(), 0.0);
+            ts.Nt[c].assign(ts.t.size(), 0);
+        }
     }
 
     return ts;
@@ -501,18 +654,25 @@ int estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig
     return estimate_t_eq(ts, cfg);
 }
 
-NetworkPattern rebuild_network_from_animation(
+namespace {
+
+NetworkPattern make_empty_like(const NetworkPattern& net)
+{
+    NetworkPattern out(net.dim, net.shape, net.num_colors, net.rho);
+    out.data.assign(net.data.size(), static_cast<NetworkPattern::state_t>(-1));
+    return out;
+}
+
+
+
+
+
+NetworkPattern build_cumulative_network_until_time(
     const NetworkPattern& encoded_net,
-    const int t_eq,
+    const int t_cut,
     const int species_factor)
 {
-    NetworkPattern filtered(
-        encoded_net.dim,
-        encoded_net.shape,
-        encoded_net.num_colors,
-        encoded_net.rho);
-
-    filtered.data.resize(encoded_net.data.size(), static_cast<NetworkPattern::state_t>(-1));
+    NetworkPattern filtered = make_empty_like(encoded_net);
 
     for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
         const long long code = static_cast<long long>(encoded_net.data[i]);
@@ -529,10 +689,10 @@ NetworkPattern rebuild_network_from_animation(
         }
 
         if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) {
-            throw std::runtime_error("rebuild_network_from_animation: cor decodificada invalida");
+            throw std::runtime_error("build_cumulative_network_until_time: cor decodificada invalida");
         }
 
-        if (dv.time >= t_eq) {
+        if (dv.time <= t_cut) {
             filtered.data[i] = static_cast<NetworkPattern::state_t>(
                 color_to_active_value(encoded_net.num_colors, dv.color_idx));
         } else {
@@ -542,6 +702,94 @@ NetworkPattern rebuild_network_from_animation(
 
     return filtered;
 }
+
+NetworkPattern build_posteq_increment_network(
+    const NetworkPattern& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    NetworkPattern filtered = make_empty_like(encoded_net);
+
+    for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
+        const long long code = static_cast<long long>(encoded_net.data[i]);
+        const DecodedValue dv = decode_animation_value(code, species_factor);
+
+        if (dv.never_activated) {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
+            continue;
+        }
+
+        if (dv.blocked) {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(0);
+            continue;
+        }
+
+        if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) {
+            throw std::runtime_error("build_posteq_increment_network: cor decodificada invalida");
+        }
+
+        if (dv.time > t_eq) {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(
+                color_to_active_value(encoded_net.num_colors, dv.color_idx));
+        } else {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
+        }
+    }
+
+    return filtered;
+}
+
+
+
+SubgraphAnalysis analyze_filtered_net(const NetworkPattern& net)
+{
+    if (net.shape.empty()) {
+        throw std::runtime_error("analyze_filtered_net: shape vazio");
+    }
+
+    const int L = net.shape[0];
+    const GridRegular grid(net.dim, L);
+
+    SubgraphAnalysis analysis;
+    analysis.net = net;
+    analysis.largest_component.assign(net.num_colors, 0);
+    analysis.sp_len.assign(net.num_colors, -1);
+    analysis.sp_path_lin.assign(net.num_colors, {});
+
+    int order = 0;
+
+    for (int c = 0; c < net.num_colors; ++c) {
+        analysis.largest_component[c] =
+            largest_component_single_color(net, grid, c);
+
+        std::vector<int> path;
+        int path_len = -1;
+
+        const bool percolates =
+            shortest_path_single_color(net, grid, c, path, path_len);
+
+        if (!percolates) continue;
+
+        analysis.color_percolation.push_back(c + 1);
+        analysis.percolation_order.push_back(++order);
+        analysis.sp_len[c] = path_len;
+        analysis.sp_path_lin[c] = std::move(path);
+    }
+
+    return analysis;
+}
+
+} // namespace
+
+NetworkPattern rebuild_network_from_animation(
+    const NetworkPattern& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    return build_cumulative_network_until_time(encoded_net, t_eq, species_factor);
+}
+
+
 
 ReanalysisResult reanalyze_animation(
     const std::string& json_path,
@@ -555,35 +803,27 @@ ReanalysisResult reanalyze_animation(
         throw std::runtime_error("shape vazio no NetworkPattern");
     }
 
-    const int L = encoded_net.shape[0];
-    const GridRegular grid(encoded_net.dim, L);
-
     ReanalysisResult result;
     result.t_eq = estimate_t_eq(ts, cfg);
-    result.filtered_net = rebuild_network_from_animation(
-        encoded_net, result.t_eq, cfg.species_factor);
 
-    result.largest_component.assign(encoded_net.num_colors, -1);
-    result.sp_len.assign(encoded_net.num_colors, -1);
-    result.sp_path_lin.assign(encoded_net.num_colors, {});
+    const NetworkPattern net_pre =
+        build_cumulative_network_until_time(
+            encoded_net, result.t_eq, cfg.species_factor);
 
-    int order = 0;
-    for (int c = 0; c < encoded_net.num_colors; ++c) {
-        std::vector<int> path;
-        int path_len = -1;
+    const NetworkPattern net_post =
+        build_posteq_increment_network(
+            encoded_net, result.t_eq, cfg.species_factor);
 
-        const bool percolates = shortest_path_single_color(
-            result.filtered_net, grid, c, path, path_len);
+    // pre_teq: salva apenas a rede antes/até t_eq
+    result.pre_teq.net = net_pre;
+    result.pre_teq.color_percolation.clear();
+    result.pre_teq.percolation_order.clear();
+    result.pre_teq.largest_component.assign(encoded_net.num_colors, 0);
+    result.pre_teq.sp_len.assign(encoded_net.num_colors, -1);
+    result.pre_teq.sp_path_lin.assign(encoded_net.num_colors, {});
 
-        if (!percolates) continue;
-
-        result.color_percolation.push_back(c + 1);
-        result.percolation_order.push_back(++order);
-        result.sp_len[c] = path_len;
-        result.sp_path_lin[c] = std::move(path);
-        result.largest_component[c] =
-            largest_component_single_color(result.filtered_net, grid, c);
-    }
+    // post_teq: calcula shortest_path e largest_component aqui
+    result.post_teq = analyze_filtered_net(net_post);
 
     return result;
 }

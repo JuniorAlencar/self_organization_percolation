@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <vector>
 
+
 namespace {
 
 template <typename SrcT>
@@ -178,6 +179,52 @@ void write_json_row(std::ostream& os,
 
 } // namespace
 
+void write_subgraph_json(std::ostream& ofs,
+                         const std::string& key,
+                         const SubgraphAnalysis& sg,
+                         const bool add_comma)
+{
+    ofs << "  \"" << key << "\": {\n";
+
+    ofs << "    \"color_percolation\": ";
+    write_json_array(ofs, sg.color_percolation);
+    ofs << ",\n";
+
+    ofs << "    \"percolation_order\": ";
+    write_json_array(ofs, sg.percolation_order);
+    ofs << ",\n";
+
+    ofs << "    \"largest_component\": ";
+    write_json_array(ofs, sg.largest_component);
+    ofs << ",\n";
+
+    ofs << "    \"sp_len\": ";
+    write_json_array(ofs, sg.sp_len);
+    ofs << ",\n";
+
+    ofs << "    \"sp_path_lin\": [";
+    for (size_t i = 0; i < sg.sp_path_lin.size(); ++i) {
+        write_json_array(ofs, sg.sp_path_lin[i]);
+        if (i + 1 < sg.sp_path_lin.size()) ofs << ", ";
+    }
+    ofs << "],\n";
+
+    ofs << "    \"net_info\": {\n";
+    ofs << "      \"dim\": " << sg.net.dim << ",\n";
+    ofs << "      \"shape\": ";
+    write_json_array(ofs, sg.net.shape);
+    ofs << ",\n";
+    ofs << "      \"num_colors\": " << sg.net.num_colors << ",\n";
+    ofs << "      \"rho\": ";
+    write_json_array(ofs, sg.net.rho);
+    ofs << "\n";
+    ofs << "    }\n";
+
+    ofs << "  }";
+    if (add_comma) ofs << ",";
+    ofs << "\n";
+}
+
 void save_data::save_network_as_npz(const NetworkPattern& net,
                                     const std::string& filename) const
 {
@@ -326,6 +373,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "}\n";
 }
 
+
 void save_data::save_reanalysis_json(const ReanalysisResult& result,
                                      const std::string& filename_json) const
 {
@@ -337,29 +385,18 @@ void save_data::save_reanalysis_json(const ReanalysisResult& result,
 
     ofs << "{\n";
     ofs << "  \"t_eq\": " << result.t_eq << ",\n";
+    ofs << "  \"analysis_basis\": \"post_teq\",\n";
 
-    ofs << "  \"color_percolation\": ";
-    write_json_array(ofs, result.color_percolation);
-    ofs << ",\n";
-
-    ofs << "  \"percolation_order\": ";
-    write_json_array(ofs, result.percolation_order);
-    ofs << ",\n";
-
-    ofs << "  \"largest_component\": ";
-    write_json_array(ofs, result.largest_component);
-    ofs << ",\n";
-
-    ofs << "  \"sp_len\": ";
-    write_json_array(ofs, result.sp_len);
-    ofs << ",\n";
-
-    ofs << "  \"sp_path_lin\": [";
-    for (size_t i = 0; i < result.sp_path_lin.size(); ++i) {
-        write_json_array(ofs, result.sp_path_lin[i]);
-        if (i + 1 < result.sp_path_lin.size()) ofs << ", ";
-    }
-    ofs << "]\n";
+    write_subgraph_json(ofs, "pre_teq", result.pre_teq, true);
+    write_subgraph_json(ofs, "post_teq", result.post_teq, false);
 
     ofs << "}\n";
+}
+
+void save_data::save_reanalysis_networks(const ReanalysisResult& result,
+                                         const std::string& filename_preteq_npz,
+                                         const std::string& filename_posteq_npz) const
+{
+    save_network_as_npz(result.pre_teq.net, filename_preteq_npz);
+    save_network_as_npz(result.post_teq.net, filename_posteq_npz);
 }

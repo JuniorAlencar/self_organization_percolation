@@ -6,7 +6,7 @@ namespace fs = std::filesystem;
 FolderCreator::FolderCreator(const std::string& base_path)
     : base_path(base_path) {}
 
-std::tuple<std::string, std::string, std::string> FolderCreator::create_structure(
+std::tuple<std::string, std::string, std::string, std::string, std::string> FolderCreator::create_structure(
     int dim,
     int type_Nt,
     double N_t,
@@ -48,16 +48,23 @@ std::tuple<std::string, std::string, std::string> FolderCreator::create_structur
     std::string network_path = full_path + "/network";
     std::string data_path = full_path + "/data";
     std::string data_path_equilibration = "";
-
+    std::string data_network_preteq = "";
+    std::string data_network_posteq = "";
+    
     fs::create_directories(network_path);
     fs::create_directories(data_path);
 
     if (animation == true) {
         data_path_equilibration = full_path + "/data_equilibration";
+        data_network_preteq = full_path + "/network_preteq";
+        data_network_posteq = full_path + "/network_posteq";
         fs::create_directories(data_path_equilibration);
+        fs::create_directories(data_network_preteq);
+        fs::create_directories(data_network_posteq);
     }
 
-    return {network_path, data_path, data_path_equilibration};
+    return {network_path, data_path, data_path_equilibration, data_network_preteq, data_network_posteq };
 }
+
 
 

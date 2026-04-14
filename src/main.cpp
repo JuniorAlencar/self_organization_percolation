@@ -219,10 +219,27 @@ int main(int argc, char* argv[]){
 
         // cria pastas Data
         FolderCreator creator("./SOP_data");
-        auto [network_dir, data_dir, equilibration_dir] = creator.create_structure(
-            dim, type_N_t, N_t, k, L, num_colors, a, alpha,
-            type_percolation, pp0, P0, rho_val, animation
-        );
+        const auto [
+            network_dir,
+            data_dir,
+            equilibration_dir,
+            network_preteq,
+            network_posteq
+        ] = creator.create_structure(
+                dim,
+                type_N_t,
+                N_t,
+                k,
+                L,
+                num_colors,
+                a,
+                alpha,
+                type_percolation,
+                pp0,
+                P0,
+                rho_val,
+                animation
+            );
         
         std::cerr << "[DBG] ps sizes -> "
                   << "order=" << ps.percolation_order.size()
@@ -263,8 +280,9 @@ int main(int argc, char* argv[]){
 
         // 2) resultados (JSON novo)
         //sort_by_order = true para ordenar por percolation_order
-       saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
-
+        saver.save_percolation_json(ps, ts, json_filename, /*sort_by_order=*/true);
+        // std::string net_filename  = network_dir + "/" + sample_base + ".npz";
+        // saver.save_network_as_npz(net, net_filename);
         // 3) save shortest map(Numpy .npy)
         // NetworkPattern sp_net = net_generator.create_shortest_paths_map(net, ps);
         // saver.save_network_as_npz(sp_net, shortest_filename);
