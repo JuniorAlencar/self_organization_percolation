@@ -1,5 +1,4 @@
 #include "animation_reanalysis.hpp"
-#include "../src/write_save.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +16,6 @@
 
 #include <cnpy.h>
 #include <nlohmann/json.hpp>
-
 
 namespace {
 
@@ -49,6 +47,10 @@ struct GridRegular {
 
     inline int grow_coord(const int idx) const {
         return (dim == 2) ? y_of(idx) : z_of(idx);
+    }
+
+    inline int lin_index(const int x, const int y, const int z) const {
+        return x + SX * (y + SY * z);
     }
 
     inline int neighbor_xm(const int idx) const {
@@ -323,7 +325,7 @@ int largest_component_single_color(
     return best;
 }
 
-bool shortest_path_single_color(
+bool shortest_path_to_subgraph_top_single_color(
     const NetworkPattern& net,
     const GridRegular& grid,
     const int color_idx,
@@ -332,20 +334,22 @@ bool shortest_path_single_color(
 {
     const int active_val = color_to_active_value(net.num_colors, color_idx);
     const int N = static_cast<int>(net.data.size());
-    const int top_coord = (grid.dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
 
     std::vector<char> visited(N, 0);
     std::vector<int> parent(N, -1);
     std::vector<int> dist(N, -1);
     std::queue<int> q;
 
-    int base_subgraph = std::numeric_limits<int>::max();
     bool has_active_nodes = false;
+    int base_subgraph = std::numeric_limits<int>::max();
+    int top_subgraph  = -1;
 
     for (int idx = 0; idx < N; ++idx) {
         if (static_cast<int>(net.data[idx]) != active_val) continue;
         has_active_nodes = true;
-        base_subgraph = std::min(base_subgraph, grid.grow_coord(idx));
+        const int g = grid.grow_coord(idx);
+        base_subgraph = std::min(base_subgraph, g);
+        top_subgraph  = std::max(top_subgraph, g);
     }
 
     if (!has_active_nodes) {
@@ -364,13 +368,19 @@ bool shortest_path_single_color(
         q.push(idx);
     }
 
+    if (q.empty()) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
     int target = -1;
 
     while (!q.empty()) {
         const int u = q.front();
         q.pop();
 
-        if (grid.grow_coord(u) == top_coord) {
+        if (grid.grow_coord(u) == top_subgraph) {
             target = u;
             break;
         }
@@ -398,9 +408,123 @@ bool shortest_path_single_color(
     return true;
 }
 
+NetworkPattern make_empty_like(const NetworkPattern& net)
+{
+    NetworkPattern out(net.dim, net.shape, net.num_colors, net.rho);
+    out.data.assign(net.data.size(), static_cast<NetworkPattern::state_t>(-1));
+    return out;
+}
+
+NetworkPattern build_preteq_network(
+    const NetworkPattern& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    NetworkPattern filtered = make_empty_like(encoded_net);
+
+    for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
+        const long long code = static_cast<long long>(encoded_net.data[i]);
+        const DecodedValue dv = decode_animation_value(code, species_factor);
+
+        // Para partição temporal dos sítios ativos:
+        // só entram ativos com t <= t_eq.
+        // Bloqueados e nunca ativados ficam fora desta decomposição temporal.
+        if (dv.never_activated || dv.blocked) {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
+            continue;
+        }
+
+        if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) {
+            throw std::runtime_error("build_preteq_network: cor decodificada invalida");
+        }
+
+        if (dv.time <= t_eq) {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(
+                color_to_active_value(encoded_net.num_colors, dv.color_idx));
+        } else {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
+        }
+    }
+
+    return filtered;
+}
+
+NetworkPattern build_postteq_network(
+    const NetworkPattern& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    NetworkPattern filtered = make_empty_like(encoded_net);
+
+    for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
+        const long long code = static_cast<long long>(encoded_net.data[i]);
+        const DecodedValue dv = decode_animation_value(code, species_factor);
+
+        // Para partição temporal dos sítios ativos:
+        // só entram ativos com t > t_eq.
+        // Bloqueados e nunca ativados ficam fora desta decomposição temporal.
+        if (dv.never_activated || dv.blocked) {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
+            continue;
+        }
+
+        if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) {
+            throw std::runtime_error("build_postteq_network: cor decodificada invalida");
+        }
+
+        if (dv.time > t_eq) {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(
+                color_to_active_value(encoded_net.num_colors, dv.color_idx));
+        } else {
+            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
+        }
+    }
+
+    return filtered;
+}
+
+SubgraphAnalysis analyze_isolated_subgraph(const NetworkPattern& net)
+{
+    if (net.shape.empty()) {
+        throw std::runtime_error("analyze_isolated_subgraph: shape vazio");
+    }
+
+    const int L = net.shape[0];
+    const GridRegular grid(net.dim, L);
+
+    SubgraphAnalysis analysis;
+    analysis.net = net;
+
+    analysis.color_percolation.clear();
+    analysis.percolation_order.clear();
+
+    analysis.largest_component.assign(net.num_colors, 0);
+    analysis.sp_len.assign(net.num_colors, -1);
+    analysis.sp_path_lin.assign(net.num_colors, {});
+
+    for (int c = 0; c < net.num_colors; ++c) {
+        analysis.largest_component[c] =
+            largest_component_single_color(net, grid, c);
+
+        std::vector<int> path;
+        int path_len = -1;
+
+        const bool has_path =
+            shortest_path_to_subgraph_top_single_color(net, grid, c, path, path_len);
+
+        if (!has_path) continue;
+
+        analysis.sp_len[c] = path_len;
+        analysis.sp_path_lin[c] = std::move(path);
+    }
+
+    return analysis;
+}
+
 } // namespace
 
-TimeSeries load_timeseries_from_json(const std::string& json_path) {
+TimeSeries load_timeseries_from_json(const std::string& json_path)
+{
     std::ifstream fin(json_path);
     if (!fin) {
         throw std::runtime_error("Nao foi possivel abrir JSON: " + json_path);
@@ -411,16 +535,6 @@ TimeSeries load_timeseries_from_json(const std::string& json_path) {
 
     TimeSeries ts;
 
-    // =========================================================
-    // FORMATO ANTIGO
-    //   {
-    //     "time_series": { "t": ..., "p_t": ..., "Nt": ... }
-    //   }
-    // ou
-    //   {
-    //     "ts_out": { "t": ..., "p_t": ..., "Nt": ... }
-    //   }
-    // =========================================================
     if (j.contains("time_series") || j.contains("ts_out")) {
         const json* root = nullptr;
 
@@ -453,23 +567,6 @@ TimeSeries load_timeseries_from_json(const std::string& json_path) {
         return ts;
     }
 
-    // =========================================================
-    // FORMATO NOVO
-    //   {
-    //     "meta": { "num_colors": ..., "rho": [...] },
-    //     "results": {
-    //       "order_percolation 1": {
-    //         "data": {
-    //           "color": 7,
-    //           "time": [...],
-    //           "pt": [...],
-    //           "nt": [...]
-    //         }
-    //       },
-    //       ...
-    //     }
-    //   }
-    // =========================================================
     if (!j.contains("results") || !j["results"].is_object()) {
         throw std::runtime_error(
             "JSON em formato nao suportado (sem 'time_series', 'ts_out' ou 'results'): " + json_path);
@@ -565,7 +662,6 @@ TimeSeries load_timeseries_from_json(const std::string& json_path) {
             "Nenhum bloco valido encontrado em 'results' no JSON: " + json_path);
     }
 
-    // Se alguma cor nao aparecer no JSON, preenche com zeros
     for (int c = 0; c < num_colors; ++c) {
         if (!color_found[c]) {
             ts.p_t[c].assign(ts.t.size(), 0.0);
@@ -576,7 +672,8 @@ TimeSeries load_timeseries_from_json(const std::string& json_path) {
     return ts;
 }
 
-NetworkPattern load_encoded_network_from_npz(const std::string& npz_path) {
+NetworkPattern load_encoded_network_from_npz(const std::string& npz_path)
+{
     cnpy::npz_t npz = cnpy::npz_load(npz_path);
 
     if (!npz.count("dim") || !npz.count("shape") || !npz.count("num_colors") || !npz.count("data")) {
@@ -606,7 +703,8 @@ NetworkPattern load_encoded_network_from_npz(const std::string& npz_path) {
     return net;
 }
 
-int estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg) {
+int estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg)
+{
     if (ts.t.empty()) {
         throw std::runtime_error("estimate_t_eq: TimeSeries t vazio");
     }
@@ -649,147 +747,19 @@ int estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg) {
     return ts.t[tail_begin];
 }
 
-int estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig& cfg) {
+int estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig& cfg)
+{
     const TimeSeries ts = load_timeseries_from_json(json_path);
     return estimate_t_eq(ts, cfg);
 }
-
-namespace {
-
-NetworkPattern make_empty_like(const NetworkPattern& net)
-{
-    NetworkPattern out(net.dim, net.shape, net.num_colors, net.rho);
-    out.data.assign(net.data.size(), static_cast<NetworkPattern::state_t>(-1));
-    return out;
-}
-
-
-
-
-
-NetworkPattern build_cumulative_network_until_time(
-    const NetworkPattern& encoded_net,
-    const int t_cut,
-    const int species_factor)
-{
-    NetworkPattern filtered = make_empty_like(encoded_net);
-
-    for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
-        const long long code = static_cast<long long>(encoded_net.data[i]);
-        const DecodedValue dv = decode_animation_value(code, species_factor);
-
-        if (dv.never_activated) {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
-            continue;
-        }
-
-        if (dv.blocked) {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(0);
-            continue;
-        }
-
-        if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) {
-            throw std::runtime_error("build_cumulative_network_until_time: cor decodificada invalida");
-        }
-
-        if (dv.time <= t_cut) {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(
-                color_to_active_value(encoded_net.num_colors, dv.color_idx));
-        } else {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
-        }
-    }
-
-    return filtered;
-}
-
-NetworkPattern build_posteq_increment_network(
-    const NetworkPattern& encoded_net,
-    const int t_eq,
-    const int species_factor)
-{
-    NetworkPattern filtered = make_empty_like(encoded_net);
-
-    for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
-        const long long code = static_cast<long long>(encoded_net.data[i]);
-        const DecodedValue dv = decode_animation_value(code, species_factor);
-
-        if (dv.never_activated) {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
-            continue;
-        }
-
-        if (dv.blocked) {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(0);
-            continue;
-        }
-
-        if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) {
-            throw std::runtime_error("build_posteq_increment_network: cor decodificada invalida");
-        }
-
-        if (dv.time > t_eq) {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(
-                color_to_active_value(encoded_net.num_colors, dv.color_idx));
-        } else {
-            filtered.data[i] = static_cast<NetworkPattern::state_t>(-1);
-        }
-    }
-
-    return filtered;
-}
-
-
-
-SubgraphAnalysis analyze_filtered_net(const NetworkPattern& net)
-{
-    if (net.shape.empty()) {
-        throw std::runtime_error("analyze_filtered_net: shape vazio");
-    }
-
-    const int L = net.shape[0];
-    const GridRegular grid(net.dim, L);
-
-    SubgraphAnalysis analysis;
-    analysis.net = net;
-    analysis.largest_component.assign(net.num_colors, 0);
-    analysis.sp_len.assign(net.num_colors, -1);
-    analysis.sp_path_lin.assign(net.num_colors, {});
-
-    int order = 0;
-
-    for (int c = 0; c < net.num_colors; ++c) {
-        analysis.largest_component[c] =
-            largest_component_single_color(net, grid, c);
-
-        std::vector<int> path;
-        int path_len = -1;
-
-        const bool percolates =
-            shortest_path_single_color(net, grid, c, path, path_len);
-
-        if (!percolates) continue;
-
-        analysis.color_percolation.push_back(c + 1);
-        analysis.percolation_order.push_back(++order);
-        analysis.sp_len[c] = path_len;
-        analysis.sp_path_lin[c] = std::move(path);
-    }
-
-    return analysis;
-}
-
-} // namespace
 
 NetworkPattern rebuild_network_from_animation(
     const NetworkPattern& encoded_net,
     const int t_eq,
     const int species_factor)
 {
-    return build_cumulative_network_until_time(encoded_net, t_eq, species_factor);
+    return build_preteq_network(encoded_net, t_eq, species_factor);
 }
-
-
 
 ReanalysisResult reanalyze_animation(
     const std::string& json_path,
@@ -807,23 +777,13 @@ ReanalysisResult reanalyze_animation(
     result.t_eq = estimate_t_eq(ts, cfg);
 
     const NetworkPattern net_pre =
-        build_cumulative_network_until_time(
-            encoded_net, result.t_eq, cfg.species_factor);
+        build_preteq_network(encoded_net, result.t_eq, cfg.species_factor);
 
     const NetworkPattern net_post =
-        build_posteq_increment_network(
-            encoded_net, result.t_eq, cfg.species_factor);
+        build_postteq_network(encoded_net, result.t_eq, cfg.species_factor);
 
-    // pre_teq: salva apenas a rede antes/até t_eq
-    result.pre_teq.net = net_pre;
-    result.pre_teq.color_percolation.clear();
-    result.pre_teq.percolation_order.clear();
-    result.pre_teq.largest_component.assign(encoded_net.num_colors, 0);
-    result.pre_teq.sp_len.assign(encoded_net.num_colors, -1);
-    result.pre_teq.sp_path_lin.assign(encoded_net.num_colors, {});
-
-    // post_teq: calcula shortest_path e largest_component aqui
-    result.post_teq = analyze_filtered_net(net_post);
+    result.pre_teq  = analyze_isolated_subgraph(net_pre);
+    result.post_teq = analyze_isolated_subgraph(net_post);
 
     return result;
 }

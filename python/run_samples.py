@@ -52,13 +52,13 @@ type_perc = 'bond'
 #         shell_data(L, type_perc, p0, seed, k, NT, dim,
 #                 nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
 
-L_lst =       [256, 512]
-num_runs =    [250, 50]
-num_threads = [11, 11]
+L_lst =       [256, 304, 362, 430, 512, 608, 724, 851, 1024]
+num_runs =    [300, 250, 150, 125, 100, 80, 30, 15, 10]
+num_threads = [11, 11, 11, 11, 11, 11, 6, 3, 2]
 multi=True
-Equilibration = 'false'
+Equilibration = 'true'
 nc = 8
-p0_lst = [0.3, 0.7, 1.0]
+p0 = 1.0
 if nc == 2:
     f = 0.03
 elif nc == 4:
@@ -66,17 +66,16 @@ elif nc == 4:
 elif nc == 8:
     f = 0.01
 
-for p0 in p0_lst:
-    for idx, L in enumerate(L_lst):
-            base = L**(dim-1)
-            NT = int(f*base)
-            # start = 1/(P0*L**2)
-            # print(start)
-            # stop = 1/(2*nc)
-            # n_points = 50
-            # rho = custom_range(start, stop, n_points)
-            rho = [1/nc]
-            exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
-            
-            shell_data(L, type_perc, p0, seed, k, NT, dim,
-                    nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
+for idx, L in enumerate(L_lst):
+        base = L**(dim-1)
+        NT = int(f*base)
+        # start = 1/(P0*L**2)
+        # print(start)
+        # stop = 1/(2*nc)
+        # n_points = 50
+        # rho = custom_range(start, stop, n_points)
+        rho = [1/nc]
+        exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
+        
+        shell_data(L, type_perc, p0, seed, k, NT, dim,
+                nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
