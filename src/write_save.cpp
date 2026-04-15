@@ -385,7 +385,7 @@ void save_data::save_reanalysis_json(const ReanalysisResult& result,
 
     ofs << "{\n";
     ofs << "  \"t_eq\": " << result.t_eq << ",\n";
-    ofs << "  \"analysis_basis\": \"post_teq\",\n";
+    ofs << "  \"analysis_basis\": \"pre_teq_and_post_teq\",\n";
 
     write_subgraph_json(ofs, "pre_teq", result.pre_teq, true);
     write_subgraph_json(ofs, "post_teq", result.post_teq, false);

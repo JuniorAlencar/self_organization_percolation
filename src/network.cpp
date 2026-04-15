@@ -188,7 +188,7 @@ NetworkPattern network::create_network(
     std::vector<int>    parent(grid.total_size, -2);
     std::vector<int>    frontier;
     std::vector<int>    next_frontier;
-
+    
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
@@ -250,6 +250,9 @@ NetworkPattern network::create_network(
     // Guarda o sítio que atingiu o topo para cada cor
     std::vector<int> top_site_per_color(num_colors, -1);
 
+    // Guarda a ordem bruta de chegada ao topo, mas só escreve no ps_out no final
+    std::vector<int> percolation_rank(num_colors, -1);
+
     auto build_path_from_parent = [&](int end_idx) -> std::vector<int>
     {
         std::vector<int> path;
@@ -271,6 +274,28 @@ NetworkPattern network::create_network(
 
         std::reverse(path.begin(), path.end());
         return path;
+    };
+
+    auto is_valid_percolating_path = [&](const std::vector<int>& path) -> bool
+    {
+        if (path.empty()) {
+            return false;
+        }
+
+        const int top_coord = (dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
+
+        const int start_idx = path.front();
+        const int end_idx   = path.back();
+
+        if (grid.grow_coord(start_idx) != 0) {
+            return false;
+        }
+
+        if (grid.grow_coord(end_idx) != top_coord) {
+            return false;
+        }
+
+        return true;
     };
 
     auto largest_component_single_color = [&](const int color_idx) -> int
@@ -353,9 +378,7 @@ NetworkPattern network::create_network(
                         percolated[cor_idx] = true;
                         finished[cor_idx] = true;
                         top_site_per_color[cor_idx] = viz_idx;
-
-                        ps_out.color_percolation.push_back(cor_idx + 1);
-                        ps_out.percolation_order.push_back(++order_ctr);
+                        percolation_rank[cor_idx] = ++order_ctr;
                     }
                 } else if (is_node) {
                     net.set(viz_idx, 0);
@@ -363,7 +386,7 @@ NetworkPattern network::create_network(
             });
         }
 
-        // Marca como morta a espécie que não percolou e não cresceu neste passo
+        // Se a espécie não percolou e N(t)=0, ela morreu e deve ser ignorada
         for (int c = 0; c < num_colors; ++c) {
             if (!percolated[c] && N_current[c] == 0) {
                 died[c] = true;
@@ -407,26 +430,60 @@ NetworkPattern network::create_network(
             all_finished && any_percolated && any_dead;
 
         if (stop_all_dead || stop_all_percolated || stop_partial_percolation) {
-            // Só calcula shortest path e maior componente
-            // se ao menos uma cor tiver percolado.
-            if (!ps_out.color_percolation.empty()) {
-                ps_out.M_size_at_perc.clear();
-                ps_out.M_size_at_perc.reserve(ps_out.color_percolation.size());
+            ps_out.color_percolation.clear();
+            ps_out.percolation_order.clear();
+            ps_out.M_size_at_perc.clear();
 
-                for (const int color_1b : ps_out.color_percolation) {
-                    const int c = color_1b - 1;
+            struct ValidPercolation {
+                int rank;
+                int color_idx;
+            };
+            std::vector<ValidPercolation> valid_percs;
+            valid_percs.reserve(num_colors);
 
-                    std::vector<int> path = build_path_from_parent(top_site_per_color[c]);
-                    ps_out.sp_path_lin[c] = std::move(path);
-
-                    if (!ps_out.sp_path_lin[c].empty()) {
-                        ps_out.sp_len[c] = static_cast<int>(ps_out.sp_path_lin[c].size()) - 1;
-                    } else {
-                        ps_out.sp_len[c] = -1;
-                    }
-
-                    ps_out.M_size_at_perc.push_back(largest_component_single_color(c));
+            for (int c = 0; c < num_colors; ++c) {
+                // morreu antes de percolar -> ignora
+                if (died[c]) {
+                    ps_out.sp_len[c] = -1;
+                    ps_out.sp_path_lin[c].clear();
+                    continue;
                 }
+
+                // nunca atingiu o topo -> ignora
+                if (!percolated[c]) {
+                    ps_out.sp_len[c] = -1;
+                    ps_out.sp_path_lin[c].clear();
+                    continue;
+                }
+
+                // monta caminho até o sítio que tocou o topo
+                std::vector<int> path = build_path_from_parent(top_site_per_color[c]);
+
+                // valida caminho base -> topo
+                if (!is_valid_percolating_path(path)) {
+                    ps_out.sp_len[c] = -1;
+                    ps_out.sp_path_lin[c].clear();
+                    continue;
+                }
+
+                ps_out.sp_path_lin[c] = std::move(path);
+                ps_out.sp_len[c] = static_cast<int>(ps_out.sp_path_lin[c].size()) - 1;
+
+                valid_percs.push_back({percolation_rank[c], c});
+            }
+
+            std::sort(valid_percs.begin(), valid_percs.end(),
+                    [](const ValidPercolation& a, const ValidPercolation& b) {
+                        return a.rank < b.rank;
+                    });
+
+            int valid_order_ctr = 0;
+            for (const auto& vp : valid_percs) {
+                const int c = vp.color_idx;
+
+                ps_out.color_percolation.push_back(c + 1);
+                ps_out.percolation_order.push_back(++valid_order_ctr);
+                ps_out.M_size_at_perc.push_back(largest_component_single_color(c));
             }
 
             break;
@@ -469,6 +526,297 @@ NetworkPattern network::create_network(
     return net;
 }
 
+// NetworkPattern network::animate_network(
+//     const int dim, const int lenght_network, const int num_of_samples,
+//     const double k, const double N_t, const int type_N_t,
+//     const std::vector<double> p0, const double P0, const double a, const double alpha,
+//     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
+//     TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
+// {
+//     this->N_t = N_t;
+
+//     const GridRegular grid(dim, lenght_network);
+//     const std::vector<int> shape = (dim == 2)
+//         ? std::vector<int>{lenght_network, lenght_network}
+//         : std::vector<int>{lenght_network, lenght_network, lenght_network};
+
+//     const bool is_node = (type_percolation == "node");
+//     const long long base_size = compute_base_size(grid);
+
+//     NetworkPattern net(dim, shape, num_colors, rho);
+
+//     // Codificação:
+//     //   -1 : nunca ativado
+//     //    0 : bloqueado no caso node
+//     // NUMBER*(c+1) + t : espécie c ativada no tempo t
+//     const int SPECIES_FACTOR = 10000000;
+
+//     if (num_of_samples >= SPECIES_FACTOR) {
+//         throw std::runtime_error(
+//             "animate_network: num_of_samples deve ser menor que SPECIES_FACTOR "
+//             "para evitar colisao entre especie e tempo.");
+//     }
+
+//     const long long max_code_needed =
+//         static_cast<long long>(SPECIES_FACTOR) * num_colors + num_of_samples;
+
+//     if (max_code_needed >
+//         static_cast<long long>(std::numeric_limits<NetworkPattern::state_t>::max()))
+//     {
+//         throw std::runtime_error(
+//             "animate_network: codificacao excede NetworkPattern::state_t. "
+//             "Reduza SPECIES_FACTOR/num_colors/num_of_samples ou aumente state_t.");
+//     }
+
+//     std::vector<NetworkPattern::state_t> activation_code(
+//         static_cast<std::size_t>(grid.total_size),
+//         static_cast<NetworkPattern::state_t>(-1));
+
+//     std::vector<int> color_mul(num_colors, 0);
+//     for (int c = 0; c < num_colors; ++c) {
+//         color_mul[c] = (c + 1) * SPECIES_FACTOR;
+//     }
+
+//     std::vector<std::vector<double>> p_series(num_colors);
+//     std::vector<std::vector<int>>    Nt_series(num_colors);
+//     std::vector<int>                 t_list;
+//     t_list.reserve(num_of_samples);
+
+//     std::vector<double> p_curr = p0;
+//     std::vector<int>    N_current(num_colors, 0);
+//     std::vector<int>    max_heights(num_colors, 0);
+//     std::vector<int>    frontier;
+//     std::vector<int>    next_frontier;
+
+//     frontier.reserve(static_cast<std::size_t>(base_size));
+//     next_frontier.reserve(static_cast<std::size_t>(base_size));
+
+//     auto commit_step = [&](const int t_k,
+//                            const std::vector<double>& p_vec,
+//                            const std::vector<int>& Nt_vec)
+//     {
+//         t_list.push_back(t_k);
+//         for (int c = 0; c < num_colors; ++c) {
+//             p_series[c].push_back(p_vec[c]);
+//             Nt_series[c].push_back(Nt_vec[c]);
+//         }
+//     };
+
+//     std::vector<int> seeds_quota(num_colors, 0);
+//     for (int c = 0; c < num_colors; ++c) {
+//         long long q = std::llround(P0 * rho[c] * base_size);
+//         if (q < 0) q = 0;
+//         if (q > base_size) q = base_size;
+//         seeds_quota[c] = static_cast<int>(q);
+//     }
+
+//     // No animate, não vamos calcular:
+//     // ps_out.sp_len
+//     // ps_out.sp_path_lin
+//     // ps_out.M_size_at_perc
+//     // shortest_path
+//     // largest_component
+//     ps_out.color_percolation.clear();
+//     ps_out.percolation_order.clear();
+//     ps_out.M_size_at_perc.clear();
+//     ps_out.sp_len.assign(num_colors, -1);
+//     ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
+
+//     // Ativação inicial na base: mesma lógica do create_network
+//     for (int c = 0; c < num_colors; ++c) {
+//         int activated = 0;
+//         int tries = 0;
+//         const int max_tries = static_cast<int>(base_size) * 20;
+//         const int prefer_neg = color_to_negative_value(num_colors, c);
+//         const int active_val = color_to_active_value(num_colors, c);
+
+//         while (activated < seeds_quota[c] && tries < max_tries) {
+//             const int x = rng.uniform_int(0, grid.SX - 1);
+//             const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
+//             const int z = 0;
+//             const int idx = grid.lin_index(x, y, z);
+//             const int v = net.get(idx);
+
+//             if (v == prefer_neg || v == -1) {
+//                 net.set(idx, active_val);
+//                 activation_code[idx] = static_cast<NetworkPattern::state_t>(color_mul[c]);
+//                 frontier.push_back(idx);
+//                 ++N_current[c];
+//                 ++activated;
+//             }
+//             ++tries;
+//         }
+//     }
+
+//     commit_step(0, p_curr, N_current);
+
+//     int order_ctr = 0;
+//     std::vector<bool> percolated(num_colors, false);
+//     std::vector<bool> died(num_colors, false);
+//     std::vector<bool> finished(num_colors, false);
+
+//     // Guarda a ordem bruta de chegada ao topo, mas só grava no ps_out no final
+//     std::vector<int> percolation_rank(num_colors, -1);
+
+//     for (int t = 1; t < num_of_samples; ++t) {
+//         std::fill(N_current.begin(), N_current.end(), 0);
+//         next_frontier.clear();
+
+//         for (const int idx : frontier) {
+//             const int a_val = net.get(idx);
+//             if (a_val <= 0) continue;
+
+//             const int cor_idx = value_to_color_index(num_colors, a_val);
+//             if (cor_idx < 0 || cor_idx >= num_colors) continue;
+//             if (finished[cor_idx]) continue;
+
+//             const int new_val = color_to_active_value(num_colors, cor_idx);
+
+//             grid.for_each_neighbor(idx, [&](const int viz_idx) {
+//                 if (viz_idx < 0) return;
+
+//                 const int vv = net.get(viz_idx);
+//                 if (vv >= 0) return;
+
+//                 const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+//                 const bool no_color   = (vv == -1);
+//                 if (!same_color && !no_color) return;
+
+//                 const double r = rng.uniform_real(0.0, 1.0);
+//                 if (r < p_curr[cor_idx]) {
+//                     net.set(viz_idx, new_val);
+//                     activation_code[viz_idx] =
+//                         static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
+//                     next_frontier.push_back(viz_idx);
+//                     ++N_current[cor_idx];
+
+//                     const int h = grid.grow_coord(viz_idx);
+//                     if (h > max_heights[cor_idx]) {
+//                         max_heights[cor_idx] = h;
+//                     }
+
+//                     if (!percolated[cor_idx] && h == lenght_network - 1) {
+//                         percolated[cor_idx] = true;
+//                         finished[cor_idx] = true;
+//                         percolation_rank[cor_idx] = ++order_ctr;
+//                     }
+//                 } else if (is_node) {
+//                     net.set(viz_idx, 0);
+//                     activation_code[viz_idx] =
+//                         static_cast<NetworkPattern::state_t>(0);
+//                 }
+//             });
+//         }
+
+//         // Se não percolou e não cresceu neste passo, morreu e deve ser ignorada
+//         for (int c = 0; c < num_colors; ++c) {
+//             if (!percolated[c] && N_current[c] == 0) {
+//                 died[c] = true;
+//                 finished[c] = true;
+//             }
+//         }
+
+//         bool all_dead = true;
+//         bool all_percolated = true;
+//         bool any_dead = false;
+//         bool any_percolated = false;
+//         bool all_finished = true;
+
+//         for (int c = 0; c < num_colors; ++c) {
+//             if (!died[c]) {
+//                 all_dead = false;
+//             } else {
+//                 any_dead = true;
+//             }
+
+//             if (!percolated[c]) {
+//                 all_percolated = false;
+//             } else {
+//                 any_percolated = true;
+//             }
+
+//             if (!finished[c]) {
+//                 all_finished = false;
+//             }
+//         }
+
+//         const bool stop_all_dead = all_dead;
+//         const bool stop_all_percolated = all_percolated;
+//         const bool stop_partial_percolation =
+//             all_finished && any_percolated && any_dead;
+
+//         if (stop_all_dead || stop_all_percolated || stop_partial_percolation) {
+//             ps_out.color_percolation.clear();
+//             ps_out.percolation_order.clear();
+
+//             struct ValidPercolation {
+//                 int rank;
+//                 int color_idx;
+//             };
+//             std::vector<ValidPercolation> valid_percs;
+//             valid_percs.reserve(num_colors);
+
+//             for (int c = 0; c < num_colors; ++c) {
+//                 if (died[c]) continue;
+//                 if (!percolated[c]) continue;
+//                 if (percolation_rank[c] < 0) continue;
+
+//                 valid_percs.push_back({percolation_rank[c], c});
+//             }
+
+//             std::sort(valid_percs.begin(), valid_percs.end(),
+//                       [](const ValidPercolation& a, const ValidPercolation& b) {
+//                           return a.rank < b.rank;
+//                       });
+
+//             int valid_order_ctr = 0;
+//             for (const auto& vp : valid_percs) {
+//                 ps_out.color_percolation.push_back(vp.color_idx + 1);
+//                 ps_out.percolation_order.push_back(++valid_order_ctr);
+//             }
+
+//             break;
+//         }
+
+//         if (t < 10 || t % 100 == 0) {
+//             std::cout << "[" << type_percolation << "] t = " << t;
+//             for (int c = 0; c < num_colors; ++c) {
+//                 std::cout
+//                     << ", p" << (c + 1) << "(t)=" << p_curr[c]
+//                     << ", N_t" << (c + 1) << "(t)=" << N_current[c]
+//                     << " max" << (c + 1) << "(t)=" << max_heights[c];
+//             }
+//             std::cout << '\n';
+//         }
+
+//         std::vector<double> p_next(num_colors);
+//         for (int c = 0; c < num_colors; ++c) {
+//             p_next[c] = finished[c]
+//                 ? p_curr[c]
+//                 : generate_p(type_N_t, p_curr[c], t, N_current[c], k, a, alpha);
+//         }
+
+//         commit_step(t, p_next, N_current);
+//         frontier.swap(next_frontier);
+//         p_curr.swap(p_next);
+//     }
+
+//     ts_out.num_colors = num_colors;
+//     ts_out.p_t = std::move(p_series);
+//     ts_out.Nt  = std::move(Nt_series);
+//     ts_out.t   = std::move(t_list);
+
+//     ps_out.rho.clear();
+//     for (int i = 0; i < num_colors; ++i) {
+//         if (i < static_cast<int>(rho.size())) {
+//             ps_out.rho.push_back(rho[i]);
+//         }
+//     }
+
+//     NetworkPattern net_animation(dim, shape, num_colors, rho);
+//     net_animation.data = std::move(activation_code);
+//     return net_animation;
+// }
 NetworkPattern network::animate_network(
     const int dim, const int lenght_network, const int num_of_samples,
     const double k, const double N_t, const int type_N_t,
@@ -528,6 +876,8 @@ NetworkPattern network::animate_network(
     std::vector<double> p_curr = p0;
     std::vector<int>    N_current(num_colors, 0);
     std::vector<int>    max_heights(num_colors, 0);
+    std::vector<int>    parent(grid.total_size, -2);
+    std::vector<int>    top_site_per_color(num_colors, -1);
     std::vector<int>    frontier;
     std::vector<int>    next_frontier;
 
@@ -562,8 +912,8 @@ NetworkPattern network::animate_network(
     ps_out.color_percolation.clear();
     ps_out.percolation_order.clear();
     ps_out.M_size_at_perc.clear();
-    ps_out.sp_len.clear();
-    ps_out.sp_path_lin.clear();
+    ps_out.sp_len.assign(num_colors, -1);
+    ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
 
     // Ativação inicial na base: mesma lógica do create_network
     for (int c = 0; c < num_colors; ++c) {
@@ -580,13 +930,14 @@ NetworkPattern network::animate_network(
             const int idx = grid.lin_index(x, y, z);
             const int v = net.get(idx);
 
-            if (v == prefer_neg || v == -1) {
-                net.set(idx, active_val);
-                activation_code[idx] = static_cast<NetworkPattern::state_t>(color_mul[c]);
-                frontier.push_back(idx);
-                ++N_current[c];
-                ++activated;
-            }
+	if (v == prefer_neg || v == -1) {
+	    net.set(idx, active_val);
+	    activation_code[idx] = static_cast<NetworkPattern::state_t>(color_mul[c]);
+	    frontier.push_back(idx);
+	    ++N_current[c];
+	    ++activated;
+	    parent[idx] = -1;
+	}
             ++tries;
         }
     }
@@ -597,7 +948,92 @@ NetworkPattern network::animate_network(
     std::vector<bool> percolated(num_colors, false);
     std::vector<bool> died(num_colors, false);
     std::vector<bool> finished(num_colors, false);
+    std::vector<int> percolation_rank(num_colors, -1);
+    
+	auto build_path_from_parent = [&](int end_idx) -> std::vector<int>
+	{
+	    std::vector<int> path;
 
+	    if (end_idx < 0) {
+		return path;
+	    }
+
+	    int cur = end_idx;
+	    while (cur >= 0) {
+		path.push_back(cur);
+		cur = parent[cur];
+	    }
+
+	    if (cur != -1) {
+		path.clear();
+		return path;
+	    }
+
+	    std::reverse(path.begin(), path.end());
+	    return path;
+	};
+
+	auto is_valid_percolating_path = [&](const std::vector<int>& path) -> bool
+	{
+	    if (path.empty()) {
+		return false;
+	    }
+
+	    const int top_coord = (dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
+
+	    const int start_idx = path.front();
+	    const int end_idx   = path.back();
+
+	    if (grid.grow_coord(start_idx) != 0) {
+		return false;
+	    }
+
+	    if (grid.grow_coord(end_idx) != top_coord) {
+		return false;
+	    }
+
+	    return true;
+	};
+
+	auto largest_component_single_color = [&](const int color_idx) -> int
+	{
+	    const int active_val = color_to_active_value(num_colors, color_idx);
+
+	    std::vector<char> visited(grid.total_size, 0);
+	    std::vector<int> stack;
+	    int max_component = 0;
+
+	    for (int idx = 0; idx < grid.total_size; ++idx) {
+		if (visited[idx]) continue;
+		if (net.get(idx) != active_val) continue;
+
+		int comp_size = 0;
+		stack.clear();
+		stack.push_back(idx);
+		visited[idx] = 1;
+
+		while (!stack.empty()) {
+		    const int u = stack.back();
+		    stack.pop_back();
+		    ++comp_size;
+
+		    grid.for_each_neighbor(u, [&](const int v) {
+		        if (v < 0) return;
+		        if (visited[v]) return;
+		        if (net.get(v) != active_val) return;
+
+		        visited[v] = 1;
+		        stack.push_back(v);
+		    });
+		}
+
+		if (comp_size > max_component) {
+		    max_component = comp_size;
+		}
+	    }
+
+	    return max_component;
+	};
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
         next_frontier.clear();
@@ -624,23 +1060,24 @@ NetworkPattern network::animate_network(
 
                 const double r = rng.uniform_real(0.0, 1.0);
                 if (r < p_curr[cor_idx]) {
-                    net.set(viz_idx, new_val);
-                    activation_code[viz_idx] =
-                        static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
-                    next_frontier.push_back(viz_idx);
-                    ++N_current[cor_idx];
+			net.set(viz_idx, new_val);
+			activation_code[viz_idx] =
+			    static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
+			next_frontier.push_back(viz_idx);
+			++N_current[cor_idx];
+			parent[viz_idx] = idx;
 
                     const int h = grid.grow_coord(viz_idx);
                     if (h > max_heights[cor_idx]) {
                         max_heights[cor_idx] = h;
                     }
 
-                    if (!percolated[cor_idx] && h == lenght_network - 1) {
-                        percolated[cor_idx] = true;
-                        finished[cor_idx] = true;
-                        ps_out.color_percolation.push_back(cor_idx + 1);
-                        ps_out.percolation_order.push_back(++order_ctr);
-                    }
+		if (!percolated[cor_idx] && h == lenght_network - 1) {
+		    percolated[cor_idx] = true;
+		    finished[cor_idx] = true;
+		    top_site_per_color[cor_idx] = viz_idx;
+		    percolation_rank[cor_idx] = ++order_ctr;
+		}
                 } else if (is_node) {
                     net.set(viz_idx, 0);
                     activation_code[viz_idx] =
@@ -649,8 +1086,7 @@ NetworkPattern network::animate_network(
             });
         }
 
-        // Mesma regra correta do create_network:
-        // se não percolou e não cresceu neste passo, morreu
+        // Se não percolou e não cresceu neste passo, morreu e deve ser ignorada
         for (int c = 0; c < num_colors; ++c) {
             if (!percolated[c] && N_current[c] == 0) {
                 died[c] = true;
@@ -688,8 +1124,60 @@ NetworkPattern network::animate_network(
             all_finished && any_percolated && any_dead;
 
         if (stop_all_dead || stop_all_percolated || stop_partial_percolation) {
-            break;
-        }
+		    ps_out.color_percolation.clear();
+		    ps_out.percolation_order.clear();
+		    ps_out.M_size_at_perc.clear();
+
+		    struct ValidPercolation {
+			int rank;
+			int color_idx;
+		    };
+		    std::vector<ValidPercolation> valid_percs;
+		    valid_percs.reserve(num_colors);
+
+		    for (int c = 0; c < num_colors; ++c) {
+			if (died[c]) {
+			    ps_out.sp_len[c] = -1;
+			    ps_out.sp_path_lin[c].clear();
+			    continue;
+			}
+
+			if (!percolated[c]) {
+			    ps_out.sp_len[c] = -1;
+			    ps_out.sp_path_lin[c].clear();
+			    continue;
+			}
+
+			std::vector<int> path = build_path_from_parent(top_site_per_color[c]);
+
+			if (!is_valid_percolating_path(path)) {
+			    ps_out.sp_len[c] = -1;
+			    ps_out.sp_path_lin[c].clear();
+			    continue;
+			}
+
+			ps_out.sp_path_lin[c] = std::move(path);
+			ps_out.sp_len[c] = static_cast<int>(ps_out.sp_path_lin[c].size()) - 1;
+
+			valid_percs.push_back({percolation_rank[c], c});
+		    }
+
+		    std::sort(valid_percs.begin(), valid_percs.end(),
+			      [](const ValidPercolation& a, const ValidPercolation& b) {
+				  return a.rank < b.rank;
+			      });
+
+		    int valid_order_ctr = 0;
+		    for (const auto& vp : valid_percs) {
+			const int c = vp.color_idx;
+
+			ps_out.color_percolation.push_back(c + 1);
+			ps_out.percolation_order.push_back(++valid_order_ctr);
+			ps_out.M_size_at_perc.push_back(largest_component_single_color(c));
+		    }
+
+		    break;
+		}
 
         if (t < 10 || t % 100 == 0) {
             std::cout << "[" << type_percolation << "] t = " << t;
