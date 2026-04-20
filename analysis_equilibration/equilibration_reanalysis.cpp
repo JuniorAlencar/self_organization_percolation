@@ -1,4 +1,4 @@
-#include "animation_reanalysis.hpp"
+#include "equilibration_reanalysis.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -112,6 +112,143 @@ struct GridRegular {
         }
     }
 };
+
+int largest_component_single_color_sparse(
+    const SparseSubgraph& net,
+    const GridRegular& grid,
+    const int color_idx)
+{
+    if (color_idx < 0 || color_idx >= net.num_colors) {
+        throw std::runtime_error("largest_component_single_color_sparse: color_idx inválido");
+    }
+
+    const auto& active = net.active_idx_by_color[color_idx];
+    if (active.empty()) return 0;
+
+    std::unordered_set<int> visited;
+    visited.reserve(active.size() * 2 + 1);
+
+    std::vector<int> stack;
+    stack.reserve(1024);
+
+    int best = 0;
+
+    for (const int idx : active) {
+        if (visited.find(idx) != visited.end()) continue;
+
+        int comp_size = 0;
+        stack.clear();
+        stack.push_back(idx);
+        visited.insert(idx);
+
+        while (!stack.empty()) {
+            const int u = stack.back();
+            stack.pop_back();
+            ++comp_size;
+
+            grid.for_each_neighbor(u, [&](const int v) {
+                if (v < 0) return;
+                if (active.find(v) == active.end()) return;
+                if (visited.find(v) != visited.end()) return;
+
+                visited.insert(v);
+                stack.push_back(v);
+            });
+        }
+
+        if (comp_size > best) best = comp_size;
+    }
+
+    return best;
+}
+
+bool shortest_path_to_subgraph_top_single_color_sparse(
+    const SparseSubgraph& net,
+    const GridRegular& grid,
+    const int color_idx,
+    std::vector<int>& out_path,
+    int& out_len)
+{
+    if (color_idx < 0 || color_idx >= net.num_colors) {
+        throw std::runtime_error(
+            "shortest_path_to_subgraph_top_single_color_sparse: color_idx inválido");
+    }
+
+    const auto& active = net.active_idx_by_color[color_idx];
+    if (active.empty()) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
+    int base_subgraph = std::numeric_limits<int>::max();
+    int top_subgraph  = -1;
+
+    for (const int idx : active) {
+        const int g = grid.grow_coord(idx);
+        base_subgraph = std::min(base_subgraph, g);
+        top_subgraph  = std::max(top_subgraph, g);
+    }
+
+    std::queue<int> q;
+    std::unordered_set<int> visited;
+    std::unordered_map<int, int> parent;
+
+    visited.reserve(active.size() * 2 + 1);
+    parent.reserve(active.size() * 2 + 1);
+
+    for (const int idx : active) {
+        if (grid.grow_coord(idx) != base_subgraph) continue;
+        visited.insert(idx);
+        parent[idx] = -1;
+        q.push(idx);
+    }
+
+    if (q.empty()) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
+    int target = -1;
+
+    while (!q.empty()) {
+        const int u = q.front();
+        q.pop();
+
+        if (grid.grow_coord(u) == top_subgraph) {
+            target = u;
+            break;
+        }
+
+        grid.for_each_neighbor(u, [&](const int v) {
+            if (v < 0) return;
+            if (active.find(v) == active.end()) return;
+            if (visited.find(v) != visited.end()) return;
+
+            visited.insert(v);
+            parent[v] = u;
+            q.push(v);
+        });
+    }
+
+    if (target < 0) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
+    out_path.clear();
+    int cur = target;
+    while (cur >= 0) {
+        out_path.push_back(cur);
+        cur = parent[cur];
+    }
+    std::reverse(out_path.begin(), out_path.end());
+
+    out_len = static_cast<int>(out_path.size()) - 1;
+    return true;
+}
 
 inline int color_to_active_value(const int num_colors, const int c) {
     return (num_colors == 1 ? 1 : (c + 2));
@@ -483,10 +620,10 @@ NetworkPattern build_postteq_network(
     return filtered;
 }
 
-SubgraphAnalysis analyze_isolated_subgraph(const NetworkPattern& net)
+SubgraphAnalysis analyze_sparse_isolated_subgraph(const SparseSubgraph& net)
 {
     if (net.shape.empty()) {
-        throw std::runtime_error("analyze_isolated_subgraph: shape vazio");
+        throw std::runtime_error("analyze_sparse_isolated_subgraph: shape vazio");
     }
 
     const int L = net.shape[0];
@@ -504,13 +641,14 @@ SubgraphAnalysis analyze_isolated_subgraph(const NetworkPattern& net)
 
     for (int c = 0; c < net.num_colors; ++c) {
         analysis.largest_component[c] =
-            largest_component_single_color(net, grid, c);
+            largest_component_single_color_sparse(net, grid, c);
 
         std::vector<int> path;
         int path_len = -1;
 
         const bool has_path =
-            shortest_path_to_subgraph_top_single_color(net, grid, c, path, path_len);
+            shortest_path_to_subgraph_top_single_color_sparse(
+                net, grid, c, path, path_len);
 
         if (!has_path) continue;
 
@@ -676,8 +814,9 @@ NetworkPattern load_encoded_network_from_npz(const std::string& npz_path)
 {
     cnpy::npz_t npz = cnpy::npz_load(npz_path);
 
-    if (!npz.count("dim") || !npz.count("shape") || !npz.count("num_colors") || !npz.count("data")) {
-        throw std::runtime_error("NPZ deve conter pelo menos: dim, shape, num_colors, data");
+    if (!npz.count("dim") || !npz.count("shape") || !npz.count("num_colors")) {
+        throw std::runtime_error(
+            "NPZ deve conter pelo menos: dim, shape, num_colors");
     }
 
     const int dim = read_scalar_int(npz["dim"]);
@@ -693,14 +832,68 @@ NetworkPattern load_encoded_network_from_npz(const std::string& npz_path)
 
     NetworkPattern net(dim, shape, num_colors, rho);
 
-    const std::vector<long long> data_ll = read_vector_ll_from_state(npz["data"]);
-    net.data.resize(data_ll.size());
-
-    for (std::size_t i = 0; i < data_ll.size(); ++i) {
-        net.data[i] = static_cast<NetworkPattern::state_t>(data_ll[i]);
+    // Como no save novo só existem sítios ativos,
+    // todo o resto volta como -1 por padrão.
+    std::size_t total_size = 1;
+    for (int s : shape) {
+        if (s <= 0) {
+            throw std::runtime_error("load_encoded_network_from_npz: shape inválido");
+        }
+        total_size *= static_cast<std::size_t>(s);
     }
 
-    return net;
+    net.data.assign(total_size, static_cast<NetworkPattern::state_t>(-1));
+
+    // -------- modo antigo denso --------
+    if (npz.count("data")) {
+        const std::vector<long long> data_ll = read_vector_ll_from_state(npz["data"]);
+
+        if (data_ll.size() != total_size) {
+            throw std::runtime_error(
+                "load_encoded_network_from_npz: tamanho de data incompatível com shape");
+        }
+
+        net.data.resize(data_ll.size());
+        for (std::size_t i = 0; i < data_ll.size(); ++i) {
+            net.data[i] = static_cast<NetworkPattern::state_t>(data_ll[i]);
+        }
+
+        return net;
+    }
+
+    // -------- modo novo esparso --------
+    if (npz.count("active_idx") && npz.count("active_val")) {
+        const std::vector<int> idx = read_vector_int(npz["active_idx"]);
+        const std::vector<int> val = read_vector_int(npz["active_val"]);
+
+        if (idx.size() != val.size()) {
+            throw std::runtime_error(
+                "load_encoded_network_from_npz: active_idx.size != active_val.size");
+        }
+
+        for (std::size_t k = 0; k < idx.size(); ++k) {
+            const int lin = idx[k];
+            const int v   = val[k];
+
+            if (lin < 0 || static_cast<std::size_t>(lin) >= total_size) {
+                throw std::runtime_error(
+                    "load_encoded_network_from_npz: índice linear fora do intervalo");
+            }
+
+            if (v <= 0) {
+                throw std::runtime_error(
+                    "load_encoded_network_from_npz: active_val deve conter apenas valores > 0");
+            }
+
+            net.data[static_cast<std::size_t>(lin)] =
+                static_cast<NetworkPattern::state_t>(v);
+        }
+
+        return net;
+    }
+
+    throw std::runtime_error(
+        "NPZ não contém nem 'data' (modo antigo) nem 'active_idx'/'active_val' (modo esparso)");
 }
 
 int estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg)
@@ -767,23 +960,241 @@ ReanalysisResult reanalyze_animation(
     const ReanalysisConfig& cfg)
 {
     const TimeSeries ts = load_timeseries_from_json(json_path);
-    const NetworkPattern encoded_net = load_encoded_network_from_npz(npz_path);
+    const SparseEncodedNetwork encoded_net =
+        load_sparse_encoded_network_from_npz(npz_path, cfg.species_factor);
 
     if (encoded_net.shape.empty()) {
-        throw std::runtime_error("shape vazio no NetworkPattern");
+        throw std::runtime_error("reanalyze_animation: shape vazio");
     }
 
     ReanalysisResult result;
     result.t_eq = estimate_t_eq(ts, cfg);
 
-    const NetworkPattern net_pre =
-        build_preteq_network(encoded_net, result.t_eq, cfg.species_factor);
+    const SparseSubgraph net_pre =
+        build_preteq_sparse_subgraph(
+            encoded_net, result.t_eq, cfg.species_factor);
 
-    const NetworkPattern net_post =
-        build_postteq_network(encoded_net, result.t_eq, cfg.species_factor);
+    const SparseSubgraph net_post =
+        build_postteq_sparse_subgraph(
+            encoded_net, result.t_eq, cfg.species_factor);
 
-    result.pre_teq  = analyze_isolated_subgraph(net_pre);
-    result.post_teq = analyze_isolated_subgraph(net_post);
+    result.pre_teq  = analyze_sparse_isolated_subgraph(net_pre);
+    result.post_teq = analyze_sparse_isolated_subgraph(net_post);
 
     return result;
 }
+
+SparseEncodedNetwork load_sparse_encoded_network_from_npz(
+    const std::string& npz_path,
+    const int species_factor)
+{
+    if (species_factor <= 0) {
+        throw std::runtime_error(
+            "load_sparse_encoded_network_from_npz: species_factor deve ser > 0");
+    }
+
+    cnpy::npz_t npz = cnpy::npz_load(npz_path);
+
+    if (!npz.count("dim") || !npz.count("shape") || !npz.count("num_colors")) {
+        throw std::runtime_error(
+            "NPZ deve conter pelo menos: dim, shape, num_colors");
+    }
+
+    SparseEncodedNetwork net;
+
+    net.dim        = read_scalar_int(npz["dim"]);
+    net.num_colors = read_scalar_int(npz["num_colors"]);
+    net.shape      = read_vector_int(npz["shape"]);
+
+    if (npz.count("seed")) {
+        net.seed = read_scalar_int(npz["seed"]);
+    } else {
+        net.seed = 0;
+    }
+
+    if (npz.count("rho")) {
+        net.rho = read_vector_double(npz["rho"]);
+    } else {
+        net.rho.assign(net.num_colors, 1.0 / std::max(1, net.num_colors));
+    }
+
+    net.total_size = 1;
+    for (int s : net.shape) {
+        if (s <= 0) {
+            throw std::runtime_error(
+                "load_sparse_encoded_network_from_npz: shape inválido");
+        }
+        net.total_size *= static_cast<std::size_t>(s);
+    }
+
+    net.active_idx_by_color.assign(net.num_colors, {});
+
+    // modo novo esparso
+    if (npz.count("active_idx") && npz.count("active_val")) {
+        net.active_idx = read_vector_int(npz["active_idx"]);
+        net.active_val = read_vector_int(npz["active_val"]);
+
+        if (net.active_idx.size() != net.active_val.size()) {
+            throw std::runtime_error(
+                "load_sparse_encoded_network_from_npz: active_idx.size != active_val.size");
+        }
+
+        net.encoded_value_by_idx.reserve(net.active_idx.size() * 2 + 1);
+
+        for (std::size_t k = 0; k < net.active_idx.size(); ++k) {
+            const int lin = net.active_idx[k];
+            const int val = net.active_val[k];
+
+            if (lin < 0 || static_cast<std::size_t>(lin) >= net.total_size) {
+                throw std::runtime_error(
+                    "load_sparse_encoded_network_from_npz: índice linear fora do intervalo");
+            }
+
+            if (val <= 0) {
+                throw std::runtime_error(
+                    "load_sparse_encoded_network_from_npz: active_val deve conter apenas valores > 0");
+            }
+
+            const DecodedValue dv =
+                decode_animation_value(static_cast<long long>(val), species_factor);
+
+            if (dv.never_activated || dv.blocked) {
+                throw std::runtime_error(
+                    "load_sparse_encoded_network_from_npz: active_val não pode decodificar para -1/0");
+            }
+
+            if (dv.color_idx < 0 || dv.color_idx >= net.num_colors) {
+                throw std::runtime_error(
+                    "load_sparse_encoded_network_from_npz: cor decodificada inválida");
+            }
+
+            net.encoded_value_by_idx[lin] = val;
+            net.active_idx_by_color[dv.color_idx].insert(lin);
+        }
+
+        return net;
+    }
+
+    // modo antigo denso
+    if (npz.count("data")) {
+        const std::vector<long long> data_ll = read_vector_ll_from_state(npz["data"]);
+
+        if (data_ll.size() != net.total_size) {
+            throw std::runtime_error(
+                "load_sparse_encoded_network_from_npz: tamanho de data incompatível com shape");
+        }
+
+        net.active_idx.reserve(data_ll.size() / 16);
+        net.active_val.reserve(data_ll.size() / 16);
+        net.encoded_value_by_idx.reserve(data_ll.size() / 16);
+
+        for (std::size_t i = 0; i < data_ll.size(); ++i) {
+            const int val = static_cast<int>(data_ll[i]);
+
+            if (val <= 0) continue;
+
+            const DecodedValue dv =
+                decode_animation_value(static_cast<long long>(val), species_factor);
+
+            if (dv.never_activated || dv.blocked) continue;
+
+            if (dv.color_idx < 0 || dv.color_idx >= net.num_colors) {
+                throw std::runtime_error(
+                    "load_sparse_encoded_network_from_npz: cor decodificada inválida no modo denso");
+            }
+
+            const int lin = static_cast<int>(i);
+
+            net.active_idx.push_back(lin);
+            net.active_val.push_back(val);
+            net.encoded_value_by_idx[lin] = val;
+            net.active_idx_by_color[dv.color_idx].insert(lin);
+        }
+
+        return net;
+    }
+
+    throw std::runtime_error(
+        "NPZ não contém nem 'data' nem 'active_idx'/'active_val'");
+}
+
+SparseSubgraph make_empty_sparse_like(const SparseEncodedNetwork& encoded_net)
+{
+    SparseSubgraph out;
+    out.dim = encoded_net.dim;
+    out.num_colors = encoded_net.num_colors;
+    out.shape = encoded_net.shape;
+    out.rho = encoded_net.rho;
+    out.total_size = encoded_net.total_size;
+    out.active_idx_by_color.assign(out.num_colors, {});
+    return out;
+}
+
+SparseSubgraph build_preteq_sparse_subgraph(
+    const SparseEncodedNetwork& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    SparseSubgraph out = make_empty_sparse_like(encoded_net);
+
+    out.active_idx.reserve(encoded_net.active_idx.size() / 2);
+    out.active_val.reserve(encoded_net.active_val.size() / 2);
+    out.value_by_idx.reserve(encoded_net.active_idx.size() / 2);
+
+    for (std::size_t k = 0; k < encoded_net.active_idx.size(); ++k) {
+        const int lin = encoded_net.active_idx[k];
+        const int enc = encoded_net.active_val[k];
+
+        const DecodedValue dv =
+            decode_animation_value(static_cast<long long>(enc), species_factor);
+
+        if (dv.never_activated || dv.blocked) continue;
+        if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) continue;
+        if (dv.time > t_eq) continue;
+
+        const int dec_val =
+            color_to_active_value(encoded_net.num_colors, dv.color_idx);
+
+        out.active_idx.push_back(lin);
+        out.active_val.push_back(dec_val);
+        out.value_by_idx[lin] = dec_val;
+        out.active_idx_by_color[dv.color_idx].insert(lin);
+    }
+
+    return out;
+}
+
+SparseSubgraph build_postteq_sparse_subgraph(
+    const SparseEncodedNetwork& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    SparseSubgraph out = make_empty_sparse_like(encoded_net);
+
+    out.active_idx.reserve(encoded_net.active_idx.size() / 2);
+    out.active_val.reserve(encoded_net.active_val.size() / 2);
+    out.value_by_idx.reserve(encoded_net.active_idx.size() / 2);
+
+    for (std::size_t k = 0; k < encoded_net.active_idx.size(); ++k) {
+        const int lin = encoded_net.active_idx[k];
+        const int enc = encoded_net.active_val[k];
+
+        const DecodedValue dv =
+            decode_animation_value(static_cast<long long>(enc), species_factor);
+
+        if (dv.never_activated || dv.blocked) continue;
+        if (dv.color_idx < 0 || dv.color_idx >= encoded_net.num_colors) continue;
+        if (dv.time <= t_eq) continue;
+
+        const int dec_val =
+            color_to_active_value(encoded_net.num_colors, dv.color_idx);
+
+        out.active_idx.push_back(lin);
+        out.active_val.push_back(dec_val);
+        out.value_by_idx[lin] = dec_val;
+        out.active_idx_by_color[dv.color_idx].insert(lin);
+    }
+
+    return out;
+}
+

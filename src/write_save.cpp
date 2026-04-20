@@ -2,76 +2,18 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <vector>
 
+#include <zip.h>
 
 namespace {
-
-template <typename SrcT>
-std::vector<int32_t> to_int32_buffer(const std::vector<SrcT>& data)
-{
-    std::vector<int32_t> out;
-    out.reserve(data.size());
-    for (const auto& v : data) {
-        out.push_back(static_cast<int32_t>(v));
-    }
-    return out;
-}
-
-static void write_npy_int32(const std::string& filename,
-                            const std::vector<int>& shape,
-                            const std::vector<int32_t>& data)
-{
-    if (shape.empty()) throw std::runtime_error("[save_network_as_npz] shape vazio");
-
-    size_t n = 1;
-    for (int s : shape) {
-        if (s <= 0) throw std::runtime_error("[save_network_as_npz] dimensão <= 0");
-        n *= static_cast<size_t>(s);
-    }
-    if (n != data.size()) {
-        throw std::runtime_error("[save_network_as_npz] shape != data.size()");
-    }
-
-    std::ofstream ofs(filename, std::ios::binary);
-    if (!ofs) {
-        throw std::runtime_error(std::string("[save_network_as_npz] não abriu: ") + filename);
-    }
-
-    ofs.write("\x93NUMPY", 6);
-    ofs.put(char(1));
-    ofs.put(char(0));
-
-    std::ostringstream dict;
-    dict << "{'descr': '<i4', 'fortran_order': False, 'shape': (";
-    for (size_t i = 0; i < shape.size(); ++i) {
-        dict << shape[i];
-        if (i + 1 < shape.size()) dict << ", ";
-    }
-    if (shape.size() == 1) dict << ",";
-    dict << "), }";
-
-    std::string hdr = dict.str();
-    const size_t preamble = 10;
-    const size_t pad = (16 - ((preamble + 2 + hdr.size()) % 16)) % 16;
-    hdr.append(pad, ' ');
-    hdr.push_back('\n');
-
-    const unsigned short hl = static_cast<unsigned short>(hdr.size());
-    ofs.put(static_cast<char>(hl & 0xFF));
-    ofs.put(static_cast<char>((hl >> 8) & 0xFF));
-
-    ofs.write(hdr.data(), static_cast<std::streamsize>(hdr.size()));
-    ofs.write(reinterpret_cast<const char*>(data.data()),
-              static_cast<std::streamsize>(data.size() * sizeof(int32_t)));
-}
 
 template <typename T>
 std::string npy_descr();
@@ -99,10 +41,12 @@ inline std::string make_npy_header(const std::string& descr,
     dict << "), }";
 
     std::string hdr = dict.str();
+
     const size_t preamble = 10;
     const size_t pad = (16 - ((preamble + 2 + hdr.size()) % 16)) % 16;
     hdr.append(pad, ' ');
     hdr.push_back('\n');
+
     return hdr;
 }
 
@@ -177,8 +121,6 @@ void write_json_row(std::ostream& os,
     write_json_array(os, m[static_cast<size_t>(row)]);
 }
 
-} // namespace
-
 void write_subgraph_json(std::ostream& ofs,
                          const std::string& key,
                          const SubgraphAnalysis& sg,
@@ -217,7 +159,8 @@ void write_subgraph_json(std::ostream& ofs,
     ofs << "      \"num_colors\": " << sg.net.num_colors << ",\n";
     ofs << "      \"rho\": ";
     write_json_array(ofs, sg.net.rho);
-    ofs << "\n";
+    ofs << ",\n";
+    ofs << "      \"num_active\": " << sg.net.active_idx.size() << "\n";
     ofs << "    }\n";
 
     ofs << "  }";
@@ -225,70 +168,76 @@ void write_subgraph_json(std::ostream& ofs,
     ofs << "\n";
 }
 
-void save_data::save_network_as_npz(const NetworkPattern& net,
-                                    const std::string& filename) const
+void save_sparse_npz_payload(const int dim,
+                             const int num_colors,
+                             const int seed,
+                             const std::vector<int>& shape,
+                             const std::vector<double>& rho,
+                             const std::vector<int32_t>& active_idx,
+                             const std::vector<int32_t>& active_val,
+                             const std::string& filename)
 {
-    const std::vector<int32_t> data_i32 = to_int32_buffer(net.data);
-
-    if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npy") {
-        write_npy_int32(filename, net.shape, data_i32);
-        return;
-    }
-
     if (!(filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")) {
-        throw std::runtime_error(
-            "save_network_as_npz: filename deve terminar com .npz ou .npy");
+        throw std::runtime_error("save_network_as_npz: filename deve terminar com .npz");
     }
 
-    const int32_t dim_i = static_cast<int32_t>(net.dim);
-    const int32_t nc_i = static_cast<int32_t>(net.num_colors);
-    const int32_t seed_i = static_cast<int32_t>(net.seed);
-    const std::vector<size_t> shape_scalar{};
+    if (active_idx.size() != active_val.size()) {
+        throw std::runtime_error("save_network_as_npz: active_idx.size != active_val.size");
+    }
 
-    const std::string npy_dim = make_npy_blob(&dim_i, 1, shape_scalar);
-    const std::string npy_nc = make_npy_blob(&nc_i, 1, shape_scalar);
-    const std::string npy_seed = make_npy_blob(&seed_i, 1, shape_scalar);
+    const int32_t dim_i  = static_cast<int32_t>(dim);
+    const int32_t nc_i   = static_cast<int32_t>(num_colors);
+    const int32_t seed_i = static_cast<int32_t>(seed);
+
+    const std::vector<size_t> scalar_shape{};
+    const std::string npy_dim  = make_npy_blob(&dim_i,  1, scalar_shape);
+    const std::string npy_nc   = make_npy_blob(&nc_i,   1, scalar_shape);
+    const std::string npy_seed = make_npy_blob(&seed_i, 1, scalar_shape);
 
     std::vector<int32_t> shape_i32;
-    shape_i32.reserve(net.shape.size());
-    for (int s : net.shape) {
+    shape_i32.reserve(shape.size());
+    for (const int s : shape) {
         if (s <= 0) {
             throw std::runtime_error("save_network_as_npz: shape inválido");
         }
         shape_i32.push_back(static_cast<int32_t>(s));
     }
+
+    std::vector<double> rho_f(rho.begin(), rho.end());
+
     const std::vector<size_t> shape_1d{shape_i32.size()};
-    const std::string npy_shape = make_npy_blob(shape_i32.data(), shape_i32.size(), shape_1d);
+    const std::vector<size_t> rho_1d{rho_f.size()};
+    const std::vector<size_t> active_1d{active_idx.size()};
 
-    std::vector<size_t> data_shape;
-    data_shape.reserve(net.shape.size());
-    for (int s : net.shape) {
-        if (s <= 0) {
-            throw std::runtime_error("save_network_as_npz: shape inválido em data.npy");
-        }
-        data_shape.push_back(static_cast<size_t>(s));
-    }
-    const std::string npy_data = make_npy_blob(data_i32.data(), data_i32.size(), data_shape);
+    const std::string npy_shape =
+        make_npy_blob(shape_i32.data(), shape_i32.size(), shape_1d);
 
-    std::vector<double> rho_f(net.rho.begin(), net.rho.end());
-    const std::vector<size_t> rho_shape_1d{rho_f.size()};
-    const std::string npy_rho = make_npy_blob(rho_f.data(), rho_f.size(), rho_shape_1d);
+    const std::string npy_rho =
+        make_npy_blob(rho_f.data(), rho_f.size(), rho_1d);
+
+    const std::string npy_active_idx =
+        make_npy_blob(active_idx.data(), active_idx.size(), active_1d);
+
+    const std::string npy_active_val =
+        make_npy_blob(active_val.data(), active_val.size(), active_1d);
 
     int errcode = 0;
     zip_t* za = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errcode);
     if (!za) {
         std::ostringstream oss;
-        oss << "save_network_as_npz: não abriu zip '" << filename << "' (err=" << errcode << ")";
+        oss << "save_network_as_npz: não abriu zip '" << filename
+            << "' (err=" << errcode << ")";
         throw std::runtime_error(oss.str());
     }
 
     try {
-        zip_add_buffer(za, "dim.npy", npy_dim);
+        zip_add_buffer(za, "dim.npy",        npy_dim);
         zip_add_buffer(za, "num_colors.npy", npy_nc);
-        zip_add_buffer(za, "seed.npy", npy_seed);
-        zip_add_buffer(za, "shape.npy", npy_shape);
-        zip_add_buffer(za, "data.npy", npy_data);
-        zip_add_buffer(za, "rho.npy", npy_rho);
+        zip_add_buffer(za, "seed.npy",       npy_seed);
+        zip_add_buffer(za, "shape.npy",      npy_shape);
+        zip_add_buffer(za, "rho.npy",        npy_rho);
+        zip_add_buffer(za, "active_idx.npy", npy_active_idx);
+        zip_add_buffer(za, "active_val.npy", npy_active_val);
 
         if (zip_close(za) != 0) {
             throw std::runtime_error("save_network_as_npz: zip_close falhou");
@@ -297,6 +246,83 @@ void save_data::save_network_as_npz(const NetworkPattern& net,
         zip_discard(za);
         throw;
     }
+}
+
+} // namespace
+
+void save_data::save_network_as_npz(const NetworkPattern& net,
+                                    const std::string& filename) const
+{
+    std::vector<int32_t> active_idx;
+    std::vector<int32_t> active_val;
+
+    active_idx.reserve(net.data.size() / 16);
+    active_val.reserve(net.data.size() / 16);
+
+    for (std::size_t i = 0; i < net.data.size(); ++i) {
+        const int v = static_cast<int>(net.data[i]);
+
+        // salva apenas sítios ativos
+        if (v <= 0) continue;
+
+        if (i > static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) {
+            throw std::runtime_error(
+                "save_network_as_npz(NetworkPattern): índice linear excede int32");
+        }
+
+        active_idx.push_back(static_cast<int32_t>(i));
+        active_val.push_back(static_cast<int32_t>(v));
+    }
+
+    save_sparse_npz_payload(
+        net.dim,
+        net.num_colors,
+        net.seed,
+        net.shape,
+        net.rho,
+        active_idx,
+        active_val,
+        filename
+    );
+}
+
+void save_data::save_network_as_npz(const SparseSubgraph& net,
+                                    const std::string& filename) const
+{
+    std::vector<int32_t> active_idx;
+    std::vector<int32_t> active_val;
+
+    active_idx.reserve(net.active_idx.size());
+    active_val.reserve(net.active_val.size());
+
+    for (std::size_t k = 0; k < net.active_idx.size(); ++k) {
+        const int lin = net.active_idx[k];
+        const int val = net.active_val[k];
+
+        if (lin < 0) {
+            throw std::runtime_error(
+                "save_network_as_npz(SparseSubgraph): índice linear negativo");
+        }
+        if (val <= 0) {
+            throw std::runtime_error(
+                "save_network_as_npz(SparseSubgraph): active_val deve ser > 0");
+        }
+
+        active_idx.push_back(static_cast<int32_t>(lin));
+        active_val.push_back(static_cast<int32_t>(val));
+    }
+
+    // seed não existe no subgrafo reanalisado; salva 0
+    save_sparse_npz_payload(
+        net.dim,
+        net.num_colors,
+        0,
+        net.shape,
+        net.rho,
+        active_idx,
+        active_val,
+        filename
+    );
 }
 
 void save_data::save_percolation_json(const PercolationSeries& ps,
@@ -318,11 +344,13 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
 
     std::ofstream ofs(filename_json);
     if (!ofs) {
-        throw std::runtime_error(std::string("[save_percolation_json] não abriu: ") + filename_json);
+        throw std::runtime_error(
+            std::string("[save_percolation_json] não abriu: ") + filename_json);
     }
 
     std::vector<size_t> idx(ps.percolation_order.size());
     for (size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+
     if (sort_by_order) {
         std::sort(idx.begin(), idx.end(), [&](const size_t a, const size_t b) {
             return ps.percolation_order[a] < ps.percolation_order[b];
@@ -373,7 +401,6 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "}\n";
 }
 
-
 void save_data::save_reanalysis_json(const ReanalysisResult& result,
                                      const std::string& filename_json) const
 {
@@ -385,7 +412,6 @@ void save_data::save_reanalysis_json(const ReanalysisResult& result,
 
     ofs << "{\n";
     ofs << "  \"t_eq\": " << result.t_eq << ",\n";
-    ofs << "  \"analysis_basis\": \"pre_teq_and_post_teq\",\n";
 
     write_subgraph_json(ofs, "pre_teq", result.pre_teq, true);
     write_subgraph_json(ofs, "post_teq", result.post_teq, false);

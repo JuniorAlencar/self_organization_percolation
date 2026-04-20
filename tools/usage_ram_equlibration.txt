@@ -1,0 +1,6 @@
+L <= 512 JOBS =11
+L = 256 - 0.39gb RAM
+L = 608 - 6gb RAM 
+L = 724 - 10.05gb RAM 
+L = 851 - 14.01gb RAM
+L = 1024 -
