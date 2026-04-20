@@ -6,63 +6,204 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib import patches  # coloque no topo do arquivo
 
-def read_network(path_dir, filename, return_metadata=False):
+
+def create_folder(folder_path):
+    """
+    Creates the folder if it does not already exist.
+
+    Args:
+        folder_path (str): Path to the folder to be created.
+    """
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder created: {folder_path}")
+        
+    else:
+        print(f"Folder already exists: {folder_path}")
+
+
+TIME_BASE_3D = 10_000_000
+
+def _get_colors_used():
+    return [
+        (0.9, 0.1, 0.1),    # 2 - red
+        (1.0, 0.5, 0.0),    # 3 - orange
+        (0.1, 0.9, 0.1),    # 4 - green
+        (0.1, 0.1, 0.9),    # 5 - blue
+        (0.8, 0.2, 0.8),    # 6 - purple
+        (0.2, 0.8, 0.8),    # 7 - teal
+        (1.0, 1.0, 0.0),    # 8 - yellow
+        (0.6, 0.4, 0.2),    # 9 - brown
+        (0.0, 0.0, 0.0),    # 10 - black
+        (0.65, 0.65, 0.65), # 11 - gray
+    ]
+
+def _build_fixed_color_map(unique_colors, nc):
+    """
+    Mantém o mesmo padrão visual da rede completa.
+
+    Casos suportados:
+    - cores 1..nc
+    - cores 2..nc+1
+
+    Se vier outro esquema, cai num fallback controlado.
+    """
+    colors_used = _get_colors_used()
+    unique_colors = sorted(int(c) for c in unique_colors)
+
+    if not unique_colors:
+        return {}
+
+    cmin = min(unique_colors)
+    cmax = max(unique_colors)
+
+    # Caso 1: labels 1..nc
+    if cmin >= 1 and cmax <= nc:
+        return {c: colors_used[c - 1] for c in unique_colors}
+
+    # Caso 2: labels 2..nc+1
+    if cmin >= 2 and cmax <= nc + 1:
+        return {c: colors_used[c - 2] for c in unique_colors}
+
+    # Fallback: mantém ordem crescente, mas avisa
+    if len(unique_colors) > len(colors_used):
+        raise ValueError(
+            f"Há {len(unique_colors)} cores no arquivo, mas apenas "
+            f"{len(colors_used)} cores foram definidas na paleta."
+        )
+
+    print(
+        "[WARN] Esquema de cores fora do padrão esperado. "
+        "Aplicando fallback por ordem crescente."
+    )
+    return {c: colors_used[i] for i, c in enumerate(unique_colors)}
+
+def _darken_rgb(rgb, factor=0.82):
+    return tuple(max(0.0, min(1.0, c * factor)) for c in rgb)
+
+def _apply_full_cube_style(pts, edge_width=1.4):
+    prop = pts.actor.property
+    prop.edge_visibility = True
+    prop.edge_color = (0, 0, 0)
+    prop.line_width = edge_width
+
+    prop.opacity = 1.0
+    prop.ambient = 0.10
+    prop.diffuse = 0.90
+    prop.specular = 0.0
+
+def _draw_points3d_cube_cloud(fig, x, y, z, rgb, darken_factor=1.0, edge_width=1.0):
+    rgb_use = _darken_rgb(rgb, darken_factor)
+
+    pts = mlab.points3d(
+        x, y, z,
+        np.ones_like(x),
+        color=rgb_use,
+        scale_factor=1.0,
+        opacity=1.0,
+        mode="cube",
+        figure=fig
+    )
+    _apply_full_cube_style(pts, edge_width=edge_width)
+    return pts
+
+def _read_positions_table(file_path):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
+
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == ".parquet":
+        return pd.read_parquet(file_path)
+    if ext == ".csv":
+        return pd.read_csv(file_path)
+
+    raise ValueError(f"Formato não suportado para posições: {file_path}")
+
+
+def _write_positions_table(df, file_path):
+    out_dir = os.path.dirname(file_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == ".parquet":
+        df.to_parquet(file_path, index=False)
+    elif ext == ".csv":
+        df.to_csv(file_path, index=False)
+    else:
+        raise ValueError(
+            f"output_data deve terminar com .parquet ou .csv. Recebido: {file_path}"
+        )
+
+
+def _read_codec_metadata(path_dir, filename):
     fn = os.path.join(path_dir, filename)
 
-    with np.load(fn, allow_pickle=True) as npz:
+    with np.load(fn, allow_pickle=False) as npz:
+        meta = {
+            "dim": int(np.asarray(npz["dim"]).item()),
+            "shape": tuple(np.asarray(npz["shape"], dtype=np.int64).tolist()),
+            "keys": list(npz.keys()),
+        }
+
+        for extra_key in ("num_colors", "seed", "rho"):
+            if extra_key in npz:
+                meta[extra_key] = npz[extra_key]
+
+    return meta
+
+def _camera_plot_3D_full(fig, L, show_base=False):
+    if show_base:
+        mlab.view(
+            azimuth=0,
+            elevation=-90,
+            distance=2.8 * L,
+            focalpoint=(L / 2, L / 2, 0),
+            figure=fig
+        )
+    else:
+        mlab.view(
+            azimuth=70,
+            elevation=65,
+            distance=3.1 * L,
+            focalpoint=(L / 2, L / 2, L / 2),
+            figure=fig
+        )
+
+
+def _new_figure_3d(figure_name="network3d"):
+    fig = mlab.figure(
+        figure=figure_name,
+        size=(800, 800),
+        bgcolor=(1, 1, 1),
+        fgcolor=(0, 0, 0),
+    )
+    mlab.clf(figure=fig)
+    return fig
+
+
+def read_network_codec(path_dir, filename, fill_value=0):
+    """
+    Lê arquivo .npz codificado, aceitando:
+      1) formato denso:  dim, shape, data
+      2) formato esparso: dim, shape, active_idx, active_val
+
+    Convenção inferida do struct C++:
+      shape[0] = Ny
+      shape[1] = Nx
+      shape[2] = Nz
+
+    Retorna:
+      network[x, y, z]
+    """
+    fn = os.path.join(path_dir, filename)
+
+    with np.load(fn, allow_pickle=False) as npz:
         keys = list(npz.keys())
-        print("chaves dentro do arquivo:", keys)
-
-        required = ("dim", "shape", "data")
-        missing = [k for k in required if k not in npz]
-        if missing:
-            raise KeyError(f"Arquivo {fn} sem as chaves obrigatórias: {missing}")
-
         dim = int(np.asarray(npz["dim"]).item())
         shape = tuple(np.asarray(npz["shape"], dtype=np.int64).tolist())
-
-        # IMPORTANTE:
-        # data.npy foi salvo com fortran_order=False e shape=net.shape,
-        # mas o buffer linear net.data segue idx = x + SX*(y + SY*z).
-        # Então a forma segura é recuperar o buffer linear original:
-        raw = np.asarray(npz["data"], dtype=np.int32).ravel(order="C")
-
-        if dim == 2:
-            if len(shape) != 2:
-                raise ValueError(f"dim=2, mas shape={shape}")
-
-            SX, SY = map(int, shape)
-
-            expected = SX * SY
-            if raw.size != expected:
-                raise ValueError(
-                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
-                )
-
-            # idx = x + SX*y
-            # array C-order com shape (SY, SX) dá arr[y, x]
-            # depois transpomos para obter network[x, y]
-            network = raw.reshape((SY, SX), order="C").T
-
-        elif dim == 3:
-            if len(shape) != 3:
-                raise ValueError(f"dim=3, mas shape={shape}")
-
-            SX, SY, SZ = map(int, shape)
-
-            expected = SX * SY * SZ
-            if raw.size != expected:
-                raise ValueError(
-                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
-                )
-
-            # idx = x + SX*(y + SY*z)
-            # array C-order com shape (SZ, SY, SX) dá arr[z, y, x]
-            # depois transpomos para obter network[x, y, z]
-            network = raw.reshape((SZ, SY, SX), order="C").transpose(2, 1, 0)
-
-        else:
-            raise ValueError(f"dim inválido em {fn}: {dim}")
 
         metadata = {
             "dim": dim,
@@ -74,659 +215,623 @@ def read_network(path_dir, filename, return_metadata=False):
             if extra_key in npz:
                 metadata[extra_key] = npz[extra_key]
 
-    if return_metadata:
-        return network, metadata
-    return network
+        if dim == 2:
+            if len(shape) != 2:
+                raise ValueError(f"dim=2, mas shape={shape}")
 
-def convert_positions(path_dir, filename, output_filename, dim=None):
-    network, meta = read_network(path_dir, filename, return_metadata=True)
+            Ny, Nx = map(int, shape)
+            expected = Ny * Nx
 
-    dim_file = meta["dim"]
-    if dim is not None and dim != dim_file:
-        raise ValueError(
-            f"dim informado ({dim}) difere do dim do arquivo ({dim_file})"
-        )
+            if "data" in npz:
+                raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
+            elif "active_idx" in npz and "active_val" in npz:
+                raw = np.full(expected, fill_value, dtype=np.int64)
+                active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
+                active_val = np.asarray(npz["active_val"], dtype=np.int64)
+                raw[active_idx] = active_val
+            else:
+                raise KeyError(
+                    f"Arquivo {fn} não possui nem 'data' nem ('active_idx', 'active_val'). "
+                    f"Chaves encontradas: {keys}"
+                )
 
-    dim = dim_file
+            if raw.size != expected:
+                raise ValueError(
+                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
+                )
 
-    valores_unicos, contagens = np.unique(network, return_counts=True)
-    print("valores únicos:", valores_unicos)
-    print("contagens:", contagens)
+            # raw[y, x] -> network[x, y]
+            network = raw.reshape((Ny, Nx), order="C").T
 
-    mask = network > 0
-    coords = np.argwhere(mask)
-    colors = network[mask]
+        elif dim == 3:
+            if len(shape) != 3:
+                raise ValueError(f"dim=3, mas shape={shape}")
 
-    if dim == 3:
-        # read_network já devolve network[x, y, z]
-        df_points = pd.DataFrame({
-            "x": coords[:, 0].astype(np.int32),
-            "y": coords[:, 1].astype(np.int32),
-            "z": coords[:, 2].astype(np.int32),
-            "color": colors.astype(np.int16),
-        })
-    else:
-        # read_network já devolve network[x, y]
-        df_points = pd.DataFrame({
-            "x": coords[:, 0].astype(np.int32),
-            "y": coords[:, 1].astype(np.int32),
-            "color": colors.astype(np.int16),
-        })
+            Ny, Nx, Nz = map(int, shape)
+            expected = Ny * Nx * Nz
 
-    save_out = os.path.join(path_dir, output_filename)
-    if not save_out.endswith(".parquet"):
-        save_out += ".parquet"
+            if "data" in npz:
+                raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
+            elif "active_idx" in npz and "active_val" in npz:
+                raw = np.full(expected, fill_value, dtype=np.int64)
+                active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
+                active_val = np.asarray(npz["active_val"], dtype=np.int64)
+                raw[active_idx] = active_val
+            else:
+                raise KeyError(
+                    f"Arquivo {fn} não possui nem 'data' nem ('active_idx', 'active_val'). "
+                    f"Chaves encontradas: {keys}"
+                )
 
-    print(df_points.head())
-    print("Total de pontos salvos:", len(df_points))
+            if raw.size != expected:
+                raise ValueError(
+                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
+                )
 
-    df_points.to_parquet(
-        save_out,
-        engine="pyarrow",
-        compression="snappy",
-        index=False,
+            # raw[z, y, x] -> network[x, y, z]
+            network = raw.reshape((Nz, Ny, Nx), order="C").transpose(2, 1, 0)
+
+        else:
+            raise ValueError(f"dim inválido em {fn}: {dim}")
+
+    return network, metadata
+
+
+TIME_BASE_3D = 10_000_000
+
+def positions_from_codec_npz(path_dir, filename, output_data=None, time_base=None):
+    """
+    Lê o .npz codificado e devolve diretamente um DataFrame com
+    x, y, z, color, time.
+
+    Caso esparso:
+        usa active_idx / active_val e decodifica x,y,z diretamente
+        do índice linear antigo:
+            idx = x + SX * (y + SY * z)
+
+    Caso denso:
+        reconstrói como no read_network antigo.
+
+    Se output_data for informado, salva o dataframe final em .parquet ou .csv.
+    """
+    fn = os.path.join(path_dir, filename)
+
+    with np.load(fn, allow_pickle=False) as npz:
+        keys = list(npz.keys())
+        dim = int(np.asarray(npz["dim"]).item())
+        shape = tuple(np.asarray(npz["shape"], dtype=np.int64).tolist())
+
+        meta = {
+            "dim": dim,
+            "shape": shape,
+            "keys": keys,
+        }
+        for extra_key in ("num_colors", "seed", "rho"):
+            if extra_key in npz:
+                meta[extra_key] = npz[extra_key]
+
+        if dim != 3:
+            raise ValueError("Esta função foi escrita para o caso 3D.")
+
+        if time_base is None:
+            if "active_val" in npz:
+                vmax = int(np.asarray(npz["active_val"]).max())
+            elif "data" in npz:
+                vmax = int(np.asarray(npz["data"]).max())
+            else:
+                raise KeyError("Arquivo sem 'data' e sem 'active_val'.")
+
+            if vmax >= 100_000_000:
+                time_base = 100_000_000
+            elif vmax >= 10_000_000:
+                time_base = 10_000_000
+            else:
+                raise ValueError(f"Não foi possível inferir time_base. vmax={vmax}")
+
+        if "active_idx" in npz and "active_val" in npz:
+            active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
+            encoded_vals = np.asarray(npz["active_val"], dtype=np.int64)
+
+            SX, SY, SZ = map(int, shape)
+
+            x = active_idx % SX
+            y = (active_idx // SX) % SY
+            z = active_idx // (SX * SY)
+
+            colors = encoded_vals // time_base
+            times = encoded_vals % time_base
+
+            df = pd.DataFrame({
+                "x": x.astype(np.int32),
+                "y": y.astype(np.int32),
+                "z": z.astype(np.int32),
+                "color": colors.astype(np.int32),
+                "time": times.astype(np.int64),
+            })
+
+        elif "data" in npz:
+            raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
+            SX, SY, SZ = map(int, shape)
+
+            expected = SX * SY * SZ
+            if raw.size != expected:
+                raise ValueError(
+                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
+                )
+
+            network = raw.reshape((SZ, SY, SX), order="C").transpose(2, 1, 0)
+
+            mask_active = network > 0
+            coords = np.argwhere(mask_active)
+            encoded_vals = network[mask_active].astype(np.int64, copy=False)
+
+            colors = encoded_vals // time_base
+            times = encoded_vals % time_base
+
+            df = pd.DataFrame({
+                "x": coords[:, 0].astype(np.int32),
+                "y": coords[:, 1].astype(np.int32),
+                "z": coords[:, 2].astype(np.int32),
+                "color": colors.astype(np.int32),
+                "time": times.astype(np.int64),
+            })
+
+        else:
+            raise KeyError(
+                f"Arquivo {fn} não possui nem ('active_idx','active_val') nem 'data'. "
+                f"Chaves encontradas: {keys}"
+            )
+
+    df = df[df["color"] > 0].copy()
+    df = df.sort_values("time").reset_index(drop=True)
+
+    if output_data is not None:
+        _write_positions_table(df, output_data)
+
+    print(f"time_base usado = {time_base}")
+    print(f"cores únicas decodificadas = {np.unique(df['color'])}")
+    print(df[["x", "y", "z"]].agg(["min", "max"]))
+
+    return df, meta
+
+def load_or_create_positions_codec(path_dir, filename, output_data, time_base=None, force_rebuild=False):
+    """
+    Se output_data existir, lê e retorna.
+    Se não existir, converte do .npz, salva e retorna.
+    """
+    if (not force_rebuild) and os.path.exists(output_data):
+        df = _read_positions_table(output_data)
+        meta = _read_codec_metadata(path_dir, filename)
+        return df, meta
+
+    return positions_from_codec_npz(
+        path_dir=path_dir,
+        filename=filename,
+        output_data=output_data,
+        time_base=time_base
     )
 
-    print(f"Arquivo salvo em: {save_out}")
+def _plot_points_df_same_style(
+    df,
+    L,
+    nc,
+    path_out,
+    figure_name=None,
+    specific_color=None,
+    show_base=False,
+    outline_mode="full",
+    visual_profile="full"
+):
+    df = df.copy()
 
-def convert_positions_sp(path_dir, filename, output_filename, dim):
-    fname = path_dir + filename
-    network = read_network(path_dir, filename)  # deve retornar um np.ndarray
+    for col in ("x", "y", "z", "color"):
+        if col not in df.columns:
+            raise ValueError(f"DataFrame sem coluna obrigatória: {col}")
 
-    # valores únicos só pra conferência (opcional)
-    valores_unicos, contagens = np.unique(network, return_counts=True)
-    print("Valores únicos na rede:", dict(zip(valores_unicos, contagens)))
-
-    # índices de todos os sítios NÃO NULOS (valor != 0)
-    coords_zyx = np.argwhere(network != 0)  # (z, y, x) em 3D; (y, x) em 2D
-
-    # valores (cores) correspondentes: exatamente o valor da matriz em (i,j,k)
-    colors = network[network != 0]
-
-    if dim == 3:
-        # mapeando para o sistema físico: x,y base; z altura
-        x = coords_zyx[:, 0]   # eixo 2 -> x
-        y = coords_zyx[:, 1]   # eixo 1 -> y
-        z = coords_zyx[:, 2]   # eixo 0 -> z
-
-        df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "z": z,
-            "color": colors
-        })
-    else:
-        # 2D: network esperado como (y, x)
-        y = coords_zyx[:, 0]
-        x = coords_zyx[:, 1]
-
-        df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "color": colors
-        })
-
-    save_out = path_dir + output_filename
-
-    print(df_points.head())
-    print("Total de pontos não nulos:", len(df_points))
-    df_points.to_csv(save_out, sep=',', index=False)
-
-
-TIME_BASE_3D = 100_000_000  # fator da codificação: C * 100000000 + t
-
-def convert_positions_3D(path_dir, filename, dim, time_base=TIME_BASE_3D):
-    """
-    Lê o arquivo da rede (2D ou 3D) e gera um CSV com:
-      - 3D: x, y, z, color, time
-      - 2D: x, y, color, time
-
-    Supõe que os valores ativos estejam codificados como:
-        valor = C * time_base + t
-    e que sítios inativos tenham valor <= 0 (0 ou negativo).
-    """
-    fname = path_dir + filename
-    network = read_network(path_dir, filename)  # deve retornar np.ndarray
-
-    # conferência rápida
-    print("network.shape:", network.shape)
-    valores_unicos, contagens = np.unique(network, return_counts=True)
-    print("alguns valores únicos:", valores_unicos[:10])
-
-    # máscara: pega apenas sítios ativos (valor > 0)
-    mask_active = network > 0
-
-    # índices dos sítios ativos
-    coords = np.argwhere(mask_active)  # (z,y,x) se 3D; (y,x) se 2D
-
-    # valores codificados
-    encoded_vals = network[mask_active].astype(np.int64, copy=False)
-
-    # decodificação cor e tempo
-    colors = encoded_vals // time_base
-    times  = encoded_vals %  time_base
-
-    # mapeando para o sistema físico
-    if dim == 3:
-        # coords: (z, y, x)
-        z = coords[:, 0]
-        y = coords[:, 1]
-        x = coords[:, 2]
-
-        df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "z": z,
-            "color": colors,
-            "time": times,
-        })
-    else:
-        # dim == 2: coords: (y, x)
-        y = coords[:, 0]
-        x = coords[:, 1]
-
-        df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "color": colors,
-            "time": times,
-        })
-
-    save_out = path_dir + "network_positions_time.csv"
-    df_points = df_points.sort_values("time").reset_index(drop=True)
-    print(df_points.head())
-    print("Total de pontos ativos:", len(df_points))
-    df_points.to_csv(save_out, sep=',', index=False)
-    print("CSV salvo em:", save_out)
-
-
-def plot_3D_cut(dim, L, nc, rho, k, NT):
-    path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho}_k{k:.1e}_Nt{NT}/"
-    
-    file_positions = f"../network/{dim}D_L{L}_nc{nc}_rho{rho}_k{k:.1e}_Nt{NT}/network_positions.csv"
-    seed = 1
-
-    # Create file positions, if dont exist
-    if not os.path.exists(file_positions):
-        print("file positions don't exist, create it...")
-        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", dim)
-        print("File with positions created")
-
-    a = 0
-    b = 0
-    seed = 1
-
-    df = pd.read_csv(path_dir + "network_positions.csv")
-
-    cut = L * (1/2)
-
-    # Ajuste as coordenadas x e y para levar em conta a e b
-    df['x'] = (df['x'] + a) % L
-    df['y'] = (df['y'] + b) % L
-
-    figure_size = (800, 800)
-    mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
-
-    colors = [i+2 for i in range(nc)]
-    colors_used = [
-        (0.9, 0.1, 0.1),  # 2 - red
-        (1.0, 0.5, 0.0),  # 3 - orange
-        (0.1, 0.9, 0.1),  # 4 - green
-        (0.1, 0.1, 0.9),  # 5 - blue
-        (0.8, 0.2, 0.8),  # 6 - purple
-        (0.2, 0.8, 0.8),  # 7 - teal
-        (1.0, 1.0, 0.0),  # 8 - yellow
-        (0.6, 0.4, 0.2),  # 9 - brown
-    ]
-
-    for idx, color in enumerate(colors):
-        df_color = df[df['color'] == color]
-
-        mask_oct = (df_color['x'] <= cut) | (df_color['y'] <= cut) | (df_color['z'] <= cut)
-        x = df_color['x'][mask_oct]
-        y = df_color['y'][mask_oct]
-        z = df_color['z'][mask_oct]
-
-        if len(x) > 0:
-            pts = mlab.points3d(
-            x, y, z,
-            color=colors_used[idx],
-            scale_factor=1,
-            opacity=1.0,
-            mode='cube'
-        )
-        #pts.actor.property.edge_visibility = True
-        #pts.actor.property.edge_color = (0, 0, 0)   # preto
-        #pts.actor.property.line_width = 0.00         # espessura da borda (ajuste se quiser)
-
-
-    mlab.outline(
-        extent=[0, L, 0, L, 0, L],  # [xmin, xmax, ymin, ymax, zmin, zmax]
-        color=(0, 0, 0),            # contorno preto
-        line_width=2.0              # espessura da linha
-    )
-
-    mlab.view(azimuth=60, elevation=60, distance=3.25*L)
-    path_out_network = path_dir + f"L{L}_seed{seed}_{cut}_better.png" 
-    mlab.savefig(path_out_network, magnification=4)
-    print(f"network save in {path_out_network}")
-    mlab.show()
-
-def plot_3D_full(path_dir, file_positions, p0, P0, L, nc, seed, filename,
-                 specific_color=None, show_base=False):
-    fn = path_dir + file_positions
-
-    if not os.path.exists(fn):
-        print("file positions don't exist, create it...")
-        convert_positions(
-            path_dir,
-            filename,
-            f"network_positions_p0_{p0:.1f}_P0_{P0:.2f}.parquet",
-            3
-        )
-        print("File with positions created")
-
-    a = 0
-    b = 0
-
-    df = pd.read_parquet(fn).copy()
-
-    # garante inteiros e periodicidade transversal
-    df["x"] = ((df["x"].astype(int) + a) % L).astype(int)
-    df["y"] = ((df["y"].astype(int) + b) % L).astype(int)
+    df["x"] = df["x"].astype(int)
+    df["y"] = df["y"].astype(int)
     df["z"] = df["z"].astype(int)
     df["color"] = df["color"].astype(int)
 
-    # mantém apenas sítios ativos
     df = df[df["color"] > 0].copy()
+    if df.empty:
+        raise ValueError("Nenhum ponto ativo para plotar.")
 
-    figure_size = (800, 800)
+    if figure_name is None:
+        figure_name = os.path.splitext(os.path.basename(path_out))[0]
 
-    # ========= mudança importante =========
-    # em vez de mlab.clf() solto ou mlab.close(all=False),
-    # cria/reutiliza uma figura nomeada e limpa essa figura
-    fig = mlab.figure(
-        figure="network3d",
-        size=figure_size,
-        bgcolor=(1, 1, 1),
-        fgcolor=(0, 0, 0)
-    )
-    mlab.clf(figure=fig)
-    # =====================================
+    fig = _new_figure_3d(figure_name=figure_name)
 
-    colors = [i + 2 for i in range(nc)]
+    unique_colors = sorted(df["color"].unique().tolist())
+    color_map = _build_fixed_color_map(unique_colors, nc)
 
-    colors_used = [
-        (0.9, 0.1, 0.1),    # 2 - red
-        (1.0, 0.5, 0.0),    # 3 - orange
-        (0.1, 0.9, 0.1),    # 4 - green
-        (0.1, 0.1, 0.9),    # 5 - blue
-        (0.8, 0.2, 0.8),    # 6 - purple
-        (0.2, 0.8, 0.8),    # 7 - teal
-        (1.0, 1.0, 0.0),    # 8 - yellow
-        (0.6, 0.4, 0.2),    # 9 - brown
-        (0.0, 0.0, 0.0),    # 10 - black
-        (0.65, 0.65, 0.65)  # 11 - gray
-    ]
+    if visual_profile == "full":
+        darken_factor = 1.00
+        edge_width = 1.0
+    elif visual_profile == "cut":
+        darken_factor = 0.82
+        edge_width = 1.4
+    else:
+        raise ValueError("visual_profile deve ser 'full' ou 'cut'.")
 
     if specific_color is None:
-        for idx, color in enumerate(colors):
-            df_color = df[df["color"] == color]
-
-            if df_color.empty:
-                continue
-
-            x = df_color["x"].to_numpy()
-            y = df_color["y"].to_numpy()
-            z = df_color["z"].to_numpy()
-
-            pts = mlab.points3d(
-                x, y, z,
-                np.ones_like(x),
-                color=colors_used[idx],
-                scale_factor=1.0,
-                opacity=1.0,
-                mode="cube"
-            )
-            pts.actor.property.edge_visibility = True
-            pts.actor.property.edge_color = (0, 0, 0)
-            pts.actor.property.line_width = 0.00
-
-        if show_base:
-            path_out_network = path_dir + f"L{L}_seed{seed}_p0_{p0:.1f}_P0_{P0:.2f}base.png"
-        else:
-            path_out_network = path_dir + f"L{L}_seed{seed}_p0_{p0:.1f}_P0_{P0:.2f}all.png"
-
+        colors_to_plot = unique_colors
     else:
-        if specific_color not in colors:
-            print(f"color not accept, please enter with any color in list {colors}")
-            return
+        if specific_color not in unique_colors:
+            raise ValueError(
+                f"Cor {specific_color} não encontrada. Disponíveis: {unique_colors}"
+            )
+        colors_to_plot = [specific_color]
 
-        idx = colors.index(specific_color)
-        df_color = df[df["color"] == specific_color]
-
+    for color in colors_to_plot:
+        df_color = df[df["color"] == color]
         if df_color.empty:
-            print(f"No points found for color {specific_color}")
-            return
+            continue
 
         x = df_color["x"].to_numpy()
         y = df_color["y"].to_numpy()
         z = df_color["z"].to_numpy()
 
-        pts = mlab.points3d(
-            x, y, z,
-            np.ones_like(x),
-            color=colors_used[idx],
-            scale_factor=1.0,
-            opacity=1.0,
-            mode="cube"
+        _draw_points3d_cube_cloud(
+            fig=fig,
+            x=x,
+            y=y,
+            z=z,
+            rgb=color_map[color],
+            darken_factor=darken_factor,
+            edge_width=edge_width
         )
-        pts.actor.property.edge_visibility = True
-        pts.actor.property.edge_color = (0, 0, 0)
-        pts.actor.property.line_width = 0.00
 
-        if show_base:
-            path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}_base.png"
-        else:
-            path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}.png"
+    if outline_mode == "full":
+        extent = [0, L, 0, L, 0, L]
+        focal = (L / 2, L / 2, L / 2 if not show_base else 0)
+        Lref = L
+    elif outline_mode == "tight":
+        xmin, xmax = df["x"].min(), df["x"].max() + 1
+        ymin, ymax = df["y"].min(), df["y"].max() + 1
+        zmin, zmax = df["z"].min(), df["z"].max() + 1
+        extent = [xmin, xmax, ymin, ymax, zmin, zmax]
+        focal = ((xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2)
+        Lref = max(xmax - xmin, ymax - ymin, zmax - zmin)
+    else:
+        raise ValueError("outline_mode deve ser 'full' ou 'tight'.")
 
     mlab.outline(
-        extent=[0, L, 0, L, 0, L],
+        extent=extent,
         color=(0, 0, 0),
-        line_width=2.0
+        line_width=2.0,
+        figure=fig
     )
 
-    # ========= mantém EXATAMENTE o ângulo original =========
     if show_base:
         mlab.view(
             azimuth=0,
             elevation=-90,
-            distance=2.8 * L,
-            focalpoint=(L / 2, L / 2, 0)
+            distance=2.8 * Lref,
+            focalpoint=(focal[0], focal[1], extent[4]),
+            figure=fig
         )
     else:
         mlab.view(
             azimuth=70,
             elevation=65,
-            distance=3.1 * L,
-            focalpoint=(L / 2, L / 2, L / 2)
+            distance=3.1 * Lref,
+            focalpoint=focal,
+            figure=fig
         )
-    # ======================================================
 
     fig.scene.render()
-    
-    mlab.savefig(path_out_network, magnification=4)
-    print(f"network save in {path_out_network}")
-    mlab.close()
+    mlab.savefig(path_out, magnification=4, figure=fig)
+    print(f"network save in {path_out}")
+    mlab.close(fig)
 
-def plot_3D_full_with_planes(path_dir, file_positions, specific_color=None):
-    # Create file positions, if dont exist
-    if not os.path.exists(file_positions):
-        print("file positions don't exist, create it...")
-        convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", "network_positions_.csv", dim)
-        print("File with positions created")
+def plot_3D_full_codec(path_dir, filename, path_out, figure_name, L, nc, seed=None,
+                       time_base=TIME_BASE_3D,
+                       specific_color=None,
+                       show_base=False,
+                       save_name=None,
+                       positions_file=None,
+                       force_rebuild_positions=False):
+    """
+    Plota a rede original codificada.
+    Usa um arquivo de posições cacheado (.parquet ou .csv) se ele existir.
+    """
+    out_dir = os.path.dirname(path_out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
-    a = 0
-    b = 0
-    seed = 1
+    if positions_file is None:
+        base = os.path.splitext(filename)[0]
+        positions_file = os.path.join(out_dir, f"{base}_positions.parquet")
 
-    df = pd.read_csv(file_positions)
+    df, meta = load_or_create_positions_codec(
+        path_dir=path_dir,
+        filename=filename,
+        output_data=positions_file,
+        time_base=time_base,
+        force_rebuild=force_rebuild_positions
+    )
 
-    cut = L * (1/2)
+    if seed is None:
+        seed = int(meta.get("seed", -1))
 
-    # Ajuste as coordenadas x e y para levar em conta a e b
-    df['x'] = (df['x'] + a) % L
-    df['y'] = (df['y'] + b) % L
+    _plot_points_df_same_style(
+        df=df,
+        L=L,
+        nc=nc,
+        path_out=path_out,
+        specific_color=specific_color,
+        show_base=show_base,
+        outline_mode="full",
+        figure_name=figure_name,
+        visual_profile="full"
+    )
 
-    figure_size = (800, 800)
-    mlab.figure(size=figure_size, bgcolor=(1, 1, 1))
+def _read_plain_npz_metadata(path_dir, filename):
+    fn = os.path.join(path_dir, filename)
 
-    colors = [i + 2 for i in range(nc)]
-    
-    colors_used = [
-        (0.9, 0.1, 0.1),  # 2 - red
-        (1.0, 0.5, 0.0),  # 3 - orange
-        (0.1, 0.9, 0.1),  # 4 - green
-        (0.1, 0.1, 0.9),  # 5 - blue
-        (0.8, 0.2, 0.8),  # 6 - purple
-        (0.2, 0.8, 0.8),  # 7 - teal
-        (1.0, 1.0, 0.0),  # 8 - yellow
-        (0.6, 0.4, 0.2),  # 9 - brown
-    ]
+    with np.load(fn, allow_pickle=False) as npz:
+        meta = {
+            "dim": int(np.asarray(npz["dim"]).item()),
+            "shape": tuple(np.asarray(npz["shape"], dtype=np.int64).tolist()),
+            "keys": list(npz.keys()),
+        }
 
-    if specific_color is None:
-        for idx, color in enumerate(colors):
-            df_color = df[df['color'] == color]
+        for extra_key in ("num_colors", "seed", "rho"):
+            if extra_key in npz:
+                meta[extra_key] = npz[extra_key]
 
-            x = df_color['x']
-            y = df_color['y']
-            z = df_color['z']
-            
-            if len(x) > 0:
-                pts = mlab.points3d(
-                    x, y, z,
-                    color=colors_used[idx],
-                    scale_factor=1,
-                    opacity=1.0,   # cubos totalmente opacos
-                    mode='cube'
+    return meta
+
+def positions_from_plain_npz(path_dir, filename, output_data=None):
+    """
+    Lê um .npz NÃO codificado e devolve um DataFrame com:
+        x, y, z, color
+
+    Aceita:
+      1) denso:  dim, shape, data
+      2) esparso: dim, shape, active_idx, active_val
+
+    Assume o índice linear:
+        idx = x + SX * (y + SY * z)
+    """
+    fn = os.path.join(path_dir, filename)
+
+    with np.load(fn, allow_pickle=False) as npz:
+        keys = list(npz.keys())
+        dim = int(np.asarray(npz["dim"]).item())
+        shape = tuple(np.asarray(npz["shape"], dtype=np.int64).tolist())
+
+        meta = {
+            "dim": dim,
+            "shape": shape,
+            "keys": keys,
+        }
+        for extra_key in ("num_colors", "seed", "rho"):
+            if extra_key in npz:
+                meta[extra_key] = npz[extra_key]
+
+        if dim != 3:
+            raise ValueError("Esta função foi escrita para o caso 3D.")
+
+        # ----------------------------------
+        # CASO ESPARSO: active_idx/active_val
+        # ----------------------------------
+        if "active_idx" in npz and "active_val" in npz:
+            active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
+            active_val = np.asarray(npz["active_val"], dtype=np.int64)
+
+            SX, SY, SZ = map(int, shape)
+
+            x = active_idx % SX
+            y = (active_idx // SX) % SY
+            z = active_idx // (SX * SY)
+
+            df = pd.DataFrame({
+                "x": x.astype(np.int32),
+                "y": y.astype(np.int32),
+                "z": z.astype(np.int32),
+                "color": active_val.astype(np.int32),
+            })
+
+        # ---------------------------
+        # CASO DENSO: data completo
+        # ---------------------------
+        elif "data" in npz:
+            raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
+
+            SX, SY, SZ = map(int, shape)
+            expected = SX * SY * SZ
+
+            if raw.size != expected:
+                raise ValueError(
+                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
                 )
-                # Ativar contorno preto nos cubos
-                pts.actor.property.edge_visibility = True
-                pts.actor.property.edge_color = (0, 0, 0)   # preto
-                pts.actor.property.line_width = 0.00        # espessura da borda
-        
-        path_out_network = path_dir + f"L{L}_seed{seed}_all_planes.png"
-    
-    else:
-        if specific_color not in colors:
-            print(f"color not accept, please enter with any color in list {colors}")
+
+            # mesma lógica da read_network antiga:
+            # raw[z, y, x] -> network[x, y, z]
+            network = raw.reshape((SZ, SY, SX), order="C").transpose(2, 1, 0)
+
+            mask_active = network > 0
+            coords = np.argwhere(mask_active)
+            colors = network[mask_active]
+
+            df = pd.DataFrame({
+                "x": coords[:, 0].astype(np.int32),
+                "y": coords[:, 1].astype(np.int32),
+                "z": coords[:, 2].astype(np.int32),
+                "color": colors.astype(np.int32),
+            })
+
         else:
-            df_color = df[df['color'] == specific_color]
-            x = df_color['x']
-            y = df_color['y']
-            z = df_color['z']
-
-            if len(x) > 0:
-                # índice da cor correta no vetor colors_used
-                color_idx = colors.index(specific_color)
-                pts = mlab.points3d(
-                    x, y, z,
-                    color=colors_used[color_idx],
-                    scale_factor=1,
-                    opacity=1.0,
-                    mode='cube'
-                )
-                # Ativar contorno preto nos cubos
-                pts.actor.property.edge_visibility = True
-                pts.actor.property.edge_color = (0, 0, 0)   # preto
-                pts.actor.property.line_width = 0.00        # espessura da borda
-
-                prop = pts.actor.property
-                prop.ambient = 0.2       # componente ambiente (luz geral)
-                prop.diffuse = 0.9       # quanto o objeto responde à luz difusa
-                prop.specular = 0.3      # brilho especular (reflexo)
-                prop.specular_power = 20 # quão concentrado é esse brilho
-
-            path_out_network = path_dir + f"L{L}_seed{seed}_color_{specific_color}_planes.png"
-
-    # ------------------------------------------------------
-    # Planos de corte em z = 25, 125, 225 atravessando o cubo
-    # ------------------------------------------------------
-    z_planes = [25, 125, 225]
-    margin = 0.1 * L  # quanto o plano "sai" para fora da caixa
-
-    for z0 in z_planes:
-        if 0 <= z0 <= L:
-            # plano maior que o cubo: [-margin, L+margin] em x e y
-            x_plane, y_plane = np.mgrid[
-                -margin : L + margin : 2j,
-                -margin : L + margin : 2j
-            ]
-            z_plane = np.full_like(x_plane, float(z0))
-
-            mlab.mesh(
-                x_plane, y_plane, z_plane,
-                color=(0.3, 0.3, 0.3),   # cinza
-                opacity=0.3              # semi-transparente
+            raise KeyError(
+                f"Arquivo {fn} não possui nem ('active_idx','active_val') nem 'data'. "
+                f"Chaves encontradas: {keys}"
             )
 
-    # Caixa de contorno do sistema
-    mlab.outline(
-        extent=[0, L, 0, L, 0, L],  # [xmin, xmax, ymin, ymax, zmin, zmax]
-        color=(0, 0, 0),            # contorno preto
-        line_width=2.0              # espessura da linha
-    )
+    df = df[df["color"] > 0].copy()
+    df = df.sort_values(["z", "y", "x"]).reset_index(drop=True)
 
-    center = (L / 2, L / 2, L / 2)
+    if output_data is not None:
+        _write_positions_table(df, output_data)
 
-    mlab.view(
-        azimuth=50,
-        elevation=60,
-        distance=3.50 * L,
-        focalpoint=center
-    )
+    print(f"cores únicas = {np.unique(df['color'])}")
+    print(df[["x", "y", "z"]].agg(["min", "max"]))
 
-    mlab.savefig(path_out_network, magnification=4)
-    print(f"network save in {path_out_network}")
-    mlab.show()
+    return df, meta
 
-
-
-
-TIME_BASE_3D = 100_000_000  # fator da codificação: C * 100000000 + t
-
-def convert_positions_animation(path_dir, filename, dim, time_base=TIME_BASE_3D):
+def load_or_create_positions_plain(path_dir, filename, output_data, force_rebuild=False):
     """
-    Lê o arquivo da rede (2D ou 3D) e gera um CSV com:
-      - 3D: x, y, z, color, time
-      - 2D: x, y, color, time
-
-    Supõe que os valores ativos estejam codificados como:
-        valor = C * time_base + t
-    e que sítios inativos tenham valor <= 0 (0 ou negativo).
+    Se output_data existir, lê e retorna.
+    Se não existir, converte do .npz, salva e retorna.
     """
-    fname = path_dir + filename
-    network = read_network(path_dir, filename)  # deve retornar np.ndarray
+    if (not force_rebuild) and os.path.exists(output_data):
+        df = _read_positions_table(output_data)
+        meta = _read_plain_npz_metadata(path_dir, filename)
+        return df, meta
 
-    # conferência rápida
-    print("network.shape:", network.shape)
-    valores_unicos, contagens = np.unique(network, return_counts=True)
-    print("alguns valores únicos:", valores_unicos[:10])
-
-    # máscara: pega apenas sítios ativos (valor > 0)
-    mask_active = network > 0
-
-    # índices dos sítios ativos
-    coords = np.argwhere(mask_active)  # (z,y,x) se 3D; (y,x) se 2D
-
-    # valores codificados
-    encoded_vals = network[mask_active].astype(np.int64, copy=False)
-
-    # decodificação cor e tempo
-    colors = encoded_vals // time_base
-    times  = encoded_vals %  time_base
-
-    # mapeando para o sistema físico
-    if dim == 3:
-        # coords: (z, y, x)
-        z = coords[:, 0]
-        y = coords[:, 1]
-        x = coords[:, 2]
-
-        df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "z": z,
-            "color": colors,
-            "time": times,
-        })
-    else:
-        # dim == 2: coords: (y, x)
-        y = coords[:, 0]
-        x = coords[:, 1]
-
-        df_points = pd.DataFrame({
-            "x": x,
-            "y": y,
-            "color": colors,
-            "time": times,
-        })
-
-    save_out = path_dir + "network_positions_time.csv"
-    df_points = df_points.sort_values("time").reset_index(drop=True)
-    print(df_points.head())
-    print("Total de pontos ativos:", len(df_points))
-    df_points.to_csv(save_out, sep=',', index=False)
-    print("CSV salvo em:", save_out)
-
-
-from matplotlib import patches  # coloque no topo do arquivo
-
-def plot_projection(path_dir, file_positions, L, P0, seed, filename, z_level):
-    fn = path_dir + file_positions
-
-    colors_used = [
-        (0.9, 0.1, 0.1),  # 2 - red
-        (1.0, 0.5, 0.0),  # 3 - orange
-        (0.1, 0.9, 0.1),  # 4 - green
-        (0.1, 0.1, 0.9),  # 5 - blue
-        (0.8, 0.2, 0.8),  # 6 - purple
-        (0.2, 0.8, 0.8),  # 7 - teal
-        (1.0, 1.0, 0.0),  # 8 - yellow
-        (0.6, 0.4, 0.2),  # 9 - brown
-    ]
-    if not os.path.exists(fn):
-        print("file positions don't exist, create it...")
-        convert_positions(path_dir, filename, f"network_positions_p0_{p0}_P0_{P0:.2f}.parquet", 3)
-        print("File with positions created")
-
-    df = pd.read_parquet(fn)
-    df_sub = df[df["z"] == z_level].copy()
-
-    a, b = 0, 0
-    df_sub.loc[:, "x"] = ((df_sub["x"] + a) % L).astype(int)
-    df_sub.loc[:, "y"] = ((df_sub["y"] + b) % L).astype(int)
-
-    color_values = sorted(df_sub["color"].unique())
-
-    img = np.zeros((L, L), dtype=np.uint8)
-
-    for j, c in enumerate(color_values):
-        idx = j + 1
-        mask = (df_sub["color"] == c)
-        xs = df_sub.loc[mask, "x"].to_numpy()
-        ys = df_sub.loc[mask, "y"].to_numpy()
-        img[xs, ys] = idx
-
-    cmap = ListedColormap([(1.0, 1.0, 1.0)] + colors_used[:len(color_values)])
-
-    fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
-    ax.imshow(
-        img.T,
-        origin="lower",
-        cmap=cmap,
-        interpolation="nearest",
-        vmin=0,
-        vmax=len(color_values)
+    return positions_from_plain_npz(
+        path_dir=path_dir,
+        filename=filename,
+        output_data=output_data
     )
 
-    rect = patches.Rectangle(
-        (-0.5, -0.5),
-        L,
-        L,
-        linewidth=1.5,
-        edgecolor="black",
-        facecolor="none"
-    )
-    ax.add_patch(rect)
+def plot_3D_plain_npz(path_dir, filename, path_out, figure_name, L, nc,
+                      positions_file=None,
+                      seed=None,
+                      specific_color=None,
+                      show_base=False,
+                      outline_mode="tight",
+                      force_rebuild_positions=False):
+    """
+    Plota uma rede .npz NÃO codificada.
+    Cria o arquivo de posições se ele não existir.
+    """
+    out_dir = os.path.dirname(path_out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
-    ax.set_axis_off()
-    plt.tight_layout(pad=0)
-    plt.savefig(
-        path_dir + f"L{L}_seed{seed}_P0_{P0:.2f}_projectionz_{z_level}.png",
-        bbox_inches="tight",
-        pad_inches=0
-    )
-    plt.show()
+    if positions_file is None:
+        base = os.path.splitext(filename)[0]
+        positions_file = os.path.join(out_dir, f"{base}_positions.parquet")
 
-    
+    df, meta = load_or_create_positions_plain(
+        path_dir=path_dir,
+        filename=filename,
+        output_data=positions_file,
+        force_rebuild=force_rebuild_positions
+    )
+
+    if seed is None:
+        seed = int(meta.get("seed", -1))
+
+    _plot_points_df_same_style(
+        df=df,
+        L=L,
+        nc=nc,
+        path_out=path_out,
+        specific_color=specific_color,
+        show_base=show_base,
+        outline_mode=outline_mode,
+        figure_name=figure_name
+    )
+
+def plot_3D_preteq_posteq(path_dir_pre, filename_pre,
+                          path_dir_post, filename_post,
+                          L, nc,
+                          path_out_pre, path_out_post,
+                          figure_name_pre=None, figure_name_post=None,
+                          positions_file_pre=None, positions_file_post=None,
+                          specific_color=None,
+                          show_base=False,
+                          outline_mode="tight",
+                          force_rebuild_positions=False):
+    """
+    Plota os recortes preteq e posteq a partir dos .npz NÃO codificados.
+
+    Para cada um:
+      - se o parquet de posições existir -> lê
+      - se não existir -> cria a partir do .npz e então lê/usa
+    """
+    if figure_name_pre is None:
+        figure_name_pre = "network3d_preteq"
+
+    if figure_name_post is None:
+        figure_name_post = "network3d_posteq"
+
+    out_dir_pre = os.path.dirname(path_out_pre)
+    if out_dir_pre:
+        os.makedirs(out_dir_pre, exist_ok=True)
+
+    out_dir_post = os.path.dirname(path_out_post)
+    if out_dir_post:
+        os.makedirs(out_dir_post, exist_ok=True)
+
+    if positions_file_pre is None:
+        base_pre = os.path.splitext(filename_pre)[0]
+        positions_file_pre = os.path.join(out_dir_pre, f"{base_pre}_positions.parquet")
+
+    if positions_file_post is None:
+        base_post = os.path.splitext(filename_post)[0]
+        positions_file_post = os.path.join(out_dir_post, f"{base_post}_positions.parquet")
+
+    df_pre, _ = load_or_create_positions_plain(
+        path_dir=path_dir_pre,
+        filename=filename_pre,
+        output_data=positions_file_pre,
+        force_rebuild=force_rebuild_positions
+    )
+
+    df_post, _ = load_or_create_positions_plain(
+        path_dir=path_dir_post,
+        filename=filename_post,
+        output_data=positions_file_post,
+        force_rebuild=force_rebuild_positions
+    )
+
+    _plot_points_df_same_style(
+    df=df_pre,
+    L=L,
+    nc=nc,
+    path_out=path_out_pre,
+    specific_color=specific_color,
+    show_base=show_base,
+    outline_mode=outline_mode,
+    figure_name=figure_name_pre,
+    visual_profile="cut"
+    )
+
+    _plot_points_df_same_style(
+        df=df_post,
+        L=L,
+        nc=nc,
+        path_out=path_out_post,
+        specific_color=specific_color,
+        show_base=show_base,
+        outline_mode=outline_mode,
+        figure_name=figure_name_post,
+        visual_profile="cut"
+    )
+
+
+def check_codification(arquivo):
+    with np.load(arquivo, allow_pickle=False) as npz:
+        print("chaves:", npz.files)
+
+        if "active_val" in npz:
+            vals = npz["active_val"]
+        elif "data" in npz:
+            vals = npz["data"].ravel()
+        else:
+            print("Arquivo sem active_val e sem data.")
+            return
+
+        vals = vals[vals > 0]
+        print("primeiros valores positivos:", vals[:20])
+
+        if len(vals) == 0:
+            print("Sem valores ativos.")
+        elif vals.max() >= 10_000_000:
+            print("Rede codificada.")
+        else:
+            print("Rede não codificada.")
