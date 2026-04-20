@@ -57,7 +57,7 @@ num_runs =    [300, 250, 150, 125, 100, 80, 30, 15, 10]
 num_threads = [11, 11, 11, 11, 11, 11, 6, 3, 2]
 multi=True
 Equilibration = 'true'
-nc = 8
+nc = 2
 p0 = 1.0
 if nc == 2:
     f = 0.03

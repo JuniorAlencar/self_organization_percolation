@@ -1,4 +1,4 @@
-#include "animation_reanalysis.hpp"
+#include "equilibration_reanalysis.hpp"
 #include "helpers.hpp"
 #include "../src/write_save.hpp"
 #include "../src/create_folders.hpp"

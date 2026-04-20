@@ -10,32 +10,55 @@ find_package(OpenMP REQUIRED)
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(ANALYSIS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/analysis_equilibration)
 
-file(GLOB SRC_CPP ${SRC_DIR}/*.cpp)
-file(GLOB SRC_HPP ${SRC_DIR}/*.hpp)
+file(GLOB SRC_CPP CONFIGURE_DEPENDS "${SRC_DIR}/*.cpp")
+file(GLOB SRC_HPP CONFIGURE_DEPENDS "${SRC_DIR}/*.hpp")
 
-file(GLOB ANALYSIS_CPP ${ANALYSIS_DIR}/*.cpp)
-file(GLOB ANALYSIS_HPP ${ANALYSIS_DIR}/*.hpp)
+file(GLOB ANALYSIS_CPP CONFIGURE_DEPENDS "${ANALYSIS_DIR}/*.cpp")
+file(GLOB ANALYSIS_HPP CONFIGURE_DEPENDS "${ANALYSIS_DIR}/*.hpp")
 
-if(SRC_CPP STREQUAL "")
+if("${SRC_CPP}" STREQUAL "")
     message(FATAL_ERROR "Nenhum arquivo .cpp encontrado em ${SRC_DIR}")
 endif()
 
-if(ANALYSIS_CPP STREQUAL "")
+if("${ANALYSIS_CPP}" STREQUAL "")
     message(WARNING "Nenhum arquivo .cpp encontrado em ${ANALYSIS_DIR}")
 endif()
 
 # mains
-set(MAIN_SOP ${SRC_DIR}/main.cpp)
-set(MAIN_REANALYSIS ${ANALYSIS_DIR}/main_animation_reanalysis.cpp)
+set(MAIN_SOP "${SRC_DIR}/main.cpp")
+set(MAIN_REANALYSIS "${ANALYSIS_DIR}/main_animation_reanalysis.cpp")
+
+# arquivos da reanalysis com nome novo
+set(EQUILIBRATION_REANALYSIS_CPP "${ANALYSIS_DIR}/equilibration_reanalysis.cpp")
+set(EQUILIBRATION_REANALYSIS_HPP "${ANALYSIS_DIR}/equilibration_reanalysis.hpp")
+
+if(NOT EXISTS "${MAIN_SOP}")
+    message(FATAL_ERROR "Main do SOP não encontrado: ${MAIN_SOP}")
+endif()
+
+if(NOT EXISTS "${MAIN_REANALYSIS}")
+    message(FATAL_ERROR "Main da reanálise não encontrado: ${MAIN_REANALYSIS}")
+endif()
+
+if(NOT EXISTS "${EQUILIBRATION_REANALYSIS_CPP}")
+    message(FATAL_ERROR "Arquivo não encontrado: ${EQUILIBRATION_REANALYSIS_CPP}")
+endif()
+
+if(NOT EXISTS "${EQUILIBRATION_REANALYSIS_HPP}")
+    message(FATAL_ERROR "Arquivo não encontrado: ${EQUILIBRATION_REANALYSIS_HPP}")
+endif()
 
 # fontes comuns do core
 set(CORE_SOURCES ${SRC_CPP})
-list(REMOVE_ITEM CORE_SOURCES ${MAIN_SOP})
+list(REMOVE_ITEM CORE_SOURCES "${MAIN_SOP}")
 
-# se por acaso analysis_animation tiver mais arquivos cpp além do main,
-# eles entram no executável de reanalysis, não no core
+if("${CORE_SOURCES}" STREQUAL "")
+    message(FATAL_ERROR "CORE_SOURCES ficou vazio. Verifique os .cpp em ${SRC_DIR}")
+endif()
+
+# fontes do executável de reanálise
 set(REANALYSIS_SOURCES ${ANALYSIS_CPP})
-list(REMOVE_ITEM REANALYSIS_SOURCES ${MAIN_REANALYSIS})
+list(REMOVE_ITEM REANALYSIS_SOURCES "${MAIN_REANALYSIS}")
 
 # biblioteca compartilhada do projeto
 add_library(sop_core STATIC
@@ -60,7 +83,7 @@ target_link_libraries(sop_core PUBLIC
 )
 
 # executável principal
-add_executable(SOP ${MAIN_SOP})
+add_executable(SOP "${MAIN_SOP}")
 
 target_include_directories(SOP PRIVATE
     ${SRC_DIR}
@@ -74,7 +97,7 @@ target_link_libraries(SOP PRIVATE
 
 # executável de reanálise
 add_executable(EquilibrationReanalysis
-    ${MAIN_REANALYSIS}
+    "${MAIN_REANALYSIS}"
     ${REANALYSIS_SOURCES}
     ${ANALYSIS_HPP}
 )
@@ -89,7 +112,6 @@ target_link_libraries(EquilibrationReanalysis PRIVATE
     sop_core
 )
 
-# ambos os executáveis saem direto em build/
 set_target_properties(SOP PROPERTIES
     BUILD_RPATH /usr/local/lib
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -100,7 +122,6 @@ set_target_properties(EquilibrationReanalysis PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# versão
 set(SOP_VERSION "1.0.0")
 target_compile_definitions(SOP PRIVATE SOP_VERSION="${SOP_VERSION}")
 target_compile_definitions(EquilibrationReanalysis PRIVATE SOP_VERSION="${SOP_VERSION}")
