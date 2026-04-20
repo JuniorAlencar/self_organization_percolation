@@ -4,67 +4,43 @@ import numpy as np
 import os
 
 import matplotlib.pyplot as plt
-from src.network_functions import convert_positions, convert_positions_sp, plot_3D_cut, plot_3D_full, plot_3D_full_with_planes, plot_projection, read_network
+from src.network_functions import create_folder, plot_3D_full_codec, plot_3D_preteq_posteq, check_codification
+import glob
 
-# plot network with 7 colors
-#L = 256
-#dim = 3
-#nc = 7
-#rho = 1/nc
-#k = 1.0e-06
-#NT = 3000
-#z_level = 225
-#z_planes = [25, 125, 225]
-#plot_projection(dim, L, nc, rho, k, NT ,z_level)
-
-
-
-# plot network with 4 colors
 L = 256
 dim = 3
-nc = 8
+nc = 4
 rho = 1/nc
 k = 1.0e-06
-
-p0 = 1.0
-seed = 42
-z_level = 0
-
 NT = 655
-path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.3f}_k{k:.1e}_Nt{NT}/"
-#filename = f"complex_seed_42_ts_20260407T083457_P0_0.10_p0_1.00.npz"
-p0 = 1.0
-P0 = 1.0
-filename = f"light_seed_42_ts_20260414T153609_P0_1.00_p0_1.00.npz"
-file_positions = f"network_positions_p0_{p0}_P0_{P0:.2f}.parquet"
-plot_3D_full(path_dir, file_positions, p0, P0, L, nc, seed, filename, specific_color=None, show_base=False)
-#convert_positions(path_dir, filename, file_positions , dim)
-#====
-# NT = 3276
-# path_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.3f}_k{k:.1e}_Nt{NT}/"
-# filename = f"complex_seed_42_ts_20260407T083857_P0_0.10_p0_1.00.npz"
-# file_positions = f"network_positions_P0_{P0:.2f}.parquet"
-#convert_positions(path_dir, filename, file_positions , dim)
 
-#plot_projection(path_dir, file_positions, L, P0, seed, filename, z_level)
-plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename, specific_color=None, show_base=False)
+path_dir = f"../SOP_data/raw/bond_percolation_equilibration/num_colors_{nc}/dim_{dim}/L_{L}/NT_constant/NT_{NT}/k_{k:.1e}/rho_{rho:.4e}/"
+filename = "light_seed_44_ts_20260420T152500_P0_0.10_p0_1.00.npz"
 
-# P0 = 0.1
-# filename = f"light_seed_1_ts_20260325T213653_P0_0.10_p0_1.00.npz"
-# file_positions = f"network_positions_P0_{P0:.2f}.parquet"
-# plot_projection(path_dir, file_positions, L, P0, seed, filename, z_level)
-# plot_3D_full(path_dir, file_positions, P0, L, nc, seed, filename, specific_color=None, show_base=False)
+output_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.4f}_k{k:.1e}_NT{NT}"
+create_folder(output_dir)
 
+plot_3D_full_codec(
+    path_dir=path_dir + "/network/",
+    filename=filename,
+    path_out=os.path.join(output_dir, f"Network_FULL_nc{nc}_L{L}.png"),
+    figure_name=f"network{dim}D_L_{L}_nc_{nc}",
+    positions_file=os.path.join(output_dir, "Network_FULL.parquet"),
+    L=L,
+    nc=nc
+)
 
-#convert_positions(path_dir, filename, output_fn , dim)
-# filename = f"light_seed_523_ts_20260325T153417_P0_0.10_p0_1.00.npz"
-
-#convert_positions(path_dir, filename, output_fn , dim)
-
-
-#plot_projection(path_dir, output_fn, L, P0, seed, filename, z_level)
-
-
-#plot_3D_full_with_planes(dim, L, nc, rho, k, NT)
-#convert_positions(path_dir,filename, output_fn, dim)
-#plot_3D_full(dim, L, nc, rho, k, NT, seed, P0, specific_color=None)
+plot_3D_preteq_posteq(
+    path_dir_pre=path_dir + "/network_preteq/",
+    filename_pre=filename,
+    path_dir_post=path_dir + "/network_posteq/",
+    filename_post=filename,
+    L=L,
+    nc=nc,
+    path_out_pre=output_dir + f"/Network_PRETEQ_nc{nc}_L{L}.png",
+    path_out_post=output_dir + f"/Network_POSTEQ_nc{nc}_L{L}.png",
+    figure_name_pre=f"Network_PRETEQ_nc{nc}_L{L}",
+    figure_name_post=f"Network_POSTEQ_nc{nc}_L{L}",
+    positions_file_pre=output_dir + f"/preteq_positions_nc{nc}_L{L}.parquet",
+    positions_file_post=output_dir + f"/posteq_positions_nc{nc}_L{L}.parquet"
+)
