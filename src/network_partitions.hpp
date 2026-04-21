@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "../src/struct_network.hpp"
+#include "struct_network.hpp"
 
 struct ReanalysisConfig {
     int species_factor = 10000000;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -12,6 +13,8 @@
 #include <vector>
 
 #include <zip.h>
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -76,13 +79,41 @@ std::string make_npy_blob(const T* data,
     return blob;
 }
 
+inline std::string zip_archive_error(zip_t* za)
+{
+    zip_error_t* err = zip_get_error(za);
+    if (!err) return "erro libzip desconhecido";
+
+    std::ostringstream oss;
+    oss << zip_error_strerror(err)
+        << " [zip_code=" << zip_error_code_zip(err)
+        << ", sys_code=" << zip_error_code_system(err) << "]";
+    return oss.str();
+}
+
+inline std::string zip_open_error_string(const int errcode)
+{
+    zip_error_t err;
+    zip_error_init_with_code(&err, errcode);
+
+    std::ostringstream oss;
+    oss << zip_error_strerror(&err)
+        << " [zip_code=" << zip_error_code_zip(&err)
+        << ", sys_code=" << zip_error_code_system(&err) << "]";
+
+    zip_error_fini(&err);
+    return oss.str();
+}
+
 inline void zip_add_buffer(zip_t* za,
                            const std::string& entry_name,
                            const std::string& buffer)
 {
     zip_source_t* src = zip_source_buffer(za, buffer.data(), buffer.size(), 0);
     if (!src) {
-        throw std::runtime_error("[npz] zip_source_buffer falhou: " + entry_name);
+        throw std::runtime_error(
+            "[npz] zip_source_buffer falhou em '" + entry_name +
+            "': " + zip_archive_error(za));
     }
 
     const zip_int64_t idx = zip_file_add(
@@ -90,7 +121,9 @@ inline void zip_add_buffer(zip_t* za,
 
     if (idx < 0) {
         zip_source_free(src);
-        throw std::runtime_error("[npz] zip_file_add falhou: " + entry_name);
+        throw std::runtime_error(
+            "[npz] zip_file_add falhou em '" + entry_name +
+            "': " + zip_archive_error(za));
     }
 }
 
@@ -185,6 +218,11 @@ void save_sparse_npz_payload(const int dim,
         throw std::runtime_error("save_network_as_npz: active_idx.size != active_val.size");
     }
 
+    const fs::path out_path(filename);
+    if (!out_path.parent_path().empty()) {
+        fs::create_directories(out_path.parent_path());
+    }
+
     const int32_t dim_i  = static_cast<int32_t>(dim);
     const int32_t nc_i   = static_cast<int32_t>(num_colors);
     const int32_t seed_i = static_cast<int32_t>(seed);
@@ -224,27 +262,25 @@ void save_sparse_npz_payload(const int dim,
     int errcode = 0;
     zip_t* za = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errcode);
     if (!za) {
-        std::ostringstream oss;
-        oss << "save_network_as_npz: não abriu zip '" << filename
-            << "' (err=" << errcode << ")";
-        throw std::runtime_error(oss.str());
+        throw std::runtime_error(
+            "save_network_as_npz: não abriu zip '" + filename +
+            "': " + zip_open_error_string(errcode));
     }
 
-    try {
-        zip_add_buffer(za, "dim.npy",        npy_dim);
-        zip_add_buffer(za, "num_colors.npy", npy_nc);
-        zip_add_buffer(za, "seed.npy",       npy_seed);
-        zip_add_buffer(za, "shape.npy",      npy_shape);
-        zip_add_buffer(za, "rho.npy",        npy_rho);
-        zip_add_buffer(za, "active_idx.npy", npy_active_idx);
-        zip_add_buffer(za, "active_val.npy", npy_active_val);
+    zip_add_buffer(za, "dim.npy",        npy_dim);
+    zip_add_buffer(za, "num_colors.npy", npy_nc);
+    zip_add_buffer(za, "seed.npy",       npy_seed);
+    zip_add_buffer(za, "shape.npy",      npy_shape);
+    zip_add_buffer(za, "rho.npy",        npy_rho);
+    zip_add_buffer(za, "active_idx.npy", npy_active_idx);
+    zip_add_buffer(za, "active_val.npy", npy_active_val);
 
-        if (zip_close(za) != 0) {
-            throw std::runtime_error("save_network_as_npz: zip_close falhou");
-        }
-    } catch (...) {
+    if (zip_close(za) != 0) {
+        const std::string err = zip_archive_error(za);
         zip_discard(za);
-        throw;
+        throw std::runtime_error(
+            "save_network_as_npz: zip_close falhou em '" + filename +
+            "': " + err);
     }
 }
 
@@ -262,7 +298,6 @@ void save_data::save_network_as_npz(const NetworkPattern& net,
     for (std::size_t i = 0; i < net.data.size(); ++i) {
         const int v = static_cast<int>(net.data[i]);
 
-        // salva apenas sítios ativos
         if (v <= 0) continue;
 
         if (i > static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) {
@@ -289,6 +324,11 @@ void save_data::save_network_as_npz(const NetworkPattern& net,
 void save_data::save_network_as_npz(const SparseSubgraph& net,
                                     const std::string& filename) const
 {
+    if (net.active_idx.size() != net.active_val.size()) {
+        throw std::runtime_error(
+            "save_network_as_npz(SparseSubgraph): active_idx.size != active_val.size");
+    }
+
     std::vector<int32_t> active_idx;
     std::vector<int32_t> active_val;
 
@@ -312,7 +352,6 @@ void save_data::save_network_as_npz(const SparseSubgraph& net,
         active_val.push_back(static_cast<int32_t>(val));
     }
 
-    // seed não existe no subgrafo reanalisado; salva 0
     save_sparse_npz_payload(
         net.dim,
         net.num_colors,
@@ -371,12 +410,37 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         const int order_i = ps.percolation_order[i];
         const int color_1b = ps.color_percolation[i];
         const int crow = std::max(0, color_1b - 1);
-        const int M_size = ps.M_size_at_perc.empty() ? -1 : ps.M_size_at_perc[i];
+
+        const int M_size =
+            ps.M_size_at_perc.empty() ? -1 : ps.M_size_at_perc[i];
 
         int shortest_path_lin_value = -1;
-        if (crow < static_cast<int>(ps.sp_len.size()) && ps.sp_len[crow] > 0) {
-            shortest_path_lin_value = ps.sp_len[crow] - 1;
+        if (crow < static_cast<int>(ps.sp_len.size()) && ps.sp_len[crow] >= 0) {
+            shortest_path_lin_value = ps.sp_len[crow];
         }
+
+        const int t_eq =
+            ps.t_eq;
+
+        const int sp_lin_preteq =
+            (crow < static_cast<int>(ps.sp_lin_preteq.size()))
+                ? ps.sp_lin_preteq[crow]
+                : -1;
+
+        const int sp_lin_posteq =
+            (crow < static_cast<int>(ps.sp_lin_posteq.size()))
+                ? ps.sp_lin_posteq[crow]
+                : -1;
+
+        const int M_size_preteq =
+            (crow < static_cast<int>(ps.M_size_preteq.size()))
+                ? ps.M_size_preteq[crow]
+                : -1;
+
+        const int M_size_posteq =
+            (crow < static_cast<int>(ps.M_size_posteq.size()))
+                ? ps.M_size_posteq[crow]
+                : -1;
 
         ofs << "    \"order_percolation " << order_i << "\": {\n";
         ofs << "      \"data\": {\n";
@@ -391,12 +455,18 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         write_json_row(ofs, ts.Nt, crow);
         ofs << ",\n";
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
-        ofs << "        \"M_size\": " << M_size << "\n";
+        ofs << "        \"M_size\": " << M_size << ",\n";
+        ofs << "        \"t_eq\": " << t_eq << ",\n";
+        ofs << "        \"sp_lin_preteq\": " << sp_lin_preteq << ",\n";
+        ofs << "        \"sp_lin_posteq\": " << sp_lin_posteq << ",\n";
+        ofs << "        \"M_size_preteq\": " << M_size_preteq << ",\n";
+        ofs << "        \"M_size_posteq\": " << M_size_posteq << "\n";
         ofs << "      }\n";
         ofs << "    }";
         if (k + 1 < idx.size()) ofs << ",";
         ofs << "\n";
     }
+
     ofs << "  }\n";
     ofs << "}\n";
 }

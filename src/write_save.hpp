@@ -4,7 +4,8 @@
 #include <string>
 
 #include "network.hpp"
-#include "../analysis_equilibration/equilibration_reanalysis.hpp"
+#include "struct_network.hpp"
+#include "network_partitions.hpp"
 
 class save_data {
 public:
