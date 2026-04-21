@@ -1,4 +1,4 @@
-#include "equilibration_reanalysis.hpp"
+#include "network_partitions.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -248,6 +248,140 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
 
     out_len = static_cast<int>(out_path.size()) - 1;
     return true;
+}
+
+bool shortest_path_postteq_with_support_single_color_sparse(
+    const SparseEncodedNetwork& full_net,
+    const SparseSubgraph& post_net,
+    const GridRegular& grid,
+    const int color_idx,
+    std::vector<int>& out_path,
+    int& out_len)
+{
+    if (color_idx < 0 || color_idx >= post_net.num_colors ||
+        color_idx >= full_net.num_colors) {
+        throw std::runtime_error(
+            "shortest_path_postteq_with_support_single_color_sparse: color_idx inválido");
+    }
+
+    const auto& post_active = post_net.active_idx_by_color[color_idx];
+    const auto& full_active = full_net.active_idx_by_color[color_idx];
+
+    if (post_active.empty() || full_active.empty()) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
+    int base_subgraph = std::numeric_limits<int>::max();
+    int top_subgraph  = -1;
+
+    for (const int idx : post_active) {
+        const int g = grid.grow_coord(idx);
+        base_subgraph = std::min(base_subgraph, g);
+        top_subgraph  = std::max(top_subgraph, g);
+    }
+
+    std::queue<int> q;
+    std::unordered_set<int> visited;
+    std::unordered_map<int, int> parent;
+
+    visited.reserve(full_active.size() * 2 + 1);
+    parent.reserve(full_active.size() * 2 + 1);
+
+    for (const int idx : post_active) {
+        if (grid.grow_coord(idx) != base_subgraph) continue;
+        visited.insert(idx);
+        parent[idx] = -1;
+        q.push(idx);
+    }
+
+    if (q.empty()) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
+    int target = -1;
+
+    while (!q.empty()) {
+        const int u = q.front();
+        q.pop();
+
+        if (grid.grow_coord(u) == top_subgraph &&
+            post_active.find(u) != post_active.end()) {
+            target = u;
+            break;
+        }
+
+        grid.for_each_neighbor(u, [&](const int v) {
+            if (v < 0) return;
+            if (full_active.find(v) == full_active.end()) return;
+            if (visited.find(v) != visited.end()) return;
+
+            visited.insert(v);
+            parent[v] = u;
+            q.push(v);
+        });
+    }
+
+    if (target < 0) {
+        out_path.clear();
+        out_len = -1;
+        return false;
+    }
+
+    out_path.clear();
+    int cur = target;
+    while (cur >= 0) {
+        out_path.push_back(cur);
+        cur = parent[cur];
+    }
+    std::reverse(out_path.begin(), out_path.end());
+
+    out_len = static_cast<int>(out_path.size()) - 1;
+    return true;
+}
+
+SubgraphAnalysis analyze_sparse_postteq_with_support(
+    const SparseEncodedNetwork& full_net,
+    const SparseSubgraph& post_net)
+{
+    if (post_net.shape.empty()) {
+        throw std::runtime_error("analyze_sparse_postteq_with_support: shape vazio");
+    }
+
+    const int L = post_net.shape[0];
+    const GridRegular grid(post_net.dim, L);
+
+    SubgraphAnalysis analysis;
+    analysis.net = post_net;
+
+    analysis.color_percolation.clear();
+    analysis.percolation_order.clear();
+
+    analysis.largest_component.assign(post_net.num_colors, 0);
+    analysis.sp_len.assign(post_net.num_colors, -1);
+    analysis.sp_path_lin.assign(post_net.num_colors, {});
+
+    for (int c = 0; c < post_net.num_colors; ++c) {
+        analysis.largest_component[c] =
+            largest_component_single_color_sparse(post_net, grid, c);
+
+        std::vector<int> path;
+        int path_len = -1;
+
+        const bool has_path =
+            shortest_path_postteq_with_support_single_color_sparse(
+                full_net, post_net, grid, c, path, path_len);
+
+        if (!has_path) continue;
+
+        analysis.sp_len[c] = path_len;
+        analysis.sp_path_lin[c] = std::move(path);
+    }
+
+    return analysis;
 }
 
 inline int color_to_active_value(const int num_colors, const int c) {
@@ -979,7 +1113,7 @@ ReanalysisResult reanalyze_animation(
             encoded_net, result.t_eq, cfg.species_factor);
 
     result.pre_teq  = analyze_sparse_isolated_subgraph(net_pre);
-    result.post_teq = analyze_sparse_isolated_subgraph(net_post);
+    result.post_teq = analyze_sparse_postteq_with_support(encoded_net, net_post);
 
     return result;
 }

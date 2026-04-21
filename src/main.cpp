@@ -5,6 +5,8 @@
 #include "write_save.hpp"
 #include "create_folders.hpp"
 #include "helpers_print.hpp"
+#include "helpers_partitions.hpp"
+#include "network_partitions.hpp"
 
 #include <iomanip>
 #include <cstdlib>
@@ -13,6 +15,8 @@
 #include <utility>
 #include <stdexcept>
 #include <string>
+
+namespace rh = reanalysis_helpers;
 
 int main(int argc, char* argv[]) {
     if (argc >= 2) {
@@ -93,17 +97,11 @@ int main(int argc, char* argv[]) {
         int N_samples = 100000;
         network net_generator(N_samples, num_colors);
 
-        NetworkPattern net = animation
-            ? net_generator.animate_network(
+        NetworkPattern net = net_generator.animate_network(
                 dim, L, N_samples, k, N_t, type_N_t,
                 p0, P0, a, alpha, type_percolation,
                 num_colors, rho, ts, ps, rng
-            )
-            : net_generator.create_network(
-                dim, L, N_samples, k, N_t, type_N_t,
-                p0, P0, a, alpha, type_percolation,
-                num_colors, rho, ts, ps, rng
-            );
+        );
 
         FolderCreator creator("./SOP_data");
         const auto [
@@ -124,8 +122,7 @@ int main(int argc, char* argv[]) {
                 type_percolation,
                 pp0,
                 P0,
-                rho_val,
-                animation
+                rho_val
             );
 
         std::cerr << "[DBG] ps sizes -> "

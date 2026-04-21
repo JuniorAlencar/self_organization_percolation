@@ -1,6 +1,5 @@
 #include "create_folders.hpp"
 
-
 namespace fs = std::filesystem;
 
 FolderCreator::FolderCreator(const std::string& base_path)
@@ -18,18 +17,15 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
     std::string type_percolation,
     double /* p0 */,
     double /* P0 */,
-    double rho,
-    bool animation)
+    double rho
+    )
 {
     char main_folder[256];
 
-    if (animation == false) {
-        sprintf(main_folder, "%s/raw/%s_percolation/num_colors_%d/dim_%d/L_%d",
-                base_path.c_str(), type_percolation.c_str(), n_colors, dim, L);
-    } else {
-        sprintf(main_folder, "%s/raw/%s_percolation_equilibration/num_colors_%d/dim_%d/L_%d",
-                base_path.c_str(), type_percolation.c_str(), n_colors, dim, L);
-    }
+
+    sprintf(main_folder, "%s/raw/%s_percolation/num_colors_%d/dim_%d/L_%d",
+            base_path.c_str(), type_percolation.c_str(), n_colors, dim, L);
+        
 
     std::string full_path;
 
@@ -47,23 +43,17 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
 
     std::string network_path = full_path + "/network";
     std::string data_path = full_path + "/data";
-    std::string data_path_equilibration = "";
-    std::string data_network_preteq = "";
-    std::string data_network_posteq = "";
+    std::string data_path_equilibration = full_path + "/data_equilibration";
+    std::string data_network_preteq = full_path + "/network_preteq";
+    std::string data_network_posteq = full_path + "/network_posteq";
     
     fs::create_directories(network_path);
     fs::create_directories(data_path);
+    fs::create_directories(data_path_equilibration);
+    fs::create_directories(data_network_preteq);
+    fs::create_directories(data_network_posteq);
 
-    if (animation == true) {
-        data_path_equilibration = full_path + "/data_equilibration";
-        data_network_preteq = full_path + "/network_preteq";
-        data_network_posteq = full_path + "/network_posteq";
-        fs::create_directories(data_path_equilibration);
-        fs::create_directories(data_network_preteq);
-        fs::create_directories(data_network_posteq);
-    }
-
-    return {network_path, data_path, data_path_equilibration, data_network_preteq, data_network_posteq };
+    return {network_path, data_path, data_path_equilibration, data_network_preteq, data_network_posteq};
 }
 
 

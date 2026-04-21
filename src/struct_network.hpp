@@ -89,18 +89,28 @@ struct NetworkPattern {
 
 struct TimeSeries {
     int num_colors;
+    int t_eq;
     std::vector<std::vector<double>> p_t;   // [cor][t]
     std::vector<std::vector<int>> Nt;       // [cor][t]
     std::vector<int> t;                     // [t]
 };
 
 struct PercolationSeries {
-    std::vector<int> color_percolation;     // 1-based
+    std::vector<double> rho;
+
+    std::vector<int> color_percolation;
     std::vector<int> percolation_order;
-    std::vector<double> rho;                // por cor (0-based)
-    std::vector<int> M_size_at_perc;        // por evento
-    std::vector<int> sp_len;                // [cor] = #nós no caminho (ou -1)
-    std::vector<std::vector<int>> sp_path_lin; // [cor] ids lineares
+
+    std::vector<int> M_size_at_perc;
+    std::vector<int> sp_len;
+    std::vector<std::vector<int>> sp_path_lin;
+
+    // novos campos
+    int t_eq = -1;
+    std::vector<int> sp_lin_preteq;
+    std::vector<int> sp_lin_posteq;
+    std::vector<int> M_size_preteq;
+    std::vector<int> M_size_posteq;
 };
 
 #endif // STRUCT_NETWORK_HPP
