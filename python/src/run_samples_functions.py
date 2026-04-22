@@ -7,19 +7,42 @@ import os
 import stat
 import textwrap
 
-def shell_data(L:int, type_perc:str, p0:float,
-               seed:int, k:float, NT:int, dim:int, num_colors:int,
-               num_runs:int, rho:list, exec_name:str, P0:float, equlibration,
-               num_threads: int = 4,
-               multi: bool = False):
+def shell_data(
+    L: int,
+    type_perc: str,
+    p0: float,
+    seed: int,
+    k: float,
+    NT: int,
+    dim: int,
+    num_colors: int,
+    num_runs: int,
+    rho: list,
+    exec_name: str,
+    P0: float,
+    equlibration,
+    multi: bool = False,
+):
     """
     Generate a shell script to run SOP multiple times.
 
-    If multi=True, use GNU parallel (with progress bar).
-    Otherwise, run sequentially with a bash progress bar.
+    If multi=True, the generated shell script:
+      1. Runs a single benchmark simulation.
+      2. Measures peak RAM with /usr/bin/time.
+      3. Chooses GNU parallel jobs automatically based on:
+         - current available RAM,
+         - total machine RAM,
+         - total CPU threads,
+         - configurable safety margins.
+
+    Runtime knobs (environment variables in the generated shell):
+      - MEMORY_SAFETY_FRACTION (default: 0.85)
+      - RAM_MULTIPLIER         (default: 1.20)
+      - RESERVE_THREADS        (default: 1)
+      - MAX_THREADS            (optional hard cap)
 
     Important:
-    - CPU clock limiting is NOT handled here anymore.
+    - CPU clock limiting is NOT handled here.
     - It should be handled centrally by run_all.sh.
     """
 
@@ -52,22 +75,147 @@ dim={dim}
 num_colors={num_colors}
 P0={P0}
 Equilibration={equlibration}
-JOBS={num_threads}
 
-# --- check GNU parallel ---
+# --- safety knobs (can be overridden at runtime) ---
+MEMORY_SAFETY_FRACTION=${{MEMORY_SAFETY_FRACTION:-0.85}}
+RAM_MULTIPLIER=${{RAM_MULTIPLIER:-1.20}}
+RESERVE_THREADS=${{RESERVE_THREADS:-1}}
+MAX_THREADS=${{MAX_THREADS:-}}
+
+# --- check dependencies ---
 if ! command -v parallel >/dev/null 2>&1; then
   echo "[ERROR] 'parallel' not found. Install it (e.g., sudo apt-get install parallel) or set multi=False."
   exit 1
 fi
 
+if ! command -v /usr/bin/time >/dev/null 2>&1; then
+  echo "[ERROR] '/usr/bin/time' not found. It is required to measure peak RAM."
+  exit 1
+fi
+
 export L p0 seed type k NT dim num_colors P0 Equilibration
 
-# --- run Cartesian product: rho × runs, with progress bar ---
-parallel -j "$JOBS" --bar --halt soon,fail=1 '
+TOTAL=$(( num_runs * ${{#rho[@]}} ))
+if [[ "$TOTAL" -le 0 ]]; then
+  echo "[ERROR] No jobs to run."
+  exit 1
+fi
+
+# --- detect machine resources ---
+CPU_THREADS_TOTAL=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)
+CPU_THREADS_LIMIT=$(( CPU_THREADS_TOTAL - RESERVE_THREADS ))
+if [[ "$CPU_THREADS_LIMIT" -lt 1 ]]; then
+  CPU_THREADS_LIMIT=1
+fi
+
+MEM_TOTAL_KB=$(awk '/MemTotal:/ {{print int($2)}}' /proc/meminfo)
+MEM_AVAILABLE_KB=$(awk '/MemAvailable:/ {{print int($2)}}' /proc/meminfo)
+
+RAM_BUDGET_KB=$(awk -v total="$MEM_TOTAL_KB" -v avail="$MEM_AVAILABLE_KB" -v frac="$MEMORY_SAFETY_FRACTION" '
+  BEGIN {{
+    budget = int(total * frac)
+    if (avail < budget) budget = avail
+    if (budget < 1) budget = 1
+    print budget
+  }}'
+)
+
+# --- benchmark exactly one simulation to estimate RAM per job ---
+BENCH_RHO=${{rho[0]}}
+BENCH_LOG=$(mktemp)
+
+echo "[INFO] Running RAM benchmark for this parameter set..."
+echo "[INFO] Benchmark command: ./build/SOP $L $p0 $seed $type $k $NT $dim $num_colors $BENCH_RHO $P0 $Equilibration"
+
+/usr/bin/time -f "%M" -o "$BENCH_LOG" \
+  ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$BENCH_RHO" "$P0" "$Equilibration" >/dev/null
+
+PEAK_RAM_KB=$(tr -dc '0-9' < "$BENCH_LOG")
+rm -f "$BENCH_LOG"
+
+if [[ -z "$PEAK_RAM_KB" || "$PEAK_RAM_KB" -le 0 ]]; then
+  echo "[ERROR] Could not determine peak RAM from benchmark."
+  exit 1
+fi
+
+PER_JOB_RAM_KB=$(awk -v peak="$PEAK_RAM_KB" -v mult="$RAM_MULTIPLIER" '
+  BEGIN {{
+    x = int(peak * mult)
+    if (x < 1) x = 1
+    print x
+  }}'
+)
+
+THREADS_BY_RAM=$(awk -v budget="$RAM_BUDGET_KB" -v per_job="$PER_JOB_RAM_KB" '
+  BEGIN {{
+    jobs = int(budget / per_job)
+    if (jobs < 1) jobs = 1
+    print jobs
+  }}'
+)
+
+JOBS=$THREADS_BY_RAM
+if [[ "$JOBS" -gt "$CPU_THREADS_LIMIT" ]]; then
+  JOBS=$CPU_THREADS_LIMIT
+fi
+
+if [[ -n "$MAX_THREADS" && "$MAX_THREADS" -lt "$JOBS" ]]; then
+  JOBS=$MAX_THREADS
+fi
+
+if [[ "$JOBS" -lt 1 ]]; then
+  JOBS=1
+fi
+
+PEAK_RAM_GB=$(awk -v kb="$PEAK_RAM_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+PER_JOB_RAM_GB=$(awk -v kb="$PER_JOB_RAM_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+RAM_BUDGET_GB=$(awk -v kb="$RAM_BUDGET_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+MEM_TOTAL_GB=$(awk -v kb="$MEM_TOTAL_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+MEM_AVAILABLE_GB=$(awk -v kb="$MEM_AVAILABLE_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+
+echo "[INFO] Peak RAM from benchmark   : $PEAK_RAM_GB GB"
+echo "[INFO] RAM per parallel job      : $PER_JOB_RAM_GB GB (with RAM_MULTIPLIER=$RAM_MULTIPLIER)"
+echo "[INFO] Total RAM                 : $MEM_TOTAL_GB GB"
+echo "[INFO] Available RAM             : $MEM_AVAILABLE_GB GB"
+echo "[INFO] Usable RAM budget         : $RAM_BUDGET_GB GB (MEMORY_SAFETY_FRACTION=$MEMORY_SAFETY_FRACTION)"
+echo "[INFO] CPU threads total         : $CPU_THREADS_TOTAL"
+echo "[INFO] CPU threads usable        : $CPU_THREADS_LIMIT (RESERVE_THREADS=$RESERVE_THREADS)"
+echo "[INFO] Selected GNU parallel jobs: $JOBS"
+
+if [[ "$TOTAL" -eq 1 ]]; then
+  echo "[INFO] Only one simulation requested. Benchmark run already completed it."
+  exit 0
+fi
+
+# --- build remaining task list, skipping the benchmarked first task ---
+TASK_FILE=$(mktemp)
+trap 'rm -f "$TASK_FILE"' EXIT
+SKIP_FIRST=1
+
+for ((run=1; run<=num_runs; run++)); do
+  for idx in "${{!rho[@]}}"; do
+    RHO=${{rho[$idx]}}
+
+    if [[ "$SKIP_FIRST" -eq 1 ]]; then
+      SKIP_FIRST=0
+      continue
+    fi
+
+    printf '%s\t%s\n' "$RHO" "$run" >> "$TASK_FILE"
+  done
+done
+
+REMAINING=$(( TOTAL - 1 ))
+echo "[INFO] Benchmark counted as the first completed simulation (1/$TOTAL)."
+echo "[INFO] Running remaining $REMAINING simulation(s) with -j $JOBS ..."
+
+parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
   RUN={{2}}
   ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration"
-' ::: "${{rho[@]}}" ::: $(seq 1 "$num_runs")
+' :::: "$TASK_FILE"
+
+echo "All runs completed."
 """
     else:
         script = f"""\
@@ -107,7 +255,6 @@ progress_bar() {{
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 DONE=0
 
-# VERBOSE=1 to echo each command
 VERBOSE=${{VERBOSE:-0}}
 
 for ((run=1; run<=num_runs; run++)); do
@@ -119,7 +266,7 @@ for ((run=1; run<=num_runs; run++)); do
 
     if [[ "$VERBOSE" -eq 1 ]]; then
       echo
-      echo "./build/SOP $L $p0 $seed $type $k $NT $dim $num_colors $RHO $P0"
+      echo "./build/SOP $L $p0 $seed $type $k $NT $dim $num_colors $RHO $P0 $Equilibration"
       ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration"
     else
       ./build/SOP "$L" "$p0" "$seed" "$type" "$k" "$NT" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" >/dev/null
@@ -134,7 +281,7 @@ echo "All runs completed."
     script = textwrap.dedent(script)
     path = os.path.join("../shells", exec_name)
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(script)
 
     st = os.stat(path)

@@ -43,7 +43,7 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
 
     std::string network_path = full_path + "/network";
     std::string data_path = full_path + "/data";
-    std::string data_path_equilibration = full_path + "/data_equilibration";
+    std::string data_path_equilibration = full_path + "/data_surfaces";
     std::string data_network_preteq = full_path + "/network_preteq";
     std::string data_network_posteq = full_path + "/network_posteq";
     

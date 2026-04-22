@@ -108,9 +108,12 @@ struct PercolationSeries {
     // novos campos
     int t_eq = -1;
     std::vector<int> sp_lin_preteq;
+    std::vector<std::vector<int>> sp_path_lin_preteq;
     std::vector<int> sp_lin_posteq;
+    std::vector<std::vector<int>> sp_path_lin_posteq;
     std::vector<int> M_size_preteq;
     std::vector<int> M_size_posteq;
+    
 };
 
 #endif // STRUCT_NETWORK_HPP

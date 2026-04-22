@@ -54,10 +54,10 @@ type_perc = 'bond'
 
 L_lst =       [256, 304, 362, 430, 512, 608, 724, 851, 1024]
 num_runs =    [300, 250, 150, 125, 100, 80, 30, 15, 10]
-num_threads = [11, 11, 11, 11, 11, 11, 6, 3, 2]
+#num_threads = [11, 11, 11, 11, 11, 11, 6, 3, 2]
 multi=True
 Equilibration = 'false'
-nc = 2
+nc = 8
 p0 = 1.0
 if nc == 2:
     f = 0.03
@@ -78,4 +78,4 @@ for idx, L in enumerate(L_lst):
         exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
         
         shell_data(L, type_perc, p0, seed, k, NT, dim,
-                nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
+                nc, num_runs[idx], rho, exec_name, P0, Equilibration, multi)

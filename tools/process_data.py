@@ -60,6 +60,17 @@ DEFAULT_DESIRED_COLS = [
     'filename', 'P0', 'p0', 'order', 'p_mean', 'p_std', 'p_sem', 'shortest_path', 'S_perc'
 ]
 
+DEFAULT_SIZE_COLS = [
+    "type_perc", "dim", "L", "Nt", "k", "nc", "rho", "p0", "P0",
+    "order", "N_samples", "N_samples_perc",
+    "shortest_path", "shortest_path_err",
+    "S_perc", "S_perc_err",
+    "shortest_path_preteq", "shortest_path_preteq_err",
+    "S_perc_preteq", "S_perc_preteq_err",
+    "shortest_path_posteq", "shortest_path_posteq_err",
+    "S_perc_posteq", "S_perc_posteq_err",
+]
+
 def ensure_dir(path: str | Path) -> Path:
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
@@ -91,6 +102,403 @@ def parse_data_dir(path: str):
         "rho": float(g["rho"]),
     }
 
+
+def _load_orders_sizes_new(fp: str) -> Optional[dict[int, dict]]:
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            js = json.load(f)
+    except json.JSONDecodeError:
+        print(f"[warn] JSON inválido ignorado: {fp}")
+        return None
+    except OSError as ex:
+        print(f"[warn] Falha ao abrir {fp}: {ex}")
+        return None
+
+    results = js.get("results", {})
+    if not isinstance(results, dict):
+        return {}
+
+    out: dict[int, dict] = {}
+
+    required_keys = [
+        "shortest_path_lin",
+        "M_size",
+        "sp_lin_preteq",
+        "sp_lin_posteq",
+        "M_size_preteq",
+        "M_size_posteq",
+    ]
+
+    for key, block in results.items():
+        if not isinstance(key, str) or "order_percolation" not in key:
+            continue
+
+        digits = "".join(ch for ch in key if ch.isdigit())
+        if not digits:
+            continue
+
+        ord1 = int(digits)
+        ordk = ord1 - 1
+
+        data = (block or {}).get("data", {})
+        if not isinstance(data, dict):
+            continue
+
+        vals: dict[str, float] = {}
+        ok = True
+        for rk in required_keys:
+            v = _safe_float(data.get(rk, None))
+            if v is None:
+                ok = False
+                break
+            vals[rk] = float(v)
+
+        if not ok:
+            continue
+
+        # Critério pedido: só entra no novo fluxo se os dois SPs temporais existirem
+        # e forem diferentes de -1
+        if int(vals["sp_lin_preteq"]) == -1 or int(vals["sp_lin_posteq"]) == -1:
+            continue
+
+        out[ordk] = vals
+
+    return out
+
+
+def _average_sizes_by_order(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
+    metric_map = [
+        ("shortest_path_lin", "shortest_path"),
+        ("M_size", "S_perc"),
+        ("sp_lin_preteq", "shortest_path_preteq"),
+        ("M_size_preteq", "S_perc_preteq"),
+        ("sp_lin_posteq", "shortest_path_posteq"),
+        ("M_size_posteq", "S_perc_posteq"),
+    ]
+
+    out: Dict[str, Any] = {}
+
+    for src_key, prefix in metric_map:
+        vals = []
+        for d in lst:
+            v = _safe_float(d.get(src_key, None))
+            if v is not None:
+                vals.append(v)
+
+        mean, sem, n = _mean_sem(vals)
+        out[f"{prefix}_mean"] = mean
+        out[f"{prefix}_sem"] = sem
+        out[f"n_{prefix}"] = n
+
+    return out
+
+def compute_sizes_for_folder(
+    type_perc: str,
+    num_colors: int,
+    dim: int,
+    L: int,
+    NT: int,
+    k: float,
+    rho: float,
+    p0_list: List[float],
+    *,
+    raw_root: str,
+    published_root: str,
+    manifests_root: str,
+    clear_data: bool = False,
+    verbose: bool = True,
+) -> Optional[str]:
+    raw_root = os.path.abspath(raw_root)
+    published_root = os.path.abspath(published_root)
+    manifests_root = os.path.abspath(manifests_root)
+
+    rel_group = os.path.join(
+        f"{type_perc}_percolation",
+        f"num_colors_{num_colors}",
+        f"dim_{dim}",
+        f"L_{L}",
+        "NT_constant",
+        f"NT_{NT}",
+        f"k_{k:.1e}",
+        f"rho_{rho:.4e}",
+    )
+
+    data_dir = os.path.join(raw_root, rel_group, "data")
+    if not os.path.isdir(data_dir):
+        raise FileNotFoundError(f"Pasta de dados não encontrada: {data_dir}")
+
+    out_dir = os.path.join(published_root, rel_group)
+    ensure_dir(out_dir)
+
+    out_path = os.path.join(out_dir, "properties_sizes_bundle.json")
+
+    manifest = _load_manifest(manifests_root, rel_group)
+
+    if clear_data:
+        if os.path.isfile(out_path):
+            os.remove(out_path)
+        manifest["processed_json_files"] = []
+        manifest["n_processed_json_files"] = 0
+        manifest["summary_file"] = None
+        manifest["last_update"] = None
+        if verbose:
+            print(f"[clear_data sizes] removido: {out_path}")
+
+    all_jsons = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+    selected_p0_filter = None if not p0_list else [float(p) for p in p0_list]
+    selected_groups = _discover_sample_groups(all_jsons, p0_filter=selected_p0_filter)
+
+    bundle: Dict[str, Any] = {
+        "meta": {
+            "type_perc": type_perc,
+            "num_colors": num_colors,
+            "dim": dim,
+            "L": L,
+            "NT": NT,
+            "k": float(k),
+            "rho": float(rho),
+            "base_dir": out_dir,
+            "seed_used": [],
+            "p0_groups_detected": sorted({float(g["p0"]) for g in selected_groups}),
+            "P0_groups_detected": sorted({float(g["P0"]) for g in selected_groups}),
+        },
+        "p0_groups": [],
+    }
+
+    seed_used_set = set()
+    current_valid_files: set[str] = set()
+
+    for group in selected_groups:
+        P0_value = float(group["P0"])
+        p0_value = float(group["p0"])
+        files = list(group["files"])
+
+        per_order: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+
+        seeds_valid_set: set[int] = set()
+        valid_files = 0
+
+        for fp in files:
+            orders = _load_orders_sizes_new(fp)
+            if orders is None:
+                continue
+
+            if len(orders) == 0:
+                continue
+
+            valid_files += 1
+            current_valid_files.add(os.path.basename(fp))
+
+            seed = _extract_seed_from_filename(fp)
+            if seed is not None:
+                seeds_valid_set.add(seed)
+                seed_used_set.add(seed)
+
+            for ordk, data in orders.items():
+                per_order[ordk].append(dict(data))
+
+        if valid_files == 0:
+            if verbose:
+                print(f"[sizes] sem samples válidas em {data_dir} para P0={P0_value:.2f}, p0={p0_value:.2f}")
+            continue
+
+        mean_by_order: Dict[int, Dict[str, Any]] = {}
+        for ordk, lst in per_order.items():
+            mean_by_order[ordk] = _average_sizes_by_order(lst)
+            mean_by_order[ordk]["n_samples_perc"] = int(len(lst))
+
+        orders_blocks = [
+            {"order_percolation": int(ordk), "data": mean_by_order[ordk]}
+            for ordk in sorted(mean_by_order.keys())
+        ]
+
+        bundle["p0_groups"].append({
+            "P0_value": float(P0_value),
+            "p0_value": float(p0_value),
+            "num_samples_valid": int(valid_files),
+            "num_seeds_valid": int(len(seeds_valid_set)),
+            "orders": orders_blocks,
+        })
+
+    bundle["meta"]["seed_used"] = sorted(seed_used_set)
+    bundle = _sanitize_for_json(bundle)
+
+    processed_files = set(map(str, manifest.get("processed_json_files", [])))
+    if (not clear_data) and os.path.isfile(out_path) and processed_files == current_valid_files:
+        if verbose:
+            print(f"[sizes skip] atualizado: {out_path}")
+        return out_path
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(bundle, f, ensure_ascii=False, indent=2, allow_nan=False)
+
+    manifest.update({
+        "group_relpath": rel_group,
+        "data_dir": data_dir,
+        "processed_json_files": sorted(current_valid_files),
+        "n_processed_json_files": len(current_valid_files),
+        "summary_file": out_path,
+        "last_update": pd.Timestamp.utcnow().isoformat(),
+    })
+    _save_manifest(manifests_root, rel_group, manifest)
+
+    return out_path
+
+
+def build_sizes_dataframe(published_root: str, output_file: str | Path) -> pd.DataFrame:
+    rows: List[Dict[str, Any]] = []
+    published_root = os.path.abspath(published_root)
+    output_file = Path(output_file)
+
+    bundle_files = []
+    for dirpath, _, filenames in os.walk(published_root):
+        if "properties_sizes_bundle.json" in filenames:
+            bundle_files.append(os.path.join(dirpath, "properties_sizes_bundle.json"))
+
+    for bundle_path in sorted(bundle_files):
+        parsed = _parse_params_from_path(os.path.dirname(bundle_path))
+        if parsed is None:
+            parsed = _parse_params_from_path(bundle_path)
+        if parsed is None:
+            continue
+
+        type_perc, L, Nt, k, nc, rho, dim = parsed
+
+        try:
+            with open(bundle_path, "r", encoding="utf-8") as f:
+                js = json.load(f)
+        except Exception:
+            continue
+
+        p0_groups = js.get("p0_groups", [])
+        if not isinstance(p0_groups, list) or len(p0_groups) == 0:
+            continue
+
+        for g in p0_groups:
+            p0_val = _safe_float(g.get("p0_value", float("nan")))
+            P0_val = _safe_float(g.get("P0_value", float("nan")))
+            N_samples = int(g.get("num_samples_valid", 0) or 0)
+
+            orders = g.get("orders", [])
+            if not isinstance(orders, list) or len(orders) == 0:
+                continue
+
+            for ob in orders:
+                ordk = ob.get("order_percolation", None)
+                if ordk is None:
+                    continue
+
+                order = int(ordk) + 1
+                d = ob.get("data", {}) or {}
+
+                rows.append({
+                    "type_perc": type_perc,
+                    "dim": dim,
+                    "L": L,
+                    "Nt": Nt,
+                    "k": k,
+                    "nc": nc,
+                    "rho": rho,
+                    "p0": p0_val,
+                    "P0": P0_val,
+                    "order": order,
+                    "N_samples": N_samples,
+                    "N_samples_perc": int(d.get("n_samples_perc", 0) or 0),
+
+                    "shortest_path": _safe_float(d.get("shortest_path_mean", float("nan"))),
+                    "shortest_path_err": _safe_float(d.get("shortest_path_sem", float("nan"))),
+
+                    "S_perc": _safe_float(d.get("S_perc_mean", float("nan"))),
+                    "S_perc_err": _safe_float(d.get("S_perc_sem", float("nan"))),
+
+                    "shortest_path_preteq": _safe_float(d.get("shortest_path_preteq_mean", float("nan"))),
+                    "shortest_path_preteq_err": _safe_float(d.get("shortest_path_preteq_sem", float("nan"))),
+
+                    "S_perc_preteq": _safe_float(d.get("S_perc_preteq_mean", float("nan"))),
+                    "S_perc_preteq_err": _safe_float(d.get("S_perc_preteq_sem", float("nan"))),
+
+                    "shortest_path_posteq": _safe_float(d.get("shortest_path_posteq_mean", float("nan"))),
+                    "shortest_path_posteq_err": _safe_float(d.get("shortest_path_posteq_sem", float("nan"))),
+
+                    "S_perc_posteq": _safe_float(d.get("S_perc_posteq_mean", float("nan"))),
+                    "S_perc_posteq_err": _safe_float(d.get("S_perc_posteq_sem", float("nan"))),
+                })
+
+    df = pd.DataFrame(rows, columns=DEFAULT_SIZE_COLS)
+
+    if not df.empty:
+        df = df.sort_values(
+            by=["type_perc", "dim", "nc", "rho", "k", "Nt", "L", "P0", "p0", "order"]
+        ).reset_index(drop=True)
+
+    ensure_dir(output_file.parent)
+    df.to_csv(output_file, index=False, sep=" ")
+    return df
+
+
+def process_all_data_sizes(
+    clear_data: bool = False,
+    *,
+    sop_root: str = "../SOP_data",
+    p0_lst: Optional[List[float]] = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    if p0_lst is not None:
+        p0_lst = [float(p) for p in p0_lst]
+        if len(p0_lst) == 0:
+            p0_lst = None
+
+    sop_root = os.path.abspath(sop_root)
+    raw_root = os.path.join(sop_root, "raw")
+    published_root = os.path.join(sop_root, "published")
+    manifests_root = os.path.join(sop_root, "manifests_sizes")
+
+    ensure_dir(raw_root)
+    ensure_dir(published_root)
+    ensure_dir(manifests_root)
+
+    all_parms = collect_param_combinations(raw_root)
+
+    iterator = tqdm(
+        all_parms,
+        desc="Processando conjuntos [sizes]",
+        ncols=120,
+        dynamic_ncols=False,
+        leave=True,
+    )
+
+    for tp, nc, DIM, L, NT, K, RHO in iterator:
+        iterator.set_postfix_str(
+            f"{tp} nc={nc} dim={DIM} L={L} NT={NT} k={K:.1e} rho={RHO:.4e}"
+        )
+        compute_sizes_for_folder(
+            type_perc=tp,
+            num_colors=nc,
+            dim=DIM,
+            L=L,
+            NT=NT,
+            k=K,
+            rho=RHO,
+            p0_list=p0_lst,
+            raw_root=raw_root,
+            published_root=published_root,
+            manifests_root=manifests_root,
+            clear_data=clear_data,
+            verbose=verbose,
+        )
+
+    if verbose:
+        print("Processamento [sizes] finalizado. Construindo SOP_data/all_data_sizes.dat ...")
+
+    df = build_sizes_dataframe(
+        published_root=published_root,
+        output_file=os.path.join(sop_root, "all_data_sizes.dat"),
+    )
+
+    if verbose:
+        print(f"[write] {os.path.join(sop_root, 'all_data_sizes.dat')} ({len(df)} linhas)")
+
+    return df
 
 def collect_param_combinations(
     root_dir: str,
@@ -1387,3 +1795,4 @@ def process_all_data(
 
 if __name__ == "__main__":
     process_all_data(clear_data=False)
+    process_all_data_sizes(clear_data=False)
