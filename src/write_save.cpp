@@ -401,7 +401,8 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "    \"num_colors\": " << ts.num_colors << ",\n";
     ofs << "    \"rho\": ";
     write_json_array(ofs, ps.rho);
-    ofs << "\n";
+    ofs << ",\n";
+    ofs << "    \"t_eq\": " << ps.t_eq << "\n";
     ofs << "  },\n";
 
     ofs << "  \"results\": {\n";
@@ -418,9 +419,6 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         if (crow < static_cast<int>(ps.sp_len.size()) && ps.sp_len[crow] >= 0) {
             shortest_path_lin_value = ps.sp_len[crow];
         }
-
-        const int t_eq =
-            ps.t_eq;
 
         const int sp_lin_preteq =
             (crow < static_cast<int>(ps.sp_lin_preteq.size()))
@@ -456,7 +454,6 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << ",\n";
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
         ofs << "        \"M_size\": " << M_size << ",\n";
-        ofs << "        \"t_eq\": " << t_eq << ",\n";
         ofs << "        \"sp_lin_preteq\": " << sp_lin_preteq << ",\n";
         ofs << "        \"sp_lin_posteq\": " << sp_lin_posteq << ",\n";
         ofs << "        \"M_size_preteq\": " << M_size_preteq << ",\n";

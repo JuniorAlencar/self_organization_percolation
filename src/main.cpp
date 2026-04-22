@@ -7,6 +7,7 @@
 #include "helpers_print.hpp"
 #include "helpers_partitions.hpp"
 #include "network_partitions.hpp"
+#include "equilibration_partition.hpp"
 
 #include <iomanip>
 #include <cstdlib>
@@ -156,7 +157,20 @@ int main(int argc, char* argv[]) {
 
         if (animation == true) {
             std::string net_filename = network_dir + "/" + sample_base + ".npz";
+            std::string net_posteq_filename = network_posteq + "/" + sample_base + ".npz";
+            std::string net_preteq_filename = network_preteq + "/" + sample_base + ".npz";
             saver.save_network_as_npz(net, net_filename);
+            const int SPECIES_FACTOR = 10000000;
+
+            EquilibrationCutNetworks cuts =
+                build_equilibration_cut_networks(net, ps.t_eq,
+                    SPECIES_FACTOR
+                );
+                // NPZ da rede pre_teq
+            saver.save_network_as_npz(cuts.pre_teq, net_preteq_filename);
+
+            // NPZ da rede post_teq
+            saver.save_network_as_npz(cuts.post_teq, net_posteq_filename);
         }
 
         saver.save_percolation_json(ps, ts, json_filename, true);

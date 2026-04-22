@@ -56,7 +56,7 @@ L_lst =       [256, 304, 362, 430, 512, 608, 724, 851, 1024]
 num_runs =    [300, 250, 150, 125, 100, 80, 30, 15, 10]
 num_threads = [11, 11, 11, 11, 11, 11, 6, 3, 2]
 multi=True
-Equilibration = 'true'
+Equilibration = 'false'
 nc = 2
 p0 = 1.0
 if nc == 2:
