@@ -60,7 +60,6 @@ DEFAULT_DESIRED_COLS = [
     'filename', 'P0', 'p0', 'order', 'p_mean', 'p_std', 'p_sem', 'shortest_path', 'S_perc'
 ]
 
-
 def ensure_dir(path: str | Path) -> Path:
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
@@ -69,7 +68,6 @@ def ensure_dir(path: str | Path) -> Path:
 
 def create_folder(folder_path):
     ensure_dir(folder_path)
-
 
 def _sem_scalar(vals: List[float]) -> float:
     a = np.asarray(vals, dtype=float)

@@ -20,4 +20,19 @@ void compute_equilibration_partition_metrics(
     const EquilibrationConfig& cfg = {});
 
 
+struct EquilibrationCutNetworks {
+    NetworkPattern pre_teq;
+    NetworkPattern post_teq;
+
+    EquilibrationCutNetworks(const NetworkPattern& pre,
+                             const NetworkPattern& post)
+        : pre_teq(pre), post_teq(post) {}
+};
+
+
+EquilibrationCutNetworks build_equilibration_cut_networks(
+    const NetworkPattern& encoded_net,
+    int t_eq,
+    int species_factor = 10000000);
+
 #endif // EQUILIBRATION_PARTITION_HPP

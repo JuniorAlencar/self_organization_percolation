@@ -376,3 +376,82 @@ void compute_equilibration_partition_metrics(
         ps.sp_lin_posteq[c] = sp_post;
     }
 }
+
+EquilibrationCutNetworks build_equilibration_cut_networks(
+    const NetworkPattern& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    if (encoded_net.shape.empty()) {
+        throw std::runtime_error(
+            "build_equilibration_cut_networks: shape vazio");
+    }
+
+    if (t_eq < 0) {
+        throw std::runtime_error(
+            "build_equilibration_cut_networks: t_eq inválido");
+    }
+
+    if (species_factor <= 0) {
+        throw std::runtime_error(
+            "build_equilibration_cut_networks: species_factor deve ser > 0");
+    }
+
+    NetworkPattern pre_net(
+        encoded_net.dim,
+        encoded_net.shape,
+        encoded_net.num_colors,
+        encoded_net.rho
+    );
+
+    NetworkPattern post_net(
+        encoded_net.dim,
+        encoded_net.shape,
+        encoded_net.num_colors,
+        encoded_net.rho
+    );
+
+    pre_net.seed = encoded_net.seed;
+    post_net.seed = encoded_net.seed;
+
+    const std::size_t total_size = encoded_net.data.size();
+    pre_net.data.assign(total_size, static_cast<NetworkPattern::state_t>(-1));
+    post_net.data.assign(total_size, static_cast<NetworkPattern::state_t>(-1));
+
+    for (std::size_t i = 0; i < total_size; ++i) {
+        const long long code =
+            static_cast<long long>(encoded_net.data[i]);
+
+        // nunca ativado
+        if (code == -1) {
+            pre_net.data[i] = static_cast<NetworkPattern::state_t>(-1);
+            post_net.data[i] = static_cast<NetworkPattern::state_t>(-1);
+            continue;
+        }
+
+        // bloqueado (node percolation)
+        if (code == 0) {
+            pre_net.data[i] = static_cast<NetworkPattern::state_t>(0);
+            post_net.data[i] = static_cast<NetworkPattern::state_t>(0);
+            continue;
+        }
+
+        const int color_1b = static_cast<int>(code / species_factor);
+        const int time = static_cast<int>(code % species_factor);
+
+        if (color_1b <= 0 || color_1b > encoded_net.num_colors) {
+            throw std::runtime_error(
+                "build_equilibration_cut_networks: código de espécie inválido");
+        }
+
+        if (time <= t_eq) {
+            pre_net.data[i] = encoded_net.data[i];
+            post_net.data[i] = static_cast<NetworkPattern::state_t>(-1);
+        } else {
+            pre_net.data[i] = static_cast<NetworkPattern::state_t>(-1);
+            post_net.data[i] = encoded_net.data[i];
+        }
+    }
+
+    return EquilibrationCutNetworks(pre_net, post_net);
+}
