@@ -20,3 +20,4 @@ shells/*.sh
 !shells/process_equilibration.sh
 shells/after/
 .process_equilibration
+*.html

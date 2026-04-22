@@ -14,8 +14,8 @@ rho = 1/nc
 k = 1.0e-06
 NT = 655
 
-path_dir = f"../SOP_data/raw/bond_percolation_equilibration/num_colors_{nc}/dim_{dim}/L_{L}/NT_constant/NT_{NT}/k_{k:.1e}/rho_{rho:.4e}/"
-filename = "light_seed_44_ts_20260420T152500_P0_0.10_p0_1.00.npz"
+path_dir = f"../SOP_data/raw/bond_percolation/num_colors_{nc}/dim_{dim}/L_{L}/NT_constant/NT_{NT}/k_{k:.1e}/rho_{rho:.4e}"
+filename = "light_seed_44_ts_20260422T155829_P0_0.10_p0_1.00.npz"
 
 output_dir = f"../network/{dim}D_L{L}_nc{nc}_rho{rho:.4f}_k{k:.1e}_NT{NT}"
 create_folder(output_dir)

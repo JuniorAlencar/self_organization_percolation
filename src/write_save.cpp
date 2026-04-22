@@ -1,5 +1,5 @@
 #include "write_save.hpp"
-
+#include "equilibration_partition.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
@@ -284,6 +284,21 @@ void save_sparse_npz_payload(const int dim,
     }
 }
 
+std::vector<int32_t> flatten_points4(const std::vector<Point3D>& pts)
+{
+    std::vector<int32_t> out;
+    out.reserve(pts.size() * 4);
+
+    for (const auto& p : pts) {
+        out.push_back(static_cast<int32_t>(p.x));
+        out.push_back(static_cast<int32_t>(p.y));
+        out.push_back(static_cast<int32_t>(p.z));
+        out.push_back(static_cast<int32_t>(p.color_index));
+    }
+
+    return out;
+}
+
 } // namespace
 
 void save_data::save_network_as_npz(const NetworkPattern& net,
@@ -439,6 +454,16 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             (crow < static_cast<int>(ps.M_size_posteq.size()))
                 ? ps.M_size_posteq[crow]
                 : -1;
+        
+                const std::vector<int>* sp_path_lin_preteq_ptr = nullptr;
+        if (crow < static_cast<int>(ps.sp_path_lin_preteq.size())) {
+            sp_path_lin_preteq_ptr = &ps.sp_path_lin_preteq[crow];
+        }
+
+        const std::vector<int>* sp_path_lin_posteq_ptr = nullptr;
+        if (crow < static_cast<int>(ps.sp_path_lin_posteq.size())) {
+            sp_path_lin_posteq_ptr = &ps.sp_path_lin_posteq[crow];
+        }
 
         ofs << "    \"order_percolation " << order_i << "\": {\n";
         ofs << "      \"data\": {\n";
@@ -455,7 +480,17 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
         ofs << "        \"M_size\": " << M_size << ",\n";
         ofs << "        \"sp_lin_preteq\": " << sp_lin_preteq << ",\n";
+        ofs << "        \"sp_path_lin_preteq\": ";
+        if (sp_path_lin_preteq_ptr) write_json_array(ofs, *sp_path_lin_preteq_ptr);
+            else ofs << "[]";
+            ofs << ",\n";
+
         ofs << "        \"sp_lin_posteq\": " << sp_lin_posteq << ",\n";
+        ofs << "        \"sp_path_lin_posteq\": ";
+        if (sp_path_lin_posteq_ptr) write_json_array(ofs, *sp_path_lin_posteq_ptr);
+            else ofs << "[]";
+            ofs << ",\n";
+
         ofs << "        \"M_size_preteq\": " << M_size_preteq << ",\n";
         ofs << "        \"M_size_posteq\": " << M_size_posteq << "\n";
         ofs << "      }\n";
@@ -492,4 +527,68 @@ void save_data::save_reanalysis_networks(const ReanalysisResult& result,
 {
     save_network_as_npz(result.pre_teq.net, filename_preteq_npz);
     save_network_as_npz(result.post_teq.net, filename_posteq_npz);
+}
+
+void save_data::save_surfaces_as_npz(const SurfacesCuts& surfaces,
+                                     const std::string& filename) const
+{
+    if (!(filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")) {
+        throw std::runtime_error("save_surfaces_as_npz: filename deve terminar com .npz");
+    }
+
+    const fs::path out_path(filename);
+    if (!out_path.parent_path().empty()) {
+        fs::create_directories(out_path.parent_path());
+    }
+
+    const std::vector<int32_t> pre_flat =
+        flatten_points4(surfaces.surface_preteq);
+
+    const std::vector<int32_t> post_flat =
+        flatten_points4(surfaces.surface_posteq);
+
+    const std::vector<size_t> shape_pre{
+        surfaces.surface_preteq.size(), 4
+    };
+
+    const std::vector<size_t> shape_post{
+        surfaces.surface_posteq.size(), 4
+    };
+
+    const std::string npy_pre =
+        make_npy_blob(
+            pre_flat.data(),
+            pre_flat.size(),
+            shape_pre
+        );
+
+    const std::string npy_post =
+        make_npy_blob(
+            post_flat.data(),
+            post_flat.size(),
+            shape_post
+        );
+
+    int errcode = 0;
+    zip_t* za = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errcode);
+    if (!za) {
+        throw std::runtime_error(
+            "save_surfaces_as_npz: não abriu zip '" + filename +
+            "': " + zip_open_error_string(errcode));
+    }
+
+    try {
+        zip_add_buffer(za, "surface_preteq.npy", npy_pre);
+        zip_add_buffer(za, "surface_posteq.npy", npy_post);
+
+        if (zip_close(za) != 0) {
+            const std::string err = zip_archive_error(za);
+            zip_discard(za);
+            throw std::runtime_error(
+                "save_surfaces_as_npz: zip_close falhou: " + err);
+        }
+    } catch (...) {
+        zip_discard(za);
+        throw;
+    }
 }

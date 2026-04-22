@@ -253,6 +253,126 @@ std::vector<int> largest_component_nodes_single_color(
     return best_nodes;
 }
 
+std::vector<Point3D> extract_top_surface_points(
+    const NetworkPattern& net,
+    const int species_factor)
+{
+    if (net.shape.empty()) {
+        throw std::runtime_error("extract_top_surface_points: shape vazio");
+    }
+
+    const int L = net.shape[0];
+    const GridRegular grid(net.dim, L);
+
+    auto is_active_site = [&](const int idx, int* color_idx_out = nullptr) -> bool {
+        if (idx < 0 || idx >= grid.total_size) {
+            return false;
+        }
+
+        const long long code =
+            static_cast<long long>(net.data[static_cast<std::size_t>(idx)]);
+
+        const DecodedValue dv = decode_animation_value(code, species_factor);
+
+        if (dv.never_activated || dv.blocked) {
+            return false;
+        }
+
+        if (color_idx_out) {
+            *color_idx_out = dv.color_idx;
+        }
+
+        return true;
+    };
+
+    struct TopCell {
+        bool valid = false;
+        int idx = -1;
+        int z = -1;
+    };
+
+    if (net.dim == 2) {
+        std::vector<TopCell> top_by_x(static_cast<std::size_t>(grid.SX));
+
+        for (int idx = 0; idx < grid.total_size; ++idx) {
+            int color_idx = -1;
+            if (!is_active_site(idx, &color_idx)) {
+                continue;
+            }
+
+            const int x = grid.x_of(idx);
+            const int y = grid.y_of(idx);
+
+            TopCell& cell = top_by_x[static_cast<std::size_t>(x)];
+            if (!cell.valid || y > cell.z) {
+                cell.valid = true;
+                cell.idx = idx;
+                cell.z = y;
+            }
+        }
+
+        std::vector<Point3D> out;
+        out.reserve(static_cast<std::size_t>(grid.SX));
+
+        for (const auto& cell : top_by_x) {
+            if (!cell.valid) continue;
+
+            int color_idx = -1;
+            is_active_site(cell.idx, &color_idx);
+
+            Point3D p;
+            p.x = grid.x_of(cell.idx);
+            p.y = grid.y_of(cell.idx);
+            p.z = 0;
+            p.color_index = color_idx;
+            out.push_back(p);
+        }
+
+        return out;
+    }
+
+    std::vector<TopCell> top_by_xy(static_cast<std::size_t>(grid.SX * grid.SY));
+
+    for (int idx = 0; idx < grid.total_size; ++idx) {
+        int color_idx = -1;
+        if (!is_active_site(idx, &color_idx)) {
+            continue;
+        }
+
+        const int x = grid.x_of(idx);
+        const int y = grid.y_of(idx);
+        const int z = grid.z_of(idx);
+
+        const int id_xy = x + grid.SX * y;
+
+        TopCell& cell = top_by_xy[static_cast<std::size_t>(id_xy)];
+        if (!cell.valid || z > cell.z) {
+            cell.valid = true;
+            cell.idx = idx;
+            cell.z = z;
+        }
+    }
+
+    std::vector<Point3D> out;
+    out.reserve(static_cast<std::size_t>(grid.SX * grid.SY));
+
+    for (const auto& cell : top_by_xy) {
+        if (!cell.valid) continue;
+
+        int color_idx = -1;
+        is_active_site(cell.idx, &color_idx);
+
+        Point3D p;
+        p.x = grid.x_of(cell.idx);
+        p.y = grid.y_of(cell.idx);
+        p.z = grid.z_of(cell.idx);
+        p.color_index = color_idx;
+        out.push_back(p);
+    }
+
+    return out;
+}
+
 } // namespace
 
 int estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg)
@@ -422,14 +542,12 @@ EquilibrationCutNetworks build_equilibration_cut_networks(
         const long long code =
             static_cast<long long>(encoded_net.data[i]);
 
-        // nunca ativado
         if (code == -1) {
             pre_net.data[i] = static_cast<NetworkPattern::state_t>(-1);
             post_net.data[i] = static_cast<NetworkPattern::state_t>(-1);
             continue;
         }
 
-        // bloqueado (node percolation)
         if (code == 0) {
             pre_net.data[i] = static_cast<NetworkPattern::state_t>(0);
             post_net.data[i] = static_cast<NetworkPattern::state_t>(0);
@@ -454,4 +572,30 @@ EquilibrationCutNetworks build_equilibration_cut_networks(
     }
 
     return EquilibrationCutNetworks(pre_net, post_net);
+}
+
+SurfacesCuts extract_exposed_surfaces_from_cuts(
+    const EquilibrationCutNetworks& cuts,
+    const int species_factor)
+{
+    if (species_factor <= 0) {
+        throw std::runtime_error(
+            "extract_exposed_surfaces_from_cuts: species_factor deve ser > 0");
+    }
+
+    SurfacesCuts out;
+    out.surface_preteq = extract_top_surface_points(cuts.pre_teq, species_factor);
+    out.surface_posteq = extract_top_surface_points(cuts.post_teq, species_factor);
+    return out;
+}
+
+SurfacesCuts build_equilibration_exposed_surfaces(
+    const NetworkPattern& encoded_net,
+    const int t_eq,
+    const int species_factor)
+{
+    const EquilibrationCutNetworks cuts =
+        build_equilibration_cut_networks(encoded_net, t_eq, species_factor);
+
+    return extract_exposed_surfaces_from_cuts(cuts, species_factor);
 }

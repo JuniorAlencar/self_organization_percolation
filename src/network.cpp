@@ -783,7 +783,9 @@ NetworkPattern network::animate_network(
     // novas métricas temporais
     ps_out.t_eq = -1;
     ps_out.sp_lin_preteq.assign(num_colors, -1);
+    ps_out.sp_path_lin_preteq.assign(num_colors, std::vector<int>{});
     ps_out.sp_lin_posteq.assign(num_colors, -1);
+    ps_out.sp_path_lin_posteq.assign(num_colors, std::vector<int>{});
     ps_out.M_size_preteq.assign(num_colors, 0);
     ps_out.M_size_posteq.assign(num_colors, 0);
 
@@ -1119,7 +1121,9 @@ NetworkPattern network::animate_network(
     for (int c = 0; c < num_colors; ++c) {
         if (ps_out.sp_len[c] < 0 || ps_out.sp_path_lin[c].empty()) {
             ps_out.sp_lin_preteq[c] = -1;
+            ps_out.sp_path_lin_preteq[c].clear();
             ps_out.sp_lin_posteq[c] = -1;
+            ps_out.sp_path_lin_posteq[c].clear();
             ps_out.M_size_preteq[c] = 0;
             ps_out.M_size_posteq[c] = 0;
             continue;
@@ -1128,10 +1132,20 @@ NetworkPattern network::animate_network(
         // ------------------------------------------------------------
         // Decomposição temporal do shortest path global
         // ------------------------------------------------------------
-        int sp_pre = 0;
+                int sp_pre = 0;
         int sp_post = 0;
 
+        ps_out.sp_path_lin_preteq[c].clear();
+        ps_out.sp_path_lin_posteq[c].clear();
+
         const std::vector<int>& path = ps_out.sp_path_lin[c];
+        if (!path.empty()) {
+            // mantém o nó inicial da base em ambos os caminhos, se você quiser
+            // preservar a referência completa do caminho original
+            ps_out.sp_path_lin_preteq[c].push_back(path.front());
+            ps_out.sp_path_lin_posteq[c].push_back(path.front());
+        }
+
         for (std::size_t k = 1; k < path.size(); ++k) {
             const int idx = path[k];
 
@@ -1144,8 +1158,13 @@ NetworkPattern network::animate_network(
                     "animate_network: shortest path contém nó inválido no encoded");
             }
 
-            if (t_site <= ps_out.t_eq) ++sp_pre;
-            else ++sp_post;
+            if (t_site <= ps_out.t_eq) {
+                ++sp_pre;
+                ps_out.sp_path_lin_preteq[c].push_back(idx);
+            } else {
+                ++sp_post;
+                ps_out.sp_path_lin_posteq[c].push_back(idx);
+            }
         }
 
         ps_out.sp_lin_preteq[c] = sp_pre;

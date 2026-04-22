@@ -96,6 +96,7 @@ int main(int argc, char* argv[]) {
         std::vector<double> p0(num_colors, pp0);
 
         int N_samples = 100000;
+        const int SPECIES_FACTOR = 10000000;
         network net_generator(N_samples, num_colors);
 
         NetworkPattern net = net_generator.animate_network(
@@ -108,7 +109,7 @@ int main(int argc, char* argv[]) {
         const auto [
             network_dir,
             data_dir,
-            equilibration_dir,
+            surfaces_dir,
             network_preteq,
             network_posteq
         ] = creator.create_structure(
@@ -149,24 +150,30 @@ int main(int argc, char* argv[]) {
                   << "_ts_" << timestamp_now
                   << "_P0_" << std::fixed << std::setprecision(2) << P0
                   << "_p0_" << std::fixed << std::setprecision(2) << pp0;
-
+        save_data saver;
+        
         const std::string sample_base = base_name.str();
         std::string json_filename = data_dir + "/" + sample_base + ".json";
+        
+        std::string surfaces_filename = surfaces_dir + "/" + sample_base + ".npz";
+        EquilibrationCutNetworks cuts =
+        build_equilibration_cut_networks(
+            net,
+            ps.t_eq,
+            SPECIES_FACTOR
+        );
 
-        save_data saver;
+        SurfacesCuts surfaces =
+            extract_exposed_surfaces_from_cuts(cuts, SPECIES_FACTOR);
+
+        saver.save_surfaces_as_npz(surfaces, surfaces_filename);
+        
 
         if (animation == true) {
             std::string net_filename = network_dir + "/" + sample_base + ".npz";
             std::string net_posteq_filename = network_posteq + "/" + sample_base + ".npz";
             std::string net_preteq_filename = network_preteq + "/" + sample_base + ".npz";
             saver.save_network_as_npz(net, net_filename);
-            const int SPECIES_FACTOR = 10000000;
-
-            EquilibrationCutNetworks cuts =
-                build_equilibration_cut_networks(net, ps.t_eq,
-                    SPECIES_FACTOR
-                );
-                // NPZ da rede pre_teq
             saver.save_network_as_npz(cuts.pre_teq, net_preteq_filename);
 
             // NPZ da rede post_teq
