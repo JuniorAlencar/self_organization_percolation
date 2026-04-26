@@ -806,6 +806,56 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
     fin >> j;
 
     TimeSeries ts;
+    ts.num_colors = 0;
+    ts.t_eq = -1;
+
+    auto get_matrix_double = [](const json& value) -> std::vector<std::vector<double>> {
+        return value.get<std::vector<std::vector<double>>>();
+    };
+
+    auto get_vector_double = [](const json& value) -> std::vector<double> {
+        return value.get<std::vector<double>>();
+    };
+
+    auto validate_timeseries_sizes = [&](const std::string& context) {
+        if (ts.t.empty()) {
+            throw std::runtime_error(context + ": vetor 't' vazio em " + json_path);
+        }
+
+        if (ts.p_t.empty()) {
+            throw std::runtime_error(context + ": matriz 'p_t' vazia em " + json_path);
+        }
+
+        if (ts.f_t.empty()) {
+            throw std::runtime_error(context + ": matriz 'f_t' vazia em " + json_path);
+        }
+
+        if (ts.p_t.size() != ts.f_t.size()) {
+            throw std::runtime_error(
+                context + ": numero de cores incompatível entre 'p_t' e 'f_t' em " + json_path);
+        }
+
+        const std::size_t ntimes = ts.t.size();
+        for (std::size_t c = 0; c < ts.p_t.size(); ++c) {
+            if (ts.p_t[c].size() != ntimes) {
+                throw std::runtime_error(
+                    context + ": comprimento de 'p_t' incompatível com 't' para uma cor em " + json_path);
+            }
+            if (ts.f_t[c].size() != ntimes) {
+                throw std::runtime_error(
+                    context + ": comprimento de 'f_t' incompatível com 't' para uma cor em " + json_path);
+            }
+        }
+
+        if (ts.num_colors <= 0) {
+            ts.num_colors = static_cast<int>(ts.p_t.size());
+        }
+
+        if (ts.num_colors != static_cast<int>(ts.p_t.size())) {
+            throw std::runtime_error(
+                context + ": num_colors incompatível com tamanho de 'p_t' em " + json_path);
+        }
+    };
 
     if (j.contains("time_series") || j.contains("ts_out")) {
         const json* root = nullptr;
@@ -824,10 +874,16 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
         ts.t = (*root)["t"].get<std::vector<int>>();
         ts.p_t = (*root)["p_t"].get<std::vector<std::vector<double>>>();
 
-        if (root->contains("Nt")) {
-            ts.Nt = (*root)["Nt"].get<std::vector<std::vector<int>>>();
+        if (root->contains("f_t")) {
+            ts.f_t = get_matrix_double((*root)["f_t"]);
+        } else if (root->contains("ft")) {
+            ts.f_t = get_matrix_double((*root)["ft"]);
+        } else if (root->contains("Nt")) {
+            // Compatibilidade apenas para leitura de arquivos antigos.
+            // No formato novo, esta matriz representa f(t), não N(t).
+            ts.f_t = get_matrix_double((*root)["Nt"]);
         } else {
-            ts.Nt.assign(ts.p_t.size(), std::vector<int>(ts.t.size(), 0));
+            ts.f_t.assign(ts.p_t.size(), std::vector<double>(ts.t.size(), 0.0));
         }
 
         if (root->contains("num_colors")) {
@@ -836,6 +892,13 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
             ts.num_colors = static_cast<int>(ts.p_t.size());
         }
 
+        if (root->contains("t_eq")) {
+            ts.t_eq = (*root)["t_eq"].get<int>();
+        } else if (j.contains("t_eq")) {
+            ts.t_eq = j["t_eq"].get<int>();
+        }
+
+        validate_timeseries_sizes("load_timeseries_from_json/time_series");
         return ts;
     }
 
@@ -865,8 +928,14 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
 
     ts.num_colors = num_colors;
     ts.p_t.assign(num_colors, {});
-    ts.Nt.assign(num_colors, {});
+    ts.f_t.assign(num_colors, {});
     std::vector<char> color_found(num_colors, 0);
+
+    if (j.contains("t_eq")) {
+        ts.t_eq = j["t_eq"].get<int>();
+    } else if (j.contains("percolation") && j["percolation"].contains("t_eq")) {
+        ts.t_eq = j["percolation"]["t_eq"].get<int>();
+    }
 
     bool t_initialized = false;
 
@@ -893,11 +962,19 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
         const std::vector<int> time = data["time"].get<std::vector<int>>();
         const std::vector<double> pt = data["pt"].get<std::vector<double>>();
 
-        std::vector<int> nt;
-        if (data.contains("nt")) {
-            nt = data["nt"].get<std::vector<int>>();
+        std::vector<double> ft;
+        if (data.contains("ft")) {
+            ft = get_vector_double(data["ft"]);
+        } else if (data.contains("f_t")) {
+            ft = get_vector_double(data["f_t"]);
+        } else if (data.contains("nt")) {
+            // Compatibilidade apenas para leitura de arquivos antigos.
+            // No formato novo, esta série representa f(t), não N(t).
+            ft = get_vector_double(data["nt"]);
+        } else if (data.contains("Nt")) {
+            ft = get_vector_double(data["Nt"]);
         } else {
-            nt.assign(time.size(), 0);
+            ft.assign(time.size(), 0.0);
         }
 
         if (time.size() != pt.size()) {
@@ -905,9 +982,9 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
                 "Comprimentos incompatíveis entre 'time' e 'pt' para color = " + std::to_string(color_1b));
         }
 
-        if (time.size() != nt.size()) {
+        if (time.size() != ft.size()) {
             throw std::runtime_error(
-                "Comprimentos incompatíveis entre 'time' e 'nt' para color = " + std::to_string(color_1b));
+                "Comprimentos incompatíveis entre 'time' e 'ft' para color = " + std::to_string(color_1b));
         }
 
         if (!t_initialized) {
@@ -925,7 +1002,7 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
         }
 
         ts.p_t[color_idx] = pt;
-        ts.Nt[color_idx] = nt;
+        ts.f_t[color_idx] = ft;
         color_found[color_idx] = 1;
     }
 
@@ -937,13 +1014,13 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
     for (int c = 0; c < num_colors; ++c) {
         if (!color_found[c]) {
             ts.p_t[c].assign(ts.t.size(), 0.0);
-            ts.Nt[c].assign(ts.t.size(), 0);
+            ts.f_t[c].assign(ts.t.size(), 0.0);
         }
     }
 
+    validate_timeseries_sizes("load_timeseries_from_json/results");
     return ts;
 }
-
 NetworkPattern load_encoded_network_from_npz(const std::string& npz_path)
 {
     cnpy::npz_t npz = cnpy::npz_load(npz_path);

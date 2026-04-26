@@ -19,7 +19,9 @@ public:
     void save_percolation_json(const PercolationSeries& ps,
                                const TimeSeries& ts,
                                const std::string& filename_json,
-                               bool sort_by_order) const;
+                               bool sort_by_order,
+                               double c,
+                               double f_T) const;
 
     void save_reanalysis_json(const ReanalysisResult& result,
                               const std::string& filename_json) const;

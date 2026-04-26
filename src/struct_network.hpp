@@ -88,10 +88,10 @@ struct NetworkPattern {
 };
 
 struct TimeSeries {
-    int num_colors;
-    int t_eq;
+    int num_colors = 0;
+    int t_eq = -1;
     std::vector<std::vector<double>> p_t;   // [cor][t]
-    std::vector<std::vector<int>> Nt;       // [cor][t]
+    std::vector<std::vector<double>> f_t;   // [cor][t], f_i(t) = N_i(t) / L^(dim-1)
     std::vector<int> t;                     // [t]
 };
 

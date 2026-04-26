@@ -16,6 +16,7 @@
 #include <utility>
 #include <stdexcept>
 #include <string>
+#include <optional>
 
 namespace rh = reanalysis_helpers;
 
@@ -42,8 +43,8 @@ int main(int argc, char* argv[]) {
         double pp0 = std::stod(argv[2]);
         int seed = std::stoi(argv[3]);
         std::string type_percolation = argv[4];
-        double k = std::stod(argv[5]);
-        int N_t = std::stoi(argv[6]);
+        double c = std::stod(argv[5]);
+        double f_T = std::stod(argv[6]);
         int dim = std::stoi(argv[7]);
         int num_colors = std::stoi(argv[8]);
         double rho_val = std::stod(argv[9]);
@@ -51,10 +52,6 @@ int main(int argc, char* argv[]) {
         std::string equilibration = argv[11];
 
         const bool animation = helpers::parse_bool(equilibration);
-
-        int type_N_t = 0;
-        double a = 0.0;
-        double alpha = 0.0;
 
         if (dim != 2 && dim != 3) {
             std::cerr << "[ERROR] dim must be 2 or 3.\n";
@@ -97,10 +94,14 @@ int main(int argc, char* argv[]) {
 
         int N_samples = 100000;
         const int SPECIES_FACTOR = 10000000;
+        int type_f_T = 0;
+        double a,alpha = 0.0;
+        //double alpha = 0.0;
+        
         network net_generator(N_samples, num_colors);
 
         NetworkPattern net = net_generator.animate_network(
-                dim, L, N_samples, k, N_t, type_N_t,
+                dim, L, N_samples, c, f_T, type_f_T,
                 p0, P0, a, alpha, type_percolation,
                 num_colors, rho, ts, ps, rng
         );
@@ -114,9 +115,9 @@ int main(int argc, char* argv[]) {
             network_posteq
         ] = creator.create_structure(
                 dim,
-                type_N_t,
-                N_t,
-                k,
+                type_f_T,
+                f_T,
+                c,
                 L,
                 num_colors,
                 a,
@@ -137,7 +138,7 @@ int main(int argc, char* argv[]) {
                   << "num_colors=" << ts.num_colors
                   << ", t="  << ts.t.size()
                   << ", p_t="<< ts.p_t.size()
-                  << ", Nt=" << ts.Nt.size() << "\n";
+                  << ", f_t=" << ts.f_t.size() << "\n";
 
         std::cout << "seed = " << seed << std::endl;
 
@@ -155,32 +156,40 @@ int main(int argc, char* argv[]) {
         const std::string sample_base = base_name.str();
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         
-        std::string surfaces_filename = surfaces_dir + "/" + sample_base + ".npz";
-        EquilibrationCutNetworks cuts =
-        build_equilibration_cut_networks(
-            net,
-            ps.t_eq,
-            SPECIES_FACTOR
-        );
+        const bool has_percolation = !ps.color_percolation.empty();
+        const bool need_equilibration_cuts = animation || has_percolation;
 
-        SurfacesCuts surfaces =
-            extract_exposed_surfaces_from_cuts(cuts, SPECIES_FACTOR);
+        std::optional<EquilibrationCutNetworks> cuts;
+        if (need_equilibration_cuts) {
+            cuts.emplace(build_equilibration_cut_networks(
+                net,
+                ps.t_eq,
+                SPECIES_FACTOR
+            ));
+        }
 
-        saver.save_surfaces_as_npz(surfaces, surfaces_filename);
-        
+        if (has_percolation) {
+            std::string surfaces_filename = surfaces_dir + "/" + sample_base + ".npz";
+            SurfacesCuts surfaces =
+                extract_exposed_surfaces_from_cuts(*cuts, SPECIES_FACTOR);
+            saver.save_surfaces_as_npz(surfaces, surfaces_filename);
+        } else {
+            std::cout << "[INFO] No percolating species found; skipping surface file."
+                      << std::endl;
+        }
 
         if (animation == true) {
             std::string net_filename = network_dir + "/" + sample_base + ".npz";
             std::string net_posteq_filename = network_posteq + "/" + sample_base + ".npz";
             std::string net_preteq_filename = network_preteq + "/" + sample_base + ".npz";
             saver.save_network_as_npz(net, net_filename);
-            saver.save_network_as_npz(cuts.pre_teq, net_preteq_filename);
+            saver.save_network_as_npz(cuts->pre_teq, net_preteq_filename);
 
             // NPZ da rede post_teq
-            saver.save_network_as_npz(cuts.post_teq, net_posteq_filename);
+            saver.save_network_as_npz(cuts->post_teq, net_posteq_filename);
         }
 
-        saver.save_percolation_json(ps, ts, json_filename, true);
+        saver.save_percolation_json(ps, ts, json_filename, true, c, f_T);
 
         return 0;
     }

@@ -382,7 +382,9 @@ void save_data::save_network_as_npz(const SparseSubgraph& net,
 void save_data::save_percolation_json(const PercolationSeries& ps,
                                       const TimeSeries& ts,
                                       const std::string& filename_json,
-                                      const bool sort_by_order) const
+                                      const bool sort_by_order,
+                                      const double c,
+                                      const double f_T) const
 {
     if (!ps.percolation_order.empty()) {
         const size_t m = ps.percolation_order.size();
@@ -417,6 +419,8 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "    \"rho\": ";
     write_json_array(ofs, ps.rho);
     ofs << ",\n";
+    ofs << "    \"c\": " << std::setprecision(17) << c << ",\n";
+    ofs << "    \"f_T\": " << std::setprecision(17) << f_T << ",\n";
     ofs << "    \"t_eq\": " << ps.t_eq << "\n";
     ofs << "  },\n";
 
@@ -474,8 +478,8 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"pt\": ";
         write_json_row(ofs, ts.p_t, crow);
         ofs << ",\n";
-        ofs << "        \"nt\": ";
-        write_json_row(ofs, ts.Nt, crow);
+        ofs << "        \"ft\": ";
+        write_json_row(ofs, ts.f_t, crow);
         ofs << ",\n";
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
         ofs << "        \"M_size\": " << M_size << ",\n";

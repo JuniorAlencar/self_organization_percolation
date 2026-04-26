@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <utility>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -227,9 +228,17 @@ inline std::vector<double> moving_average(const std::vector<double>& x, const in
 
 inline std::vector<double> build_mean_p_series(const TimeSeries& ts)
 {
-    if (ts.t.empty()) return {};
-    if (ts.p_t.empty()) {
-        throw std::runtime_error("build_mean_p_series: p_t vazio");
+    if (ts.t.empty()) {
+        throw std::runtime_error("build_mean_p_series: TimeSeries.t vazio");
+    }
+    if (ts.num_colors <= 0) {
+        throw std::runtime_error("build_mean_p_series: TimeSeries.num_colors inválido");
+    }
+    if (static_cast<int>(ts.p_t.size()) != ts.num_colors) {
+        throw std::runtime_error("build_mean_p_series: p_t.size() incompatível com num_colors");
+    }
+    if (static_cast<int>(ts.f_t.size()) != ts.num_colors) {
+        throw std::runtime_error("build_mean_p_series: f_t.size() incompatível com num_colors");
     }
 
     const std::size_t T = ts.t.size();
@@ -237,10 +246,16 @@ inline std::vector<double> build_mean_p_series(const TimeSeries& ts)
 
     for (const auto& row : ts.p_t) {
         if (row.size() != T) {
-            throw std::runtime_error("build_mean_p_series: linhas de p_t com tamanhos diferentes");
+            throw std::runtime_error("build_mean_p_series: linhas de p_t com tamanhos diferentes de t");
         }
         for (std::size_t i = 0; i < T; ++i) {
             p_mean[i] += row[i];
+        }
+    }
+
+    for (const auto& row : ts.f_t) {
+        if (row.size() != T) {
+            throw std::runtime_error("build_mean_p_series: linhas de f_t com tamanhos diferentes de t");
         }
     }
 
@@ -303,15 +318,28 @@ inline int estimate_t_eq_from_timeseries(const TimeSeries& ts,
 } // anonymous namespace
 
 
-double network::type_Nt_create(const int type_N_t, const int t_i, const double a, const double alpha){
-    if(type_N_t == 0) return N_t;
-    else if (type_N_t == 1) return a*pow(t_i, alpha);
-    throw std::invalid_argument("Invalid type_N_t value: " + std::to_string(type_N_t));
+double network::target_fT_create(const int type_f_T,
+                                const int t_i,
+                                const double f_T,
+                                const double a,
+                                const double alpha)
+{
+    if (type_f_T == 0) return f_T;
+    if (type_f_T == 1) return a * std::pow(t_i, alpha);
+    throw std::invalid_argument("Invalid type_f_T value: " + std::to_string(type_f_T));
 }
 
-double network::generate_p(const int type_N_t, const double p_t, const int t_i, const int N_current, const double k, const double a, const double alpha) {
-    double N_T = type_Nt_create(type_N_t, t_i, a, alpha);
-    double p_next = p_t + k * (N_T - N_current);
+double network::generate_p(const int type_f_T,
+                           const double p_t,
+                           const int t_i,
+                           const double f_current,
+                           const double c,
+                           const double f_T,
+                           const double a,
+                           const double alpha)
+{
+    const double f_target = target_fT_create(type_f_T, t_i, f_T, a, alpha);
+    double p_next = p_t + c * (f_target - f_current);
 
     if (p_next > 1.0) p_next = 1.0;
     if (p_next < 0.0) p_next = 0.0;
@@ -321,12 +349,13 @@ double network::generate_p(const int type_N_t, const double p_t, const int t_i, 
 
 NetworkPattern network::create_network(
     const int dim, const int lenght_network, const int num_of_samples,
-    const double k, const double N_t, const int type_N_t,
+    const double c_value, const double f_T, const int type_f_T,
     const std::vector<double> p0, const double P0, const double a, const double alpha,
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
     TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
 {
-    this->N_t = N_t;
+    this->c = c_value;
+    this->f_T = f_T;
 
     const GridRegular grid(dim, lenght_network);
     const std::vector<int> shape = (dim == 2)
@@ -335,16 +364,18 @@ NetworkPattern network::create_network(
 
     const bool is_node = (type_percolation == "node");
     const long long base_size = compute_base_size(grid);
+    const double norm_factor = static_cast<double>(base_size);
 
     NetworkPattern net(dim, shape, num_colors, rho);
 
     std::vector<std::vector<double>> p_series(num_colors);
-    std::vector<std::vector<int>>    Nt_series(num_colors);
+    std::vector<std::vector<double>> f_series(num_colors);
     std::vector<int>                 t_list;
     t_list.reserve(num_of_samples);
 
     std::vector<double> p_curr = p0;
     std::vector<int>    N_current(num_colors, 0);
+    std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
     std::vector<int>    parent(grid.total_size, -2);
     std::vector<int>    frontier;
@@ -353,12 +384,14 @@ NetworkPattern network::create_network(
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
-    auto commit_step = [&](const int t_k, const std::vector<double>& p_vec, const std::vector<int>& Nt_vec)
+    auto commit_step = [&](const int t_k,
+                           const std::vector<double>& p_vec,
+                           const std::vector<double>& f_vec)
     {
         t_list.push_back(t_k);
         for (int c = 0; c < num_colors; ++c) {
             p_series[c].push_back(p_vec[c]);
-            Nt_series[c].push_back(Nt_vec[c]);
+            f_series[c].push_back(f_vec[c]);
         }
     };
 
@@ -401,7 +434,10 @@ NetworkPattern network::create_network(
     ps_out.percolation_order.clear();
     ps_out.M_size_at_perc.clear();
 
-    commit_step(0, p_curr, N_current);
+    for (int c = 0; c < num_colors; ++c) {
+        f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
+    }
+    commit_step(0, p_curr, f_current);
 
     int order_ctr = 0;
     std::vector<bool> percolated(num_colors, false);
@@ -501,6 +537,7 @@ NetworkPattern network::create_network(
 
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
+        std::fill(f_current.begin(), f_current.end(), 0.0);
         next_frontier.clear();
 
         for (const int idx : frontier) {
@@ -537,7 +574,6 @@ NetworkPattern network::create_network(
 
                     if (!percolated[cor_idx] && h == lenght_network - 1) {
                         percolated[cor_idx] = true;
-                        finished[cor_idx] = true;
                         top_site_per_color[cor_idx] = viz_idx;
                         percolation_rank[cor_idx] = ++order_ctr;
                     }
@@ -547,10 +583,30 @@ NetworkPattern network::create_network(
             });
         }
 
-        // Se a espécie não percolou e N(t)=0, ela morreu e deve ser ignorada
         for (int c = 0; c < num_colors; ++c) {
-            if (!percolated[c] && N_current[c] == 0) {
-                died[c] = true;
+            f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
+        }
+
+        if (t < 10 || t % 100 == 0) {
+            std::cout << "[" << type_percolation << "] t = " << t;
+            for (int c = 0; c < num_colors; ++c) {
+                std::cout
+                    << ", p" << (c + 1) << "(t)=" << p_curr[c]
+                    << ", f" << (c + 1) << "(t)="
+                    << f_current[c]
+                    << " max" << (c + 1) << "(t)=" << max_heights[c];
+            }
+            std::cout << '\n';
+        }
+
+        // Se a espécie não cresceu neste passo, então f_i(t) = 0.
+        // Caso ainda não tenha percolado, ela morreu; caso já tenha percolado,
+        // apenas finalizou o crescimento sem ser congelada no instante de percolação.
+        for (int c = 0; c < num_colors; ++c) {
+            if (f_current[c] <= 0.0) {
+                if (!percolated[c]) {
+                    died[c] = true;
+                }
                 finished[c] = true;
             }
         }
@@ -559,7 +615,7 @@ NetworkPattern network::create_network(
         bool all_percolated = true;
         bool any_dead = false;
         bool any_percolated = false;
-        bool all_finished = true;
+        bool all_terminal = true;
 
         for (int c = 0; c < num_colors; ++c) {
             if (!died[c]) {
@@ -574,8 +630,13 @@ NetworkPattern network::create_network(
                 any_percolated = true;
             }
 
-            if (!finished[c]) {
-                all_finished = false;
+            // Estado terminal para a simulação global:
+            // - percolated[c] == true: a espécie já atingiu o topo;
+            // - died[c] == true: a espécie não tem mais crescimento, f_i(t)=0.
+            // Espécies percoladas continuam crescendo enquanto a simulação global
+            // não terminou, mas para o critério global elas já contam como terminais.
+            if (!percolated[c] && !died[c]) {
+                all_terminal = false;
             }
         }
 
@@ -586,9 +647,10 @@ NetworkPattern network::create_network(
         // 2) todas percolaram
         const bool stop_all_percolated = all_percolated;
 
-        // 3) algumas percolaram e o restante morreu
+        // 3) percolação parcial: pelo menos uma espécie percolou e todas as
+        // demais espécies que não percolaram já morreram.
         const bool stop_partial_percolation =
-            all_finished && any_percolated && any_dead;
+            all_terminal && any_percolated && any_dead;
 
         if (stop_all_dead || stop_all_percolated || stop_partial_percolation) {
             ps_out.color_percolation.clear();
@@ -650,32 +712,31 @@ NetworkPattern network::create_network(
             break;
         }
 
-        if (t < 10 || t % 100 == 0) {
-            std::cout << "[" << type_percolation << "] t = " << t;
-            for (int c = 0; c < num_colors; ++c) {
-                std::cout
-                    << ", p" << (c + 1) << "(t)=" << p_curr[c]
-                    << ", N_t" << (c + 1) << "(t)=" << N_current[c]
-                    << " max" << (c + 1) << "(t)=" << max_heights[c];
-            }
-            std::cout << '\n';
-        }
 
         std::vector<double> p_next(num_colors);
         for (int c = 0; c < num_colors; ++c) {
             p_next[c] = finished[c] ? p_curr[c]
-                                    : generate_p(type_N_t, p_curr[c], t, N_current[c], k, a, alpha);
+                                    : generate_p(type_f_T, p_curr[c], t, f_current[c], c_value, f_T, a, alpha);
         }
 
-        commit_step(t, p_next, N_current);
+        commit_step(t, p_next, f_current);
         frontier.swap(next_frontier);
         p_curr.swap(p_next);
     }
 
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
-    ts_out.Nt  = std::move(Nt_series);
+    ts_out.f_t = std::move(f_series);
     ts_out.t   = std::move(t_list);
+    ts_out.t_eq = estimate_t_eq_from_timeseries(
+        ts_out,
+        25,      // smoothing_window
+        25,      // min_stable_steps
+        2.0e-2,  // rel_tol
+        1.0e-6,  // abs_tol
+        2.0      // sigma_multiplier
+    );
+    ps_out.t_eq = ts_out.t_eq;
 
     ps_out.rho.clear();
     for (int i = 0; i < num_colors; ++i) {
@@ -689,12 +750,13 @@ NetworkPattern network::create_network(
 
 NetworkPattern network::animate_network(
     const int dim, const int lenght_network, const int num_of_samples,
-    const double k, const double N_t, const int type_N_t,
+    const double c_value, const double f_T, const int type_f_T,
     const std::vector<double> p0, const double P0, const double a, const double alpha,
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
     TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
 {
-    this->N_t = N_t;
+    this->c = c_value;
+    this->f_T = f_T;
 
     const GridRegular grid(dim, lenght_network);
     const std::vector<int> shape = (dim == 2)
@@ -703,6 +765,7 @@ NetworkPattern network::animate_network(
 
     const bool is_node = (type_percolation == "node");
     const long long base_size = compute_base_size(grid);
+    const double norm_factor = static_cast<double>(base_size);
 
     NetworkPattern net(dim, shape, num_colors, rho);
 
@@ -739,12 +802,13 @@ NetworkPattern network::animate_network(
     }
 
     std::vector<std::vector<double>> p_series(num_colors);
-    std::vector<std::vector<int>>    Nt_series(num_colors);
+    std::vector<std::vector<double>> f_series(num_colors);
     std::vector<int>                 t_list;
     t_list.reserve(num_of_samples);
 
     std::vector<double> p_curr = p0;
     std::vector<int>    N_current(num_colors, 0);
+    std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
     std::vector<int>    parent(grid.total_size, -2);
     std::vector<int>    top_site_per_color(num_colors, -1);
@@ -756,12 +820,12 @@ NetworkPattern network::animate_network(
 
     auto commit_step = [&](const int t_k,
                            const std::vector<double>& p_vec,
-                           const std::vector<int>& Nt_vec)
+                           const std::vector<double>& f_vec)
     {
         t_list.push_back(t_k);
         for (int c = 0; c < num_colors; ++c) {
             p_series[c].push_back(p_vec[c]);
-            Nt_series[c].push_back(Nt_vec[c]);
+            f_series[c].push_back(f_vec[c]);
         }
     };
 
@@ -817,7 +881,10 @@ NetworkPattern network::animate_network(
         }
     }
 
-    commit_step(0, p_curr, N_current);
+    for (int c = 0; c < num_colors; ++c) {
+        f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
+    }
+    commit_step(0, p_curr, f_current);
 
     int order_ctr = 0;
     std::vector<bool> percolated(num_colors, false);
@@ -986,6 +1053,7 @@ NetworkPattern network::animate_network(
 
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
+        std::fill(f_current.begin(), f_current.end(), 0.0);
         next_frontier.clear();
 
         for (const int idx : frontier) {
@@ -1024,7 +1092,6 @@ NetworkPattern network::animate_network(
 
                     if (!percolated[cor_idx] && h == lenght_network - 1) {
                         percolated[cor_idx] = true;
-                        finished[cor_idx] = true;
                         top_site_per_color[cor_idx] = viz_idx;
                         percolation_rank[cor_idx] = ++order_ctr;
                     }
@@ -1037,8 +1104,26 @@ NetworkPattern network::animate_network(
         }
 
         for (int c = 0; c < num_colors; ++c) {
-            if (!percolated[c] && N_current[c] == 0) {
-                died[c] = true;
+            f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
+        }
+
+        if (t < 10 || t % 100 == 0) {
+            std::cout << "[" << type_percolation << "] t = " << t;
+            for (int c = 0; c < num_colors; ++c) {
+                std::cout
+                    << ", p" << (c + 1) << "(t)=" << p_curr[c]
+                    << ", f" << (c + 1) << "(t)="
+                    << f_current[c]
+                    << " max" << (c + 1) << "(t)=" << max_heights[c];
+            }
+            std::cout << '\n';
+        }
+
+        for (int c = 0; c < num_colors; ++c) {
+            if (f_current[c] <= 0.0) {
+                if (!percolated[c]) {
+                    died[c] = true;
+                }
                 finished[c] = true;
             }
         }
@@ -1047,7 +1132,7 @@ NetworkPattern network::animate_network(
         bool all_percolated = true;
         bool any_dead = false;
         bool any_percolated = false;
-        bool all_finished = true;
+        bool all_terminal = true;
 
         for (int c = 0; c < num_colors; ++c) {
             if (!died[c]) {
@@ -1062,54 +1147,44 @@ NetworkPattern network::animate_network(
                 any_percolated = true;
             }
 
-            if (!finished[c]) {
-                all_finished = false;
+            if (!percolated[c] && !died[c]) {
+                all_terminal = false;
             }
         }
 
         const bool stop_all_dead = all_dead;
         const bool stop_all_percolated = all_percolated;
         const bool stop_partial_percolation =
-            all_finished && any_percolated && any_dead;
+            all_terminal && any_percolated && any_dead;
 
         if (stop_all_dead || stop_all_percolated || stop_partial_percolation) {
             finalize_global_metrics();
             break;
         }
 
-        if (t < 10 || t % 100 == 0) {
-            std::cout << "[" << type_percolation << "] t = " << t;
-            for (int c = 0; c < num_colors; ++c) {
-                std::cout
-                    << ", p" << (c + 1) << "(t)=" << p_curr[c]
-                    << ", N_t" << (c + 1) << "(t)=" << N_current[c]
-                    << " max" << (c + 1) << "(t)=" << max_heights[c];
-            }
-            std::cout << '\n';
-        }
 
         std::vector<double> p_next(num_colors);
         for (int c = 0; c < num_colors; ++c) {
             p_next[c] = finished[c]
                 ? p_curr[c]
-                : generate_p(type_N_t, p_curr[c], t, N_current[c], k, a, alpha);
+                : generate_p(type_f_T, p_curr[c], t, f_current[c], c_value, f_T, a, alpha);
         }
 
-        commit_step(t, p_next, N_current);
+        commit_step(t, p_next, f_current);
         frontier.swap(next_frontier);
         p_curr.swap(p_next);
     }
 
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
-    ts_out.Nt  = std::move(Nt_series);
+    ts_out.f_t = std::move(f_series);
     ts_out.t   = std::move(t_list);
 
     if (!global_metrics_finalized) {
         finalize_global_metrics();
     }
 
-    ps_out.t_eq = estimate_t_eq_from_timeseries(
+    ts_out.t_eq = estimate_t_eq_from_timeseries(
         ts_out,
         25,      // smoothing_window
         25,      // min_stable_steps
@@ -1117,6 +1192,7 @@ NetworkPattern network::animate_network(
         1.0e-6,  // abs_tol
         2.0      // sigma_multiplier
     );
+    ps_out.t_eq = ts_out.t_eq;
 
     for (int c = 0; c < num_colors; ++c) {
         if (ps_out.sp_len[c] < 0 || ps_out.sp_path_lin[c].empty()) {
