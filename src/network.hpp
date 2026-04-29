@@ -85,9 +85,12 @@ public:
         PercolationSeries& ps_out,
         all_random& rng);
 
-    NetworkPattern create_shortest_paths_map(
-        const NetworkPattern& net,
-        const PercolationSeries& ps_out);
+    NetworkPattern filter_percolating_clusters_from_encoded(
+        const NetworkPattern& encoded_net) const;
+
+    // NetworkPattern create_shortest_paths_map(
+    //     const NetworkPattern& net,
+    //     const PercolationSeries& ps_out);
 };
 
 #endif // network_hpp

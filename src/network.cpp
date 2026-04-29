@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr int ANIMATION_SPECIES_FACTOR = 10000000;
+
 struct GridRegular {
     int dim;
     int SX;
@@ -773,7 +775,7 @@ NetworkPattern network::animate_network(
     //   -1 : nunca ativado
     //    0 : bloqueado no caso node
     // NUMBER*(c+1) + t : espécie c ativada no tempo t
-    const int SPECIES_FACTOR = 10000000;
+    const int SPECIES_FACTOR = ANIMATION_SPECIES_FACTOR;
 
     if (num_of_samples >= SPECIES_FACTOR) {
         throw std::runtime_error(
@@ -1283,40 +1285,149 @@ NetworkPattern network::animate_network(
     return net_animation;
 }  
 
-NetworkPattern network::create_shortest_paths_map(const NetworkPattern& net,
-                                                  const PercolationSeries& ps_out)
+NetworkPattern network::filter_percolating_clusters_from_encoded(
+    const NetworkPattern& encoded_net) const
 {
-    NetworkPattern sp_net(net.dim, net.shape, net.num_colors, net.rho);
-
-    if (sp_net.data.size() != net.data.size()) {
-        throw std::runtime_error("[create_shortest_paths_map] tamanho de data inconsistente");
+    if (encoded_net.dim != 2 && encoded_net.dim != 3) {
+        throw std::invalid_argument(
+            "[filter_percolating_clusters_from_encoded] dim deve ser 2 ou 3");
     }
 
-    std::fill(sp_net.data.begin(), sp_net.data.end(), 0);
-
-    const int num_colors = net.num_colors;
-    if (static_cast<int>(ps_out.sp_path_lin.size()) < num_colors ||
-        static_cast<int>(ps_out.sp_len.size())      < num_colors) {
-        throw std::runtime_error("[create_shortest_paths_map] PercolationSeries inconsistente");
+    if (static_cast<int>(encoded_net.shape.size()) != encoded_net.dim) {
+        throw std::invalid_argument(
+            "[filter_percolating_clusters_from_encoded] shape incompatível com dim");
     }
 
-    const std::size_t N = sp_net.data.size();
+    const int L = encoded_net.shape[0];
+    if (L <= 0) {
+        throw std::invalid_argument(
+            "[filter_percolating_clusters_from_encoded] L inválido");
+    }
 
-    for (int c = 0; c < num_colors; ++c) {
-        if (ps_out.sp_len[c] <= 0) continue;
-
-        const std::vector<int>& path = ps_out.sp_path_lin[c];
-        if (path.empty()) continue;
-
-        const int color_label = (num_colors == 1 ? 1 : (c + 2));
-
-        for (int idx : path) {
-            if (idx < 0 || static_cast<std::size_t>(idx) >= N) {
-                continue;
-            }
-            sp_net.data[idx] = color_label;
+    if (encoded_net.dim == 2) {
+        if (encoded_net.shape[1] != L) {
+            throw std::invalid_argument(
+                "[filter_percolating_clusters_from_encoded] rede 2D deve ter shape {L,L}");
+        }
+    } else {
+        if (encoded_net.shape[1] != L || encoded_net.shape[2] != L) {
+            throw std::invalid_argument(
+                "[filter_percolating_clusters_from_encoded] rede 3D deve ter shape {L,L,L}");
         }
     }
 
-    return sp_net;
+    const GridRegular grid(encoded_net.dim, L);
+
+    if (static_cast<int>(encoded_net.data.size()) != grid.total_size) {
+        throw std::runtime_error(
+            "[filter_percolating_clusters_from_encoded] tamanho de data inconsistente com shape");
+    }
+
+    NetworkPattern out(encoded_net.dim, encoded_net.shape,
+                       encoded_net.num_colors, encoded_net.rho);
+    out.seed = encoded_net.seed;
+    std::fill(out.data.begin(), out.data.end(), static_cast<NetworkPattern::state_t>(-1));
+
+    const int num_colors = encoded_net.num_colors;
+    const int top_coord = (encoded_net.dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
+
+    auto color_idx_from_encoded = [&](const int idx) -> int
+    {
+        const long long code =
+            static_cast<long long>(encoded_net.data[static_cast<std::size_t>(idx)]);
+
+        const DecodedValue dv = decode_animation_value(code, ANIMATION_SPECIES_FACTOR);
+        if (dv.never_activated || dv.blocked) return -1;
+        if (dv.color_idx < 0 || dv.color_idx >= num_colors) return -1;
+        return dv.color_idx;
+    };
+
+    std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
+    std::vector<int> stack;
+    std::vector<int> component;
+
+    for (int start = 0; start < grid.total_size; ++start) {
+        if (visited[static_cast<std::size_t>(start)]) continue;
+
+        const int color_idx = color_idx_from_encoded(start);
+        if (color_idx < 0) continue;
+
+        bool touches_base = false;
+        bool touches_top = false;
+
+        stack.clear();
+        component.clear();
+
+        stack.push_back(start);
+        visited[static_cast<std::size_t>(start)] = 1;
+
+        while (!stack.empty()) {
+            const int u = stack.back();
+            stack.pop_back();
+
+            component.push_back(u);
+
+            const int h = grid.grow_coord(u);
+            if (h == 0) touches_base = true;
+            if (h == top_coord) touches_top = true;
+
+            grid.for_each_neighbor(u, [&](const int v) {
+                if (v < 0) return;
+                if (visited[static_cast<std::size_t>(v)]) return;
+                if (color_idx_from_encoded(v) != color_idx) return;
+
+                visited[static_cast<std::size_t>(v)] = 1;
+                stack.push_back(v);
+            });
+        }
+
+        if (!touches_base || !touches_top) {
+            continue;
+        }
+
+        for (const int idx : component) {
+            out.data[static_cast<std::size_t>(idx)] =
+                encoded_net.data[static_cast<std::size_t>(idx)];
+        }
+    }
+
+    return out;
 }
+
+// NetworkPattern network::create_shortest_paths_map(const NetworkPattern& net,
+//                                                   const PercolationSeries& ps_out)
+// {
+//     NetworkPattern sp_net(net.dim, net.shape, net.num_colors, net.rho);
+
+//     if (sp_net.data.size() != net.data.size()) {
+//         throw std::runtime_error("[create_shortest_paths_map] tamanho de data inconsistente");
+//     }
+
+//     std::fill(sp_net.data.begin(), sp_net.data.end(), 0);
+
+//     const int num_colors = net.num_colors;
+//     if (static_cast<int>(ps_out.sp_path_lin.size()) < num_colors ||
+//         static_cast<int>(ps_out.sp_len.size())      < num_colors) {
+//         throw std::runtime_error("[create_shortest_paths_map] PercolationSeries inconsistente");
+//     }
+
+//     const std::size_t N = sp_net.data.size();
+
+//     for (int c = 0; c < num_colors; ++c) {
+//         if (ps_out.sp_len[c] <= 0) continue;
+
+//         const std::vector<int>& path = ps_out.sp_path_lin[c];
+//         if (path.empty()) continue;
+
+//         const int color_label = (num_colors == 1 ? 1 : (c + 2));
+
+//         for (int idx : path) {
+//             if (idx < 0 || static_cast<std::size_t>(idx) >= N) {
+//                 continue;
+//             }
+//             sp_net.data[idx] = color_label;
+//         }
+//     }
+
+//     return sp_net;
+// }

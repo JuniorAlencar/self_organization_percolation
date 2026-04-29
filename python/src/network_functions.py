@@ -446,11 +446,11 @@ def _plot_points_df_same_style(
     color_map = _build_fixed_color_map(unique_colors, nc)
 
     if visual_profile == "full":
-        darken_factor = 1.00
-        edge_width = 1.0
+        darken_factor = 0.90
+        edge_width = 0.4
     elif visual_profile == "cut":
-        darken_factor = 0.82
-        edge_width = 1.4
+        darken_factor = 0.90
+        edge_width = 0.5
     else:
         raise ValueError("visual_profile deve ser 'full' ou 'cut'.")
 
@@ -835,3 +835,120 @@ def check_codification(arquivo):
             print("Rede codificada.")
         else:
             print("Rede não codificada.")
+
+def plot_3D_full_codec_by_species(path_dir, filename, path_out_dir, figure_name,
+                                  L, nc, seed=None,
+                                  time_base=TIME_BASE_3D,
+                                  show_base=False,
+                                  positions_file=None,
+                                  force_rebuild_positions=False,
+                                  colors_to_plot=None,
+                                  outline_mode="full",
+                                  visual_profile="full",
+                                  filename_prefix=None):
+    """
+    Plota a rede codificada separando uma figura para cada espécie/cor.
+
+    Uso típico:
+        - Se o arquivo de entrada já contém apenas os clusters percolantes,
+          cada figura mostrará o cluster percolante daquela espécie.
+        - Se o arquivo contém a rede completa, cada figura mostrará toda a
+          espécie correspondente.
+
+    Args:
+        path_dir: pasta onde está o .npz codificado.
+        filename: nome do arquivo .npz codificado.
+        path_out_dir: pasta onde as figuras serão salvas.
+        figure_name: nome-base da figura Mayavi.
+        L: tamanho linear da rede.
+        nc: número de cores/espécies.
+        seed: opcional.
+        time_base: base usada na codificação cor/tempo.
+        show_base: se True, câmera olhando pela base.
+        positions_file: cache .parquet/.csv das posições.
+        force_rebuild_positions: força reconstrução do cache.
+        colors_to_plot: lista opcional de cores específicas. Ex: [2, 3, 4].
+        outline_mode: "full" mantém caixa LxLxL; "tight" ajusta ao cluster.
+        visual_profile: "full" ou "cut".
+        filename_prefix: prefixo opcional dos arquivos salvos.
+
+    Returns:
+        dict {color: path_out}
+    """
+    os.makedirs(path_out_dir, exist_ok=True)
+
+    if positions_file is None:
+        base = os.path.splitext(filename)[0]
+        positions_file = os.path.join(path_out_dir, f"{base}_positions.parquet")
+
+    df, meta = load_or_create_positions_codec(
+        path_dir=path_dir,
+        filename=filename,
+        output_data=positions_file,
+        time_base=time_base,
+        force_rebuild=force_rebuild_positions
+    )
+
+    if seed is None:
+        seed = int(meta.get("seed", -1))
+
+    df = df.copy()
+    df = df[df["color"] > 0].copy()
+
+    if df.empty:
+        raise ValueError("Nenhum ponto ativo encontrado para plotar.")
+
+    unique_colors = sorted(df["color"].astype(int).unique().tolist())
+
+    if colors_to_plot is None:
+        colors_to_plot = unique_colors
+    else:
+        colors_to_plot = [int(c) for c in colors_to_plot]
+
+    missing_colors = sorted(set(colors_to_plot) - set(unique_colors))
+    if missing_colors:
+        print(
+            f"[WARN] As cores {missing_colors} não foram encontradas no arquivo. "
+            f"Cores disponíveis: {unique_colors}"
+        )
+
+    if filename_prefix is None:
+        filename_prefix = os.path.splitext(filename)[0]
+
+    saved_paths = {}
+
+    for color in colors_to_plot:
+        if color not in unique_colors:
+            continue
+
+        df_color = df[df["color"].astype(int) == color].copy()
+
+        if df_color.empty:
+            continue
+
+        path_out = os.path.join(
+            path_out_dir,
+            f"{filename_prefix}_species_{color}.png"
+        )
+
+        fig_name_color = f"{figure_name}_species_{color}"
+
+        _plot_points_df_same_style(
+            df=df_color,
+            L=L,
+            nc=nc,
+            path_out=path_out,
+            specific_color=color,
+            show_base=show_base,
+            outline_mode=outline_mode,
+            figure_name=fig_name_color,
+            visual_profile=visual_profile
+        )
+
+        saved_paths[color] = path_out
+
+    print("Figuras salvas por espécie:")
+    for color, path in saved_paths.items():
+        print(f"  color={color}: {path}")
+
+    return saved_paths

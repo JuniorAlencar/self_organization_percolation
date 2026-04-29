@@ -182,14 +182,20 @@ int main(int argc, char* argv[]) {
             std::string net_filename = network_dir + "/" + sample_base + ".npz";
             std::string net_posteq_filename = network_posteq + "/" + sample_base + ".npz";
             std::string net_preteq_filename = network_preteq + "/" + sample_base + ".npz";
+            std::string net_PERCOLATION_filename = network_dir + "/" + sample_base + "_PERCOLATION" + ".npz";
+            NetworkPattern net_perc_clusters =
+                net_generator.filter_percolating_clusters_from_encoded(net);
+
             saver.save_network_as_npz(net, net_filename);
+            // Network Percolation
+            saver.save_network_as_npz(net_perc_clusters, net_PERCOLATION_filename);
             saver.save_network_as_npz(cuts->pre_teq, net_preteq_filename);
 
             // NPZ da rede post_teq
             saver.save_network_as_npz(cuts->post_teq, net_posteq_filename);
         }
 
-        saver.save_percolation_json(ps, ts, json_filename, true, c, f_T);
+        saver.save_percolation_json(ps, ts, json_filename, true);
 
         return 0;
     }
