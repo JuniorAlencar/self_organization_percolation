@@ -139,20 +139,33 @@ def _write_positions_table(df, file_path):
 
 
 def _read_codec_metadata(path_dir, filename):
+    # Prefer compact .bin metadata
     fn = os.path.join(path_dir, filename)
+    base, ext = os.path.splitext(fn)
+    if ext.lower() == ".npz":
+        binf = base + ".bin"
+        if os.path.exists(binf):
+            info = _read_compact_bin(binf)
+            N = info["N"]
+            L3 = int(round(float(N) ** (1.0 / 3.0)))
+            if L3 * L3 * L3 == N:
+                return {"dim": 3, "shape": (L3, L3, L3)}
+            else:
+                L2 = int(round(np.sqrt(N)))
+                return {"dim": 2, "shape": (L2, L2)}
 
-    with np.load(fn, allow_pickle=False) as npz:
-        meta = {
-            "dim": int(np.asarray(npz["dim"]).item()),
-            "shape": tuple(np.asarray(npz["shape"], dtype=np.int64).tolist()),
-            "keys": list(npz.keys()),
-        }
+    # try direct .bin
+    if ext.lower() == ".bin" and os.path.exists(fn):
+        info = _read_compact_bin(fn)
+        N = info["N"]
+        L3 = int(round(float(N) ** (1.0 / 3.0)))
+        if L3 * L3 * L3 == N:
+            return {"dim": 3, "shape": (L3, L3, L3)}
+        else:
+            L2 = int(round(np.sqrt(N)))
+            return {"dim": 2, "shape": (L2, L2)}
 
-        for extra_key in ("num_colors", "seed", "rho"):
-            if extra_key in npz:
-                meta[extra_key] = npz[extra_key]
-
-    return meta
+    raise FileNotFoundError(f"No compact .bin metadata available for {fn}")
 
 def _camera_plot_3D_full(fig, L, show_base=False):
     if show_base:
@@ -198,189 +211,226 @@ def read_network_codec(path_dir, filename, fill_value=0):
     Retorna:
       network[x, y, z]
     """
+    # Read the compact .bin (preferred) and return a dense network array plus metadata
     fn = os.path.join(path_dir, filename)
-
-    with np.load(fn, allow_pickle=False) as npz:
-        keys = list(npz.keys())
-        dim = int(np.asarray(npz["dim"]).item())
-        shape = tuple(np.asarray(npz["shape"], dtype=np.int64).tolist())
-
-        metadata = {
-            "dim": dim,
-            "shape": shape,
-            "keys": keys,
-        }
-
-        for extra_key in ("num_colors", "seed", "rho"):
-            if extra_key in npz:
-                metadata[extra_key] = npz[extra_key]
-
-        if dim == 2:
-            if len(shape) != 2:
-                raise ValueError(f"dim=2, mas shape={shape}")
-
-            Ny, Nx = map(int, shape)
-            expected = Ny * Nx
-
-            if "data" in npz:
-                raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
-            elif "active_idx" in npz and "active_val" in npz:
-                raw = np.full(expected, fill_value, dtype=np.int64)
-                active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
-                active_val = np.asarray(npz["active_val"], dtype=np.int64)
-                raw[active_idx] = active_val
-            else:
-                raise KeyError(
-                    f"Arquivo {fn} não possui nem 'data' nem ('active_idx', 'active_val'). "
-                    f"Chaves encontradas: {keys}"
-                )
-
-            if raw.size != expected:
-                raise ValueError(
-                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
-                )
-
-            # raw[y, x] -> network[x, y]
-            network = raw.reshape((Ny, Nx), order="C").T
-
-        elif dim == 3:
-            if len(shape) != 3:
-                raise ValueError(f"dim=3, mas shape={shape}")
-
-            Ny, Nx, Nz = map(int, shape)
-            expected = Ny * Nx * Nz
-
-            if "data" in npz:
-                raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
-            elif "active_idx" in npz and "active_val" in npz:
-                raw = np.full(expected, fill_value, dtype=np.int64)
-                active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
-                active_val = np.asarray(npz["active_val"], dtype=np.int64)
-                raw[active_idx] = active_val
-            else:
-                raise KeyError(
-                    f"Arquivo {fn} não possui nem 'data' nem ('active_idx', 'active_val'). "
-                    f"Chaves encontradas: {keys}"
-                )
-
-            if raw.size != expected:
-                raise ValueError(
-                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
-                )
-
-            # raw[z, y, x] -> network[x, y, z]
-            network = raw.reshape((Nz, Ny, Nx), order="C").transpose(2, 1, 0)
-
+    base, ext = os.path.splitext(fn)
+    if ext.lower() == ".npz":
+        candidate = base + ".bin"
+        if os.path.exists(candidate):
+            fn_use = candidate
         else:
-            raise ValueError(f"dim inválido em {fn}: {dim}")
+            fn_use = fn
+    else:
+        fn_use = fn
 
-    return network, metadata
+    info = _read_compact_bin(fn_use)
+    N = info["N"]
+    species = info["species"].astype(np.int64)
+    pos = info["pos_flat"].astype(np.int64)
+
+    # infer shape heuristics: prefer cube then square
+    L3 = int(round(float(N) ** (1.0 / 3.0)))
+    if L3 * L3 * L3 == N:
+        dim = 3
+        SX = SY = SZ = L3
+    else:
+        L2 = int(round(np.sqrt(N)))
+        if L2 * L2 == N:
+            dim = 2
+            SX = SY = L2
+            SZ = 1
+        else:
+            raise ValueError(f"Cannot infer shape from N={N} in {fn_use}")
+
+    if dim == 2:
+        network = np.full((SX, SY), fill_value, dtype=np.int64)
+        mask = species > 0
+        idxs = pos[mask]
+        vals = species[mask]
+        x = (idxs % SX).astype(np.int64)
+        y = ((idxs // SX) % SY).astype(np.int64)
+        network[x, y] = vals
+    else:
+        network = np.full((SX, SY, SZ), fill_value, dtype=np.int64)
+        mask = species > 0
+        idxs = pos[mask]
+        vals = species[mask]
+        x = (idxs % SX).astype(np.int64)
+        y = ((idxs // SX) % SY).astype(np.int64)
+        z = (idxs // (SX * SY)).astype(np.int64)
+        network[x, y, z] = vals
+
+    meta = {"dim": dim, "shape": (SX, SY, SZ) if dim == 3 else (SY, SX)}
+    return network, meta
 
 
 TIME_BASE_3D = 10_000_000
 
-def positions_from_codec_npz(path_dir, filename, output_data=None, time_base=None):
+
+
+def load_or_create_positions_codec(path_dir, filename, output_data, time_base=None, force_rebuild=False):
     """
-    Lê o .npz codificado e devolve diretamente um DataFrame com
-    x, y, z, color, time.
-
-    Caso esparso:
-        usa active_idx / active_val e decodifica x,y,z diretamente
-        do índice linear antigo:
-            idx = x + SX * (y + SY * z)
-
-    Caso denso:
-        reconstrói como no read_network antigo.
-
-    Se output_data for informado, salva o dataframe final em .parquet ou .csv.
+    Se output_data existir, lê e retorna.
+    Se não existir, converte do .npz, salva e retorna.
     """
-    fn = os.path.join(path_dir, filename)
+    fn = _prefer_bin(filename)
+    out_path = output_data
 
-    with np.load(fn, allow_pickle=False) as npz:
-        keys = list(npz.keys())
-        dim = int(np.asarray(npz["dim"]).item())
-        shape = tuple(np.asarray(npz["shape"], dtype=np.int64).tolist())
-
-        meta = {
-            "dim": dim,
-            "shape": shape,
-            "keys": keys,
-        }
-        for extra_key in ("num_colors", "seed", "rho"):
-            if extra_key in npz:
-                meta[extra_key] = npz[extra_key]
-
-        if dim != 3:
-            raise ValueError("Esta função foi escrita para o caso 3D.")
-
-        if time_base is None:
-            if "active_val" in npz:
-                vmax = int(np.asarray(npz["active_val"]).max())
-            elif "data" in npz:
-                vmax = int(np.asarray(npz["data"]).max())
+    if (not force_rebuild) and out_path is not None and os.path.exists(out_path):
+        df = _read_positions_table(out_path)
+        # attempt to read metadata from companion .bin
+        base = os.path.splitext(os.path.join(path_dir, filename))[0]
+        binf = base + ".bin"
+        if os.path.exists(binf):
+            info = _read_compact_bin(binf)
+            N = info["N"]
+            L3 = int(round(float(N) ** (1.0 / 3.0)))
+            if L3 * L3 * L3 == N:
+                meta = {"dim": 3, "shape": (L3, L3, L3)}
             else:
-                raise KeyError("Arquivo sem 'data' e sem 'active_val'.")
-
-            if vmax >= 100_000_000:
-                time_base = 100_000_000
-            elif vmax >= 10_000_000:
-                time_base = 10_000_000
-            else:
-                raise ValueError(f"Não foi possível inferir time_base. vmax={vmax}")
-
-        if "active_idx" in npz and "active_val" in npz:
-            active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
-            encoded_vals = np.asarray(npz["active_val"], dtype=np.int64)
-
-            SX, SY, SZ = map(int, shape)
-
-            x = active_idx % SX
-            y = (active_idx // SX) % SY
-            z = active_idx // (SX * SY)
-
-            colors = encoded_vals // time_base
-            times = encoded_vals % time_base
-
-            df = pd.DataFrame({
-                "x": x.astype(np.int32),
-                "y": y.astype(np.int32),
-                "z": z.astype(np.int32),
-                "color": colors.astype(np.int32),
-                "time": times.astype(np.int64),
-            })
-
-        elif "data" in npz:
-            raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
-            SX, SY, SZ = map(int, shape)
-
-            expected = SX * SY * SZ
-            if raw.size != expected:
-                raise ValueError(
-                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
-                )
-
-            network = raw.reshape((SZ, SY, SX), order="C").transpose(2, 1, 0)
-
-            mask_active = network > 0
-            coords = np.argwhere(mask_active)
-            encoded_vals = network[mask_active].astype(np.int64, copy=False)
-
-            colors = encoded_vals // time_base
-            times = encoded_vals % time_base
-
-            df = pd.DataFrame({
-                "x": coords[:, 0].astype(np.int32),
-                "y": coords[:, 1].astype(np.int32),
-                "z": coords[:, 2].astype(np.int32),
-                "color": colors.astype(np.int32),
-                "time": times.astype(np.int64),
-            })
-
+                L2 = int(round(np.sqrt(N)))
+                meta = {"dim": 2, "shape": (L2, L2)}
         else:
-            raise KeyError(
-                f"Arquivo {fn} não possui nem ('active_idx','active_val') nem 'data'. "
-                f"Chaves encontradas: {keys}"
-            )
+            meta = {"dim": None, "shape": None}
+        return df, meta
+
+    return positions_from_compact_bin(path_dir, filename, output_data=output_data, time_base=time_base)
+    
+def _read_compact_bin(fn):
+    """Read compact NetworkCompact .bin created by the C++ code.
+
+    Binary layout (as produced by NetworkCompact::write_binary):
+      - magic uint32 (0x4E455447 'NETG')
+      - N uint32
+      - E uint64
+      - pos_flat: N x uint32
+      - species: N x uint8
+      - activation_time: N x uint32
+      - edge_offsets: (N+1) x uint32
+      - edges: E x uint32
+
+    Returns dict with keys: N, E, pos_flat (np.uint64), species (np.uint8), activation_time (np.uint32), edge_offsets, edges
+    """
+    import struct
+
+    with open(fn, "rb") as f:
+        hdr = f.read(4)
+        if len(hdr) < 4:
+            raise ValueError(f"File too small: {fn}")
+        magic = struct.unpack('<I', hdr)[0]
+        if magic != 0x4E455447:
+            raise ValueError(f"Bad magic in {fn}: {hex(magic)}")
+
+        N = struct.unpack('<I', f.read(4))[0]
+        E = struct.unpack('<Q', f.read(8))[0]
+
+        # read arrays
+        pos_flat = np.fromfile(f, dtype=np.uint32, count=N).astype(np.int64)
+        species = np.fromfile(f, dtype=np.uint8, count=N)
+        activation_time = np.fromfile(f, dtype=np.uint32, count=N).astype(np.int64)
+
+        edge_offsets = np.fromfile(f, dtype=np.uint32, count=(N + 1)).astype(np.int64)
+        edges = np.fromfile(f, dtype=np.uint32, count=E).astype(np.int64)
+
+    return {
+        "N": int(N),
+        "E": int(E),
+        "pos_flat": pos_flat,
+        "species": species,
+        "activation_time": activation_time,
+        "edge_offsets": edge_offsets,
+        "edges": edges,
+    }
+
+
+def _infer_shape_from_pos(pos):
+    """Infer grid shape from maximum linear index in pos array.
+
+    Returns (dim, SX, SY, SZ) where SZ==1 for 2D.
+    """
+    if pos.size == 0:
+        raise ValueError("Empty pos array; cannot infer shape")
+    max_idx = int(pos.max())
+    # minimal candidate size is max_idx+1
+    tot = int(max_idx) + 1
+
+    # try cube
+    L3 = int(round(float(tot) ** (1.0 / 3.0)))
+    if L3 * L3 * L3 >= tot:
+        return 3, L3, L3, L3
+
+    # try square
+    L2 = int(round(np.sqrt(tot)))
+    if L2 * L2 >= tot:
+        return 2, L2, L2, 1
+
+    # fallback: assume 1D-ish
+    return 1, tot, 1, 1
+
+
+def positions_from_compact_bin(path_dir, filename, output_data=None, time_base=None):
+    """Convert compact .bin into positions DataFrame (x,y,z,color,time).
+
+    Heuristics to infer shape like the C++ loader: prefer cube then square.
+    """
+    fn_npz = os.path.join(path_dir, filename)
+    # prefer .bin next to requested filename
+    base, ext = os.path.splitext(fn_npz)
+    if ext.lower() == ".npz":
+        candidate = base + ".bin"
+        if os.path.exists(candidate):
+            fn = candidate
+        elif os.path.exists(fn_npz):
+            fn = fn_npz
+        else:
+            raise FileNotFoundError(f"Neither {candidate} nor {fn_npz} exist")
+    else:
+        fn = fn_npz
+
+    info = _read_compact_bin(fn)
+    N = info["N"]
+    species = info["species"].astype(np.int64)
+    activation = info["activation_time"].astype(np.int64)
+    pos = info["pos_flat"].astype(np.int64)
+
+    # Infer shape from positions (supports active-only .bin)
+    dim, SX, SY, SZ = _infer_shape_from_pos(pos)
+
+    if time_base is None:
+        vmax = int(activation.max() if activation.size else 0)
+        if vmax >= 100_000_000:
+            time_base = 100_000_000
+        elif vmax >= 10_000_000:
+            time_base = 10_000_000
+        else:
+            time_base = 10_000_000
+
+    # active nodes are those with species > 0
+    mask = species > 0
+    idxs = pos[mask]
+    cols = species[mask]
+    times = activation[mask]
+
+    if dim == 3:
+        x = (idxs % SX).astype(np.int32)
+        y = ((idxs // SX) % SY).astype(np.int32)
+        z = (idxs // (SX * SY)).astype(np.int32)
+    elif dim == 2:
+        x = (idxs % SX).astype(np.int32)
+        y = ((idxs // SX) % SY).astype(np.int32)
+        z = np.zeros_like(x)
+    else:
+        x = idxs.astype(np.int32)
+        y = np.zeros_like(x)
+        z = np.zeros_like(x)
+
+    df = pd.DataFrame({
+        "x": x,
+        "y": y,
+        "z": z,
+        "color": cols.astype(np.int32),
+        "time": times.astype(np.int64),
+    })
 
     df = df[df["color"] > 0].copy()
     df = df.sort_values("time").reset_index(drop=True)
@@ -388,28 +438,37 @@ def positions_from_codec_npz(path_dir, filename, output_data=None, time_base=Non
     if output_data is not None:
         _write_positions_table(df, output_data)
 
-    print(f"time_base usado = {time_base}")
-    print(f"cores únicas decodificadas = {np.unique(df['color'])}")
+    print(f"time_base used = {time_base}")
+    print(f"unique colors = {np.unique(df['color'])}")
     print(df[["x", "y", "z"]].agg(["min", "max"]))
 
+    meta = {"dim": (3 if SZ > 1 else 2), "shape": (SZ, SY, SX)}
     return df, meta
 
-def load_or_create_positions_codec(path_dir, filename, output_data, time_base=None, force_rebuild=False):
-    """
-    Se output_data existir, lê e retorna.
-    Se não existir, converte do .npz, salva e retorna.
-    """
-    if (not force_rebuild) and os.path.exists(output_data):
-        df = _read_positions_table(output_data)
-        meta = _read_codec_metadata(path_dir, filename)
-        return df, meta
 
-    return positions_from_codec_npz(
-        path_dir=path_dir,
-        filename=filename,
-        output_data=output_data,
-        time_base=time_base
-    )
+def _prefer_bin(filename):
+    base, ext = os.path.splitext(filename)
+    if ext.lower() == ".npz":
+        binf = base + ".bin"
+        return binf
+    return filename
+
+
+def convert_positions_animation(path_dir, filename, dim, time_base=None):
+    # compatibility wrapper used by scripts
+    fn = _prefer_bin(filename)
+    return positions_from_compact_bin(path_dir, fn, output_data=os.path.join(path_dir, "network_positions_time.csv"), time_base=time_base)
+
+
+def convert_positions(path_dir, filename, dim, time_base=None):
+    fn = _prefer_bin(filename)
+    out = os.path.join(path_dir, "network_positions.csv")
+    return positions_from_compact_bin(path_dir, fn, output_data=out, time_base=time_base)
+
+
+def convert_positions_sp(path_dir, filename, output_csv, dim, time_base=None):
+    fn = _prefer_bin(filename)
+    return positions_from_compact_bin(path_dir, fn, output_data=os.path.join(path_dir, output_csv), time_base=time_base)
 
 def _plot_points_df_same_style(
     df,
@@ -567,174 +626,10 @@ def plot_3D_full_codec(path_dir, filename, path_out, figure_name, L, nc, seed=No
         visual_profile="full"
     )
 
-def _read_plain_npz_metadata(path_dir, filename):
-    fn = os.path.join(path_dir, filename)
 
-    with np.load(fn, allow_pickle=False) as npz:
-        meta = {
-            "dim": int(np.asarray(npz["dim"]).item()),
-            "shape": tuple(np.asarray(npz["shape"], dtype=np.int64).tolist()),
-            "keys": list(npz.keys()),
-        }
 
-        for extra_key in ("num_colors", "seed", "rho"):
-            if extra_key in npz:
-                meta[extra_key] = npz[extra_key]
 
-    return meta
 
-def positions_from_plain_npz(path_dir, filename, output_data=None):
-    """
-    Lê um .npz NÃO codificado e devolve um DataFrame com:
-        x, y, z, color
-
-    Aceita:
-      1) denso:  dim, shape, data
-      2) esparso: dim, shape, active_idx, active_val
-
-    Assume o índice linear:
-        idx = x + SX * (y + SY * z)
-    """
-    fn = os.path.join(path_dir, filename)
-
-    with np.load(fn, allow_pickle=False) as npz:
-        keys = list(npz.keys())
-        dim = int(np.asarray(npz["dim"]).item())
-        shape = tuple(np.asarray(npz["shape"], dtype=np.int64).tolist())
-
-        meta = {
-            "dim": dim,
-            "shape": shape,
-            "keys": keys,
-        }
-        for extra_key in ("num_colors", "seed", "rho"):
-            if extra_key in npz:
-                meta[extra_key] = npz[extra_key]
-
-        if dim != 3:
-            raise ValueError("Esta função foi escrita para o caso 3D.")
-
-        # ----------------------------------
-        # CASO ESPARSO: active_idx/active_val
-        # ----------------------------------
-        if "active_idx" in npz and "active_val" in npz:
-            active_idx = np.asarray(npz["active_idx"], dtype=np.int64)
-            active_val = np.asarray(npz["active_val"], dtype=np.int64)
-
-            SX, SY, SZ = map(int, shape)
-
-            x = active_idx % SX
-            y = (active_idx // SX) % SY
-            z = active_idx // (SX * SY)
-
-            df = pd.DataFrame({
-                "x": x.astype(np.int32),
-                "y": y.astype(np.int32),
-                "z": z.astype(np.int32),
-                "color": active_val.astype(np.int32),
-            })
-
-        # ---------------------------
-        # CASO DENSO: data completo
-        # ---------------------------
-        elif "data" in npz:
-            raw = np.asarray(npz["data"], dtype=np.int64).ravel(order="C")
-
-            SX, SY, SZ = map(int, shape)
-            expected = SX * SY * SZ
-
-            if raw.size != expected:
-                raise ValueError(
-                    f"Tamanho inconsistente em {fn}: raw.size={raw.size}, esperado={expected}"
-                )
-
-            # mesma lógica da read_network antiga:
-            # raw[z, y, x] -> network[x, y, z]
-            network = raw.reshape((SZ, SY, SX), order="C").transpose(2, 1, 0)
-
-            mask_active = network > 0
-            coords = np.argwhere(mask_active)
-            colors = network[mask_active]
-
-            df = pd.DataFrame({
-                "x": coords[:, 0].astype(np.int32),
-                "y": coords[:, 1].astype(np.int32),
-                "z": coords[:, 2].astype(np.int32),
-                "color": colors.astype(np.int32),
-            })
-
-        else:
-            raise KeyError(
-                f"Arquivo {fn} não possui nem ('active_idx','active_val') nem 'data'. "
-                f"Chaves encontradas: {keys}"
-            )
-
-    df = df[df["color"] > 0].copy()
-    df = df.sort_values(["z", "y", "x"]).reset_index(drop=True)
-
-    if output_data is not None:
-        _write_positions_table(df, output_data)
-
-    print(f"cores únicas = {np.unique(df['color'])}")
-    print(df[["x", "y", "z"]].agg(["min", "max"]))
-
-    return df, meta
-
-def load_or_create_positions_plain(path_dir, filename, output_data, force_rebuild=False):
-    """
-    Se output_data existir, lê e retorna.
-    Se não existir, converte do .npz, salva e retorna.
-    """
-    if (not force_rebuild) and os.path.exists(output_data):
-        df = _read_positions_table(output_data)
-        meta = _read_plain_npz_metadata(path_dir, filename)
-        return df, meta
-
-    return positions_from_plain_npz(
-        path_dir=path_dir,
-        filename=filename,
-        output_data=output_data
-    )
-
-def plot_3D_plain_npz(path_dir, filename, path_out, figure_name, L, nc,
-                      positions_file=None,
-                      seed=None,
-                      specific_color=None,
-                      show_base=False,
-                      outline_mode="tight",
-                      force_rebuild_positions=False):
-    """
-    Plota uma rede .npz NÃO codificada.
-    Cria o arquivo de posições se ele não existir.
-    """
-    out_dir = os.path.dirname(path_out)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-
-    if positions_file is None:
-        base = os.path.splitext(filename)[0]
-        positions_file = os.path.join(out_dir, f"{base}_positions.parquet")
-
-    df, meta = load_or_create_positions_plain(
-        path_dir=path_dir,
-        filename=filename,
-        output_data=positions_file,
-        force_rebuild=force_rebuild_positions
-    )
-
-    if seed is None:
-        seed = int(meta.get("seed", -1))
-
-    _plot_points_df_same_style(
-        df=df,
-        L=L,
-        nc=nc,
-        path_out=path_out,
-        specific_color=specific_color,
-        show_base=show_base,
-        outline_mode=outline_mode,
-        figure_name=figure_name
-    )
 
 def plot_3D_preteq_posteq(path_dir_pre, filename_pre,
                           path_dir_post, filename_post,
@@ -775,14 +670,14 @@ def plot_3D_preteq_posteq(path_dir_pre, filename_pre,
         base_post = os.path.splitext(filename_post)[0]
         positions_file_post = os.path.join(out_dir_post, f"{base_post}_positions.parquet")
 
-    df_pre, _ = load_or_create_positions_plain(
+    df_pre, _ = load_or_create_positions_codec(
         path_dir=path_dir_pre,
         filename=filename_pre,
         output_data=positions_file_pre,
         force_rebuild=force_rebuild_positions
     )
 
-    df_post, _ = load_or_create_positions_plain(
+    df_post, _ = load_or_create_positions_codec(
         path_dir=path_dir_post,
         filename=filename_post,
         output_data=positions_file_post,
@@ -815,26 +710,117 @@ def plot_3D_preteq_posteq(path_dir_pre, filename_pre,
 
 
 def check_codification(arquivo):
-    with np.load(arquivo, allow_pickle=False) as npz:
-        print("chaves:", npz.files)
+    base, ext = os.path.splitext(arquivo)
+    if ext.lower() == ".bin":
+        info = _read_compact_bin(arquivo)
+        print(f"compact .bin: N={info['N']} E={info['E']}")
+        print(f"sample species (first 20): {info['species'][:20]}")
+        print(f"sample activation_time (first 20): {info['activation_time'][:20]}")
+        return
 
-        if "active_val" in npz:
-            vals = npz["active_val"]
-        elif "data" in npz:
-            vals = npz["data"].ravel()
-        else:
-            print("Arquivo sem active_val e sem data.")
+    # Do not inspect .npz files. Prefer compact .bin.
+    if ext.lower() == ".npz":
+        base = os.path.splitext(arquivo)[0]
+        binf = base + ".bin"
+        if os.path.exists(binf):
+            info = _read_compact_bin(binf)
+            print(f"Found companion .bin: N={info['N']} E={info['E']}")
             return
+        raise ValueError(f".npz inspection is deprecated; create or provide {base}.bin")
 
-        vals = vals[vals > 0]
-        print("primeiros valores positivos:", vals[:20])
+    raise ValueError(f"Formato não suportado pelo check_codification: {arquivo}")
 
-        if len(vals) == 0:
-            print("Sem valores ativos.")
-        elif vals.max() >= 10_000_000:
-            print("Rede codificada.")
-        else:
-            print("Rede não codificada.")
+
+def plot_network_edges(path_dir, filename, figure_name="network_edges",
+                       line_width=0.6, alpha=0.8, edge_color_rule="source",
+                       max_edges=None, nc=None, show_base=False, path_out=None):
+    """
+    Plot network edges from compact .bin. Each edge is drawn as a segment colored
+    according to the incident site's color. Parameters:
+      - edge_color_rule: 'source' (color of u) or 'target' or 'average'
+      - max_edges: if set, limits number of edges plotted (for performance)
+      - nc: number of species (optional, used to build palette)
+    """
+    fn = os.path.join(path_dir, filename)
+    base, ext = os.path.splitext(fn)
+    if ext.lower() == ".npz":
+        candidate = base + ".bin"
+        if os.path.exists(candidate):
+            fn = candidate
+
+    info = _read_compact_bin(fn)
+    N = info["N"]
+    species = info["species"].astype(np.int32)
+    pos = info["pos_flat"].astype(np.int64)
+    offs = info["edge_offsets"].astype(np.int64)
+    edges = info["edges"].astype(np.int64)
+
+    # infer shape from positions (supports active-only .bin)
+    dim, SX, SY, SZ = _infer_shape_from_pos(pos)
+
+    if dim == 3:
+        xs = (pos % SX).astype(np.float32)
+        ys = ((pos // SX) % SY).astype(np.float32)
+        zs = (pos // (SX * SY)).astype(np.float32)
+    else:
+        xs = (pos % SX).astype(np.float32)
+        ys = ((pos // SX) % SY).astype(np.float32)
+        zs = np.zeros_like(xs, dtype=np.float32)
+
+    unique_colors = sorted(int(c) for c in np.unique(species) if c > 0)
+    if nc is None:
+        nc_guess = max(unique_colors) if unique_colors else 1
+    else:
+        nc_guess = nc
+    cmap = _build_fixed_color_map(unique_colors, nc_guess)
+
+    fig = _new_figure_3d(figure_name=figure_name)
+
+    count = 0
+    for u in range(N):
+        start = offs[u]
+        end = offs[u + 1]
+        for idx in range(start, end):
+            v = int(edges[idx])
+            if v < 0 or v >= N:
+                continue
+            if u >= v:
+                # avoid duplicate undirected plotting
+                continue
+
+            xu, yu, zu = float(xs[u]), float(ys[u]), float(zs[u])
+            xv, yv, zv = float(xs[v]), float(ys[v]), float(zs[v])
+
+            if edge_color_rule == "source":
+                cidx = int(species[u])
+            elif edge_color_rule == "target":
+                cidx = int(species[v])
+            else:
+                cidx = int((int(species[u]) + int(species[v])) // 2)
+
+            if cidx <= 0:
+                color = (0.5, 0.5, 0.5)
+            else:
+                color = cmap.get(cidx, (0.2, 0.2, 0.2))
+
+            mlab.plot3d([xu, xv], [yu, yv], [zu, zv], color=color,
+                        tube_radius=line_width * 0.02, opacity=alpha, figure=fig)
+
+            count += 1
+            if max_edges is not None and count >= max_edges:
+                break
+        if max_edges is not None and count >= max_edges:
+            break
+
+    _camera_plot_3D_full(fig, max(SX, SY, SZ), show_base=show_base)
+
+    if path_out is not None:
+        out_dir = os.path.dirname(path_out)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        mlab.savefig(path_out, figure=fig)
+
+    return fig
 
 def plot_3D_full_codec_by_species(path_dir, filename, path_out_dir, figure_name,
                                   L, nc, seed=None,

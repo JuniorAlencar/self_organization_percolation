@@ -12,7 +12,7 @@
 /results
 
 .pyenv
-
+.codex
 shells/*.sh
 shells/.run_all_ram_logs/*
 !shells/run_all.sh

@@ -10,11 +10,7 @@
 
 class save_data {
 public:
-    void save_network_as_npz(const NetworkPattern& net,
-                             const std::string& filename) const;
-
-    void save_network_as_npz(const SparseSubgraph& net,
-                             const std::string& filename) const;
+    // NPZ format removed. Use `save_network_compact_bin` for compact networks.
 
     void save_percolation_json(const PercolationSeries& ps,
                                const TimeSeries& ts,
@@ -25,11 +21,22 @@ public:
                               const std::string& filename_json) const;
 
     void save_reanalysis_networks(const ReanalysisResult& result,
-                                  const std::string& filename_preteq_npz,
-                                  const std::string& filename_posteq_npz) const;
+                                  const std::string& filename_preteq_bin,
+                                  const std::string& filename_posteq_bin) const;
 
+    // Legacy-named helpers (still present but write compact .bin / JSON)
     void save_surfaces_as_npz(const SurfacesCuts& surfaces,
                               const std::string& filename) const;
+
+    // Compatibility wrappers that convert encoded networks to compact .bin
+    void save_network_as_npz(const NetworkPattern& net,
+                             const std::string& filename) const;
+
+    void save_network_as_npz(const SparseSubgraph& net,
+                             const std::string& filename) const;
+
+    void save_network_compact_bin(const NetworkCompact& net,
+                                  const std::string& filename) const;
 };
 
 #endif

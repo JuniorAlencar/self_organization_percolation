@@ -32,24 +32,41 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (argc != 12) {
+    // Allow either zero-argument (use defaults) or full-argument run
+    if (argc != 1 && argc != 12) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
     }
 
     try {
-        int L = std::stoi(argv[1]);
-        double pp0 = std::stod(argv[2]);
-        int seed = std::stoi(argv[3]);
-        std::string type_percolation = argv[4];
-        double c = std::stod(argv[5]);
-        double f_T = std::stod(argv[6]);
-        int dim = std::stoi(argv[7]);
-        int num_colors = std::stoi(argv[8]);
-        double rho_val = std::stod(argv[9]);
-        double P0 = std::stod(argv[10]);
-        std::string equilibration = argv[11];
+        // If no arguments provided, use a set of reasonable defaults you can
+        // edit here. If full argv are provided (11), parse them.
+        int L = 128;
+        double pp0 = 1.0;
+        int seed = 12345;
+        std::string type_percolation = "site";
+        double c = 0.01;
+        double f_T = 0.06;
+        int dim = 3;
+        int num_colors = 1;
+        double rho_val = 1.0;
+        double P0 = 0.1;
+        std::string equilibration = "true";
+
+        if (argc == 12) {
+            L = std::stoi(argv[1]);
+            pp0 = std::stod(argv[2]);
+            seed = std::stoi(argv[3]);
+            type_percolation = argv[4];
+            c = std::stod(argv[5]);
+            f_T = std::stod(argv[6]);
+            dim = std::stoi(argv[7]);
+            num_colors = std::stoi(argv[8]);
+            rho_val = std::stod(argv[9]);
+            P0 = std::stod(argv[10]);
+            equilibration = argv[11];
+        }
 
         const bool animation = helpers::parse_bool(equilibration);
 
@@ -179,20 +196,119 @@ int main(int argc, char* argv[]) {
         }
 
         if (animation == true) {
-            std::string net_filename = network_dir + "/" + sample_base + ".npz";
-            std::string net_posteq_filename = network_posteq + "/" + sample_base + ".npz";
-            std::string net_preteq_filename = network_preteq + "/" + sample_base + ".npz";
-            std::string net_PERCOLATION_filename = network_dir + "/" + sample_base + "_PERCOLATION" + ".npz";
-            NetworkPattern net_perc_clusters =
-                net_generator.filter_percolating_clusters_from_encoded(net);
+            // Helper: convert NetworkPattern -> NetworkCompact (decode encoded values)
+            auto convert_to_compact = [&](const NetworkPattern& np) {
+                NetworkCompact nc;
+                const std::size_t total = np.data.size();
+                nc.N = static_cast<NetworkCompact::index_t>(total);
+                nc.pos_flat.resize(nc.N);
+                for (NetworkCompact::index_t i = 0; i < nc.N; ++i) nc.pos_flat[i] = i;
 
-            saver.save_network_as_npz(net, net_filename);
-            // Network Percolation
-            saver.save_network_as_npz(net_perc_clusters, net_PERCOLATION_filename);
-            saver.save_network_as_npz(cuts->pre_teq, net_preteq_filename);
+                nc.species.resize(nc.N);
+                nc.activation_time.resize(nc.N);
 
-            // NPZ da rede post_teq
-            saver.save_network_as_npz(cuts->post_teq, net_posteq_filename);
+                for (NetworkCompact::index_t i = 0; i < nc.N; ++i) {
+                    const long long code = static_cast<long long>(np.data[static_cast<std::size_t>(i)]);
+                    if (code <= 0) {
+                        nc.species[i] = 0;
+                        nc.activation_time[i] = 0u;
+                    } else {
+                        const int color_1b = static_cast<int>(code / SPECIES_FACTOR);
+                        const int time = static_cast<int>(code % SPECIES_FACTOR);
+                        int color_idx = 0;
+                        if (np.num_colors == 1) color_idx = 0;
+                        else color_idx = std::max(0, std::min(np.num_colors - 1, color_1b - 1));
+                        // store species as 1-based color id to match previous convention
+                        nc.species[i] = static_cast<uint8_t>(color_idx + 1);
+                        nc.activation_time[i] = static_cast<uint32_t>(time);
+                    }
+                }
+
+                // The NetworkPattern doesn't carry explicit edge lists here; leave CSR empty.
+                nc.edge_offsets.assign(nc.N + 1, 0);
+                nc.edges.clear();
+
+                return nc;
+            };
+
+            // full network (stored as compact)
+            const std::string net_compact_filename = network_dir + "/" + sample_base + ".bin";
+            try {
+                NetworkCompact fullc = convert_to_compact(net);
+                saver.save_network_compact_bin(fullc, net_compact_filename);
+            } catch (const std::exception &e) {
+                std::cerr << "Warning: failed to save full compact network: " << e.what() << '\n';
+            }
+
+            // percolating clusters (compact)
+            try {
+                NetworkPattern net_perc_clusters = net_generator.filter_percolating_clusters_from_encoded(net);
+                NetworkCompact percc = convert_to_compact(net_perc_clusters);
+                const std::string net_PERCOLATION_filename = network_dir + "/" + sample_base + "_PERCOLATION" + ".bin";
+                saver.save_network_compact_bin(percc, net_PERCOLATION_filename);
+            } catch (const std::exception &e) {
+                std::cerr << "Warning: failed to save percolation compact network: " << e.what() << '\n';
+            }
+
+            // pre/post teq networks: prefer to preserve CSR edges from the full compact
+            try {
+                // Attempt to read the full compact file we saved above to reuse its CSR
+                NetworkCompact base_full;
+                bool have_csr = false;
+                if (base_full.read_binary(net_compact_filename)) {
+                    have_csr = true;
+                }
+
+                // Convert cuts to compact form (species + activation_time)
+                NetworkCompact pre_c = convert_to_compact(cuts->pre_teq);
+                NetworkCompact post_c = convert_to_compact(cuts->post_teq);
+
+                if (have_csr && base_full.N == pre_c.N) {
+                    // Build CSR for pre and post by selecting only edges between active nodes
+                    std::vector<std::pair<NetworkCompact::index_t, NetworkCompact::index_t>> pairs_pre;
+                    std::vector<std::pair<NetworkCompact::index_t, NetworkCompact::index_t>> pairs_post;
+
+                    pairs_pre.reserve(base_full.edges.size());
+                    pairs_post.reserve(base_full.edges.size());
+
+                    for (NetworkCompact::index_t u = 0; u < base_full.N; ++u) {
+                        const NetworkCompact::index_t start = base_full.neighbors_start(u);
+                        const NetworkCompact::index_t end = base_full.neighbors_end(u);
+                        if (start >= end) continue;
+                        for (NetworkCompact::index_t k = start; k < end; ++k) {
+                            const NetworkCompact::index_t v = base_full.edges[static_cast<std::size_t>(k)];
+                            if (v >= base_full.N) continue;
+                            if (pre_c.species[u] != 0 && pre_c.species[v] != 0) {
+                                pairs_pre.emplace_back(u, v);
+                            }
+                            if (post_c.species[u] != 0 && post_c.species[v] != 0) {
+                                pairs_post.emplace_back(u, v);
+                            }
+                        }
+                    }
+
+                    if (!pairs_pre.empty()) pre_c.build_csr_from_edge_pairs(pairs_pre);
+                    else pre_c.edge_offsets.assign(pre_c.N + 1, 0);
+
+                    if (!pairs_post.empty()) post_c.build_csr_from_edge_pairs(pairs_post);
+                    else post_c.edge_offsets.assign(post_c.N + 1, 0);
+                }
+
+                const std::string net_preteq_filename = network_preteq + "/" + sample_base + ".bin";
+                const std::string net_posteq_filename = network_posteq + "/" + sample_base + ".bin";
+                saver.save_network_compact_bin(pre_c, net_preteq_filename);
+                saver.save_network_compact_bin(post_c, net_posteq_filename);
+
+                // Additionally save filtered (reindexed) active-only compact networks
+                NetworkCompact pre_filtered = pre_c.filter_active();
+                NetworkCompact post_filtered = post_c.filter_active();
+                const std::string net_preteq_active = network_preteq + "/" + sample_base + "_active.bin";
+                const std::string net_posteq_active = network_posteq + "/" + sample_base + "_active.bin";
+                saver.save_network_compact_bin(pre_filtered, net_preteq_active);
+                saver.save_network_compact_bin(post_filtered, net_posteq_active);
+            } catch (const std::exception &e) {
+                std::cerr << "Warning: failed to save pre/post teq compact networks: " << e.what() << '\n';
+            }
         }
 
         saver.save_percolation_json(ps, ts, json_filename, true);

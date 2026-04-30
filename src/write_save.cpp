@@ -12,120 +12,11 @@
 #include <type_traits>
 #include <vector>
 
-#include <zip.h>
-
 namespace fs = std::filesystem;
 
 namespace {
 
-template <typename T>
-std::string npy_descr();
-
-template <>
-std::string npy_descr<int32_t>() { return "<i4"; }
-
-template <>
-std::string npy_descr<double>() { return "<f8"; }
-
-inline std::string make_npy_header(const std::string& descr,
-                                   const bool fortran_order,
-                                   const std::vector<size_t>& shape)
-{
-    std::ostringstream dict;
-    dict << "{'descr': '" << descr << "', 'fortran_order': "
-         << (fortran_order ? "True" : "False") << ", 'shape': (";
-
-    for (size_t i = 0; i < shape.size(); ++i) {
-        dict << shape[i];
-        if (shape.size() == 1) dict << ",";
-        if (i + 1 < shape.size()) dict << ", ";
-    }
-
-    dict << "), }";
-
-    std::string hdr = dict.str();
-
-    const size_t preamble = 10;
-    const size_t pad = (16 - ((preamble + 2 + hdr.size()) % 16)) % 16;
-    hdr.append(pad, ' ');
-    hdr.push_back('\n');
-
-    return hdr;
-}
-
-template <typename T>
-std::string make_npy_blob(const T* data,
-                          const size_t count,
-                          const std::vector<size_t>& shape,
-                          const bool fortran_order = false)
-{
-    const std::string hdr = make_npy_header(npy_descr<T>(), fortran_order, shape);
-
-    std::string blob;
-    blob.reserve(10 + hdr.size() + count * sizeof(T));
-
-    blob.append("\x93NUMPY", 6);
-    blob.push_back(char(1));
-    blob.push_back(char(0));
-
-    const unsigned short hl = static_cast<unsigned short>(hdr.size());
-    blob.push_back(static_cast<char>(hl & 0xFF));
-    blob.push_back(static_cast<char>((hl >> 8) & 0xFF));
-
-    blob.append(hdr);
-    if (count > 0) {
-        blob.append(reinterpret_cast<const char*>(data), count * sizeof(T));
-    }
-    return blob;
-}
-
-inline std::string zip_archive_error(zip_t* za)
-{
-    zip_error_t* err = zip_get_error(za);
-    if (!err) return "erro libzip desconhecido";
-
-    std::ostringstream oss;
-    oss << zip_error_strerror(err)
-        << " [zip_code=" << zip_error_code_zip(err)
-        << ", sys_code=" << zip_error_code_system(err) << "]";
-    return oss.str();
-}
-
-inline std::string zip_open_error_string(const int errcode)
-{
-    zip_error_t err;
-    zip_error_init_with_code(&err, errcode);
-
-    std::ostringstream oss;
-    oss << zip_error_strerror(&err)
-        << " [zip_code=" << zip_error_code_zip(&err)
-        << ", sys_code=" << zip_error_code_system(&err) << "]";
-
-    zip_error_fini(&err);
-    return oss.str();
-}
-
-inline void zip_add_buffer(zip_t* za,
-                           const std::string& entry_name,
-                           const std::string& buffer)
-{
-    zip_source_t* src = zip_source_buffer(za, buffer.data(), buffer.size(), 0);
-    if (!src) {
-        throw std::runtime_error(
-            "[npz] zip_source_buffer falhou em '" + entry_name +
-            "': " + zip_archive_error(za));
-    }
-
-    const zip_int64_t idx = zip_file_add(
-        za, entry_name.c_str(), src, ZIP_FL_OVERWRITE | ZIP_FL_ENC_UTF_8);
-
-    if (idx < 0) {
-        zip_source_free(src);
-        throw std::runtime_error(
-            "[npz] zip_file_add falhou em '" + entry_name +
-            "': " + zip_archive_error(za));
-    }
-}
+// NPZ helpers removed. JSON/binary output is used instead.
 
 template <typename T>
 void write_json_array(std::ostream& os, const std::vector<T>& v)
@@ -201,88 +92,8 @@ void write_subgraph_json(std::ostream& ofs,
     ofs << "\n";
 }
 
-void save_sparse_npz_payload(const int dim,
-                             const int num_colors,
-                             const int seed,
-                             const std::vector<int>& shape,
-                             const std::vector<double>& rho,
-                             const std::vector<int32_t>& active_idx,
-                             const std::vector<int32_t>& active_val,
-                             const std::string& filename)
-{
-    if (!(filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")) {
-        throw std::runtime_error("save_network_as_npz: filename deve terminar com .npz");
-    }
-
-    if (active_idx.size() != active_val.size()) {
-        throw std::runtime_error("save_network_as_npz: active_idx.size != active_val.size");
-    }
-
-    const fs::path out_path(filename);
-    if (!out_path.parent_path().empty()) {
-        fs::create_directories(out_path.parent_path());
-    }
-
-    const int32_t dim_i  = static_cast<int32_t>(dim);
-    const int32_t nc_i   = static_cast<int32_t>(num_colors);
-    const int32_t seed_i = static_cast<int32_t>(seed);
-
-    const std::vector<size_t> scalar_shape{};
-    const std::string npy_dim  = make_npy_blob(&dim_i,  1, scalar_shape);
-    const std::string npy_nc   = make_npy_blob(&nc_i,   1, scalar_shape);
-    const std::string npy_seed = make_npy_blob(&seed_i, 1, scalar_shape);
-
-    std::vector<int32_t> shape_i32;
-    shape_i32.reserve(shape.size());
-    for (const int s : shape) {
-        if (s <= 0) {
-            throw std::runtime_error("save_network_as_npz: shape inválido");
-        }
-        shape_i32.push_back(static_cast<int32_t>(s));
-    }
-
-    std::vector<double> rho_f(rho.begin(), rho.end());
-
-    const std::vector<size_t> shape_1d{shape_i32.size()};
-    const std::vector<size_t> rho_1d{rho_f.size()};
-    const std::vector<size_t> active_1d{active_idx.size()};
-
-    const std::string npy_shape =
-        make_npy_blob(shape_i32.data(), shape_i32.size(), shape_1d);
-
-    const std::string npy_rho =
-        make_npy_blob(rho_f.data(), rho_f.size(), rho_1d);
-
-    const std::string npy_active_idx =
-        make_npy_blob(active_idx.data(), active_idx.size(), active_1d);
-
-    const std::string npy_active_val =
-        make_npy_blob(active_val.data(), active_val.size(), active_1d);
-
-    int errcode = 0;
-    zip_t* za = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errcode);
-    if (!za) {
-        throw std::runtime_error(
-            "save_network_as_npz: não abriu zip '" + filename +
-            "': " + zip_open_error_string(errcode));
-    }
-
-    zip_add_buffer(za, "dim.npy",        npy_dim);
-    zip_add_buffer(za, "num_colors.npy", npy_nc);
-    zip_add_buffer(za, "seed.npy",       npy_seed);
-    zip_add_buffer(za, "shape.npy",      npy_shape);
-    zip_add_buffer(za, "rho.npy",        npy_rho);
-    zip_add_buffer(za, "active_idx.npy", npy_active_idx);
-    zip_add_buffer(za, "active_val.npy", npy_active_val);
-
-    if (zip_close(za) != 0) {
-        const std::string err = zip_archive_error(za);
-        zip_discard(za);
-        throw std::runtime_error(
-            "save_network_as_npz: zip_close falhou em '" + filename +
-            "': " + err);
-    }
-}
+// NPZ payload writer removed. Use compact binary (`save_network_compact_bin`) or
+// JSON outputs instead. Older API calls were migrated to compact/bin equivalents.
 
 std::vector<int32_t> flatten_points4(const std::vector<Point3D>& pts)
 {
@@ -324,16 +135,37 @@ void save_data::save_network_as_npz(const NetworkPattern& net,
         active_val.push_back(static_cast<int32_t>(v));
     }
 
-    save_sparse_npz_payload(
-        net.dim,
-        net.num_colors,
-        net.seed,
-        net.shape,
-        net.rho,
-        active_idx,
-        active_val,
-        filename
-    );
+    // Convert to compact binary and save as .bin next to requested filename.
+    NetworkCompact cnet;
+    cnet.N = static_cast<NetworkCompact::index_t>(net.data.size());
+    cnet.pos_flat.resize(cnet.N);
+    cnet.species.resize(cnet.N);
+    cnet.activation_time.resize(cnet.N);
+
+    // Fill pos_flat and decode encoded values into species/time using
+    // ANIMATION_SPECIES_FACTOR convention.
+    const int species_factor = 10000000;
+    for (NetworkCompact::index_t i = 0; i < cnet.N; ++i) {
+        cnet.pos_flat[i] = i;
+        const long long v = static_cast<long long>(net.data[i]);
+        if (v <= 0) {
+            cnet.species[i] = 0;
+            cnet.activation_time[i] = 0;
+        } else {
+            const int color = static_cast<int>(v / species_factor);
+            const int time = static_cast<int>(v % species_factor);
+            cnet.species[i] = static_cast<uint8_t>(color > 255 ? 255 : color);
+            cnet.activation_time[i] = static_cast<uint32_t>(time);
+        }
+    }
+
+    std::string out = filename;
+    if (out.size() >= 4 && out.substr(out.size()-4) == ".npz") {
+        out = out.substr(0, out.size()-4) + ".bin";
+    } else {
+        out += ".bin";
+    }
+    save_network_compact_bin(cnet, out);
 }
 
 void save_data::save_network_as_npz(const SparseSubgraph& net,
@@ -367,16 +199,30 @@ void save_data::save_network_as_npz(const SparseSubgraph& net,
         active_val.push_back(static_cast<int32_t>(val));
     }
 
-    save_sparse_npz_payload(
-        net.dim,
-        net.num_colors,
-        0,
-        net.shape,
-        net.rho,
-        active_idx,
-        active_val,
-        filename
-    );
+    // Convert sparse subgraph to compact binary representation and save.
+    NetworkCompact cnet;
+    cnet.N = static_cast<NetworkCompact::index_t>(net.total_size);
+    cnet.pos_flat.resize(cnet.N);
+    cnet.species.assign(cnet.N, 0);
+    cnet.activation_time.assign(cnet.N, 0);
+
+    for (NetworkCompact::index_t i = 0; i < cnet.N; ++i) cnet.pos_flat[i] = i;
+    for (size_t k = 0; k < static_cast<size_t>(net.active_idx.size()); ++k) {
+        const int lin = net.active_idx[k];
+        const int val = net.active_val[k];
+        if (lin < 0 || lin >= static_cast<int>(cnet.N)) continue;
+        const int color = val;
+        cnet.species[static_cast<size_t>(lin)] = static_cast<uint8_t>(
+            color > 255 ? 255 : (color < 0 ? 0 : color));
+    }
+
+    std::string out = filename;
+    if (out.size() >= 4 && out.substr(out.size()-4) == ".npz") {
+        out = out.substr(0, out.size()-4) + ".bin";
+    } else {
+        out += ".bin";
+    }
+    save_network_compact_bin(cnet, out);
 }
 
 void save_data::save_percolation_json(const PercolationSeries& ps,
@@ -503,6 +349,27 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "}\n";
 }
 
+void save_data::save_network_compact_bin(const NetworkCompact& net,
+                                        const std::string& filename) const
+{
+    const std::filesystem::path out_path(filename);
+    if (!out_path.parent_path().empty()) {
+        std::filesystem::create_directories(out_path.parent_path());
+    }
+
+    // Make a copy and normalize species to small integer codes (0..255)
+    NetworkCompact tmp = net;
+    for (std::size_t i = 0; i < tmp.species.size(); ++i) {
+        uint8_t s = tmp.species[i];
+        // normalize: any non-zero -> keep as-is but clamp to 255
+        tmp.species[i] = (s == 0) ? 0 : (s > 255 ? 255 : s);
+    }
+
+    if (!tmp.write_binary(filename)) {
+        throw std::runtime_error("save_network_compact_bin: falha ao gravar " + filename);
+    }
+}
+
 void save_data::save_reanalysis_json(const ReanalysisResult& result,
                                      const std::string& filename_json) const
 {
@@ -525,70 +392,50 @@ void save_data::save_reanalysis_networks(const ReanalysisResult& result,
                                          const std::string& filename_preteq_npz,
                                          const std::string& filename_posteq_npz) const
 {
-    save_network_as_npz(result.pre_teq.net, filename_preteq_npz);
-    save_network_as_npz(result.post_teq.net, filename_posteq_npz);
+    // Save reanalysis networks as compact binaries (.bin)
+    std::string pre = filename_preteq_npz;
+    std::string post = filename_posteq_npz;
+    if (pre.size() >= 4 && pre.substr(pre.size()-4) == ".npz") pre = pre.substr(0, pre.size()-4) + ".bin";
+    if (post.size() >= 4 && post.substr(post.size()-4) == ".npz") post = post.substr(0, post.size()-4) + ".bin";
+    save_network_as_npz(result.pre_teq.net, pre);
+    save_network_as_npz(result.post_teq.net, post);
 }
 
 void save_data::save_surfaces_as_npz(const SurfacesCuts& surfaces,
                                      const std::string& filename) const
 {
-    if (!(filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")) {
-        throw std::runtime_error("save_surfaces_as_npz: filename deve terminar com .npz");
+    // Save surfaces as JSON file instead of NPZ.
+    std::string out = filename;
+    if (out.size() >= 4 && out.substr(out.size()-4) == ".npz") {
+        out = out.substr(0, out.size()-4) + ".json";
+    } else if (out.size() >= 5 && out.substr(out.size()-5) == ".json") {
+        // ok
+    } else {
+        out += ".json";
     }
 
-    const fs::path out_path(filename);
-    if (!out_path.parent_path().empty()) {
-        fs::create_directories(out_path.parent_path());
+    const fs::path out_path(out);
+    if (!out_path.parent_path().empty()) fs::create_directories(out_path.parent_path());
+
+    std::ofstream ofs(out);
+    if (!ofs) throw std::runtime_error("save_surfaces_as_npz: falha abrindo " + out);
+
+    ofs << "{\n";
+    ofs << "  \"surface_preteq\": [\n";
+    for (size_t i = 0; i < surfaces.surface_preteq.size(); ++i) {
+        const auto &p = surfaces.surface_preteq[i];
+        ofs << "    [" << p.x << ", " << p.y << ", " << p.z << ", " << p.color_index << "]";
+        if (i + 1 < surfaces.surface_preteq.size()) ofs << ",\n";
+        else ofs << "\n";
     }
-
-    const std::vector<int32_t> pre_flat =
-        flatten_points4(surfaces.surface_preteq);
-
-    const std::vector<int32_t> post_flat =
-        flatten_points4(surfaces.surface_posteq);
-
-    const std::vector<size_t> shape_pre{
-        surfaces.surface_preteq.size(), 4
-    };
-
-    const std::vector<size_t> shape_post{
-        surfaces.surface_posteq.size(), 4
-    };
-
-    const std::string npy_pre =
-        make_npy_blob(
-            pre_flat.data(),
-            pre_flat.size(),
-            shape_pre
-        );
-
-    const std::string npy_post =
-        make_npy_blob(
-            post_flat.data(),
-            post_flat.size(),
-            shape_post
-        );
-
-    int errcode = 0;
-    zip_t* za = zip_open(filename.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &errcode);
-    if (!za) {
-        throw std::runtime_error(
-            "save_surfaces_as_npz: não abriu zip '" + filename +
-            "': " + zip_open_error_string(errcode));
+    ofs << "  ],\n";
+    ofs << "  \"surface_posteq\": [\n";
+    for (size_t i = 0; i < surfaces.surface_posteq.size(); ++i) {
+        const auto &p = surfaces.surface_posteq[i];
+        ofs << "    [" << p.x << ", " << p.y << ", " << p.z << ", " << p.color_index << "]";
+        if (i + 1 < surfaces.surface_posteq.size()) ofs << ",\n";
+        else ofs << "\n";
     }
-
-    try {
-        zip_add_buffer(za, "surface_preteq.npy", npy_pre);
-        zip_add_buffer(za, "surface_posteq.npy", npy_post);
-
-        if (zip_close(za) != 0) {
-            const std::string err = zip_archive_error(za);
-            zip_discard(za);
-            throw std::runtime_error(
-                "save_surfaces_as_npz: zip_close falhou: " + err);
-        }
-    } catch (...) {
-        zip_discard(za);
-        throw;
-    }
+    ofs << "  ]\n";
+    ofs << "}\n";
 }
