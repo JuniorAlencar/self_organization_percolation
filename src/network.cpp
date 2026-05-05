@@ -10,6 +10,8 @@
 #include <sstream>
 #include <random>
 #include <array>
+#include <unordered_set>
+#include <cstdint>
 
 namespace {
 
@@ -154,6 +156,7 @@ struct DecodedValue {
     int time = -1;
 };
 
+
 struct FrontCandidate {
     int activator = -1;
     int color_idx = -1;
@@ -185,6 +188,25 @@ inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
     return n;
 }
 
+inline std::uint64_t undirected_edge_key(const int u, const int v)
+{
+    const std::uint32_t a = static_cast<std::uint32_t>(std::min(u, v));
+    const std::uint32_t b = static_cast<std::uint32_t>(std::max(u, v));
+    return (static_cast<std::uint64_t>(a) << 32) | static_cast<std::uint64_t>(b);
+}
+
+inline bool mark_bond_if_new(std::unordered_set<std::uint64_t>& tested_bonds,
+                             const int u,
+                             const int v)
+{
+    return tested_bonds.insert(undirected_edge_key(u, v)).second;
+}
+
+inline double topology_uniform01(std::mt19937_64& rng)
+{
+    return std::generate_canonical<double, 53>(rng);
+}
+
 struct SparseFrontCandidates {
     static constexpr int max_candidates_per_target = 16;
 
@@ -195,13 +217,6 @@ struct SparseFrontCandidates {
 
     explicit SparseFrontCandidates(const int nsites = 0)
         : slot_of_target(static_cast<std::size_t>(nsites), -1) {}
-
-    void reset_size(const int nsites) {
-        touched_targets.clear();
-        candidates.clear();
-        counts.clear();
-        slot_of_target.assign(static_cast<std::size_t>(nsites), -1);
-    }
 
     void clear() {
         for (const int target : touched_targets) {
@@ -647,8 +662,23 @@ NetworkPattern network::create_network(
         return max_component;
     };
 
-    // To store chosen edge pairs during the simulation
+    // To store chosen edge pairs during the simulation.
     std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
+
+    // History of lattice bonds already tested in the bond process.
+    // This is used only in bond percolation so that an edge rejected earlier
+    // as active-inactive is not tested later as active-active.
+    std::unordered_set<std::uint64_t> tested_bonds;
+
+    // Independent RNG for purely topological active-active bonds.
+    // These bonds must not consume the dynamical RNG used for active-inactive
+    // activation attempts; otherwise p(t) changes even though N(t) does not.
+    const std::uint64_t topology_seed =
+        static_cast<std::uint64_t>(rng.get_seed()) ^
+        0x9E3779B97F4A7C15ULL ^
+        (static_cast<std::uint64_t>(lenght_network) << 32) ^
+        (static_cast<std::uint64_t>(num_colors) << 48);
+    std::mt19937_64 topology_rng(topology_seed);
 
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
@@ -657,10 +687,9 @@ NetworkPattern network::create_network(
         front_candidates.clear();
 
         if (is_node) {
-            // Site percolation (Leath/SOP): each perimeter site exposed by the
-            // current growth front is tested only once. If it fails, it is
-            // blocked forever. Sparse storage avoids O(Nsites) allocation/scan
-            // at every time step.
+            // Site percolation (Leath/SOP): each perimeter target exposed by
+            // the current growth front is considered once. If the selected
+            // attempt fails, the target is blocked forever.
             int neigh[6];
 
             for (const int idx : frontier) {
@@ -729,9 +758,8 @@ NetworkPattern network::create_network(
             }
         } else {
             // Bond percolation (SOP): test every allowed bond from the current
-            // growth front. A target site is activated if at least one incident
-            // allowed bond opens in this time step. Sparse storage avoids
-            // allocating/scanning one vector per lattice site.
+            // growth front. A target activates if at least one incident allowed
+            // bond opens in this time step.
             int neigh[6];
 
             for (const int idx : frontier) {
@@ -747,11 +775,39 @@ NetworkPattern network::create_network(
                     const int viz_idx = neigh[ni];
 
                     const int vv = net.get(viz_idx);
-                    if (vv >= 0) continue; // already active/blocked
 
+                    if (vv == 0) {
+                        continue; // blocked site
+                    }
+
+                    if (vv > 0) {
+                        // Purely topological bond: active frontier site to an
+                        // already-active neighbor of the same species. This
+                        // never changes the state, N(t), f(t), frontier, parent
+                        // or activation_time. It also uses topology_rng, not the
+                        // dynamical rng, so p(t) is not indirectly changed.
+                        const int neigh_color_idx = value_to_color_index(num_colors, vv);
+                        if (neigh_color_idx != cor_idx) continue;
+
+                        if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
+
+                        if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
+                            edge_pairs.emplace_back(static_cast<uint32_t>(idx),
+                                                    static_cast<uint32_t>(viz_idx));
+                            edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
+                                                    static_cast<uint32_t>(idx));
+                        }
+                        continue;
+                    }
+
+                    // Dynamical bond: active frontier site to an inactive
+                    // compatible neighbor. Only this case can activate sites
+                    // and therefore contribute to N(t), f(t), and p(t).
                     const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
                     const bool no_color   = (vv == -1);
                     if (!same_color && !no_color) continue;
+
+                    if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
 
                     if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
                         front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
@@ -764,29 +820,55 @@ NetworkPattern network::create_network(
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
-                const int color_pick = rng.uniform_int(0, n_cand - 1);
-                const int cor_idx = front_candidates.candidates[slot][color_pick].color_idx;
+                const int target_before = net.get(viz);
+                const bool target_without_species = (num_colors > 1 && target_before == -1);
 
-                int same_color_count = 0;
-                for (int i = 0; i < n_cand; ++i) {
-                    if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
-                        ++same_color_count;
-                    }
-                }
-                if (same_color_count <= 0) continue;
-
-                const int parent_pick = rng.uniform_int(0, same_color_count - 1);
+                int cor_idx = -1;
                 int chosen_u = -1;
-                int seen = 0;
-                for (int i = 0; i < n_cand; ++i) {
-                    const FrontCandidate fc = front_candidates.candidates[slot][i];
-                    if (fc.color_idx != cor_idx) continue;
-                    if (seen == parent_pick) {
-                        chosen_u = fc.activator;
+
+                if (target_without_species) {
+                    // For a species-free target, only one accepted bond becomes
+                    // effective. This avoids connecting different species
+                    // through the same newly activated site.
+                    const int pick = rng.uniform_int(0, n_cand - 1);
+                    const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                    cor_idx = chosen.color_idx;
+                    chosen_u = chosen.activator;
+                } else {
+                    // For a target that already belongs to a species, all
+                    // accepted bonds from that same species are kept.
+                    cor_idx = (num_colors == 1)
+                        ? 0
+                        : value_to_color_index(num_colors, target_before);
+
+                    if (cor_idx < 0 || cor_idx >= num_colors) {
+                        continue;
                     }
-                    ++seen;
+
+                    int same_color_count = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
+                            ++same_color_count;
+                        }
+                    }
+                    if (same_color_count <= 0) continue;
+
+                    const int parent_pick = rng.uniform_int(0, same_color_count - 1);
+                    int seen = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        if (fc.color_idx != cor_idx) continue;
+                        if (seen == parent_pick) {
+                            chosen_u = fc.activator;
+                            break;
+                        }
+                        ++seen;
+                    }
                 }
-                if (chosen_u < 0) continue;
+
+                if (chosen_u < 0 || cor_idx < 0 || cor_idx >= num_colors) {
+                    continue;
+                }
 
                 const int new_val = color_to_active_value(num_colors, cor_idx);
                 net.set(viz, new_val);
@@ -808,19 +890,24 @@ NetworkPattern network::create_network(
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
 
-                // Store every accepted bond compatible with the species assigned
-                // to this target. This preserves multiple incident bonds to the
-                // same newly activated site in the compact network.
-                for (int i = 0; i < n_cand; ++i) {
-                    const FrontCandidate fc = front_candidates.candidates[slot][i];
-                    if (fc.color_idx != cor_idx) continue;
-                    edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
+                if (target_without_species) {
+                    edge_pairs.emplace_back(static_cast<uint32_t>(chosen_u),
                                             static_cast<uint32_t>(viz));
                     edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                            static_cast<uint32_t>(fc.activator));
+                                            static_cast<uint32_t>(chosen_u));
+                } else {
+                    for (int i = 0; i < n_cand; ++i) {
+                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        if (fc.color_idx != cor_idx) continue;
+                        edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
+                                                static_cast<uint32_t>(viz));
+                        edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                                static_cast<uint32_t>(fc.activator));
+                    }
                 }
             }
         }
+
         for (int c = 0; c < num_colors; ++c) {
             f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
         }
@@ -1431,14 +1518,23 @@ NetworkPattern network::animate_network(
         global_metrics_finalized = true;
     };
 
+    std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
+    std::unordered_set<std::uint64_t> tested_bonds;
+    const std::uint64_t topology_seed =
+        static_cast<std::uint64_t>(rng.get_seed()) ^
+        0x9E3779B97F4A7C15ULL ^
+        (static_cast<std::uint64_t>(lenght_network) << 32) ^
+        (static_cast<std::uint64_t>(num_colors) << 48);
+    std::mt19937_64 topology_rng(topology_seed);
+
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
         std::fill(f_current.begin(), f_current.end(), 0.0);
         next_frontier.clear();
-
         front_candidates.clear();
 
         if (is_node) {
+            // Same activation logic used by create_network for site/SOP.
             int neigh[6];
 
             for (const int idx : frontier) {
@@ -1498,8 +1594,16 @@ NetworkPattern network::animate_network(
                     top_site_per_color[cor_idx] = viz;
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
+
+                edge_pairs.emplace_back(static_cast<uint32_t>(chosen.activator),
+                                        static_cast<uint32_t>(viz));
+                edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                        static_cast<uint32_t>(chosen.activator));
             }
         } else {
+            // Same activation logic used by create_network for bond/SOP.
+            // All accepted bonds from the current front are collected before
+            // any target site is activated, removing for-loop order bias.
             int neigh[6];
 
             for (const int idx : frontier) {
@@ -1515,11 +1619,31 @@ NetworkPattern network::animate_network(
                     const int viz_idx = neigh[ni];
 
                     const int vv = net.get(viz_idx);
-                    if (vv >= 0) continue;
+
+                    if (vv == 0) {
+                        continue;
+                    }
+
+                    if (vv > 0) {
+                        const int neigh_color_idx = value_to_color_index(num_colors, vv);
+                        if (neigh_color_idx != cor_idx) continue;
+
+                        if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
+
+                        if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
+                            edge_pairs.emplace_back(static_cast<uint32_t>(idx),
+                                                    static_cast<uint32_t>(viz_idx));
+                            edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
+                                                    static_cast<uint32_t>(idx));
+                        }
+                        continue;
+                    }
 
                     const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
                     const bool no_color   = (vv == -1);
                     if (!same_color && !no_color) continue;
+
+                    if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
 
                     if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
                         front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
@@ -1532,29 +1656,50 @@ NetworkPattern network::animate_network(
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
-                const int color_pick = rng.uniform_int(0, n_cand - 1);
-                const int cor_idx = front_candidates.candidates[slot][color_pick].color_idx;
+                const int target_before = net.get(viz);
+                const bool target_without_species = (num_colors > 1 && target_before == -1);
 
-                int same_color_count = 0;
-                for (int i = 0; i < n_cand; ++i) {
-                    if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
-                        ++same_color_count;
-                    }
-                }
-                if (same_color_count <= 0) continue;
-
-                const int parent_pick = rng.uniform_int(0, same_color_count - 1);
+                int cor_idx = -1;
                 int chosen_u = -1;
-                int seen = 0;
-                for (int i = 0; i < n_cand; ++i) {
-                    const FrontCandidate fc = front_candidates.candidates[slot][i];
-                    if (fc.color_idx != cor_idx) continue;
-                    if (seen == parent_pick) {
-                        chosen_u = fc.activator;
+
+                if (target_without_species) {
+                    const int pick = rng.uniform_int(0, n_cand - 1);
+                    const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                    cor_idx = chosen.color_idx;
+                    chosen_u = chosen.activator;
+                } else {
+                    cor_idx = (num_colors == 1)
+                        ? 0
+                        : value_to_color_index(num_colors, target_before);
+
+                    if (cor_idx < 0 || cor_idx >= num_colors) {
+                        continue;
                     }
-                    ++seen;
+
+                    int same_color_count = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
+                            ++same_color_count;
+                        }
+                    }
+                    if (same_color_count <= 0) continue;
+
+                    const int parent_pick = rng.uniform_int(0, same_color_count - 1);
+                    int seen = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        if (fc.color_idx != cor_idx) continue;
+                        if (seen == parent_pick) {
+                            chosen_u = fc.activator;
+                            break;
+                        }
+                        ++seen;
+                    }
                 }
-                if (chosen_u < 0) continue;
+
+                if (chosen_u < 0 || cor_idx < 0 || cor_idx >= num_colors) {
+                    continue;
+                }
 
                 const int new_val = color_to_active_value(num_colors, cor_idx);
                 net.set(viz, new_val);
@@ -1574,8 +1719,25 @@ NetworkPattern network::animate_network(
                     top_site_per_color[cor_idx] = viz;
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
+
+                if (target_without_species) {
+                    edge_pairs.emplace_back(static_cast<uint32_t>(chosen_u),
+                                            static_cast<uint32_t>(viz));
+                    edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                            static_cast<uint32_t>(chosen_u));
+                } else {
+                    for (int i = 0; i < n_cand; ++i) {
+                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        if (fc.color_idx != cor_idx) continue;
+                        edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
+                                                static_cast<uint32_t>(viz));
+                        edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                                static_cast<uint32_t>(fc.activator));
+                    }
+                }
             }
         }
+
         for (int c = 0; c < num_colors; ++c) {
             f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
         }
@@ -1753,6 +1915,7 @@ NetworkPattern network::animate_network(
 
     NetworkPattern net_animation(dim, shape, num_colors, rho);
     net_animation.data = std::move(activation_code);
+    net_animation.edge_pairs = std::move(edge_pairs);
     return net_animation;
 }  
 
@@ -1860,6 +2023,15 @@ NetworkPattern network::filter_percolating_clusters_from_encoded(
             out.data[static_cast<std::size_t>(idx)] =
                 encoded_net.data[static_cast<std::size_t>(idx)];
         }
+    }
+
+    out.edge_pairs.reserve(encoded_net.edge_pairs.size());
+    for (const auto& edge : encoded_net.edge_pairs) {
+        const std::size_t u = static_cast<std::size_t>(edge.first);
+        const std::size_t v = static_cast<std::size_t>(edge.second);
+        if (u >= out.data.size() || v >= out.data.size()) continue;
+        if (out.data[u] <= 0 || out.data[v] <= 0) continue;
+        out.edge_pairs.push_back(edge);
     }
 
     return out;

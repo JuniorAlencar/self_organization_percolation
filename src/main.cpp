@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
         int N_samples = 100000;
         const int SPECIES_FACTOR = 10000000;
         int type_f_T = 0;
-        double a,alpha = 0.0;
+        double a = 0.0, alpha = 0.0;
         //double alpha = 0.0;
         
         network net_generator(N_samples, num_colors);
@@ -224,9 +224,22 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // The NetworkPattern doesn't carry explicit edge lists here; leave CSR empty.
-                nc.edge_offsets.assign(nc.N + 1, 0);
-                nc.edges.clear();
+                std::vector<std::pair<NetworkCompact::index_t, NetworkCompact::index_t>> pairs;
+                pairs.reserve(np.edge_pairs.size());
+                for (const auto& edge : np.edge_pairs) {
+                    const auto u = static_cast<NetworkCompact::index_t>(edge.first);
+                    const auto v = static_cast<NetworkCompact::index_t>(edge.second);
+                    if (u >= nc.N || v >= nc.N) continue;
+                    if (nc.species[u] == 0 || nc.species[v] == 0) continue;
+                    pairs.emplace_back(u, v);
+                }
+
+                if (!pairs.empty()) {
+                    nc.build_csr_from_edge_pairs(pairs);
+                } else {
+                    nc.edge_offsets.assign(nc.N + 1, 0);
+                    nc.edges.clear();
+                }
 
                 return nc;
             };

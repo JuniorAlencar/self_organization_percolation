@@ -27,6 +27,7 @@ struct NetworkPattern {
     std::vector<int> shape;         // Forma da rede, ex: {L, L} ou {L, L, L}
     std::vector<state_t> data;      // Estado por sítio
     std::vector<double> rho;        // Fração global por cor (aplicada na rede toda)
+    std::vector<std::pair<uint32_t, uint32_t>> edge_pairs; // Arestas dirigidas u -> v
 
     NetworkPattern(int dim_, const std::vector<int>& shape_, int num_colors_, const std::vector<double>& rho_)
         : dim(dim_),

@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg
-   width="743.00256"
-   height="614.7348"
-   viewBox="80 120 564.68195 461.05109"
+   width="736.38159"
+   height="613.33551"
+   viewBox="80 120 559.65001 460.00163"
    version="1.1"
    id="svg3797"
-   sodipodi:docname="FIG_B.svg"
+   sodipodi:docname="cube_L4_nc2.svg"
    inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
-   inkscape:export-filename="../PNGs/FIG_B.png"
+   inkscape:export-filename="SVGs/FIG_A.svg"
    inkscape:export-xdpi="96"
    inkscape:export-ydpi="96"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
@@ -26,22 +26,22 @@
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
      inkscape:zoom="1.1421053"
-     inkscape:cx="183.87096"
-     inkscape:cy="279.74653"
-     inkscape:window-width="1920"
-     inkscape:window-height="1043"
-     inkscape:window-x="1920"
-     inkscape:window-y="0"
+     inkscape:cx="331.84332"
+     inkscape:cy="275.36866"
+     inkscape:window-width="1854"
+     inkscape:window-height="1011"
+     inkscape:window-x="66"
+     inkscape:window-y="32"
      inkscape:window-maximized="1"
      inkscape:current-layer="svg3797" />
   <defs
      id="defs3134">
     <linearGradient
        id="baseGrad"
-       x1="66.843674"
+       x1="66.84367"
        y1="1195.8143"
        x2="314.40909"
-       y2="1443.3798"
+       y2="1443.3797"
        gradientTransform="scale(2.2557214,0.44331716)"
        gradientUnits="userSpaceOnUse">
       <stop
@@ -71,202 +71,212 @@
          stop-color="#747474"
          id="stop3130" />
     </radialGradient>
+    <filter
+       id="softShadow"
+       x="-0.34999999"
+       y="-0.34999999"
+       width="1.7"
+       height="1.7">
+      <feDropShadow
+         dx="0"
+         dy="2"
+         stdDeviation="1.7"
+         flood-color="#000000"
+         flood-opacity="0.18" />
+    </filter>
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3972"
-       cx="358.37201"
+       cx="358.372"
        cy="359.23599"
        r="12.263999"
-       fx="358.37201"
+       fx="358.372"
        fy="359.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3974"
-       cx="450.37201"
+       cx="450.372"
        cy="359.23599"
        r="12.263999"
-       fx="450.37201"
+       fx="450.372"
        fy="359.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3976"
-       cx="542.37201"
+       cx="542.372"
        cy="359.23599"
        r="12.263999"
-       fx="542.37201"
+       fx="542.372"
        fy="359.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3978"
-       cx="634.37201"
+       cx="634.372"
        cy="359.23599"
        r="12.263999"
-       fx="634.37201"
+       fx="634.372"
        fy="359.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3980"
-       cx="312.37201"
+       cx="312.372"
        cy="386.23599"
        r="12.263999"
-       fx="312.37201"
+       fx="312.372"
        fy="386.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3982"
-       cx="404.37201"
+       cx="404.372"
        cy="386.23599"
        r="12.263999"
-       fx="404.37201"
+       fx="404.372"
        fy="386.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3984"
-       cx="496.37201"
+       cx="496.372"
        cy="386.23599"
        r="12.263999"
-       fx="496.37201"
+       fx="496.372"
        fy="386.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3986"
-       cx="588.37201"
+       cx="588.372"
        cy="386.23599"
        r="12.263999"
-       fx="588.37201"
+       fx="588.372"
        fy="386.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3988"
-       cx="266.37201"
+       cx="266.372"
        cy="413.23599"
        r="12.263999"
-       fx="266.37201"
+       fx="266.372"
        fy="413.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3990"
-       cx="358.37201"
+       cx="358.372"
        cy="413.23599"
        r="12.263999"
-       fx="358.37201"
+       fx="358.372"
        fy="413.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3992"
-       cx="450.37201"
+       cx="450.372"
        cy="413.23599"
        r="12.263999"
-       fx="450.37201"
+       fx="450.372"
        fy="413.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3994"
-       cx="542.37201"
+       cx="542.372"
        cy="413.23599"
        r="12.263999"
-       fx="542.37201"
+       fx="542.372"
        fy="413.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3996"
-       cx="220.37199"
+       cx="220.372"
        cy="440.23599"
        r="12.263999"
-       fx="220.37199"
+       fx="220.372"
        fy="440.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient3998"
-       cx="312.37201"
+       cx="312.372"
        cy="440.23599"
        r="12.263999"
-       fx="312.37201"
+       fx="312.372"
        fy="440.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient4000"
-       cx="404.37201"
+       cx="404.372"
        cy="440.23599"
        r="12.263999"
-       fx="404.37201"
+       fx="404.372"
        fy="440.23599"
        gradientUnits="userSpaceOnUse" />
     <radialGradient
        inkscape:collect="always"
        xlink:href="#sphereGrad"
        id="radialGradient4002"
-       cx="496.37201"
+       cx="496.372"
        cy="440.23599"
        r="12.263999"
-       fx="496.37201"
+       fx="496.372"
        fy="440.23599"
        gradientUnits="userSpaceOnUse" />
   </defs>
   <g
      id="cubic-box"
      style="display:inline"
-     transform="translate(-67.659019,-78.650217)">
+     transform="translate(-70.175,-80.440003)">
     <polygon
        points="706,531 338,531 154,639 522,639 "
        fill="url(#baseGrad)"
        stroke="#202020"
        stroke-width="1.75"
        id="polygon3138"
-       style="fill:url(#baseGrad);stroke-width:3.44693;stroke-dasharray:none" />
+       style="fill:url(#baseGrad)" />
     <polygon
        points="706,197.3 522,305.3 522,639 706,531 "
        fill="#ededed"
        stroke="none"
        stroke-width="0"
        opacity="0.12"
-       id="polygon3140"
-       style="stroke-width:3.44693;stroke-dasharray:none" />
+       id="polygon3140" />
     <polygon
        points="338,197.3 706,197.3 706,531 338,531 "
        fill="#ededed"
        stroke="none"
        stroke-width="0"
        opacity="0.09"
-       id="polygon3142"
-       style="stroke-width:3.44693;stroke-dasharray:none" />
+       id="polygon3142" />
     <polygon
        points="706,197.3 338,197.3 154,305.3 522,305.3 "
        fill="#ffffff"
        stroke="none"
        stroke-width="0"
        opacity="0.03"
-       id="polygon3144"
-       style="stroke-width:3.44693;stroke-dasharray:none" />
+       id="polygon3144" />
     <line
        x1="154"
        y1="639"
@@ -276,8 +286,7 @@
        stroke-width="1.32"
        opacity="0.52"
        stroke-linecap="round"
-       id="line3146"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3146" />
     <line
        x1="522"
        y1="639"
@@ -287,8 +296,7 @@
        stroke-width="1.32"
        opacity="0.52"
        stroke-linecap="round"
-       id="line3148"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3148" />
     <line
        x1="706"
        y1="531"
@@ -298,8 +306,7 @@
        stroke-width="1.32"
        opacity="0.52"
        stroke-linecap="round"
-       id="line3150"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3150" />
     <line
        x1="338"
        y1="531"
@@ -309,8 +316,7 @@
        stroke-width="1.32"
        opacity="0.52"
        stroke-linecap="round"
-       id="line3152"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3152" />
     <line
        x1="154"
        y1="305.29999"
@@ -320,8 +326,7 @@
        stroke-width="1.18"
        opacity="0.42"
        stroke-linecap="round"
-       id="line3154"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3154" />
     <line
        x1="522"
        y1="305.29999"
@@ -331,8 +336,7 @@
        stroke-width="1.18"
        opacity="0.42"
        stroke-linecap="round"
-       id="line3156"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3156" />
     <line
        x1="706"
        y1="197.3"
@@ -342,8 +346,7 @@
        stroke-width="1.18"
        opacity="0.42"
        stroke-linecap="round"
-       id="line3158"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3158" />
     <line
        x1="338"
        y1="197.3"
@@ -353,8 +356,7 @@
        stroke-width="1.18"
        opacity="0.42"
        stroke-linecap="round"
-       id="line3160"
-       style="opacity:0.66;stroke:#272727;stroke-width:3.44693;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3160" />
     <g
        id="base-grid"
        style="display:none">
@@ -422,10 +424,10 @@
   </g>
   <g
      id="upper-gray-layer-guide"
-     transform="translate(-67.659019,-78.650217)"
+     transform="translate(-70.175,-80.440003)"
      style="display:none">
     <polygon
-       points="338,349.24 154,457.24 522,457.24 706,349.24 "
+       points="522,457.24 706,349.24 338,349.24 154,457.24 "
        fill="#f8f8f8"
        stroke="#5b5b5b"
        stroke-width="1"
@@ -500,7 +502,7 @@
   </g>
   <g
      id="vertical-layer-alignment"
-     transform="translate(-67.659019,-78.650217)"
+     transform="translate(-70.175,-80.440003)"
      style="display:none">
     <line
        x1="223"
@@ -681,573 +683,493 @@
   </g>
   <g
      id="base-filled-symbols"
-     transform="translate(-67.659019,-78.650217)"
-     style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+     transform="translate(-70.175,-80.440003)"
+     style="display:none">
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3232"
-       style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3232">
       <polygon
-         points="371.79,550.53 361,555.17 350.21,550.53 "
+         points="361,555.17 350.21,550.53 371.79,550.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3224"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3224" />
       <polygon
-         points="350.21,550.53 361,549.49 361,530.58 "
+         points="361,549.49 361,530.58 350.21,550.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3226"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3226" />
       <polygon
-         points="371.79,550.53 361,549.49 361,530.58 "
+         points="361,549.49 361,530.58 371.79,550.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3228"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3228" />
       <polygon
-         points="350.21,550.53 371.79,550.53 361,530.58 "
+         points="371.79,550.53 361,530.58 350.21,550.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3230"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3230" />
     </g>
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3242"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3242">
       <polygon
          points="453,555.17 442.21,550.53 463.79,550.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3234"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3234" />
       <polygon
          points="453,549.49 453,530.58 442.21,550.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3236"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3236" />
       <polygon
          points="453,549.49 453,530.58 463.79,550.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3238"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3238" />
       <polygon
          points="463.79,550.53 453,530.58 442.21,550.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3240"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3240" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3252"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3252">
       <polygon
          points="553.64,538.78 545,543.85 536.36,538.78 545,533.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3244"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3244" />
       <polygon
          points="545,543.85 545,555.3 536.36,550.22 536.36,538.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3246"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3246" />
       <polygon
          points="545,543.85 545,555.3 553.64,550.22 553.64,538.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3248"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3248" />
       <path
          d="M 545,543.85 V 555.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3250"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3250" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3262"
-       style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3262">
       <polygon
-         points="637,533.7 645.64,538.78 637,543.85 628.36,538.78 "
+         points="645.64,538.78 637,543.85 628.36,538.78 637,533.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3254"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3254" />
       <polygon
-         points="628.36,538.78 637,543.85 637,555.3 628.36,550.22 "
+         points="637,543.85 637,555.3 628.36,550.22 628.36,538.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3256"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3256" />
       <polygon
-         points="645.64,538.78 637,543.85 637,555.3 645.64,550.22 "
+         points="637,543.85 637,555.3 645.64,550.22 645.64,538.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3258"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3258" />
       <path
          d="M 637,543.85 V 555.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3260"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3260" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3272"
-       style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3272">
       <polygon
-         points="315,570.85 306.36,565.78 315,560.7 323.64,565.78 "
+         points="323.64,565.78 315,570.85 306.36,565.78 315,560.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3264"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3264" />
       <polygon
-         points="315,582.3 306.36,577.22 306.36,565.78 315,570.85 "
+         points="315,570.85 315,582.3 306.36,577.22 306.36,565.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3266"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3266" />
       <polygon
-         points="315,582.3 323.64,577.22 323.64,565.78 315,570.85 "
+         points="315,570.85 315,582.3 323.64,577.22 323.64,565.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3268"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3268" />
       <path
          d="M 315,570.85 V 582.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3270"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3270" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3282"
-       style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3282">
       <polygon
-         points="407,570.85 398.36,565.78 407,560.7 415.64,565.78 "
+         points="415.64,565.78 407,570.85 398.36,565.78 407,560.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3274"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3274" />
       <polygon
-         points="407,582.3 398.36,577.22 398.36,565.78 407,570.85 "
+         points="407,570.85 407,582.3 398.36,577.22 398.36,565.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3276"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3276" />
       <polygon
-         points="407,582.3 415.64,577.22 415.64,565.78 407,570.85 "
+         points="407,570.85 407,582.3 415.64,577.22 415.64,565.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3278"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3278" />
       <path
          d="M 407,570.85 V 582.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3280"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3280" />
     </g>
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3292"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3292">
       <polygon
-         points="488.21,577.53 509.79,577.53 499,582.17 "
+         points="499,582.17 488.21,577.53 509.79,577.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3284"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3284" />
       <polygon
-         points="499,557.58 488.21,577.53 499,576.49 "
+         points="499,576.49 499,557.58 488.21,577.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3286"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3286" />
       <polygon
-         points="499,557.58 509.79,577.53 499,576.49 "
+         points="499,576.49 499,557.58 509.79,577.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3288"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3288" />
       <polygon
-         points="499,557.58 488.21,577.53 509.79,577.53 "
+         points="509.79,577.53 499,557.58 488.21,577.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3290"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3290" />
     </g>
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3302"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3302">
       <polygon
          points="591,582.17 580.21,577.53 601.79,577.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3294"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3294" />
       <polygon
          points="591,576.49 591,557.58 580.21,577.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3296"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3296" />
       <polygon
          points="591,576.49 591,557.58 601.79,577.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3298"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3298" />
       <polygon
          points="601.79,577.53 591,557.58 580.21,577.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3300"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3300" />
     </g>
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3312"
-       style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3312">
       <polygon
          points="269,609.17 258.21,604.53 279.79,604.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3304"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3304" />
       <polygon
          points="269,603.49 269,584.58 258.21,604.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3306"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3306" />
       <polygon
          points="269,603.49 269,584.58 279.79,604.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3308"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3308" />
       <polygon
          points="279.79,604.53 269,584.58 258.21,604.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3310"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3310" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3322"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3322">
       <polygon
-         points="352.36,592.78 361,587.7 369.64,592.78 361,597.85 "
+         points="369.64,592.78 361,597.85 352.36,592.78 361,587.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3314"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3314" />
       <polygon
-         points="352.36,604.22 352.36,592.78 361,597.85 361,609.3 "
+         points="361,597.85 361,609.3 352.36,604.22 352.36,592.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3316"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3316" />
       <polygon
-         points="369.64,604.22 369.64,592.78 361,597.85 361,609.3 "
+         points="361,597.85 361,609.3 369.64,604.22 369.64,592.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3318"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3318" />
       <path
          d="M 361,597.85 V 609.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3320"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3320" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3332"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3332">
       <polygon
          points="461.64,592.78 453,597.85 444.36,592.78 453,587.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3324"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3324" />
       <polygon
          points="453,597.85 453,609.3 444.36,604.22 444.36,592.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3326"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3326" />
       <polygon
          points="453,597.85 453,609.3 461.64,604.22 461.64,592.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3328"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3328" />
       <path
          d="M 453,597.85 V 609.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3330"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3330" />
     </g>
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3342"
-       style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3342">
       <polygon
-         points="555.79,604.53 545,609.17 534.21,604.53 "
+         points="545,609.17 534.21,604.53 555.79,604.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3334"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3334" />
       <polygon
-         points="534.21,604.53 545,603.49 545,584.58 "
+         points="545,603.49 545,584.58 534.21,604.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3336"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3336" />
       <polygon
-         points="555.79,604.53 545,603.49 545,584.58 "
+         points="545,603.49 545,584.58 555.79,604.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3338"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3338" />
       <polygon
-         points="534.21,604.53 555.79,604.53 545,584.58 "
+         points="555.79,604.53 545,584.58 534.21,604.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3340"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3340" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3352"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3352">
       <polygon
          points="231.64,619.78 223,624.85 214.36,619.78 223,614.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3344"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3344" />
       <polygon
          points="223,624.85 223,636.3 214.36,631.22 214.36,619.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3346"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3346" />
       <polygon
          points="223,624.85 223,636.3 231.64,631.22 231.64,619.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3348"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3348" />
       <path
          d="M 223,624.85 V 636.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3350"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3350" />
     </g>
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3362"
-       style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3362">
       <polygon
-         points="325.79,631.53 315,636.17 304.21,631.53 "
+         points="315,636.17 304.21,631.53 325.79,631.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3354"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3354" />
       <polygon
-         points="304.21,631.53 315,630.49 315,611.58 "
+         points="315,630.49 315,611.58 304.21,631.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3356"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3356" />
       <polygon
-         points="325.79,631.53 315,630.49 315,611.58 "
+         points="315,630.49 315,611.58 325.79,631.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3358"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3358" />
       <polygon
-         points="304.21,631.53 325.79,631.53 315,611.58 "
+         points="325.79,631.53 315,611.58 304.21,631.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3360"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3360" />
     </g>
     <g
        class="blue-pyramid"
        opacity="1"
-       id="g3372"
-       style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3372">
       <polygon
          points="407,636.17 396.21,631.53 417.79,631.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
          opacity="0.4"
-         id="polygon3364"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3364" />
       <polygon
          points="407,630.49 407,611.58 396.21,631.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3366"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3366" />
       <polygon
          points="407,630.49 407,611.58 417.79,631.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
-         id="polygon3368"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3368" />
       <polygon
          points="417.79,631.53 407,611.58 396.21,631.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
          opacity="0.78"
-         id="polygon3370"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3370" />
     </g>
     <g
        class="red-cube"
        opacity="1"
-       id="g3382"
-       style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
+       id="g3382">
       <polygon
-         points="499,614.7 507.64,619.78 499,624.85 490.36,619.78 "
+         points="507.64,619.78 499,624.85 490.36,619.78 499,614.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3374"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3374" />
       <polygon
-         points="490.36,619.78 499,624.85 499,636.3 490.36,631.22 "
+         points="499,624.85 499,636.3 490.36,631.22 490.36,619.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3376"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3376" />
       <polygon
-         points="507.64,619.78 499,624.85 499,636.3 507.64,631.22 "
+         points="499,624.85 499,636.3 507.64,631.22 507.64,619.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
-         id="polygon3378"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="polygon3378" />
       <path
          d="M 499,624.85 V 636.3"
          stroke="#7b1512"
          stroke-width="0.7"
          opacity="0.55"
-         id="path3380"
-         style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
+         id="path3380" />
     </g>
   </g>
   <g
      id="base-connections-centered"
      stroke-linejoin="round"
-     transform="translate(-67.659019,-78.650217)"
+     transform="translate(-70.175,-80.440003)"
      style="display:none">
     <line
        x1="223"
@@ -1652,7 +1574,7 @@
   </g>
   <g
      id="base-hollow-replica-overlap"
-     transform="translate(-67.659019,-78.650217)"
+     transform="translate(-70.175,-80.440003)"
      style="display:inline">
     <g
        class="blue-pyramid-hollow-overlap"
@@ -1663,26 +1585,26 @@
        stroke-linecap="round"
        id="g3476">
       <polygon
-         points="361,556.28 349.1,551.16 372.9,551.16 "
+         points="372.9,551.16 361,556.28 349.1,551.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3466" />
       <polygon
-         points="361,550 361,529.14 349.1,551.16 "
+         points="349.1,551.16 361,550 361,529.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3468" />
       <polygon
-         points="361,550 361,529.14 372.9,551.16 "
+         points="372.9,551.16 361,550 361,529.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3470" />
       <polygon
-         points="372.9,551.16 361,529.14 349.1,551.16 "
+         points="349.1,551.16 372.9,551.16 361,529.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -1703,26 +1625,26 @@
        stroke-linecap="round"
        id="g3488">
       <polygon
-         points="453,556.28 441.1,551.16 464.9,551.16 "
+         points="464.9,551.16 453,556.28 441.1,551.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3478" />
       <polygon
-         points="453,550 453,529.14 441.1,551.16 "
+         points="441.1,551.16 453,550 453,529.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3480" />
       <polygon
-         points="453,550 453,529.14 464.9,551.16 "
+         points="464.9,551.16 453,550 453,529.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3482" />
       <polygon
-         points="464.9,551.16 453,529.14 441.1,551.16 "
+         points="441.1,551.16 464.9,551.16 453,529.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -1743,19 +1665,19 @@
        stroke-linecap="round"
        id="g3498">
       <polygon
-         points="545,543.78 535.4,538.14 545,532.5 554.6,538.14 "
+         points="545,532.5 554.6,538.14 545,543.78 535.4,538.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3490" />
       <polygon
-         points="545,556.5 535.4,550.86 535.4,538.14 545,543.78 "
+         points="535.4,538.14 545,543.78 545,556.5 535.4,550.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3492" />
       <polygon
-         points="545,556.5 554.6,550.86 554.6,538.14 545,543.78 "
+         points="554.6,538.14 545,543.78 545,556.5 554.6,550.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -1776,19 +1698,19 @@
        stroke-linecap="round"
        id="g3508">
       <polygon
-         points="637,543.78 627.4,538.14 637,532.5 646.6,538.14 "
+         points="637,532.5 646.6,538.14 637,543.78 627.4,538.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3500" />
       <polygon
-         points="637,556.5 627.4,550.86 627.4,538.14 637,543.78 "
+         points="627.4,538.14 637,543.78 637,556.5 627.4,550.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3502" />
       <polygon
-         points="637,556.5 646.6,550.86 646.6,538.14 637,543.78 "
+         points="646.6,538.14 637,543.78 637,556.5 646.6,550.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -1809,19 +1731,19 @@
        stroke-linecap="round"
        id="g3518">
       <polygon
-         points="315,570.78 305.4,565.14 315,559.5 324.6,565.14 "
+         points="315,559.5 324.6,565.14 315,570.78 305.4,565.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3510" />
       <polygon
-         points="315,583.5 305.4,577.86 305.4,565.14 315,570.78 "
+         points="305.4,565.14 315,570.78 315,583.5 305.4,577.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3512" />
       <polygon
-         points="315,583.5 324.6,577.86 324.6,565.14 315,570.78 "
+         points="324.6,565.14 315,570.78 315,583.5 324.6,577.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -1842,19 +1764,19 @@
        stroke-linecap="round"
        id="g3528">
       <polygon
-         points="407,570.78 397.4,565.14 407,559.5 416.6,565.14 "
+         points="407,559.5 416.6,565.14 407,570.78 397.4,565.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3520" />
       <polygon
-         points="407,583.5 397.4,577.86 397.4,565.14 407,570.78 "
+         points="397.4,565.14 407,570.78 407,583.5 397.4,577.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3522" />
       <polygon
-         points="407,583.5 416.6,577.86 416.6,565.14 407,570.78 "
+         points="416.6,565.14 407,570.78 407,583.5 416.6,577.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -1875,26 +1797,26 @@
        stroke-linecap="round"
        id="g3540">
       <polygon
-         points="499,583.28 487.1,578.16 510.9,578.16 "
+         points="510.9,578.16 499,583.28 487.1,578.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3530" />
       <polygon
-         points="499,577 499,556.14 487.1,578.16 "
+         points="487.1,578.16 499,577 499,556.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3532" />
       <polygon
-         points="499,577 499,556.14 510.9,578.16 "
+         points="510.9,578.16 499,577 499,556.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3534" />
       <polygon
-         points="510.9,578.16 499,556.14 487.1,578.16 "
+         points="487.1,578.16 510.9,578.16 499,556.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -1915,26 +1837,26 @@
        stroke-linecap="round"
        id="g3552">
       <polygon
-         points="591,583.28 579.1,578.16 602.9,578.16 "
+         points="602.9,578.16 591,583.28 579.1,578.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3542" />
       <polygon
-         points="591,577 591,556.14 579.1,578.16 "
+         points="579.1,578.16 591,577 591,556.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3544" />
       <polygon
-         points="591,577 591,556.14 602.9,578.16 "
+         points="602.9,578.16 591,577 591,556.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3546" />
       <polygon
-         points="602.9,578.16 591,556.14 579.1,578.16 "
+         points="579.1,578.16 602.9,578.16 591,556.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -1955,26 +1877,26 @@
        stroke-linecap="round"
        id="g3564">
       <polygon
-         points="269,610.28 257.1,605.16 280.9,605.16 "
+         points="280.9,605.16 269,610.28 257.1,605.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3554" />
       <polygon
-         points="269,604 269,583.14 257.1,605.16 "
+         points="257.1,605.16 269,604 269,583.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3556" />
       <polygon
-         points="269,604 269,583.14 280.9,605.16 "
+         points="280.9,605.16 269,604 269,583.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3558" />
       <polygon
-         points="280.9,605.16 269,583.14 257.1,605.16 "
+         points="257.1,605.16 280.9,605.16 269,583.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -1995,19 +1917,19 @@
        stroke-linecap="round"
        id="g3574">
       <polygon
-         points="361,597.78 351.4,592.14 361,586.5 370.6,592.14 "
+         points="361,586.5 370.6,592.14 361,597.78 351.4,592.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3566" />
       <polygon
-         points="361,610.5 351.4,604.86 351.4,592.14 361,597.78 "
+         points="351.4,592.14 361,597.78 361,610.5 351.4,604.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3568" />
       <polygon
-         points="361,610.5 370.6,604.86 370.6,592.14 361,597.78 "
+         points="370.6,592.14 361,597.78 361,610.5 370.6,604.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -2028,19 +1950,19 @@
        stroke-linecap="round"
        id="g3584">
       <polygon
-         points="453,597.78 443.4,592.14 453,586.5 462.6,592.14 "
+         points="453,586.5 462.6,592.14 453,597.78 443.4,592.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3576" />
       <polygon
-         points="453,610.5 443.4,604.86 443.4,592.14 453,597.78 "
+         points="443.4,592.14 453,597.78 453,610.5 443.4,604.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3578" />
       <polygon
-         points="453,610.5 462.6,604.86 462.6,592.14 453,597.78 "
+         points="462.6,592.14 453,597.78 453,610.5 462.6,604.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -2061,26 +1983,26 @@
        stroke-linecap="round"
        id="g3596">
       <polygon
-         points="545,610.28 533.1,605.16 556.9,605.16 "
+         points="556.9,605.16 545,610.28 533.1,605.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3586" />
       <polygon
-         points="545,604 545,583.14 533.1,605.16 "
+         points="533.1,605.16 545,604 545,583.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3588" />
       <polygon
-         points="545,604 545,583.14 556.9,605.16 "
+         points="556.9,605.16 545,604 545,583.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3590" />
       <polygon
-         points="556.9,605.16 545,583.14 533.1,605.16 "
+         points="533.1,605.16 556.9,605.16 545,583.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -2101,19 +2023,19 @@
        stroke-linecap="round"
        id="g3606">
       <polygon
-         points="223,624.78 213.4,619.14 223,613.5 232.6,619.14 "
+         points="223,613.5 232.6,619.14 223,624.78 213.4,619.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3598" />
       <polygon
-         points="223,637.5 213.4,631.86 213.4,619.14 223,624.78 "
+         points="213.4,619.14 223,624.78 223,637.5 213.4,631.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3600" />
       <polygon
-         points="223,637.5 232.6,631.86 232.6,619.14 223,624.78 "
+         points="232.6,619.14 223,624.78 223,637.5 232.6,631.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -2134,26 +2056,26 @@
        stroke-linecap="round"
        id="g3618">
       <polygon
-         points="315,637.28 303.1,632.16 326.9,632.16 "
+         points="326.9,632.16 315,637.28 303.1,632.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3608" />
       <polygon
-         points="315,631 315,610.14 303.1,632.16 "
+         points="303.1,632.16 315,631 315,610.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3610" />
       <polygon
-         points="315,631 315,610.14 326.9,632.16 "
+         points="326.9,632.16 315,631 315,610.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3612" />
       <polygon
-         points="326.9,632.16 315,610.14 303.1,632.16 "
+         points="303.1,632.16 326.9,632.16 315,610.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -2174,26 +2096,26 @@
        stroke-linecap="round"
        id="g3630">
       <polygon
-         points="407,637.28 395.1,632.16 418.9,632.16 "
+         points="418.9,632.16 407,637.28 395.1,632.16 "
          fill="none"
          stroke="#052957"
          stroke-width="1.45"
          opacity="0.85"
          id="polygon3620" />
       <polygon
-         points="407,631 407,610.14 395.1,632.16 "
+         points="395.1,632.16 407,631 407,610.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3622" />
       <polygon
-         points="407,631 407,610.14 418.9,632.16 "
+         points="418.9,632.16 407,631 407,610.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
          id="polygon3624" />
       <polygon
-         points="418.9,632.16 407,610.14 395.1,632.16 "
+         points="395.1,632.16 418.9,632.16 407,610.14 "
          fill="none"
          stroke="#052957"
          stroke-width="1.6"
@@ -2214,19 +2136,19 @@
        stroke-linecap="round"
        id="g3640">
       <polygon
-         points="499,624.78 489.4,619.14 499,613.5 508.6,619.14 "
+         points="499,613.5 508.6,619.14 499,624.78 489.4,619.14 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3632" />
       <polygon
-         points="499,637.5 489.4,631.86 489.4,619.14 499,624.78 "
+         points="489.4,619.14 499,624.78 499,637.5 489.4,631.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
          id="polygon3634" />
       <polygon
-         points="499,637.5 508.6,631.86 508.6,619.14 499,624.78 "
+         points="508.6,619.14 499,624.78 499,637.5 508.6,631.86 "
          fill="none"
          stroke="#4f0d0b"
          stroke-width="1.55"
@@ -2241,7 +2163,7 @@
   </g>
   <g
      id="upper-gray-spheres"
-     transform="translate(-67.659019,-78.650217)"
+     transform="translate(-70.175,-80.440003)"
      style="display:inline">
     <g
        class="gray-sphere"
@@ -2742,8 +2664,8 @@
   </g>
   <g
      id="front-outline"
-     transform="translate(-67.659019,-78.650217)"
-     style="display:inline;stroke-width:1.72346;stroke-dasharray:none">
+     transform="translate(-70.175,-80.440003)"
+     style="display:inline">
     <line
        x1="154"
        y1="639"
@@ -2753,8 +2675,7 @@
        stroke-width="1.75"
        opacity="0.86"
        stroke-linecap="round"
-       id="line3772"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3772" />
     <line
        x1="522"
        y1="639"
@@ -2764,8 +2685,7 @@
        stroke-width="1.75"
        opacity="0.86"
        stroke-linecap="round"
-       id="line3774"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3774" />
     <line
        x1="706"
        y1="531"
@@ -2775,8 +2695,7 @@
        stroke-width="1.75"
        opacity="0.86"
        stroke-linecap="round"
-       id="line3776"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3776" />
     <line
        x1="338"
        y1="531"
@@ -2786,8 +2705,7 @@
        stroke-width="1.75"
        opacity="0.86"
        stroke-linecap="round"
-       id="line3778"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3778" />
     <line
        x1="154"
        y1="639"
@@ -2797,8 +2715,7 @@
        stroke-width="1.28"
        opacity="0.45"
        stroke-linecap="round"
-       id="line3780"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3780" />
     <line
        x1="522"
        y1="639"
@@ -2808,8 +2725,7 @@
        stroke-width="1.28"
        opacity="0.45"
        stroke-linecap="round"
-       id="line3782"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3782" />
     <line
        x1="706"
        y1="531"
@@ -2819,8 +2735,7 @@
        stroke-width="1.28"
        opacity="0.45"
        stroke-linecap="round"
-       id="line3784"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3784" />
     <line
        x1="338"
        y1="531"
@@ -2830,8 +2745,7 @@
        stroke-width="1.28"
        opacity="0.45"
        stroke-linecap="round"
-       id="line3786"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3786" />
     <line
        x1="154"
        y1="457.23999"
@@ -2841,8 +2755,7 @@
        stroke-width="0.92"
        opacity="0.4"
        stroke-linecap="round"
-       id="line3788"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3788" />
     <line
        x1="522"
        y1="457.23999"
@@ -2852,8 +2765,7 @@
        stroke-width="0.92"
        opacity="0.4"
        stroke-linecap="round"
-       id="line3790"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3790" />
     <line
        x1="706"
        y1="349.23999"
@@ -2863,8 +2775,7 @@
        stroke-width="0.92"
        opacity="0.4"
        stroke-linecap="round"
-       id="line3792"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3792" />
     <line
        x1="338"
        y1="349.23999"
@@ -2874,7 +2785,6 @@
        stroke-width="0.92"
        opacity="0.4"
        stroke-linecap="round"
-       id="line3794"
-       style="opacity:0.57;stroke:#323232;stroke-width:1.72346;stroke-dasharray:none;stroke-opacity:1" />
+       id="line3794" />
   </g>
 </svg>

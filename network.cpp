@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <random>
+#include <array>
 
 namespace {
 
@@ -150,6 +152,76 @@ struct DecodedValue {
     int color_1b = -1;
     int color_idx = -1;
     int time = -1;
+};
+
+
+struct FrontCandidate {
+    int activator = -1;
+    int color_idx = -1;
+};
+
+inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
+{
+    int n = 0;
+
+    const int xm = grid.neighbor_xm(idx);
+    const int xp = grid.neighbor_xp(idx);
+    if (xm >= 0) out[n++] = xm;
+    if (xp >= 0) out[n++] = xp;
+
+    if (grid.dim >= 2) {
+        const int ym = grid.neighbor_ym(idx);
+        const int yp = grid.neighbor_yp(idx);
+        if (ym >= 0) out[n++] = ym;
+        if (yp >= 0) out[n++] = yp;
+    }
+
+    if (grid.dim == 3) {
+        const int zm = grid.neighbor_zm(idx);
+        const int zp = grid.neighbor_zp(idx);
+        if (zm >= 0) out[n++] = zm;
+        if (zp >= 0) out[n++] = zp;
+    }
+
+    return n;
+}
+
+struct SparseFrontCandidates {
+    static constexpr int max_candidates_per_target = 16;
+
+    std::vector<int> touched_targets;
+    std::vector<int> slot_of_target;
+    std::vector<std::array<FrontCandidate, max_candidates_per_target>> candidates;
+    std::vector<unsigned char> counts;
+
+    explicit SparseFrontCandidates(const int nsites = 0)
+        : slot_of_target(static_cast<std::size_t>(nsites), -1) {}
+
+    void clear() {
+        for (const int target : touched_targets) {
+            slot_of_target[static_cast<std::size_t>(target)] = -1;
+        }
+        touched_targets.clear();
+        candidates.clear();
+        counts.clear();
+    }
+
+    void add(const int target, const FrontCandidate candidate) {
+        int slot = slot_of_target[static_cast<std::size_t>(target)];
+        if (slot < 0) {
+            slot = static_cast<int>(counts.size());
+            slot_of_target[static_cast<std::size_t>(target)] = slot;
+            touched_targets.push_back(target);
+            candidates.emplace_back();
+            counts.push_back(0);
+        }
+
+        unsigned char& count = counts[static_cast<std::size_t>(slot)];
+        if (count < max_candidates_per_target) {
+            candidates[static_cast<std::size_t>(slot)][count] = candidate;
+            ++count;
+        }
+    }
 };
 
 inline DecodedValue decode_animation_value(const long long code,
@@ -404,6 +476,8 @@ NetworkPattern network::create_network(
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
+    SparseFrontCandidates front_candidates(grid.total_size);
+
     auto commit_step = [&](const int t_k,
                            const std::vector<double>& p_vec,
                            const std::vector<double>& f_vec)
@@ -574,86 +648,198 @@ NetworkPattern network::create_network(
         std::fill(N_current.begin(), N_current.end(), 0);
         std::fill(f_current.begin(), f_current.end(), 0.0);
         next_frontier.clear();
-        // Candidates per target site: collect potential activators in this iteration
-        const std::size_t Nsites = static_cast<std::size_t>(grid.total_size);
-        std::vector<std::vector<int>> candidates(Nsites);
+        front_candidates.clear();
 
-        for (const int idx : frontier) {
-            const int a_val = net.get(idx);
-            if (a_val <= 0) continue;
-
-            const int cor_idx = value_to_color_index(num_colors, a_val);
-            if (cor_idx < 0 || cor_idx >= num_colors) continue;
-            if (finished[cor_idx]) continue;
-
-            grid.for_each_neighbor(idx, [&](const int viz_idx) {
-                if (viz_idx < 0) return;
-
-                const int vv = net.get(viz_idx);
-                if (vv >= 0) return; // already active/blocked
-
-                const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
-                const bool no_color   = (vv == -1);
-                if (!same_color && !no_color) return;
-
-                const double r = rng.uniform_real(0.0, 1.0);
-                if (r < p_curr[cor_idx]) {
-                    // register idx as a candidate activator for viz_idx
-                    candidates[static_cast<std::size_t>(viz_idx)].push_back(idx);
-                } else if (is_node) {
-                    // mark as blocked only if no one activates it; postpone to end
-                }
-            });
-        }
-
-        // RNG for selection — deterministic per global seed + t
-        std::mt19937 sel_rng(static_cast<uint32_t>(rng.get_seed() ^ static_cast<int>(t)));
-
-        // For each target, pick one activator uniformly (if any)
-        for (std::size_t viz = 0; viz < Nsites; ++viz) {
-            auto &c = candidates[viz];
-            if (c.empty()) continue;
-            std::uniform_int_distribution<std::size_t> dist(0, c.size() - 1);
-            const std::size_t pick = dist(sel_rng);
-            const int chosen_u = c[pick];
-
-            // determine color from chosen_u
-            const int a_val = net.get(chosen_u);
-            if (a_val <= 0) continue;
-            const int cor_idx = value_to_color_index(num_colors, a_val);
-            if (cor_idx < 0 || cor_idx >= num_colors) continue;
-            const int new_val = color_to_active_value(num_colors, cor_idx);
-
-            net.set(static_cast<int>(viz), new_val);
-            next_frontier.push_back(static_cast<int>(viz));
-            ++N_current[cor_idx];
-            parent[static_cast<int>(viz)] = chosen_u;
-            activation_time[viz] = static_cast<uint32_t>(t);
-            // record encoded activation time for temporal decomposition
-            activation_code[static_cast<std::size_t>(viz)] =
-                static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
-
-            const int h = grid.grow_coord(static_cast<int>(viz));
-            if (h > max_heights[cor_idx]) {
-                max_heights[cor_idx] = h;
-            }
-
-            if (!percolated[cor_idx] && h == lenght_network - 1) {
-                percolated[cor_idx] = true;
-                top_site_per_color[cor_idx] = static_cast<int>(viz);
-                percolation_rank[cor_idx] = ++order_ctr;
-            }
-
-            // record chosen edge (both directions for undirected traversal)
-            edge_pairs.emplace_back(static_cast<uint32_t>(chosen_u), static_cast<uint32_t>(viz));
-            edge_pairs.emplace_back(static_cast<uint32_t>(viz), static_cast<uint32_t>(chosen_u));
-        }
-
-        // Optionally mark blocked nodes for node percolation model
         if (is_node) {
-            for (std::size_t viz = 0; viz < Nsites; ++viz) {
-                if (net.get(static_cast<int>(viz)) < 0 && candidates[viz].empty()) {
-                    net.set(static_cast<int>(viz), 0);
+            // Site percolation (Leath/SOP): each perimeter target exposed by
+            // the current growth front is considered once. If the selected
+            // attempt fails, the target is blocked forever.
+            int neigh[6];
+
+            for (const int idx : frontier) {
+                const int a_val = net.get(idx);
+                if (a_val <= 0) continue;
+
+                const int cor_idx = value_to_color_index(num_colors, a_val);
+                if (cor_idx < 0 || cor_idx >= num_colors) continue;
+                if (finished[cor_idx]) continue;
+
+                const int nneigh = collect_neighbors(grid, idx, neigh);
+                for (int ni = 0; ni < nneigh; ++ni) {
+                    const int viz_idx = neigh[ni];
+
+                    const int vv = net.get(viz_idx);
+                    if (vv >= 0) continue; // already active/blocked
+
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color   = (vv == -1);
+                    if (!same_color && !no_color) continue;
+
+                    front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
+                }
+            }
+
+            for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
+                const int viz = front_candidates.touched_targets[slot];
+                const int n_cand = static_cast<int>(front_candidates.counts[slot]);
+                if (n_cand <= 0) continue;
+
+                const int pick = rng.uniform_int(0, n_cand - 1);
+                const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                const int cor_idx = chosen.color_idx;
+
+                if (rng.uniform_real(0.0, 1.0) >= p_curr[cor_idx]) {
+                    net.set(viz, 0);
+                    activation_code[static_cast<std::size_t>(viz)] =
+                        static_cast<NetworkPattern::state_t>(0);
+                    continue;
+                }
+
+                const int new_val = color_to_active_value(num_colors, cor_idx);
+                net.set(viz, new_val);
+                next_frontier.push_back(viz);
+                ++N_current[cor_idx];
+                parent[viz] = chosen.activator;
+                activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                activation_code[static_cast<std::size_t>(viz)] =
+                    static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
+
+                const int h = grid.grow_coord(viz);
+                if (h > max_heights[cor_idx]) {
+                    max_heights[cor_idx] = h;
+                }
+
+                if (!percolated[cor_idx] && h == lenght_network - 1) {
+                    percolated[cor_idx] = true;
+                    top_site_per_color[cor_idx] = viz;
+                    percolation_rank[cor_idx] = ++order_ctr;
+                }
+
+                edge_pairs.emplace_back(static_cast<uint32_t>(chosen.activator),
+                                        static_cast<uint32_t>(viz));
+                edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                        static_cast<uint32_t>(chosen.activator));
+            }
+        } else {
+            // Bond percolation (SOP): test every allowed bond from the current
+            // growth front. A target activates if at least one incident allowed
+            // bond opens in this time step.
+            int neigh[6];
+
+            for (const int idx : frontier) {
+                const int a_val = net.get(idx);
+                if (a_val <= 0) continue;
+
+                const int cor_idx = value_to_color_index(num_colors, a_val);
+                if (cor_idx < 0 || cor_idx >= num_colors) continue;
+                if (finished[cor_idx]) continue;
+
+                const int nneigh = collect_neighbors(grid, idx, neigh);
+                for (int ni = 0; ni < nneigh; ++ni) {
+                    const int viz_idx = neigh[ni];
+
+                    const int vv = net.get(viz_idx);
+                    if (vv >= 0) continue; // already active/blocked
+
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color   = (vv == -1);
+                    if (!same_color && !no_color) continue;
+
+                    if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
+                        front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
+                    }
+                }
+            }
+
+            for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
+                const int viz = front_candidates.touched_targets[slot];
+                const int n_cand = static_cast<int>(front_candidates.counts[slot]);
+                if (n_cand <= 0) continue;
+
+                const int target_before = net.get(viz);
+                const bool target_without_species = (num_colors > 1 && target_before == -1);
+
+                int cor_idx = -1;
+                int chosen_u = -1;
+
+                if (target_without_species) {
+                    // For a species-free target, only one accepted bond becomes
+                    // effective. This avoids connecting different species
+                    // through the same newly activated site.
+                    const int pick = rng.uniform_int(0, n_cand - 1);
+                    const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                    cor_idx = chosen.color_idx;
+                    chosen_u = chosen.activator;
+                } else {
+                    // For a target that already belongs to a species, all
+                    // accepted bonds from that same species are kept.
+                    cor_idx = (num_colors == 1)
+                        ? 0
+                        : value_to_color_index(num_colors, target_before);
+
+                    if (cor_idx < 0 || cor_idx >= num_colors) {
+                        continue;
+                    }
+
+                    int same_color_count = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
+                            ++same_color_count;
+                        }
+                    }
+                    if (same_color_count <= 0) continue;
+
+                    const int parent_pick = rng.uniform_int(0, same_color_count - 1);
+                    int seen = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        if (fc.color_idx != cor_idx) continue;
+                        if (seen == parent_pick) {
+                            chosen_u = fc.activator;
+                            break;
+                        }
+                        ++seen;
+                    }
+                }
+
+                if (chosen_u < 0 || cor_idx < 0 || cor_idx >= num_colors) {
+                    continue;
+                }
+
+                const int new_val = color_to_active_value(num_colors, cor_idx);
+                net.set(viz, new_val);
+                next_frontier.push_back(viz);
+                ++N_current[cor_idx];
+                parent[viz] = chosen_u;
+                activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                activation_code[static_cast<std::size_t>(viz)] =
+                    static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
+
+                const int h = grid.grow_coord(viz);
+                if (h > max_heights[cor_idx]) {
+                    max_heights[cor_idx] = h;
+                }
+
+                if (!percolated[cor_idx] && h == lenght_network - 1) {
+                    percolated[cor_idx] = true;
+                    top_site_per_color[cor_idx] = viz;
+                    percolation_rank[cor_idx] = ++order_ctr;
+                }
+
+                if (target_without_species) {
+                    edge_pairs.emplace_back(static_cast<uint32_t>(chosen_u),
+                                            static_cast<uint32_t>(viz));
+                    edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                            static_cast<uint32_t>(chosen_u));
+                } else {
+                    for (int i = 0; i < n_cand; ++i) {
+                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        if (fc.color_idx != cor_idx) continue;
+                        edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
+                                                static_cast<uint32_t>(viz));
+                        edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                                static_cast<uint32_t>(fc.activator));
+                    }
                 }
             }
         }
@@ -1033,6 +1219,8 @@ NetworkPattern network::animate_network(
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
+    SparseFrontCandidates front_candidates(grid.total_size);
+
     auto commit_step = [&](const int t_k,
                            const std::vector<double>& p_vec,
                            const std::vector<double>& f_vec)
@@ -1270,52 +1458,170 @@ NetworkPattern network::animate_network(
         std::fill(N_current.begin(), N_current.end(), 0);
         std::fill(f_current.begin(), f_current.end(), 0.0);
         next_frontier.clear();
+        front_candidates.clear();
 
-        for (const int idx : frontier) {
-            const int a_val = net.get(idx);
-            if (a_val <= 0) continue;
+        if (is_node) {
+            // Same activation logic used by create_network for site/SOP.
+            int neigh[6];
 
-            const int cor_idx = value_to_color_index(num_colors, a_val);
-            if (cor_idx < 0 || cor_idx >= num_colors) continue;
-            if (finished[cor_idx]) continue;
+            for (const int idx : frontier) {
+                const int a_val = net.get(idx);
+                if (a_val <= 0) continue;
 
-            const int new_val = color_to_active_value(num_colors, cor_idx);
+                const int cor_idx = value_to_color_index(num_colors, a_val);
+                if (cor_idx < 0 || cor_idx >= num_colors) continue;
+                if (finished[cor_idx]) continue;
 
-            grid.for_each_neighbor(idx, [&](const int viz_idx) {
-                if (viz_idx < 0) return;
+                const int nneigh = collect_neighbors(grid, idx, neigh);
+                for (int ni = 0; ni < nneigh; ++ni) {
+                    const int viz_idx = neigh[ni];
 
-                const int vv = net.get(viz_idx);
-                if (vv >= 0) return;
+                    const int vv = net.get(viz_idx);
+                    if (vv >= 0) continue;
 
-                const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
-                const bool no_color   = (vv == -1);
-                if (!same_color && !no_color) return;
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color   = (vv == -1);
+                    if (!same_color && !no_color) continue;
 
-                const double r = rng.uniform_real(0.0, 1.0);
-                if (r < p_curr[cor_idx]) {
-                    net.set(viz_idx, new_val);
-                    activation_code[static_cast<std::size_t>(viz_idx)] =
-                        static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
-                    next_frontier.push_back(viz_idx);
-                    ++N_current[cor_idx];
-                    parent[viz_idx] = idx;
-
-                    const int h = grid.grow_coord(viz_idx);
-                    if (h > max_heights[cor_idx]) {
-                        max_heights[cor_idx] = h;
-                    }
-
-                    if (!percolated[cor_idx] && h == lenght_network - 1) {
-                        percolated[cor_idx] = true;
-                        top_site_per_color[cor_idx] = viz_idx;
-                        percolation_rank[cor_idx] = ++order_ctr;
-                    }
-                } else if (is_node) {
-                    net.set(viz_idx, 0);
-                    activation_code[static_cast<std::size_t>(viz_idx)] =
-                        static_cast<NetworkPattern::state_t>(0);
+                    front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
                 }
-            });
+            }
+
+            for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
+                const int viz = front_candidates.touched_targets[slot];
+                const int n_cand = static_cast<int>(front_candidates.counts[slot]);
+                if (n_cand <= 0) continue;
+
+                const int pick = rng.uniform_int(0, n_cand - 1);
+                const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                const int cor_idx = chosen.color_idx;
+
+                if (rng.uniform_real(0.0, 1.0) >= p_curr[cor_idx]) {
+                    net.set(viz, 0);
+                    activation_code[static_cast<std::size_t>(viz)] =
+                        static_cast<NetworkPattern::state_t>(0);
+                    continue;
+                }
+
+                const int new_val = color_to_active_value(num_colors, cor_idx);
+                net.set(viz, new_val);
+                activation_code[static_cast<std::size_t>(viz)] =
+                    static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
+                next_frontier.push_back(viz);
+                ++N_current[cor_idx];
+                parent[viz] = chosen.activator;
+
+                const int h = grid.grow_coord(viz);
+                if (h > max_heights[cor_idx]) {
+                    max_heights[cor_idx] = h;
+                }
+
+                if (!percolated[cor_idx] && h == lenght_network - 1) {
+                    percolated[cor_idx] = true;
+                    top_site_per_color[cor_idx] = viz;
+                    percolation_rank[cor_idx] = ++order_ctr;
+                }
+            }
+        } else {
+            // Same activation logic used by create_network for bond/SOP.
+            // All accepted bonds from the current front are collected before
+            // any target site is activated, removing for-loop order bias.
+            int neigh[6];
+
+            for (const int idx : frontier) {
+                const int a_val = net.get(idx);
+                if (a_val <= 0) continue;
+
+                const int cor_idx = value_to_color_index(num_colors, a_val);
+                if (cor_idx < 0 || cor_idx >= num_colors) continue;
+                if (finished[cor_idx]) continue;
+
+                const int nneigh = collect_neighbors(grid, idx, neigh);
+                for (int ni = 0; ni < nneigh; ++ni) {
+                    const int viz_idx = neigh[ni];
+
+                    const int vv = net.get(viz_idx);
+                    if (vv >= 0) continue;
+
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color   = (vv == -1);
+                    if (!same_color && !no_color) continue;
+
+                    if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
+                        front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
+                    }
+                }
+            }
+
+            for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
+                const int viz = front_candidates.touched_targets[slot];
+                const int n_cand = static_cast<int>(front_candidates.counts[slot]);
+                if (n_cand <= 0) continue;
+
+                const int target_before = net.get(viz);
+                const bool target_without_species = (num_colors > 1 && target_before == -1);
+
+                int cor_idx = -1;
+                int chosen_u = -1;
+
+                if (target_without_species) {
+                    const int pick = rng.uniform_int(0, n_cand - 1);
+                    const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                    cor_idx = chosen.color_idx;
+                    chosen_u = chosen.activator;
+                } else {
+                    cor_idx = (num_colors == 1)
+                        ? 0
+                        : value_to_color_index(num_colors, target_before);
+
+                    if (cor_idx < 0 || cor_idx >= num_colors) {
+                        continue;
+                    }
+
+                    int same_color_count = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
+                            ++same_color_count;
+                        }
+                    }
+                    if (same_color_count <= 0) continue;
+
+                    const int parent_pick = rng.uniform_int(0, same_color_count - 1);
+                    int seen = 0;
+                    for (int i = 0; i < n_cand; ++i) {
+                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        if (fc.color_idx != cor_idx) continue;
+                        if (seen == parent_pick) {
+                            chosen_u = fc.activator;
+                            break;
+                        }
+                        ++seen;
+                    }
+                }
+
+                if (chosen_u < 0 || cor_idx < 0 || cor_idx >= num_colors) {
+                    continue;
+                }
+
+                const int new_val = color_to_active_value(num_colors, cor_idx);
+                net.set(viz, new_val);
+                activation_code[static_cast<std::size_t>(viz)] =
+                    static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
+                next_frontier.push_back(viz);
+                ++N_current[cor_idx];
+                parent[viz] = chosen_u;
+
+                const int h = grid.grow_coord(viz);
+                if (h > max_heights[cor_idx]) {
+                    max_heights[cor_idx] = h;
+                }
+
+                if (!percolated[cor_idx] && h == lenght_network - 1) {
+                    percolated[cor_idx] = true;
+                    top_site_per_color[cor_idx] = viz;
+                    percolation_rank[cor_idx] = ++order_ctr;
+                }
+            }
         }
 
         for (int c = 0; c < num_colors; ++c) {
