@@ -21,8 +21,25 @@ public:
         PercolationSeries&                  ps_out
     );
 
+    void compute_shortest_paths_to_base_compact(
+        const NetworkCompact&              netc,
+        int                                 dim,
+        const std::vector<int>&             shape,
+        int                                 grow_axis,
+        int                                 num_colors,
+        PercolationSeries&                  ps_out
+    );
+
     std::vector<int> largest_cluster_sizes(
         const NetworkPattern&   net,
+        int                     dim,
+        const std::vector<int>& shape,
+        int                     grow_axis,
+        int                     num_colors
+    );
+
+    std::vector<int> largest_cluster_sizes_compact(
+        const NetworkCompact&   netc,
         int                     dim,
         const std::vector<int>& shape,
         int                     grow_axis,

@@ -11,9 +11,9 @@ class network {
 private:
     int lenght_network;
     int num_of_samples;
-    double k;
-    double N_t = 0.0;
-    int type_N_t;
+    double c = 0.0;
+    double f_T = 0.0;
+    int type_f_T;
     double a;
     double alpha;
     int dim;
@@ -33,16 +33,18 @@ public:
           p0(num_colors_, 0.0),
           rho(num_colors_, 0.0) {}
 
-    double generate_p(int type_N_t, double p0, int t_i, int N_current, double k, double a, double alpha);
-    double type_Nt_create(int type_N_t, int t_i, double a, double alpha);
+    double generate_p(int type_f_T, double p_t, int t_i, double f_current,
+                      double c, double f_T, double a, double alpha);
+    double target_fT_create(int type_f_T, int t_i, double f_T,
+                          double a, double alpha);
 
     NetworkPattern create_network(
         int dim,
         int lenght_network,
         int num_of_samples,
-        double k,
-        double N_t,
-        int type_N_t,
+        double c,
+        double f_T,
+        int type_f_T,
         std::vector<double> p0,
         double P0,
         double a,
@@ -69,9 +71,9 @@ public:
         int dim,
         int lenght_network,
         int num_of_samples,
-        double k,
-        double N_t,
-        int type_N_t,
+        double c,
+        double f_T,
+        int type_f_T,
         std::vector<double> p0,
         double P0,
         double a,
@@ -83,9 +85,12 @@ public:
         PercolationSeries& ps_out,
         all_random& rng);
 
-    NetworkPattern create_shortest_paths_map(
-        const NetworkPattern& net,
-        const PercolationSeries& ps_out);
+    NetworkPattern filter_percolating_clusters_from_encoded(
+        const NetworkPattern& encoded_net) const;
+
+    // NetworkPattern create_shortest_paths_map(
+    //     const NetworkPattern& net,
+    //     const PercolationSeries& ps_out);
 };
 
 #endif // network_hpp

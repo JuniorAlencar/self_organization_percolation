@@ -15,9 +15,9 @@ class FolderCreator {
 
         std::tuple<std::string, std::string, std::string, std::string, std::string> create_structure(
             int dim,
-            int type_Nt,
-            double N_t,
-            double k,
+            int type_f_T,
+            double f_T,
+            double c,
             int L,
             int n_colors,
             double a,

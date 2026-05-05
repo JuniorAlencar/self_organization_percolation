@@ -38,16 +38,17 @@ def create_folder(folder_path):
     else:
         print(f"Folder already exists: {folder_path}")
 
-# Accepts k/rho in normal float or scientific notation (e.g., 1.0e-04)
+# Accepts c/f_T/rho in normal float or scientific notation (e.g., 5.0e-01)
+FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
 PARAMS_RE = re.compile(
-    r"""
+    rf"""
     (?P<type_perc>[A-Za-z]+)_percolation
     /num_colors_(?P<num_colors>\d+)
     /dim_(?P<dim>\d+)
     /L_(?P<L>\d+)
-    /NT_constant/NT_(?P<Nt>\d+)
-    /k_(?P<k>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)
-    /rho_(?P<rho>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)
+    /fT_constant/fT_(?P<f_T>{FLOAT})
+    /c_(?P<c>{FLOAT})
+    /rho_(?P<rho>{FLOAT})
     /data
     """,
     re.X,
@@ -55,7 +56,7 @@ PARAMS_RE = re.compile(
 
 def parse_params_from_path(path: str) -> dict | None:
     """
-    Extract type_perc, num_colors, dim, L, Nt, k, rho from a folder path.
+    Extract type_perc, num_colors, dim, L, f_T, c, rho from a folder path.
     Returns a typed dict or None if it does not match.
     """
     p = path.replace("\\", "/")
@@ -68,8 +69,8 @@ def parse_params_from_path(path: str) -> dict | None:
         "num_colors": int(gd["num_colors"]),
         "dim": int(gd["dim"]),
         "L": int(gd["L"]),
-        "Nt": int(gd["Nt"]),
-        "k": float(gd["k"]),
+        "f_T": float(gd["f_T"]),
+        "c": float(gd["c"]),
         "rho": float(gd["rho"]),
     }
 
@@ -103,10 +104,11 @@ def parse_p0_from_filename(path: str) -> float | None:
 def read_orders_one_file(file_path: str) -> list[tuple[int | None, np.ndarray, np.ndarray | None]]:
     """
     Read one SOP result JSON and return a list of tuples:
-      (order_percolation, p_t_array, N_t_array_or_None)
+      (order_percolation, p_t_array, f_t_array_or_None)
 
-    - Ignores empty/corrupted files and malformed entries.
-    - Truncates series to the shortest length if pt/nt differ.
+    Supports both result layouts:
+      - list: [{"order_percolation": i, "data": {...}}, ...]
+      - dict: {"order_percolation i": {"data": {...}}, ...}
     """
     try:
         with open(file_path, "r") as f:
@@ -114,25 +116,39 @@ def read_orders_one_file(file_path: str) -> list[tuple[int | None, np.ndarray, n
     except Exception:
         return []
 
-    out = []
-    if isinstance(obj, dict) and isinstance(obj.get("results"), list):
-        for item in obj["results"]:
-            order = item.get("order_percolation", None)
-            d = item.get("data", {})
-            if order is None or "time" not in d or "pt" not in d:
-                continue
+    if not isinstance(obj, dict):
+        return []
 
-            p = np.asarray(d["pt"], float)
-            n_arr = np.asarray(d["nt"], float) if "nt" in d else None
-            n = min(len(p), len(n_arr)) if n_arr is not None else len(p)
-            if n <= 0:
-                continue
-            p = p[:n]
-            n_arr = n_arr[:n] if n_arr is not None else None
-            # store int(order) only if it's integer-like
-            order_val = int(order) if isinstance(order, (int, np.integer)) else None
-            out.append((order_val, p, n_arr))
-    return out  # possibly []
+    results = obj.get("results", {})
+    if isinstance(results, list):
+        items = [(str(item.get("order_percolation", "")), item) for item in results if isinstance(item, dict)]
+    elif isinstance(results, dict):
+        items = list(results.items())
+    else:
+        return []
+
+    out = []
+    for key, item in items:
+        if not isinstance(item, dict):
+            continue
+        order = item.get("order_percolation", None)
+        if order is None:
+            m = re.search(r"(\d+)", str(key))
+            order = int(m.group(1)) if m else None
+        d = item.get("data", item)
+        if order is None or not isinstance(d, dict) or "pt" not in d:
+            continue
+
+        p = np.asarray(d["pt"], float)
+        f_arr = np.asarray(d.get("ft", d.get("f_t", [])), float) if ("ft" in d or "f_t" in d) else None
+        n = min(len(p), len(f_arr)) if f_arr is not None else len(p)
+        if n <= 0:
+            continue
+        p = p[:n]
+        f_arr = f_arr[:n] if f_arr is not None else None
+        out.append((int(order), p, f_arr))
+
+    return out
 
 def read_orders_one_file_fix(file_path: str) -> dict:
     """
@@ -377,17 +393,16 @@ def list_rho_values(
     num_colors: int,
     dim: int,
     L: int,
-    Nt: int,
-    k: float,
+    f_T: float,
+    c: float,
     base_root: str = "../Data",
     rel_tol: float = 1e-12,
     abs_tol: float = 1e-15,
 ) -> list[float]:
     """
     List all rho values that exist under:
-      ../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/
-      NT_constant/NT_{Nt}/k_*/rho_*/data
-    and match the fixed parameters (including k≈ given k).
+      ../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/fT_constant/fT_*/c_*/rho_*/data
+    and match the fixed parameters c and f_T.
     """
     base = (
         Path(base_root)
@@ -395,14 +410,13 @@ def list_rho_values(
         / f"num_colors_{num_colors}"
         / f"dim_{dim}"
         / f"L_{L}"
-        / "NT_constant"
-        / f"NT_{Nt}"
+        / "fT_constant"
     )
     if not base.exists():
         return []
 
     rhos = []
-    for data_dir in base.glob("k_*/rho_*/data"):
+    for data_dir in base.glob("fT_*/c_*/rho_*/data"):
         if not data_dir.is_dir():
             continue
         m = PARAMS_RE.search(str(data_dir.as_posix()))
@@ -417,11 +431,12 @@ def list_rho_values(
             continue
         if int(gd["L"]) != L:
             continue
-        if int(gd["Nt"]) != Nt:
-            continue
 
-        k_here = float(gd["k"])
-        if not math.isclose(k_here, float(k), rel_tol=rel_tol, abs_tol=abs_tol):
+        f_T_here = float(gd["f_T"])
+        c_here = float(gd["c"])
+        if not math.isclose(f_T_here, float(f_T), rel_tol=rel_tol, abs_tol=abs_tol):
+            continue
+        if not math.isclose(c_here, float(c), rel_tol=rel_tol, abs_tol=abs_tol):
             continue
         rhos.append(float(gd["rho"]))
     return sorted(set(rhos))
@@ -457,21 +472,21 @@ def _safe_p0_tag(p0: float) -> str:
 
 _CACHE_VERSION = 1
 
-def _cache_dir(type_perc: str, num_colors: int, dim: int, L: int, NT: int, k: float, rho: float) -> str:
+def _cache_dir(type_perc: str, num_colors: int, dim: int, L: int, f_T: float, c: float, rho: float) -> str:
     """Directory one level above /data that holds cache files."""
     return (
         f"../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/"
-        f"NT_constant/NT_{NT}/k_{k:.1e}/rho_{rho:.4e}"
+        f"fT_constant/fT_{f_T:.6e}/c_{c:.6e}/rho_{rho:.4e}"
     )
 
-def _cache_file_path(type_perc: str, num_colors: int, dim: int, L: int, NT: int, k: float, rho: float, p0: float) -> str:
+def _cache_file_path(type_perc: str, num_colors: int, dim: int, L: int, f_T: float, c: float, rho: float, p0: float) -> str:
     """Cache file for a single p0."""
-    return os.path.join(_cache_dir(type_perc, num_colors, dim, L, NT, k, rho),
+    return os.path.join(_cache_dir(type_perc, num_colors, dim, L, f_T, c, rho),
                         f"mean_properties_p0_{_safe_p0_tag(p0)}.json")
 
-def _bundle_file_path(type_perc: str, num_colors: int, dim: int, L: int, NT: int, k: float, rho: float) -> str:
+def _bundle_file_path(type_perc: str, num_colors: int, dim: int, L: int, f_T: float, c: float, rho: float) -> str:
     """Single bundle cache containing many p0 entries."""
-    return os.path.join(_cache_dir(type_perc, num_colors, dim, L, NT, k, rho),
+    return os.path.join(_cache_dir(type_perc, num_colors, dim, L, f_T, c, rho),
                         "mean_properties_bundle.json")
 
 def _latest_mtime(folder: str) -> float:
@@ -508,20 +523,20 @@ def _stats_from_json(obj: dict) -> dict:
 
 # ------------------------ (A) per-p0 cache ------------------------
 
-def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
-                    k: float, rho: float, p0: float) -> tuple[dict, dict]:
+def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, f_T: float,
+                    c: float, rho: float, p0: float) -> tuple[dict, dict]:
     """
     Compute (or load from cache) ensemble stats for a SINGLE p0.
 
-    Returns (p_stats, N_stats) dicts with keys like 't_grid', 'mean', 'std', etc.
+    Returns (p_stats, f_stats) dicts with keys like 't_grid', 'mean', 'std', etc.
     Cache file: mean_properties_p0_<p0_tag>.json (one dir above /data).
     """
     path_files = (
         f"../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/"
-        f"NT_constant/NT_{NT}/k_{k:.1e}/rho_{rho:.4e}/data"
+        f"fT_constant/fT_{f_T:.6e}/c_{c:.6e}/rho_{rho:.4e}/data"
     )
-    save_dir = _cache_dir(type_perc, num_colors, dim, L, NT, k, rho)
-    cache_fp = _cache_file_path(type_perc, num_colors, dim, L, NT, k, rho, p0)
+    save_dir = _cache_dir(type_perc, num_colors, dim, L, f_T, c, rho)
+    cache_fp = _cache_file_path(type_perc, num_colors, dim, L, f_T, c, rho, p0)
 
     # try reading cache
     if os.path.isfile(cache_fp):
@@ -535,19 +550,19 @@ def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
                 and meta.get("num_colors") == num_colors
                 and meta.get("dim") == dim
                 and meta.get("L") == L
-                and meta.get("NT") == NT
-                and float(meta.get("k")) == float(k)
+                and float(meta.get("f_T")) == float(f_T)
+                and float(meta.get("c")) == float(c)
                 and float(meta.get("rho")) == float(rho)
                 and float(meta.get("p0")) == float(p0)
             ):
-                return _stats_from_json(cached.get("stats_p", {})), _stats_from_json(cached.get("stats_N", {}))
+                return _stats_from_json(cached.get("stats_p", {})), _stats_from_json(cached.get("stats_f", cached.get("stats_N", {})))
         except Exception:
             pass  # ignore corrupted cache and recompute
 
     # compute from raw files
     all_files = glob.glob(os.path.join(path_files, "*.json"))
     times_list_p, p_values_list = [], []
-    times_list_N, N_values_list = [], []
+    times_list_f, f_values_list = [], []
 
     for file in all_files:
         if not _filename_matches_p0(file, p0):
@@ -556,7 +571,7 @@ def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
         if not records:
             continue
 
-        order, p, nt = records[0]
+        order, p, ft = records[0]
         p = np.asarray(p, float)
         if p.size == 0:
             continue
@@ -579,21 +594,21 @@ def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
             times_list_p.append(t_p)
             p_values_list.append(p_p)
 
-        # N(t)
-        if nt is not None:
-            nt = np.asarray(nt, float)
-            m_n = min(t.size, nt.size)
-            if m_n > 0:
-                t_n = t[:m_n].astype(float, copy=False)
-                nt_n = nt[:m_n]
-                if m_n > 1 and not np.all(np.diff(t_n) >= 0):
-                    idx = np.argsort(t_n)
-                    t_n, nt_n = t_n[idx], nt_n[idx]
-                times_list_N.append(t_n)
-                N_values_list.append(nt_n)
+        # f(t)
+        if ft is not None:
+            ft = np.asarray(ft, float)
+            m_f = min(t.size, ft.size)
+            if m_f > 0:
+                t_f = t[:m_f].astype(float, copy=False)
+                ft_f = ft[:m_f]
+                if m_f > 1 and not np.all(np.diff(t_f) >= 0):
+                    idx = np.argsort(t_f)
+                    t_f, ft_f = t_f[idx], ft_f[idx]
+                times_list_f.append(t_f)
+                f_values_list.append(ft_f)
 
     stats_p = ensemble_stats(times_list_p, p_values_list)
-    stats_N = ensemble_stats(times_list_N, N_values_list)
+    stats_f = ensemble_stats(times_list_f, f_values_list)
 
     # save cache
     os.makedirs(save_dir, exist_ok=True)
@@ -604,14 +619,14 @@ def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
             "num_colors": num_colors,
             "dim": dim,
             "L": L,
-            "NT": NT,
-            "k": float(k),
+            "f_T": float(f_T),
+            "c": float(c),
             "rho": float(rho),
             "p0": float(p0),
             "generated_at": datetime.utcnow().isoformat() + "Z",
         },
         "stats_p": _stats_to_jsonable(stats_p),
-        "stats_N": _stats_to_jsonable(stats_N),
+        "stats_f": _stats_to_jsonable(stats_f),
     }
     try:
         with open(cache_fp, "w") as f:
@@ -619,7 +634,7 @@ def mean_properties(type_perc: str, num_colors: int, dim: int, L: int, NT: int,
     except Exception as e:
         print(f"[WARN] Could not save cache at {cache_fp}: {e}")
 
-    return stats_p, stats_N
+    return stats_p, stats_f
 
 # --------- helpers ---------
 FNAME_RE = re.compile(r"P0_(?P<P0>\d+\.\d+)_p0_(?P<p0>\d+\.\d+)_seed_(?P<seed>\d+)\.json$")
@@ -685,7 +700,7 @@ def _mean_sem(vals: List[float]) -> Dict[str, float]:
     return {"mean": float(arr.mean()), "sem": float(arr.std(ddof=1) / np.sqrt(n))}
 
 def average_by_order(dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
-    keys_series = ("time", "pt", "nt", "Mt", "Smax", "Ni", "chi")
+    keys_series = ("time", "pt", "ft", "Mt", "Smax", "Ni", "chi")
     # escalares para reportar média + SEM
     keys_scalar_sem = ("time_percolation", "shortest_path_lin")
 
@@ -763,7 +778,7 @@ def infer_p0_from_filename(path_json: str | Path) -> float | None:
     return float(m.group(1)) if m else None
 
 # HOW TO USE
-# bundle_path = f"../Data/bond_percolation/num_colors_{NUM_COLORS}/dim_{DIM}/L_{L}/NT_constant/NT_{NT}/k_{K:.1e}/rho_{RHO:.4e}/data/"
+# bundle_path = f"../Data/bond_percolation/num_colors_{NUM_COLORS}/dim_{DIM}/L_{L}/fT_constant/fT_{f_T:.6e}/c_{C:.6e}/rho_{RHO:.4e}/data/"
 # filename = ex: "P0_0.10_p0_0.30_seed_27324716.json"
 # bundle, p0_index_like = load_perc_json(bundle_path + filename)
 # orders = sorted(p0_index_like.keys())  # ex.: [1,2,3,4]
@@ -785,27 +800,27 @@ def load_bundle(path_json: str | Path):
 def load_bundle_old(
     filepath: str | Path,
     *,
-    include_nt: bool = True
+    include_ft: bool = True
 ) -> Tuple[List[Dict[str, Any]], pd.DataFrame]:
     """
     Lê um arquivo .json de simulação e retorna:
       - metas: lista de dicts com metadados por 'order_percolation'
-      - df: DataFrame longo com colunas ['order','t','pt','nt'] (nt pode vir NaN)
+      - df: DataFrame longo com colunas ['order','t','pt','ft'] (ft pode vir NaN)
 
     Parâmetros
     ----------
     filepath : str | Path
         Caminho do arquivo JSON.
-    include_nt : bool
-        Se True, tenta carregar a série 'nt' quando existir; caso contrário, preenche NaN.
+    include_ft : bool
+        Se True, tenta carregar a série 'ft' quando existir; caso contrário, preenche NaN.
 
     Retorno
     -------
     metas : list[dict]
         Para cada entrada em 'results', inclui:
-        {'order', 'color', 'rho', 'M_size', 'time_percolation', 'n_time', 'has_nt'}.
+        {'order', 'color', 'rho', 'M_size', 'time_percolation', 'n_time', 'has_ft'}.
     df : pandas.DataFrame
-        Linhas por tempo: colunas ['order','t','pt','nt'] (nt pode ser NaN).
+        Linhas por tempo: colunas ['order','t','pt','ft'] (ft pode ser NaN).
     """
     filepath = Path(filepath)
     with filepath.open("r", encoding="utf-8") as f:
@@ -825,12 +840,12 @@ def load_bundle_old(
 
         time = d.get("time", None)
         pt   = d.get("pt", None)
-        nt   = d.get("nt", None) if include_nt else None
+        ft   = d.get("ft", None) if include_ft else None
 
         # Converte para arrays, se existirem
         time = np.asarray(time) if time is not None else None
         pt   = np.asarray(pt)   if pt   is not None else None
-        nt   = np.asarray(nt)   if nt   is not None else None
+        ft   = np.asarray(ft)   if ft   is not None else None
 
         # Valida tamanhos mínimos
         if time is None or pt is None:
@@ -838,22 +853,22 @@ def load_bundle_old(
             n_time = 0
         else:
             n_time = int(min(len(time), len(pt)))
-            if nt is not None:
-                n_time = int(min(n_time, len(nt)))
+            if ft is not None:
+                n_time = int(min(n_time, len(ft)))
             # recorta para o mesmo comprimento
             time = time[:n_time]
             pt   = pt[:n_time]
-            if nt is not None:
-                nt = nt[:n_time]
+            if ft is not None:
+                ft = ft[:n_time]
 
             # Empilha linhas
             if n_time > 0:
-                if nt is None:
-                    # sem nt: preenche NaN
+                if ft is None:
+                    # sem ft: preenche NaN
                     for t, p in zip(time, pt):
                         rows.append((int(order), int(t), float(p), np.nan))
                 else:
-                    for t, p, n in zip(time, pt, nt):
+                    for t, p, n in zip(time, pt, ft):
                         rows.append((int(order), int(t), float(p), float(n)))
 
         metas.append({
@@ -863,11 +878,11 @@ def load_bundle_old(
             "M_size": d.get("M_size", None),
             "time_percolation": d.get("time_percolation", None),
             "n_time": n_time,
-            "has_nt": (nt is not None)
+            "has_ft": (ft is not None)
         })
 
-    df = pd.DataFrame(rows, columns=["order", "t", "pt", "nt"]) if rows else \
-         pd.DataFrame(columns=["order", "t", "pt", "nt"])
+    df = pd.DataFrame(rows, columns=["order", "t", "pt", "ft"]) if rows else \
+         pd.DataFrame(columns=["order", "t", "pt", "ft"])
 
     return metas, df
 
@@ -968,7 +983,7 @@ def _mean_sem_1d(values: List[float]) -> Tuple[float, float, int]:
 
 def _avg_series_across_seeds(items: List[Dict[str, Any]], key: str) -> Dict[str, Any]:
     """
-    Média/SEM ao longo das seeds para uma SÉRIE (pt ou nt).
+    Média/SEM ao longo das seeds para uma SÉRIE (pt ou ft).
     Alinha por índice (usa comprimento mínimo comum).
     Retorna dict com time, <key>_mean, <key>_sem.
     """
@@ -1014,12 +1029,12 @@ def _avg_series_across_seeds(items: List[Dict[str, Any]], key: str) -> Dict[str,
 def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Faz a média para um conjunto de dicionários (uma por seed) de UMA dada ordem.
-    - Séries: pt (sempre), nt (se existir).
+    - Séries: pt (sempre), ft (se existir).
     - Escalares: time_percolation e M_size (média e SEM).
     """
     # séries
     pt_blk = _avg_series_across_seeds(lst, "pt")
-    nt_blk = _avg_series_across_seeds([d for d in lst if d.get("nt", None) is not None], "nt")
+    ft_blk = _avg_series_across_seeds([d for d in lst if d.get("ft", None) is not None], "ft")
 
     # escalares
     m_ms, sem_ms, n_ms = _mean_sem_1d([d.get("M_size", None) for d in lst])
@@ -1031,10 +1046,10 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
         "pt_sem":  pt_blk["pt_sem"],
         "n_seeds_pt": pt_blk["n_seeds_series"],
 
-        # nt pode não existir
-        "nt_mean": nt_blk.get("nt_mean", []),
-        "nt_sem":  nt_blk.get("nt_sem", []),
-        "n_seeds_nt": nt_blk.get("n_seeds_series", 0),
+        # ft pode não existir
+        "ft_mean": ft_blk.get("ft_mean", []),
+        "ft_sem":  ft_blk.get("ft_sem", []),
+        "n_seeds_ft": ft_blk.get("n_seeds_series", 0),
 
         "M_size_mean": m_ms,
         "M_size_sem":  sem_ms,
@@ -1049,7 +1064,7 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 # --- helpers que você já tem em outro lugar ---
 # _parse_fname(fp) -> Optional[Tuple[float p0, float p0_val, int seed]]
-# _load_orders_new(fp) -> Dict[int, Dict[str, Any]]  # por ordem: {"t":..., "pt":..., "nt":...}
+# _load_orders_new(fp) -> Dict[int, Dict[str, Any]]  # por ordem: {"t":..., "pt":..., "ft":...}
 # _average_by_order_new(lst) -> Dict[str, Any]       # média/SEM por ordem
 
 import os, glob, json
@@ -1176,8 +1191,8 @@ def compute_means_for_folder_new(
     num_colors: int,
     dim: int,
     L: int,
-    NT: int,
-    k: float,
+    f_T: float,
+    c: float,
     rho: float,
     p0_list: List[float],
     *,
@@ -1189,7 +1204,7 @@ def compute_means_for_folder_new(
     """
     Agrega todas as seeds para cada p0 em p0_list, alinha por order_percolation,
     calcula médias e SEM:
-      - séries: pt (e nt se existir);
+      - séries: pt (e ft se existir);
       - escalares: time_percolation e M_size;
     Além disso, calcula e salva no JSON:
       - p_{c,SOP} (bootstrap ENTRE-SEEDS, escalar)
@@ -1204,9 +1219,9 @@ def compute_means_for_folder_new(
         f"num_colors_{num_colors}",
         f"dim_{dim}",
         f"L_{L}",
-        "NT_constant",
-        f"NT_{NT}",
-        f"k_{k:.1e}",
+        "fT_constant",
+        f"fT_{f_T:.6e}",
+        f"c_{c:.6e}",
         f"rho_{rho:.4e}",
         "data",
     )
@@ -1219,8 +1234,8 @@ def compute_means_for_folder_new(
             "num_colors": num_colors,
             "dim": dim,
             "L": L,
-            "NT": NT,
-            "k": float(k),
+            "f_T": float(f_T),
+            "c": float(c),
             "rho": float(rho),
             "base_dir": os.path.dirname(data_dir),  # uma pasta acima de 'data'
             "x_max_used": None if x_max is None else float(x_max),
@@ -1255,7 +1270,7 @@ def compute_means_for_folder_new(
             _, p0_val, seed = parsed
             seeds.append(seed)
 
-            orders = _load_orders_new(fp)  # {ordk: {"t":..., "pt":..., "nt":...}}
+            orders = _load_orders_new(fp)  # {ordk: {"t":..., "pt":..., "ft":...}}
             for ordk, data in orders.items():
                 per_order[ordk].append(data)
 
@@ -1402,8 +1417,8 @@ def compute_means_for_folder_tests(
     num_colors: int,
     dim: int,
     L: int,
-    NT: int,
-    k: float,
+    f_T: float,
+    c: float,
     rho: float,
     p0_list: List[float],
     *,
@@ -1415,7 +1430,7 @@ def compute_means_for_folder_tests(
     """
     Agrega todas as seeds para cada p0 em p0_list, alinha por order_percolation,
     calcula médias e SEM:
-      - séries: pt (e nt se existir);
+      - séries: pt (e ft se existir);
       - escalares: time_percolation e M_size;
     Além disso, calcula e salva no JSON:
       - p_{c,SOP} (bootstrap ENTRE-SEEDS, escalar)
@@ -1430,9 +1445,9 @@ def compute_means_for_folder_tests(
         f"num_colors_{num_colors}",
         f"dim_{dim}",
         f"L_{L}",
-        "NT_constant",
-        f"NT_{NT}",
-        f"k_{k:.1e}",
+        "fT_constant",
+        f"fT_{f_T:.6e}",
+        f"c_{c:.6e}",
         f"rho_{rho:.4e}",
         "data",
     )
@@ -1445,8 +1460,8 @@ def compute_means_for_folder_tests(
             "num_colors": num_colors,
             "dim": dim,
             "L": L,
-            "NT": NT,
-            "k": float(k),
+            "f_T": float(f_T),
+            "c": float(c),
             "rho": float(rho),
             "base_dir": os.path.dirname(data_dir),  # uma pasta acima de 'data'
             "x_max_used": None if x_max is None else float(x_max),
@@ -1481,7 +1496,7 @@ def compute_means_for_folder_tests(
             _, p0_val, seed = parsed
             seeds.append(seed)
 
-            orders = _load_orders_new(fp)  # {ordk: {"t":..., "pt":..., "nt":...}}
+            orders = _load_orders_new(fp)  # {ordk: {"t":..., "pt":..., "ft":...}}
             for ordk, data in orders.items():
                 per_order[ordk].append(data)
 
@@ -1884,10 +1899,10 @@ def rolling_weighted_mean(y, sem, w):
 
     return mu, se, chi2r
 
-def read_mean_json(N_COLORS:int, DIM:int, L:int, NT:int, K:float, RHO:float):
+def read_mean_json(N_COLORS:int, DIM:int, L:int, f_T:float, C:float, RHO:float):
     filename = (
         f"../SOP_data/published/bond_percolation/num_colors_{N_COLORS}/dim_{DIM}/"
-        f"L_{L}/NT_constant/NT_{NT}/k_{K:.1e}/rho_{RHO:.4e}/properties_mean_bundle.json"
+        f"L_{L}/fT_constant/fT_{f_T:.6e}/c_{C:.6e}/rho_{RHO:.4e}/properties_mean_bundle.json"
     )
     with open(filename, "r", encoding="utf-8") as f:
         data = json.load(f)

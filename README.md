@@ -1,8 +1,6 @@
 # self_organization_percolation
 required libraries
 
-* cnpy.h
-* zip.h
 * zlib.h
 * boost.h
 * openMP.h
@@ -15,27 +13,14 @@ required program
 sudo apt install cmake
 ```
 
-# To install *cnpy.h*
-
-```bash
-git clone https://github.com/rogersce/cnpy.git
-cd cnpy
-mkdir build
-cd build
-cmake ..
-make
-sudo make install
-```
 
 # To install *zlib* (linux ubuntu)
 ```bash
 sudo apt install zlib1g-dev
 ```
 
-# To install *zip* (linux ubuntu)
-```bash
-sudo apt install libzip-dev
-```
+# Note
+The project no longer requires cnpy or libzip; networks are stored as compact .bin files and JSON.
 
 # To install *boost* (linux ubuntu)
 ```bash

@@ -196,6 +196,85 @@ void BiggestComponent::compute_shortest_paths_to_base(
     }
 }
 
+// ===== compute_shortest_paths_to_base using NetworkCompact CSR =====
+void BiggestComponent::compute_shortest_paths_to_base_compact(
+    const NetworkCompact&              netc,
+    int                                 dim,
+    const std::vector<int>&             shape,
+    int                                 grow_axis,
+    int                                 num_colors,
+    PercolationSeries&                  ps_out
+) {
+    const int SX = sx(shape);
+    const int SY = sy(shape, dim);
+    const int SZ = sz(shape, dim);
+    const int GRID_N = SX * SY * SZ;
+
+    ps_out.sp_len.assign(num_colors, -1);
+    ps_out.sp_path_lin.assign(num_colors, {});
+
+    const int top_level = shape[grow_axis] - 1;
+
+    // helper to compute level from linear index stored in pos_flat
+    auto level_of = [&](uint32_t lin) {
+        int x,y,z;
+        unravel(shape, dim, static_cast<int>(lin), x, y, z);
+        return (grow_axis == 0 ? x : (grow_axis == 1 ? y : z));
+    };
+
+    for (int c = 0; c < num_colors; ++c) {
+        // collect all top nodes of this color
+        std::vector<uint32_t> sources;
+        for (uint32_t i = 0; i < netc.N; ++i) {
+            if (netc.species[i] == static_cast<uint8_t>(c+1) && level_of(netc.pos_flat[i]) == top_level) {
+                sources.push_back(i);
+            }
+        }
+
+        if (sources.empty()) continue;
+
+        // BFS from sources to any base node
+        std::vector<int> parent(netc.N, -1);
+        std::vector<char> seen(netc.N, 0);
+        std::vector<uint32_t> q;
+        q.reserve(netc.N);
+
+        for (auto s : sources) { seen[s] = 1; parent[s] = -1; q.push_back(s); }
+
+        int found_target = -1;
+        for (size_t qi = 0; qi < q.size(); ++qi) {
+            uint32_t u = q[qi];
+            const int lvl = level_of(netc.pos_flat[u]);
+            if (lvl == 0) { found_target = static_cast<int>(u); break; }
+            const uint32_t start = netc.neighbors_start(u);
+            const uint32_t end = netc.neighbors_end(u);
+            for (uint32_t k = start; k < end; ++k) {
+                uint32_t v = netc.edges[k];
+                if (v >= netc.N) continue;
+                if (seen[v]) continue;
+                if (netc.species[v] != static_cast<uint8_t>(c+1)) continue;
+                seen[v] = 1;
+                parent[v] = static_cast<int>(u);
+                q.push_back(v);
+            }
+        }
+
+        if (found_target == -1) continue;
+
+        // reconstruct path from found_target back to a source
+        std::vector<int> path;
+        int cur = found_target;
+        while (cur != -1) {
+            // map compact index to original linear pos
+            path.push_back(static_cast<int>(netc.pos_flat[static_cast<uint32_t>(cur)]));
+            cur = parent[cur];
+        }
+        std::reverse(path.begin(), path.end());
+        ps_out.sp_len[c] = static_cast<int>(path.size());
+        ps_out.sp_path_lin[c] = std::move(path);
+    }
+}
+
 // ===== Maior cluster QUE PERCOLA por cor =====
 std::vector<int> BiggestComponent::largest_cluster_sizes(
     const NetworkPattern&   net,
@@ -255,6 +334,76 @@ std::vector<int> BiggestComponent::largest_cluster_sizes(
             if (touches_base && touches_top) {
                 best_c = std::max(best_c, comp_size);
             }
+        }
+
+        best[c] = best_c;
+    }
+
+    return best;
+}
+
+// ===== largest_cluster_sizes using NetworkCompact CSR =====
+std::vector<int> BiggestComponent::largest_cluster_sizes_compact(
+    const NetworkCompact&   netc,
+    int                     dim,
+    const std::vector<int>& shape,
+    int                     grow_axis,
+    int                     num_colors
+) {
+    const int SX = sx(shape);
+    const int SY = sy(shape, dim);
+    const int SZ = sz(shape, dim);
+    const int GRID_N = SX * SY * SZ;
+    const int L = shape[grow_axis];
+
+    std::vector<int> best(num_colors, 0);
+    std::vector<char> seen(netc.N, 0);
+
+    std::vector<int> q;
+    q.reserve(4096);
+
+    auto level_of_compact = [&](uint32_t lin) {
+        int x,y,z;
+        unravel(shape, dim, static_cast<int>(lin), x, y, z);
+        return (grow_axis == 0 ? x : (grow_axis == 1 ? y : z));
+    };
+
+    for (int c = 0; c < num_colors; ++c) {
+        std::fill(seen.begin(), seen.end(), 0);
+        int best_c = 0;
+
+        for (uint32_t i = 0; i < netc.N; ++i) {
+            if (seen[i]) continue;
+            if (netc.species[i] != static_cast<uint8_t>(c+1)) continue;
+
+            q.clear();
+            q.push_back(static_cast<int>(i));
+            seen[i] = 1;
+
+            int comp_size = 0;
+            bool touches_base = false;
+            bool touches_top = false;
+
+            while (!q.empty()) {
+                const int u = q.back(); q.pop_back();
+                ++comp_size;
+                const int lvl = level_of_compact(netc.pos_flat[static_cast<uint32_t>(u)]);
+                if (lvl == 0) touches_base = true;
+                if (lvl == L - 1) touches_top = true;
+
+                const uint32_t start = netc.neighbors_start(static_cast<uint32_t>(u));
+                const uint32_t end = netc.neighbors_end(static_cast<uint32_t>(u));
+                for (uint32_t k = start; k < end; ++k) {
+                    const uint32_t v = netc.edges[k];
+                    if (v >= netc.N) continue;
+                    if (seen[v]) continue;
+                    if (netc.species[v] != static_cast<uint8_t>(c+1)) continue;
+                    seen[v] = 1;
+                    q.push_back(static_cast<int>(v));
+                }
+            }
+
+            if (touches_base && touches_top) best_c = std::max(best_c, comp_size);
         }
 
         best[c] = best_c;

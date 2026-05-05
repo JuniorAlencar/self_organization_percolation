@@ -47,8 +47,6 @@ target_link_directories(sop_core PUBLIC
 )
 
 target_link_libraries(sop_core PUBLIC
-    cnpy
-    zip
     OpenMP::OpenMP_CXX
 )
 
@@ -71,3 +69,21 @@ set_target_properties(SOP PROPERTIES
 
 set(SOP_VERSION "1.0.0")
 target_compile_definitions(SOP PRIVATE SOP_VERSION="${SOP_VERSION}")
+
+# Add optional test runner that builds the create_network test harness
+set(TOOLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+file(GLOB TOOL_SOURCES CONFIGURE_DEPENDS "${TOOLS_DIR}/*.cpp")
+if(NOT TOOL_SOURCES STREQUAL "")
+    add_executable(run_create_network_test ${TOOLS_DIR}/run_create_network_test.cpp)
+    target_include_directories(run_create_network_test PRIVATE
+        ${SRC_DIR}
+        ${TOOLS_DIR}
+        /usr/local/include
+    )
+    target_link_libraries(run_create_network_test PRIVATE
+        sop_core
+    )
+    set_target_properties(run_create_network_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+endif()
