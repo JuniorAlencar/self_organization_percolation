@@ -117,11 +117,17 @@ int main(int argc, char* argv[]) {
         
         network net_generator(N_samples, num_colors);
 
-        NetworkPattern net = net_generator.animate_network(
-                dim, L, N_samples, c, f_T, type_f_T,
-                p0, P0, a, alpha, type_percolation,
-                num_colors, rho, ts, ps, rng
-        );
+        NetworkPattern net = animation
+            ? net_generator.animate_network(
+                    dim, L, N_samples, c, f_T, type_f_T,
+                    p0, P0, a, alpha, type_percolation,
+                    num_colors, rho, ts, ps, rng
+              )
+            : net_generator.create_network(
+                    dim, L, N_samples, c, f_T, type_f_T,
+                    p0, P0, a, alpha, type_percolation,
+                    num_colors, rho, ts, ps, rng, false
+              );
 
         FolderCreator creator("./SOP_data");
         const auto [
@@ -174,10 +180,10 @@ int main(int argc, char* argv[]) {
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         
         const bool has_percolation = !ps.color_percolation.empty();
-        const bool need_equilibration_cuts = animation || has_percolation;
+        const bool write_large_artifacts = animation && has_percolation && L == 1024;
 
         std::optional<EquilibrationCutNetworks> cuts;
-        if (need_equilibration_cuts) {
+        if (write_large_artifacts) {
             cuts.emplace(build_equilibration_cut_networks(
                 net,
                 ps.t_eq,
@@ -185,17 +191,17 @@ int main(int argc, char* argv[]) {
             ));
         }
 
-        if (has_percolation) {
+        if (write_large_artifacts) {
             std::string surfaces_filename = surfaces_dir + "/" + sample_base + ".npz";
             SurfacesCuts surfaces =
-                extract_exposed_surfaces_from_cuts(*cuts, SPECIES_FACTOR);
+                extract_exposed_surfaces(net, *cuts, SPECIES_FACTOR);
             saver.save_surfaces_as_npz(surfaces, surfaces_filename);
-        } else {
+        } else if (animation && !has_percolation) {
             std::cout << "[INFO] No percolating species found; skipping surface file."
                       << std::endl;
         }
 
-        if (animation == true) {
+        if (write_large_artifacts) {
             // Helper: convert NetworkPattern -> NetworkCompact (decode encoded values)
             auto convert_to_compact = [&](const NetworkPattern& np) {
                 NetworkCompact nc;

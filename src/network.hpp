@@ -54,7 +54,8 @@ public:
         const std::vector<double>& rho,
         TimeSeries& ts_out,
         PercolationSeries& ps_out,
-        all_random& rng);
+        all_random& rng,
+        bool save_compact = true);
 
     NetworkPattern initialize_network(
         int dim,

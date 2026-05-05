@@ -79,6 +79,50 @@ def _build_fixed_color_map(unique_colors, nc):
     )
     return {c: colors_used[i] for i, c in enumerate(unique_colors)}
 
+def _strip_percolation_suffix(name):
+    if name.lower().endswith("_percolation"):
+        return name[:-len("_percolation")]
+    return name
+
+def _find_percolation_json_for_network(path_dir, filename):
+    network_parent = os.path.dirname(os.path.abspath(path_dir))
+    data_dir = os.path.join(network_parent, "data")
+    base = os.path.splitext(os.path.basename(filename))[0]
+    base = _strip_percolation_suffix(base)
+    json_path = os.path.join(data_dir, base + ".json")
+    return json_path if os.path.exists(json_path) else None
+
+def _read_percolation_order_by_color(path_json):
+    if path_json is None:
+        return {}
+
+    with open(path_json, "r") as fh:
+        data = json.load(fh)
+
+    results = data.get("results", {})
+    if not isinstance(results, dict):
+        return {}
+
+    order_by_color = {}
+    for key, block in results.items():
+        if not isinstance(key, str) or "order_percolation" not in key:
+            continue
+
+        try:
+            order = int(key.split()[-1])
+        except (TypeError, ValueError):
+            continue
+
+        payload = block.get("data", block) if isinstance(block, dict) else {}
+        color = payload.get("color") if isinstance(payload, dict) else None
+
+        try:
+            order_by_color[int(color)] = order
+        except (TypeError, ValueError):
+            continue
+
+    return order_by_color
+
 def _darken_rgb(rgb, factor=0.82):
     return tuple(max(0.0, min(1.0, c * factor)) for c in rgb)
 
@@ -2021,6 +2065,7 @@ def plot_run_network_blocks(path_dir,
             outline_mode=outline_mode,
             visual_profile=visual_profile,
             filename_prefix="05_active_cluster",
+            filename_by_percolation_order=True,
         )
         results["05_active_sites_by_color"] = species_paths
 
@@ -2039,7 +2084,8 @@ def plot_3D_full_codec_by_species(path_dir, filename, path_out_dir, figure_name,
                                   colors_to_plot=None,
                                   outline_mode="full",
                                   visual_profile="full",
-                                  filename_prefix=None):
+                                  filename_prefix=None,
+                                  filename_by_percolation_order=False):
     """
     Plota a rede codificada separando uma figura para cada espécie/cor.
 
@@ -2065,6 +2111,8 @@ def plot_3D_full_codec_by_species(path_dir, filename, path_out_dir, figure_name,
         outline_mode: "full" mantém caixa LxLxL; "tight" ajusta ao cluster.
         visual_profile: "full" ou "cut".
         filename_prefix: prefixo opcional dos arquivos salvos.
+        filename_by_percolation_order: se True, salva como i_{order}.png
+            usando o JSON em ../data correspondente ao arquivo da rede.
 
     Returns:
         dict {color: path_out}
@@ -2109,6 +2157,16 @@ def plot_3D_full_codec_by_species(path_dir, filename, path_out_dir, figure_name,
     if filename_prefix is None:
         filename_prefix = os.path.splitext(filename)[0]
 
+    order_by_color = {}
+    if filename_by_percolation_order:
+        percolation_json = _find_percolation_json_for_network(path_dir, filename)
+        order_by_color = _read_percolation_order_by_color(percolation_json)
+        if not order_by_color:
+            print(
+                "[WARN] Não foi possível ler a ordem de percolação no JSON. "
+                "Usando nomes por espécie/cor."
+            )
+
     saved_paths = {}
 
     for color in colors_to_plot:
@@ -2120,10 +2178,13 @@ def plot_3D_full_codec_by_species(path_dir, filename, path_out_dir, figure_name,
         if df_color.empty:
             continue
 
-        path_out = os.path.join(
-            path_out_dir,
-            f"{filename_prefix}_species_{color}.png"
-        )
+        order = order_by_color.get(color)
+        if filename_by_percolation_order and order is not None:
+            out_filename = f"i_{order}.png"
+        else:
+            out_filename = f"{filename_prefix}_species_{color}.png"
+
+        path_out = os.path.join(path_out_dir, out_filename)
 
         fig_name_color = f"{figure_name}_species_{color}"
 
