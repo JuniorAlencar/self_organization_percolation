@@ -300,8 +300,13 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             (crow < static_cast<int>(ps.M_size_posteq.size()))
                 ? ps.M_size_posteq[crow]
                 : -1;
+
+        const std::vector<int>* sp_path_lin_ptr = nullptr;
+        if (crow < static_cast<int>(ps.sp_path_lin.size())) {
+            sp_path_lin_ptr = &ps.sp_path_lin[crow];
+        }
         
-                const std::vector<int>* sp_path_lin_preteq_ptr = nullptr;
+        const std::vector<int>* sp_path_lin_preteq_ptr = nullptr;
         if (crow < static_cast<int>(ps.sp_path_lin_preteq.size())) {
             sp_path_lin_preteq_ptr = &ps.sp_path_lin_preteq[crow];
         }
@@ -324,6 +329,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         write_json_row(ofs, ts.f_t, crow);
         ofs << ",\n";
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
+        ofs << "        \"sp_path_lin\": ";
+        if (sp_path_lin_ptr) write_json_array(ofs, *sp_path_lin_ptr);
+            else ofs << "[]";
+            ofs << ",\n";
+
         ofs << "        \"M_size\": " << M_size << ",\n";
         ofs << "        \"sp_lin_preteq\": " << sp_lin_preteq << ",\n";
         ofs << "        \"sp_path_lin_preteq\": ";
