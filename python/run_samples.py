@@ -25,7 +25,6 @@ import numpy as np
 #Nt = [[int(fraction*L**2) for fraction in f] for L in L_lst]
 #f0 = 0.02
 #rho = 1/nc
-k = 1.0e-06
 #p0 = 1.0
 seed = -1
 dim = 3
@@ -52,30 +51,26 @@ type_perc = 'bond'
 #         shell_data(L, type_perc, p0, seed, k, NT, dim,
 #                 nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
 
-L_lst =       [256, 304, 362, 430, 512, 608, 724, 851, 1024]
-num_runs =    [300, 250, 150, 125, 100, 80, 30, 15, 10]
-#num_threads = [11, 11, 11, 11, 11, 11, 6, 3, 2]
+#L_lst =       [128, 192, 256, 304, 362, 430, 512, 608, 724, 851, 1024]
+#num_runs =    [400, 350, 300, 250, 150, 125, 100, 80, 30, 15, 10]
+L_lst = [128, 256, 512, 1024]
+num_runs =    [400, 300, 100, 10]
+f_T = np.linspace(0.01, 0.50, 25)
+c_lst = [0.01, 0.05, 0.25, 0.50, 0.75, 1.0]
 multi=True
 Equilibration = 'false'
-nc = 8
+nc = 1
 p0 = 1.0
-if nc == 2:
-    f = 0.03
-elif nc == 4:
-    f = 0.02
-elif nc == 8:
-    f = 0.01
-
-for idx, L in enumerate(L_lst):
-        base = L**(dim-1)
-        NT = int(f*base)
-        # start = 1/(P0*L**2)
-        # print(start)
-        # stop = 1/(2*nc)
-        # n_points = 50
-        # rho = custom_range(start, stop, n_points)
-        rho = [1/nc]
-        exec_name = f"NT_{NT}_L_{L}_k_{k}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
-        
-        shell_data(L, type_perc, p0, seed, k, NT, dim,
-                nc, num_runs[idx], rho, exec_name, P0, Equilibration, multi)
+for c in c_lst:
+        for ft in f_T:
+            for idx, L in enumerate(L_lst):            
+                    # start = 1/(P0*L**2)
+                    # print(start)
+                    # stop = 1/(2*nc)
+                    # n_points = 50
+                    # rho = custom_range(start, stop, n_points)
+                    rho = [1/nc]
+                    exec_name = f"ft_{ft:.2f}L_{L}_c_{c}_nc_{nc}_dim_{dim}.sh"
+                    
+                    shell_data(L, type_perc, p0, seed, c, ft, dim,
+                            nc, num_runs[idx], [1/nc], exec_name, P0, Equilibration, multi)

@@ -21,9 +21,9 @@ DIR_RE = re.compile(
     /num_colors_(?P<nc>\d+)
     /dim_(?P<dim>\d+)
     /L_(?P<L>\d+)
-    /NT_constant
-    /NT_(?P<Nt>\d+)
-    /k_(?P<k>{FLOAT})
+    /fT_constant
+    /fT_(?P<fT>{FLOAT})
+    /c_(?P<c>{FLOAT})
     /rho_(?P<rho>{FLOAT})
     /data/?$
     """,
@@ -36,9 +36,9 @@ PARAM_RE = re.compile(
     /num_colors_(?P<nc>\d+)
     /dim_(?P<dim>\d+)
     /L_(?P<L>\d+)
-    /NT_constant
-    /NT_(?P<Nt>\d+)
-    /k_(?P<k>{FLOAT})
+    /fT_constant
+    /fT_(?P<fT>{FLOAT})
+    /c_(?P<c>{FLOAT})
     /rho_(?P<rho>{FLOAT})
     (?:/data)?/?$
     """,
@@ -61,7 +61,7 @@ DEFAULT_DESIRED_COLS = [
 ]
 
 DEFAULT_SIZE_COLS = [
-    "type_perc", "dim", "L", "Nt", "k", "nc", "rho", "p0", "P0",
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
     "order", "N_samples", "N_samples_perc",
     "shortest_path", "shortest_path_err",
     "S_perc", "S_perc_err",
@@ -70,6 +70,92 @@ DEFAULT_SIZE_COLS = [
     "shortest_path_posteq", "shortest_path_posteq_err",
     "S_perc_posteq", "S_perc_posteq_err",
 ]
+
+
+
+def _float_close(a: float, b: float, *, rel_tol: float = 1e-12, abs_tol: float = 1e-15) -> bool:
+    try:
+        return math.isclose(float(a), float(b), rel_tol=rel_tol, abs_tol=abs_tol)
+    except Exception:
+        return False
+
+
+def _build_group_relpath(
+    type_perc: str,
+    num_colors: int,
+    dim: int,
+    L: int,
+    f_T: float,
+    c: float,
+    rho: float,
+) -> str:
+    return os.path.join(
+        f"{type_perc}_percolation",
+        f"num_colors_{num_colors}",
+        f"dim_{dim}",
+        f"L_{L}",
+        "fT_constant",
+        f"fT_{f_T:.4e}",
+        f"c_{c:.4e}",
+        f"rho_{rho:.4e}",
+    )
+
+
+def _resolve_existing_group_relpath(
+    raw_root: str,
+    type_perc: str,
+    num_colors: int,
+    dim: int,
+    L: int,
+    f_T: float,
+    c: float,
+    rho: float,
+) -> str:
+    """Resolve o diretório real do grupo sem depender da formatação exata dos floats."""
+    raw_root = os.path.abspath(raw_root)
+
+    formatted = _build_group_relpath(type_perc, num_colors, dim, L, f_T, c, rho)
+    formatted_data_dir = os.path.join(raw_root, formatted, "data")
+    if os.path.isdir(formatted_data_dir):
+        return formatted
+
+    base = os.path.join(
+        raw_root,
+        f"{type_perc}_percolation",
+        f"num_colors_{num_colors}",
+        f"dim_{dim}",
+        f"L_{L}",
+        "fT_constant",
+    )
+
+    if not os.path.isdir(base):
+        return formatted
+
+    candidates = sorted(glob.glob(os.path.join(base, "fT_*", "c_*", "rho_*", "data")))
+    matches: List[str] = []
+
+    for data_dir in candidates:
+        parsed = parse_data_dir(data_dir)
+        if parsed is None:
+            continue
+
+        if (
+            parsed["type_perc"] == type_perc
+            and int(parsed["nc"]) == int(num_colors)
+            and int(parsed["dim"]) == int(dim)
+            and int(parsed["L"]) == int(L)
+            and _float_close(parsed["f_T"], f_T)
+            and _float_close(parsed["c"], c)
+            and _float_close(parsed["rho"], rho)
+        ):
+            group_abs = os.path.dirname(data_dir)
+            matches.append(os.path.relpath(group_abs, raw_root))
+
+    if matches:
+        return matches[0]
+
+    return formatted
+
 
 def ensure_dir(path: str | Path) -> Path:
     p = Path(path)
@@ -97,8 +183,8 @@ def parse_data_dir(path: str):
         "nc": int(g["nc"]),
         "dim": int(g["dim"]),
         "L": int(g["L"]),
-        "Nt": int(g["Nt"]),
-        "k": float(g["k"]),
+        "f_T": float(g["fT"]),
+        "c": float(g["c"]),
         "rho": float(g["rho"]),
     }
 
@@ -197,14 +283,15 @@ def compute_sizes_for_folder(
     num_colors: int,
     dim: int,
     L: int,
-    NT: int,
-    k: float,
+    f_T: float,
+    c: float,
     rho: float,
     p0_list: List[float],
     *,
     raw_root: str,
     published_root: str,
     manifests_root: str,
+    rel_group: Optional[str] = None,
     clear_data: bool = False,
     verbose: bool = True,
 ) -> Optional[str]:
@@ -212,16 +299,19 @@ def compute_sizes_for_folder(
     published_root = os.path.abspath(published_root)
     manifests_root = os.path.abspath(manifests_root)
 
-    rel_group = os.path.join(
-        f"{type_perc}_percolation",
-        f"num_colors_{num_colors}",
-        f"dim_{dim}",
-        f"L_{L}",
-        "NT_constant",
-        f"NT_{NT}",
-        f"k_{k:.1e}",
-        f"rho_{rho:.4e}",
-    )
+    if rel_group is None:
+        rel_group = _resolve_existing_group_relpath(
+            raw_root,
+            type_perc,
+            num_colors,
+            dim,
+            L,
+            f_T,
+            c,
+            rho,
+        )
+    else:
+        rel_group = os.path.normpath(str(rel_group))
 
     data_dir = os.path.join(raw_root, rel_group, "data")
     if not os.path.isdir(data_dir):
@@ -254,8 +344,8 @@ def compute_sizes_for_folder(
             "num_colors": num_colors,
             "dim": dim,
             "L": L,
-            "NT": NT,
-            "k": float(k),
+            "f_T": float(f_T),
+            "c": float(c),
             "rho": float(rho),
             "base_dir": out_dir,
             "seed_used": [],
@@ -362,7 +452,7 @@ def build_sizes_dataframe(published_root: str, output_file: str | Path) -> pd.Da
         if parsed is None:
             continue
 
-        type_perc, L, Nt, k, nc, rho, dim = parsed
+        type_perc, L, f_T, c, nc, rho, dim = parsed
 
         try:
             with open(bundle_path, "r", encoding="utf-8") as f:
@@ -395,8 +485,8 @@ def build_sizes_dataframe(published_root: str, output_file: str | Path) -> pd.Da
                     "type_perc": type_perc,
                     "dim": dim,
                     "L": L,
-                    "Nt": Nt,
-                    "k": k,
+                    "f_T": f_T,
+                    "c": c,
                     "nc": nc,
                     "rho": rho,
                     "p0": p0_val,
@@ -428,7 +518,7 @@ def build_sizes_dataframe(published_root: str, output_file: str | Path) -> pd.Da
 
     if not df.empty:
         df = df.sort_values(
-            by=["type_perc", "dim", "nc", "rho", "k", "Nt", "L", "P0", "p0", "order"]
+            by=["type_perc", "dim", "nc", "rho", "c", "f_T", "L", "P0", "p0", "order"]
         ).reset_index(drop=True)
 
     ensure_dir(output_file.parent)
@@ -457,7 +547,7 @@ def process_all_data_sizes(
     ensure_dir(published_root)
     ensure_dir(manifests_root)
 
-    all_parms = collect_param_combinations(raw_root)
+    all_parms = collect_param_combinations(raw_root, return_relpath=True)
 
     iterator = tqdm(
         all_parms,
@@ -467,22 +557,23 @@ def process_all_data_sizes(
         leave=True,
     )
 
-    for tp, nc, DIM, L, NT, K, RHO in iterator:
+    for tp, nc, DIM, L, FT, C, RHO, REL_GROUP in iterator:
         iterator.set_postfix_str(
-            f"{tp} nc={nc} dim={DIM} L={L} NT={NT} k={K:.1e} rho={RHO:.4e}"
+            f"{tp} nc={nc} dim={DIM} L={L} f_T={FT:.4e} c={C:.4e} rho={RHO:.4e}"
         )
         compute_sizes_for_folder(
             type_perc=tp,
             num_colors=nc,
             dim=DIM,
             L=L,
-            NT=NT,
-            k=K,
+            f_T=FT,
+            c=C,
             rho=RHO,
             p0_list=p0_lst,
             raw_root=raw_root,
             published_root=published_root,
             manifests_root=manifests_root,
+            rel_group=REL_GROUP,
             clear_data=clear_data,
             verbose=verbose,
         )
@@ -505,8 +596,16 @@ def collect_param_combinations(
     *,
     type_perc: Optional[str] = None,
     dir_re: re.Pattern = DIR_RE,
-) -> List[Tuple[str, int, int, int, int, float, float]]:
-    root_dir = os.path.normpath(root_dir)
+    return_relpath: bool = False,
+) -> List[Tuple]:
+    """
+    Coleta combinações de parâmetros a partir dos diretórios existentes.
+
+    Quando return_relpath=True, retorna também o caminho relativo real do grupo.
+    Isso evita reconstruir nomes de diretório a partir de floats, que pode falhar
+    quando as pastas usam, por exemplo, fT_5.000000e-02 em vez de fT_5.0000e-02.
+    """
+    root_dir = os.path.abspath(os.path.normpath(root_dir))
     combos = set()
 
     for dirpath, _, _ in os.walk(root_dir):
@@ -525,10 +624,16 @@ def collect_param_combinations(
         nc = int(m.group("nc"))
         dim = int(m.group("dim"))
         L = int(m.group("L"))
-        NT = int(m.group("Nt"))
-        k = float(m.group("k"))
+        f_T = float(m.group("fT"))
+        c = float(m.group("c"))
         rho = float(m.group("rho"))
-        combos.add((tp, nc, dim, L, NT, k, rho))
+
+        if return_relpath:
+            group_abs = os.path.dirname(os.path.normpath(dirpath))
+            rel_group = os.path.relpath(group_abs, root_dir).replace(os.sep, "/")
+            combos.add((tp, nc, dim, L, f_T, c, rho, rel_group))
+        else:
+            combos.add((tp, nc, dim, L, f_T, c, rho))
 
     combos = sorted(combos, key=lambda x: (x[0], x[1], x[2], x[4], x[5], x[6], x[3]))
     return combos
@@ -849,6 +954,9 @@ def _load_orders_new(fp: str) -> Optional[dict[int, dict]]:
         print(f"[warn] Falha ao abrir {fp}: {ex}")
         return None
 
+    meta = js.get("meta", {}) if isinstance(js.get("meta", {}), dict) else {}
+    t_eq_json = _safe_float(meta.get("t_eq", js.get("t_eq", None)))
+
     results = js.get("results", {})
     if not isinstance(results, dict):
         return {}
@@ -871,19 +979,20 @@ def _load_orders_new(fp: str) -> Optional[dict[int, dict]]:
 
         t = data.get("time", data.get("t", None))
         pt = data.get("pt", None)
-        nt = data.get("nt", None)
+        ft = data.get("ft", data.get("f_t", None))
 
         if t is not None:
             t = np.asarray(t, dtype=float)
         if pt is not None:
             pt = np.asarray(pt, dtype=float)
-        if nt is not None:
-            nt = np.asarray(nt, dtype=float)
+        if ft is not None:
+            ft = np.asarray(ft, dtype=float)
 
         out[ordk] = {
             "t": t,
             "pt": pt,
-            "nt": nt,
+            "ft": ft,
+            "t_eq": t_eq_json,
             "shortest_path_lin": data.get("shortest_path_lin", None),
             "M_size": data.get("M_size", None),
         }
@@ -893,14 +1002,18 @@ def _load_orders_new(fp: str) -> Optional[dict[int, dict]]:
 
 def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
     series_pt = []
-    series_nt = []
+    series_ft = []
+    t_eq_vals: List[float] = []
     spl_vals: List[float] = []
     msz_vals: List[float] = []
 
     for d in lst:
         t = d.get("t", None)
         pt = d.get("pt", None)
-        nt = d.get("nt", None)
+        ft = d.get("ft", None)
+        t_eq = _safe_float(d.get("t_eq", None))
+        if t_eq is not None:
+            t_eq_vals.append(float(t_eq))
 
         if t is None or pt is None:
             continue
@@ -914,11 +1027,11 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
 
         series_pt.append((t[:n_pt], pt[:n_pt]))
 
-        if nt is not None:
-            nt = np.asarray(nt, dtype=float)
-            n_nt = min(len(t), len(nt), n_pt)
-            if n_nt > 1:
-                series_nt.append(nt[:n_nt])
+        if ft is not None:
+            ft = np.asarray(ft, dtype=float)
+            n_ft = min(len(t), len(ft), n_pt)
+            if n_ft > 1:
+                series_ft.append(ft[:n_ft])
 
         spl = d.get("shortest_path_lin", None)
         if spl is not None:
@@ -940,11 +1053,16 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
             "pt_mean": [],
             "pt_std": [],
             "pt_sem": [],
-            "nt_mean": [],
-            "nt_std": [],
-            "nt_sem": [],
+            "ft_mean": [],
+            "ft_std": [],
+            "ft_sem": [],
             "n_seeds_pt": 0,
-            "n_seeds_nt": 0,
+            "n_seeds_ft": 0,
+            "t_eq": float(max(t_eq_vals)) if t_eq_vals else float("nan"),
+            "t_eq_mean": float(np.mean(t_eq_vals)) if t_eq_vals else float("nan"),
+            "t_eq_min": float(np.min(t_eq_vals)) if t_eq_vals else float("nan"),
+            "t_eq_max": float(np.max(t_eq_vals)) if t_eq_vals else float("nan"),
+            "n_t_eq": int(len(t_eq_vals)),
         }
 
     min_len_pt = min(len(pt) for (_, pt) in series_pt)
@@ -967,20 +1085,34 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
     out["pt_sem"] = pt_sem.tolist()
     out["n_seeds_pt"] = nseed_pt
 
-    if series_nt:
-        min_len_nt = min(len(nt) for nt in series_nt)
-        min_len = min(min_len_pt, min_len_nt)
+    if t_eq_vals:
+        t_eq_arr = np.asarray(t_eq_vals, dtype=float)
+        out["t_eq"] = float(np.max(t_eq_arr))
+        out["t_eq_mean"] = float(np.mean(t_eq_arr))
+        out["t_eq_min"] = float(np.min(t_eq_arr))
+        out["t_eq_max"] = float(np.max(t_eq_arr))
+        out["n_t_eq"] = int(t_eq_arr.size)
+    else:
+        out["t_eq"] = float("nan")
+        out["t_eq_mean"] = float("nan")
+        out["t_eq_min"] = float("nan")
+        out["t_eq_max"] = float("nan")
+        out["n_t_eq"] = 0
 
-        nts = np.stack([nt[:min_len] for nt in series_nt], axis=0)
-        nseed_nt = int(nts.shape[0])
+    if series_ft:
+        min_len_ft = min(len(ft) for ft in series_ft)
+        min_len = min(min_len_pt, min_len_ft)
 
-        nt_mean = np.mean(nts, axis=0)
-        if nseed_nt > 1:
-            nt_std = np.std(nts, axis=0, ddof=1)
-            nt_sem = nt_std / np.sqrt(nseed_nt)
+        fts = np.stack([ft[:min_len] for ft in series_ft], axis=0)
+        nseed_ft = int(fts.shape[0])
+
+        ft_mean = np.mean(fts, axis=0)
+        if nseed_ft > 1:
+            ft_std = np.std(fts, axis=0, ddof=1)
+            ft_sem = ft_std / np.sqrt(nseed_ft)
         else:
-            nt_std = np.zeros_like(nt_mean)
-            nt_sem = np.zeros_like(nt_mean)
+            ft_std = np.zeros_like(ft_mean)
+            ft_sem = np.zeros_like(ft_mean)
 
         pt_mean2 = np.mean(pts[:, :min_len], axis=0)
         if nseed_pt > 1:
@@ -994,15 +1126,15 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
         out["pt_mean"] = pt_mean2.tolist()
         out["pt_std"] = pt_std2.tolist()
         out["pt_sem"] = pt_sem2.tolist()
-        out["nt_mean"] = nt_mean.tolist()
-        out["nt_std"] = nt_std.tolist()
-        out["nt_sem"] = nt_sem.tolist()
-        out["n_seeds_nt"] = nseed_nt
+        out["ft_mean"] = ft_mean.tolist()
+        out["ft_std"] = ft_std.tolist()
+        out["ft_sem"] = ft_sem.tolist()
+        out["n_seeds_ft"] = nseed_ft
     else:
-        out["nt_mean"] = []
-        out["nt_std"] = []
-        out["nt_sem"] = []
-        out["n_seeds_nt"] = 0
+        out["ft_mean"] = []
+        out["ft_std"] = []
+        out["ft_sem"] = []
+        out["n_seeds_ft"] = 0
 
     if spl_vals:
         a = np.asarray(spl_vals, dtype=float)
@@ -1017,7 +1149,6 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
         out["n_seeds_M_size"] = int(a.size)
 
     return out
-
 
 def _parse_fname(filepath: str) -> Optional[Tuple[float, float, int]]:
     name = os.path.basename(filepath)
@@ -1079,20 +1210,20 @@ def _discover_sample_groups(
     return out
 
 
-def _parse_params_from_path(path: str) -> Optional[Tuple[str, int, int, float, int, float, int]]:
+def _parse_params_from_path(path: str) -> Optional[Tuple[str, int, float, float, int, float, int]]:
     m = PARAM_RE.search(path.replace("\\", "/"))
     if not m:
         return None
 
     type_perc = m.group("type")
     L = int(m.group("L"))
-    Nt = int(m.group("Nt"))
-    k = float(m.group("k"))
+    f_T = float(m.group("fT"))
+    c = float(m.group("c"))
     nc = int(m.group("nc"))
     rho = float(m.group("rho"))
     dim = int(m.group("dim"))
 
-    return (type_perc, L, Nt, k, nc, rho, dim)
+    return (type_perc, L, f_T, c, nc, rho, dim)
 
 
 def _parse_P0_p0_from_seed_used(seed_used: List[str]) -> Tuple[float, float]:
@@ -1205,14 +1336,15 @@ def compute_means_for_folder(
     num_colors: int,
     dim: int,
     L: int,
-    NT: int,
-    k: float,
+    f_T: float,
+    c: float,
     rho: float,
     p0_list: List[float],
     *,
     raw_root: str,
     published_root: str,
     manifests_root: str,
+    rel_group: Optional[str] = None,
     x_max: float | None = None,
     n_boot: int = 20000,
     rng_seed: int = 12345,
@@ -1224,16 +1356,19 @@ def compute_means_for_folder(
     published_root = os.path.abspath(published_root)
     manifests_root = os.path.abspath(manifests_root)
 
-    rel_group = os.path.join(
-        f"{type_perc}_percolation",
-        f"num_colors_{num_colors}",
-        f"dim_{dim}",
-        f"L_{L}",
-        "NT_constant",
-        f"NT_{NT}",
-        f"k_{k:.1e}",
-        f"rho_{rho:.4e}",
-    )
+    if rel_group is None:
+        rel_group = _resolve_existing_group_relpath(
+            raw_root,
+            type_perc,
+            num_colors,
+            dim,
+            L,
+            f_T,
+            c,
+            rho,
+        )
+    else:
+        rel_group = os.path.normpath(str(rel_group))
 
     data_dir = os.path.join(raw_root, rel_group, "data")
     if not os.path.isdir(data_dir):
@@ -1309,8 +1444,8 @@ def compute_means_for_folder(
             "num_colors": num_colors,
             "dim": dim,
             "L": L,
-            "NT": NT,
-            "k": float(k),
+            "f_T": float(f_T),
+            "c": float(c),
             "rho": float(rho),
             "base_dir": out_dir,
             "x_max_used": None if x_max is None else float(x_max),
@@ -1389,8 +1524,8 @@ def compute_means_for_folder(
                     data_local["t"] = t[m]
                     if data_local.get("pt") is not None:
                         data_local["pt"] = np.asarray(data_local["pt"], dtype=float)[m]
-                    if data_local.get("nt") is not None:
-                        data_local["nt"] = np.asarray(data_local["nt"], dtype=float)[m]
+                    if data_local.get("ft") is not None:
+                        data_local["ft"] = np.asarray(data_local["ft"], dtype=float)[m]
 
                 per_order[ordk].append(data_local)
 
@@ -1412,33 +1547,12 @@ def compute_means_for_folder(
         t0_by_order: Dict[int, float] = {}
         for ordk in sorted(mean_by_order.keys()):
             d = mean_by_order[ordk]
-            if not d.get("time") or not d.get("pt_mean") or not d.get("pt_sem"):
+            t_eq = _safe_float(d.get("t_eq", None))
+            if t_eq is None:
                 continue
-
-            t = np.asarray(d["time"], dtype=float)
-            pt = np.asarray(d["pt_mean"], dtype=float)
-            pt_sem = np.asarray(d["pt_sem"], dtype=float)
-            n0 = min(t.size, pt.size, pt_sem.size)
-            if n0 == 0:
-                continue
-
-            t = t[:n0]
-            pt = pt[:n0]
-            pt_sem = pt_sem[:n0]
-
-            idx0 = detect_equilibrium_start_with_errors(
-                t,
-                pt,
-                pt_sem,
-                w=40,
-                consec=6,
-                z=2.0,
-                chi2r_max=2.0,
-            )
-            idx0 = int(np.clip(idx0, 0, len(t) - 1))
-            t0_by_order[ordk] = float(t[idx0])
-            mean_by_order[ordk]["t_eq"] = float(t[idx0])
-            mean_by_order[ordk]["t_eq_source"] = "detected from ensemble-mean pt"
+            t0_by_order[ordk] = float(t_eq)
+            mean_by_order[ordk]["t_eq"] = float(t_eq)
+            mean_by_order[ordk]["t_eq_source"] = "json meta.t_eq; max over samples in this order"
 
         t0_global = float(max(t0_by_order.values())) if t0_by_order else float("nan")
 
@@ -1471,7 +1585,7 @@ def compute_means_for_folder(
                 "n_tail_points": int(n_tail),
                 "n_boot": int(n_boot),
                 "t0": _safe_float(t0_global),
-                "pc_method": "ensemble-mean tail after t_eq from ensemble-mean pt",
+                "pc_method": "ensemble-mean tail after t_eq read from sample json meta",
             }
 
         mean_eq_list = []
@@ -1518,7 +1632,7 @@ def compute_means_for_folder(
                 "n_seeds": len(seeds_set),
                 "n_boot": int(n_boot),
                 "t0_global": _safe_float(t0_global),
-                "pc_method": "combine orders of ensemble-mean tails after global t_eq",
+                "pc_method": "combine orders of ensemble-mean tails after global t_eq read from sample json meta",
             },
             "colors": {
                 "Nsamples": int(colors_arr.size),
@@ -1569,7 +1683,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
         if parsed is None:
             continue
 
-        type_perc, L, Nt, k, nc, rho, dim = parsed
+        type_perc, L, f_T, c, nc, rho, dim = parsed
 
         try:
             with open(bundle_path, "r", encoding="utf-8") as f:
@@ -1623,8 +1737,8 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
                     "type_perc": type_perc,
                     "dim": dim,
                     "L": L,
-                    "Nt": Nt,
-                    "k": k,
+                    "f_T": f_T,
+                    "c": c,
                     "nc": nc,
                     "rho": rho,
                     "p0": p0_val,
@@ -1641,7 +1755,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
                 })
 
     cols = [
-        "type_perc", "dim", "L", "Nt", "k", "nc", "rho", "p0", "P0",
+        "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
         "order", "N_samples", "N_samples_perc",
         "p_mean", "p_err",
         "shortest_path", "shortest_path_err",
@@ -1652,7 +1766,7 @@ def build_properties_dataframe(published_root: str, output_file: str | Path) -> 
 
     if not df.empty:
         df = df.sort_values(
-            by=["type_perc", "dim", "nc", "rho", "k", "Nt", "L", "P0", "p0", "order"]
+            by=["type_perc", "dim", "nc", "rho", "c", "f_T", "L", "P0", "p0", "order"]
         ).reset_index(drop=True)
 
     ensure_dir(output_file.parent)
@@ -1677,7 +1791,7 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
         if parsed is None:
             continue
 
-        type_perc, L, Nt, k, nc_model, rho, dim = parsed
+        type_perc, L, f_T, c, nc_model, rho, dim = parsed
 
         try:
             with open(bundle_path, "r", encoding="utf-8") as f:
@@ -1697,8 +1811,8 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
             rows.append({
                 "L": L,
                 "dim": dim,
-                "Nt": Nt,
-                "k": k,
+                "f_T": f_T,
+                "c": c,
                 "num_colors": nc_model,
                 "P0": P0_val,
                 "p0": p0_val,
@@ -1709,12 +1823,12 @@ def build_colors_dataframe(published_root: str, output_file: str | Path) -> pd.D
                 "nc_std": _safe_float(cstats.get("nc_std", float("nan"))),
             })
 
-    cols = ["L", "dim", "Nt", "k", "num_colors", "P0", "p0", "Nsamples", "rho", "nc", "nc_err", "nc_std"]
+    cols = ["L", "dim", "f_T", "c", "num_colors", "P0", "p0", "Nsamples", "rho", "nc", "nc_err", "nc_std"]
     df = pd.DataFrame(rows, columns=cols)
 
     if not df.empty:
         df = df.sort_values(
-            by=["dim", "num_colors", "rho", "k", "Nt", "L", "P0", "p0"]
+            by=["dim", "num_colors", "rho", "c", "f_T", "L", "P0", "p0"]
         ).reset_index(drop=True)
 
     ensure_dir(output_file.parent)
@@ -1742,7 +1856,7 @@ def process_all_data(
     ensure_dir(published_root)
     ensure_dir(manifests_root)
 
-    all_parms = collect_param_combinations(raw_root)
+    all_parms = collect_param_combinations(raw_root, return_relpath=True)
 
     iterator = tqdm(
         all_parms,
@@ -1752,22 +1866,23 @@ def process_all_data(
         leave=True,
     )
 
-    for tp, nc, DIM, L, NT, K, RHO in iterator:
+    for tp, nc, DIM, L, FT, C, RHO, REL_GROUP in iterator:
         iterator.set_postfix_str(
-            f"{tp} nc={nc} dim={DIM} L={L} NT={NT} k={K:.1e} rho={RHO:.4e}"
+            f"{tp} nc={nc} dim={DIM} L={L} f_T={FT:.4e} c={C:.4e} rho={RHO:.4e}"
         )
         compute_means_for_folder(
             type_perc=tp,
             num_colors=nc,
             dim=DIM,
             L=L,
-            NT=NT,
-            k=K,
+            f_T=FT,
+            c=C,
             rho=RHO,
             p0_list=p0_lst,
             raw_root=raw_root,
             published_root=published_root,
             manifests_root=manifests_root,
+            rel_group=REL_GROUP,
             clear_data=clear_data,
             verbose=verbose,
         )

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="133.68364"
+   height="150.86792"
+   viewBox="344 524 25.251354 28.664905"
+   preserveAspectRatio="xMidYMid"
+   version="1.1"
+   id="svg1877"
+   sodipodi:docname="piramide_fig_A_extraida.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1881" />
+  <sodipodi:namedview
+     id="namedview1879"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false" />
+  <title
+     id="title1855">Pirâmide preenchida extraída da FIG_A</title>
+  <g
+     id="pyramid-filled-symbol"
+     opacity="1"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     transform="translate(-4.374323,-4.3400882)"
+     inkscape:export-filename="pyramid-filled-symbol_EDITED.svg"
+     inkscape:export-xdpi="96"
+     inkscape:export-ydpi="96">
+    <polygon
+       points="361,555.17 350.21,550.53 371.79,550.53 "
+       fill="#1769c2"
+       stroke="#0b2c63"
+       stroke-width="0.7"
+       opacity="0.4"
+       id="polygon1857" />
+    <polygon
+       points="361,549.49 361,530.58 350.21,550.53 "
+       fill="#3298ff"
+       stroke="#0b2c63"
+       stroke-width="0.82"
+       id="polygon1859" />
+    <polygon
+       points="361,549.49 361,530.58 371.79,550.53 "
+       fill="#0d55b8"
+       stroke="#0b2c63"
+       stroke-width="0.82"
+       id="polygon1861" />
+    <polygon
+       points="371.79,550.53 361,530.58 350.21,550.53 "
+       fill="#207cea"
+       stroke="#0b2c63"
+       stroke-width="0.82"
+       opacity="0.78"
+       id="polygon1863" />
+  </g>
+  <g
+     id="pyramid-hollow-replica-overlap"
+     opacity="0.98"
+     fill="none"
+     stroke="#052957"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     transform="translate(-4.374323,-4.3400882)">
+    <polygon
+       points="361,556.28 349.1,551.16 372.9,551.16 "
+       stroke-width="1.45"
+       opacity="0.85"
+       id="polygon1866" />
+    <polygon
+       points="361,550 361,529.14 349.1,551.16 "
+       stroke-width="1.6"
+       id="polygon1868" />
+    <polygon
+       points="361,550 361,529.14 372.9,551.16 "
+       stroke-width="1.6"
+       id="polygon1870" />
+    <polygon
+       points="372.9,551.16 361,529.14 349.1,551.16 "
+       stroke-width="1.6"
+       id="polygon1872" />
+    <path
+       d="m 361,529.14 v 27.14"
+       stroke-width="1.2"
+       opacity="0.85"
+       id="path1874" />
+  </g>
+</svg>

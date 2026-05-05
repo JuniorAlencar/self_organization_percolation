@@ -7,9 +7,9 @@ FolderCreator::FolderCreator(const std::string& base_path)
 
 std::tuple<std::string, std::string, std::string, std::string, std::string> FolderCreator::create_structure(
     int dim,
-    int type_Nt,
-    double N_t,
-    double k,
+    int type_f_T,
+    double f_T,
+    double c,
     int L,
     int n_colors,
     double a,
@@ -29,15 +29,15 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
 
     std::string full_path;
 
-    if (type_Nt == 0) {
+    if (type_f_T == 0) {
         char sub[512];
-        sprintf(sub, "%s/NT_constant/NT_%.0f/k_%.1e/rho_%.4e",
-                main_folder, N_t, k, rho);
+        sprintf(sub, "%s/fT_constant/fT_%.6e/c_%.6e/rho_%.4e",
+                main_folder, f_T, c, rho);
         full_path = std::string(sub);
     } else {
         char sub[512];
-        sprintf(sub, "%s/NT_variable/type_%d/a_%.2f/alpha_%.2f/k_%.1e/rho_%.4e",
-                main_folder, type_Nt, a, alpha, k, rho);
+        sprintf(sub, "%s/fT_variable/type_%d/a_%.2f/alpha_%.2f/c_%.6e/rho_%.4e",
+                main_folder, type_f_T, a, alpha, c, rho);
         full_path = std::string(sub);
     }
 

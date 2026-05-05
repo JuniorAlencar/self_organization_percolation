@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="109.21053"
+   height="134.47331"
+   viewBox="620 525 20.628655 25.549929"
+   version="1.1"
+   id="svg1820"
+   sodipodi:docname="cubo_preenchido_destacado_verde.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1824" />
+  <sodipodi:namedview
+     id="namedview1822"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="4.34"
+     inkscape:cx="34.562212"
+     inkscape:cy="64.631336"
+     inkscape:window-width="1854"
+     inkscape:window-height="1011"
+     inkscape:window-x="66"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1820" />
+  <title
+     id="title1800">Cubo preenchido com destaque verde</title>
+  <g
+     id="cube-filled-symbol"
+     opacity="1"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     transform="translate(-6.725,-6.7250124)">
+    <polygon
+       points="637,533.7 645.64,538.78 637,543.85 628.36,538.78 "
+       fill="#ff625d"
+       stroke="#15ff24"
+       stroke-width="3.04"
+       id="polygon1802" />
+    <polygon
+       points="628.36,538.78 637,543.85 637,555.3 628.36,550.22 "
+       fill="#d92d29"
+       stroke="#15ff24"
+       stroke-width="3.04"
+       id="polygon1804" />
+    <polygon
+       points="645.64,538.78 637,543.85 637,555.3 645.64,550.22 "
+       fill="#b81718"
+       stroke="#15ff24"
+       stroke-width="3.04"
+       id="polygon1806" />
+    <path
+       d="M 637,543.85 V 555.3"
+       fill="none"
+       stroke="#15ff24"
+       stroke-width="3.04"
+       opacity="1"
+       id="path1808" />
+  </g>
+  <g
+     id="cube-hollow-replica-overlap"
+     opacity="0.98"
+     fill="none"
+     stroke="#4f0d0b"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     transform="translate(-6.725,-6.7250124)">
+    <polygon
+       points="637,543.78 627.4,538.14 637,532.5 646.6,538.14 "
+       stroke-width="1.55"
+       id="polygon1811" />
+    <polygon
+       points="637,556.5 627.4,550.86 627.4,538.14 637,543.78 "
+       stroke-width="1.55"
+       id="polygon1813" />
+    <polygon
+       points="637,556.5 646.6,550.86 646.6,538.14 637,543.78 "
+       stroke-width="1.55"
+       id="polygon1815" />
+    <path
+       d="M 637,543.78 V 556.5"
+       stroke-width="1.25"
+       opacity="0.92"
+       id="path1817" />
+  </g>
+</svg>

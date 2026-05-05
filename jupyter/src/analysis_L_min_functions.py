@@ -4,7 +4,7 @@ import os
 import pandas as pd
 from .TimeSeriesAnalysis import compute_means_for_folder_tests
 
-def calculate_means_L(N_COLORS, DIM, NT, K, RHO, p0):
+def calculate_means_L(N_COLORS, DIM, f_T, C, RHO, p0):
     base = f"../Data_tests/bond_percolation/num_colors_{N_COLORS}/dim_{DIM}/"
     L_lst = []
 
@@ -22,14 +22,14 @@ def calculate_means_L(N_COLORS, DIM, NT, K, RHO, p0):
             pass  # ignora pastas tipo "L_backup", etc.
     
     for L in L_lst:
-        compute_means_for_folder_tests(type_perc='bond', num_colors=N_COLORS, dim=DIM, L=L, NT=NT, k=K, rho=RHO, p0_list=p0)
+        compute_means_for_folder_tests(type_perc='bond', num_colors=N_COLORS, dim=DIM, L=L, f_T=f_T, c=C, rho=RHO, p0_list=p0)
     
     return L_lst
 
-def read_mean_json(N_COLORS:int, DIM:int, L:int, NT:int, K:float, RHO:float):
+def read_mean_json(N_COLORS:int, DIM:int, L:int, f_T:float, C:float, RHO:float):
     filename = (
         f"../Data_tests/bond_percolation/num_colors_{N_COLORS}/dim_{DIM}/"
-        f"L_{L}/NT_constant/NT_{NT}/k_{K:.1e}/rho_{RHO:.4e}/properties_mean_bundle.json"
+        f"L_{L}/fT_constant/fT_{f_T:.6e}/c_{C:.6e}/rho_{RHO:.4e}/properties_mean_bundle.json"
     )
     with open(filename, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -48,7 +48,7 @@ def read_mean_json(N_COLORS:int, DIM:int, L:int, NT:int, K:float, RHO:float):
 
     return orders, num_seeds
 
-def generate_pc_estimate(L_lst, N_COLORS, DIM, NT, K, RHO, pc_ref=0.24881182):
+def generate_pc_estimate(L_lst, N_COLORS, DIM, f_T, C, RHO, pc_ref=0.24881182):
     fn = "../Data_tests/bond_percolation/pc_estimative.csv"
 
     # -----------------------------
@@ -68,7 +68,7 @@ def generate_pc_estimate(L_lst, N_COLORS, DIM, NT, K, RHO, pc_ref=0.24881182):
         # caminho do json mean (seu "file_mean")
         file_mean = (
             f"../Data_tests/bond_percolation/num_colors_{N_COLORS}/dim_{DIM}/"
-            f"L_{L_int}/NT_constant/NT_{NT}/k_{K:.1e}/rho_{RHO:.4e}/properties_mean_bundle.json"
+            f"L_{L_int}/fT_constant/fT_{f_T:.6e}/c_{C:.6e}/rho_{RHO:.4e}/properties_mean_bundle.json"
         )
 
         # lê o json e pega num_seeds
@@ -95,8 +95,8 @@ def generate_pc_estimate(L_lst, N_COLORS, DIM, NT, K, RHO, pc_ref=0.24881182):
                 (df_old.get("L") == L_int) &
                 (df_old.get("nc") == N_COLORS) &
                 (df_old.get("dim") == DIM) &
-                (df_old.get("NT") == NT) &
-                (df_old.get("k") == float(K)) &
+                (df_old.get("f_T") == float(f_T)) &
+                (df_old.get("c") == float(C)) &
                 (df_old.get("rho") == float(RHO))
             )
 
@@ -114,7 +114,7 @@ def generate_pc_estimate(L_lst, N_COLORS, DIM, NT, K, RHO, pc_ref=0.24881182):
             continue
 
         # marca esse caso para ser substituído no CSV
-        keys_to_replace.add((L_int, N_COLORS, DIM, NT, float(K), float(RHO)))
+        keys_to_replace.add((L_int, N_COLORS, DIM, float(f_T), float(C), float(RHO)))
 
         # -----------------------------
         # RECALCULA as propriedades
@@ -146,8 +146,8 @@ def generate_pc_estimate(L_lst, N_COLORS, DIM, NT, K, RHO, pc_ref=0.24881182):
                 "L": L_int,
                 "nc": N_COLORS,
                 "dim": DIM,
-                "NT": NT,
-                "k": float(K),
+                "f_T": float(f_T),
+                "c": float(C),
                 "rho": float(RHO),
 
                 "t0": t0_global,
@@ -169,13 +169,13 @@ def generate_pc_estimate(L_lst, N_COLORS, DIM, NT, K, RHO, pc_ref=0.24881182):
         if keys_to_replace:
             mask_keep = np.ones(len(df_old), dtype=bool)
 
-            for (L_int, nc, dim, NT_, k_, rho_) in keys_to_replace:
+            for (L_int, nc, dim, f_T_, c_, rho_) in keys_to_replace:
                 m = (
                     (df_old["L"] == L_int) &
                     (df_old["nc"] == nc) &
                     (df_old["dim"] == dim) &
-                    (df_old["NT"] == NT_) &
-                    (df_old["k"] == k_) &
+                    (df_old["f_T"] == f_T_) &
+                    (df_old["c"] == c_) &
                     (df_old["rho"] == rho_)
                 )
                 mask_keep &= ~m
@@ -189,7 +189,7 @@ def generate_pc_estimate(L_lst, N_COLORS, DIM, NT, K, RHO, pc_ref=0.24881182):
 
     # ordena (opcional)
     if not df_final.empty:
-        df_final = df_final.sort_values(by=["nc", "dim", "NT", "k", "rho", "L", "order"]).reset_index(drop=True)
+        df_final = df_final.sort_values(by=["nc", "dim", "f_T", "c", "rho", "L", "order"]).reset_index(drop=True)
 
     # salva sem índice
     df_final.to_csv(fn, index=False)

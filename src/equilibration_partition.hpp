@@ -14,6 +14,8 @@ struct EquilibrationConfig {
     double sigma_multiplier = 2.0;
 };
 
+// Estima t_eq usando a série média p(t).
+// O TimeSeries esperado é o novo formato: p_t[cor][t], f_t[cor][t] e t[t].
 int estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg = {});
 
 void compute_equilibration_partition_metrics(

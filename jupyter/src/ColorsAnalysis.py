@@ -19,15 +19,16 @@ def create_folder(folder_path):
     else:
         print(f"Folder already exists: {folder_path}")
 
-# Aceita k/rho em float normal ou notação científica (ex.: 1.0e-04, 8.9e-02)
-PARAMS_RE = re.compile(r"""
+# Aceita c/f_T/rho em float normal ou notação científica (ex.: 5.0e-01, 5.0e-02)
+FLOAT = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+PARAMS_RE = re.compile(rf"""
     (?P<type_perc>[A-Za-z]+)_percolation
     /num_colors_(?P<num_colors>\d+)
     /dim_(?P<dim>\d+)
     /L_(?P<L>\d+)
-    /NT_constant/NT_(?P<Nt>\d+)
-    /k_(?P<k>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)
-    /rho_(?P<rho>[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)
+    /fT_constant/fT_(?P<f_T>{FLOAT})
+    /c_(?P<c>{FLOAT})
+    /rho_(?P<rho>{FLOAT})
     /data
 """, re.X)
 
@@ -68,10 +69,10 @@ def compute_nc_from_df(df: pd.DataFrame):
 
 def upsert_summary(summary_path: Path, rows: list[dict]) -> pd.DataFrame:
     """
-    Upsert por chave (L, n_colors, NT, k, rho).
+    Upsert por chave (L, n_colors, f_T, c, rho).
     Salva sem a coluna 'source' (mudança 2).
     """
-    key_cols = ["L", "n_colors", "NT", "k", "rho"]
+    key_cols = ["L", "n_colors", "f_T", "c", "rho"]
     cols_all = key_cols + ["n_c", "n_c_err", "Nsamples"]  # <- sem 'source'
     new_df = pd.DataFrame(rows, columns=cols_all)
 
@@ -90,10 +91,10 @@ def upsert_summary(summary_path: Path, rows: list[dict]) -> pd.DataFrame:
         old_df = pd.DataFrame(columns=cols_all)
 
     # Tipos consistentes
-    for c in ["L", "n_colors", "NT"]:
+    for c in ["L", "n_colors"]:
         new_df[c] = pd.to_numeric(new_df[c], errors="coerce").astype("Int64")
         old_df[c] = pd.to_numeric(old_df[c], errors="coerce").astype("Int64")
-    for c in ["k", "rho", "n_c", "n_c_err"]:
+    for c in ["f_T", "c", "rho", "n_c", "n_c_err"]:
         new_df[c] = pd.to_numeric(new_df[c], errors="coerce")
         old_df[c] = pd.to_numeric(old_df[c], errors="coerce")
     old_df["Nsamples"] = pd.to_numeric(old_df["Nsamples"], errors="coerce").astype("Int64")
@@ -106,7 +107,7 @@ def upsert_summary(summary_path: Path, rows: list[dict]) -> pd.DataFrame:
     merged = pd.concat([old_idx[~old_idx.index.isin(new_idx.index)], new_idx]).reset_index()
 
     # Ordena e salva
-    merged = merged[["L","n_colors","NT","n_c","n_c_err","rho","k","Nsamples"]]
+    merged = merged[["L","n_colors","f_T","c","n_c","n_c_err","rho","Nsamples"]]
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(summary_path, index=False)
     return merged
@@ -193,76 +194,70 @@ def list_rho_values(
     num_colors: int,
     dim: int,
     L: int,
-    Nt: int,
-    k: float,
+    f_T: float,
+    c: float,
     base_root: str = "../Data",
     rel_tol: float = 1e-12,
     abs_tol: float = 1e-15,
 ):
     """
     Retorna todos os rho (float) existentes em:
-      ../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/NT_constant/NT_{Nt}/k_*/rho_*/data
-    que coincidam com os parâmetros fixos e com k (~=) ao informado.
+      ../Data/{type_perc}_percolation/num_colors_{num_colors}/dim_{dim}/L_{L}/fT_constant/fT_*/c_*/rho_*/data
+    que coincidam com os parâmetros fixos e com c/f_T informados.
     """
     base = (Path(base_root)
             / f"{type_perc}_percolation"
             / f"num_colors_{num_colors}"
             / f"dim_{dim}"
             / f"L_{L}"
-            / "NT_constant"
-            / f"NT_{Nt}")
+            / "fT_constant")
 
     if not base.exists():
         return []
 
     rhos = []
-    # Procurar todos caminhos .../k_*/rho_*/data
-    for data_dir in base.glob("k_*/rho_*/data"):
+    for data_dir in base.glob("fT_*/c_*/rho_*/data"):
         if not data_dir.is_dir():
             continue
         m = PARAMS_RE.search(str(data_dir.as_posix()))
         if not m:
             continue
         gd = m.groupdict()
-        # Verificar os fixos
-        if gd["type_perc"] != type_perc: 
+        if gd["type_perc"] != type_perc:
             continue
-        if int(gd["num_colors"]) != num_colors: 
+        if int(gd["num_colors"]) != num_colors:
             continue
-        if int(gd["dim"]) != dim: 
+        if int(gd["dim"]) != dim:
             continue
-        if int(gd["L"]) != L: 
-            continue
-        if int(gd["Nt"]) != Nt: 
+        if int(gd["L"]) != L:
             continue
 
-        k_here = float(gd["k"])
-        if not math.isclose(k_here, float(k), rel_tol=rel_tol, abs_tol=abs_tol):
+        f_T_here = float(gd["f_T"])
+        c_here = float(gd["c"])
+        if not math.isclose(f_T_here, float(f_T), rel_tol=rel_tol, abs_tol=abs_tol):
+            continue
+        if not math.isclose(c_here, float(c), rel_tol=rel_tol, abs_tol=abs_tol):
             continue
 
         rhos.append(float(gd["rho"]))
 
-    # Deixar únicos e ordenados
-    rhos = sorted(set(rhos))
-    return rhos
+    return sorted(set(rhos))
 
-def processing_data_nc(L_lst, Nt_lst, k_lst, num_colors, dim, type_perc):
-    base_root  = "../Data"
-    output_dir = "../Data/bond_percolation/"   # <- mudança 1
-    out_csv    = None  # definido abaixo com base no dim
+def processing_data_nc(L_lst, f_T_lst, c_lst, num_colors, dim, type_perc):
+    base_root = "../Data"
+    output_dir = "../Data/bond_percolation/"
 
-    # ---------- processamento principal ----------
     rows = []
     root = Path(base_root)
 
     for L in L_lst:
-        for NT in Nt_lst:
-            for k in k_lst:
-                # Lista rhos existentes para este (L, NT, k)
-                rho_values = list_rho_values(type_perc, num_colors, dim, L, NT, k, base_root=base_root)
+        for f_T in f_T_lst:
+            for c_val in c_lst:
+                rho_values = list_rho_values(type_perc, num_colors, dim, L, f_T, c_val, base_root=base_root)
                 for rho in rho_values:
-                    p = root / f"{type_perc}_percolation" / f"num_colors_{num_colors}" / f"dim_{dim}" / \
-                        f"L_{L}" / "NT_constant" / f"NT_{NT}" / f"k_{k:.1e}" / f"rho_{rho:.4e}" / "data" / "process_names.txt"
+                    p = (root / f"{type_perc}_percolation" / f"num_colors_{num_colors}" / f"dim_{dim}" /
+                         f"L_{L}" / "fT_constant" / f"fT_{f_T:.6e}" / f"c_{c_val:.6e}" /
+                         f"rho_{rho:.4e}" / "data" / "process_names.txt")
                     if not p.exists():
                         continue
                     try:
@@ -271,26 +266,27 @@ def processing_data_nc(L_lst, Nt_lst, k_lst, num_colors, dim, type_perc):
                         rows.append({
                             "L": L,
                             "n_colors": num_colors,
-                            "NT": NT,
-                            "k": k,
+                            "f_T": float(f_T),
+                            "c": float(c_val),
                             "rho": float(rho),
                             "n_c": n_c,
                             "n_c_err": n_c_err,
-                            "Nsamples": N
+                            "Nsamples": N,
                         })
                     except Exception as e:
                         print(f"[WARN] Falha em {p}: {e}")
 
-    # Define caminho final conforme solicitado
     out_dir_path = Path(output_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
-    out_csv_path = out_dir_path / f"nc_dim_{dim}.csv"   # <- mudança 1
+    out_csv_path = out_dir_path / f"nc_dim_{dim}.csv"
 
     merged = upsert_summary(out_csv_path, rows)
 
-    # Log curto
     print("\nResumo atualizado:")
-    print(merged.sort_values(["L","NT","k","rho"]).to_string(index=False))
+    if not merged.empty:
+        print(merged.sort_values(["L", "f_T", "c", "rho"]).to_string(index=False))
+    else:
+        print("[vazio] nenhum dado encontrado")
     print(f"\nArquivo salvo/atualizado: {out_csv_path}")
 
 def create_folder(folder_path):

@@ -168,20 +168,51 @@ std::vector<double> moving_average(const std::vector<double>& x, const int windo
     return out;
 }
 
+void validate_timeseries_layout(const TimeSeries& ts,
+                                const std::string& caller,
+                                const bool require_f_t)
+{
+    if (ts.t.empty()) {
+        throw std::runtime_error(caller + ": TimeSeries.t vazio");
+    }
+
+    if (ts.num_colors <= 0) {
+        throw std::runtime_error(caller + ": TimeSeries.num_colors inválido");
+    }
+
+    if (static_cast<int>(ts.p_t.size()) != ts.num_colors) {
+        throw std::runtime_error(caller + ": p_t.size() incompatível com num_colors");
+    }
+
+    if (require_f_t && static_cast<int>(ts.f_t.size()) != ts.num_colors) {
+        throw std::runtime_error(caller + ": f_t.size() incompatível com num_colors");
+    }
+
+    const std::size_t T = ts.t.size();
+
+    for (const auto& row : ts.p_t) {
+        if (row.size() != T) {
+            throw std::runtime_error(caller + ": linhas de p_t com tamanhos diferentes de t");
+        }
+    }
+
+    if (require_f_t) {
+        for (const auto& row : ts.f_t) {
+            if (row.size() != T) {
+                throw std::runtime_error(caller + ": linhas de f_t com tamanhos diferentes de t");
+            }
+        }
+    }
+}
+
 std::vector<double> build_mean_p_series(const TimeSeries& ts)
 {
-    if (ts.t.empty()) return {};
-    if (ts.p_t.empty()) {
-        throw std::runtime_error("build_mean_p_series: p_t vazio");
-    }
+    validate_timeseries_layout(ts, "build_mean_p_series", true);
 
     const std::size_t T = ts.t.size();
     std::vector<double> out(T, 0.0);
 
     for (const auto& row : ts.p_t) {
-        if (row.size() != T) {
-            throw std::runtime_error("build_mean_p_series: linhas de p_t com tamanhos diferentes");
-        }
         for (std::size_t i = 0; i < T; ++i) {
             out[i] += row[i];
         }
@@ -377,9 +408,7 @@ std::vector<Point3D> extract_top_surface_points(
 
 int estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg)
 {
-    if (ts.t.empty()) {
-        throw std::runtime_error("estimate_t_eq: TimeSeries.t vazio");
-    }
+    validate_timeseries_layout(ts, "estimate_t_eq", true);
 
     const std::vector<double> p_mean = build_mean_p_series(ts);
     const std::vector<double> p_smoothed = moving_average(p_mean, cfg.smoothing_window);
@@ -429,11 +458,18 @@ void compute_equilibration_partition_metrics(
         throw std::runtime_error("compute_equilibration_partition_metrics: shape vazio");
     }
 
+    validate_timeseries_layout(ts, "compute_equilibration_partition_metrics", true);
+
     const int L = encoded_net.shape[0];
     const GridRegular grid(encoded_net.dim, L);
     const int num_colors = encoded_net.num_colors;
 
-    ps.t_eq = estimate_t_eq(ts, cfg);
+    if (ts.num_colors != num_colors) {
+        throw std::runtime_error(
+            "compute_equilibration_partition_metrics: TimeSeries.num_colors incompatível com a rede");
+    }
+
+    ps.t_eq = (ts.t_eq >= 0) ? ts.t_eq : estimate_t_eq(ts, cfg);
 
     ps.sp_lin_preteq.assign(num_colors, -1);
     ps.sp_lin_posteq.assign(num_colors, -1);
@@ -464,7 +500,9 @@ void compute_equilibration_partition_metrics(
         ps.M_size_preteq[c] = m_pre;
         ps.M_size_posteq[c] = m_post;
 
-        if (c >= static_cast<int>(ps.sp_path_lin.size()) || ps.sp_len[c] < 0) {
+        if (c >= static_cast<int>(ps.sp_len.size()) ||
+            c >= static_cast<int>(ps.sp_path_lin.size()) ||
+            ps.sp_len[c] < 0) {
             continue;
         }
 
@@ -533,6 +571,8 @@ EquilibrationCutNetworks build_equilibration_cut_networks(
 
     pre_net.seed = encoded_net.seed;
     post_net.seed = encoded_net.seed;
+    pre_net.edge_pairs = encoded_net.edge_pairs;
+    post_net.edge_pairs = encoded_net.edge_pairs;
 
     const std::size_t total_size = encoded_net.data.size();
     pre_net.data.assign(total_size, static_cast<NetworkPattern::state_t>(-1));

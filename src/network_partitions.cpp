@@ -14,8 +14,8 @@
 #include <utility>
 #include <vector>
 
-#include <cnpy.h>
 #include <nlohmann/json.hpp>
+#include "animation_utils.hpp"
 
 namespace {
 
@@ -113,6 +113,19 @@ struct GridRegular {
     }
 };
 
+std::vector<int> build_path(const std::vector<int>& parent, const int target) {
+    std::vector<int> path;
+    if (target < 0) return path;
+    int cur = target;
+    while (cur >= 0) {
+        path.push_back(cur);
+        cur = parent[static_cast<std::size_t>(cur)];
+        if (static_cast<std::size_t>(cur) >= parent.size() && cur != -1) break;
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
 int largest_component_single_color_sparse(
     const SparseSubgraph& net,
     const GridRegular& grid,
@@ -170,37 +183,35 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
     int& out_len)
 {
     if (color_idx < 0 || color_idx >= net.num_colors) {
-        throw std::runtime_error(
-            "shortest_path_to_subgraph_top_single_color_sparse: color_idx inválido");
-    }
-
-    const auto& active = net.active_idx_by_color[color_idx];
-    if (active.empty()) {
         out_path.clear();
         out_len = -1;
         return false;
     }
 
-    int base_subgraph = std::numeric_limits<int>::max();
-    int top_subgraph  = -1;
-
-    for (const int idx : active) {
-        const int g = grid.grow_coord(idx);
-        base_subgraph = std::min(base_subgraph, g);
-        top_subgraph  = std::max(top_subgraph, g);
+    const auto& active_set = net.active_idx_by_color[color_idx];
+    if (active_set.empty()) {
+        out_path.clear();
+        out_len = -1;
+        return false;
     }
 
+    const std::size_t total = net.total_size;
+    std::vector<char> visited(total, 0);
+    std::vector<int> parent(static_cast<std::size_t>(total), -1);
     std::queue<int> q;
-    std::unordered_set<int> visited;
-    std::unordered_map<int, int> parent;
 
-    visited.reserve(active.size() * 2 + 1);
-    parent.reserve(active.size() * 2 + 1);
+    int base_subgraph = std::numeric_limits<int>::max();
+    int top_subgraph = std::numeric_limits<int>::min();
+    for (const int idx : active_set) {
+        const int g = grid.grow_coord(idx);
+        base_subgraph = std::min(base_subgraph, g);
+        top_subgraph = std::max(top_subgraph, g);
+    }
 
-    for (const int idx : active) {
+    for (const int idx : active_set) {
         if (grid.grow_coord(idx) != base_subgraph) continue;
-        visited.insert(idx);
-        parent[idx] = -1;
+        visited[static_cast<std::size_t>(idx)] = 1;
+        parent[static_cast<std::size_t>(idx)] = -1;
         q.push(idx);
     }
 
@@ -211,11 +222,8 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
     }
 
     int target = -1;
-
     while (!q.empty()) {
-        const int u = q.front();
-        q.pop();
-
+        const int u = q.front(); q.pop();
         if (grid.grow_coord(u) == top_subgraph) {
             target = u;
             break;
@@ -223,11 +231,10 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
 
         grid.for_each_neighbor(u, [&](const int v) {
             if (v < 0) return;
-            if (active.find(v) == active.end()) return;
-            if (visited.find(v) != visited.end()) return;
-
-            visited.insert(v);
-            parent[v] = u;
+            if (visited[static_cast<std::size_t>(v)]) return;
+            if (active_set.find(v) == active_set.end()) return;
+            visited[static_cast<std::size_t>(v)] = 1;
+            parent[static_cast<std::size_t>(v)] = u;
             q.push(v);
         });
     }
@@ -238,322 +245,9 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
         return false;
     }
 
-    out_path.clear();
-    int cur = target;
-    while (cur >= 0) {
-        out_path.push_back(cur);
-        cur = parent[cur];
-    }
-    std::reverse(out_path.begin(), out_path.end());
-
+    out_path = build_path(parent, target);
     out_len = static_cast<int>(out_path.size()) - 1;
     return true;
-}
-
-bool shortest_path_postteq_with_support_single_color_sparse(
-    const SparseEncodedNetwork& full_net,
-    const SparseSubgraph& post_net,
-    const GridRegular& grid,
-    const int color_idx,
-    std::vector<int>& out_path,
-    int& out_len)
-{
-    if (color_idx < 0 || color_idx >= post_net.num_colors ||
-        color_idx >= full_net.num_colors) {
-        throw std::runtime_error(
-            "shortest_path_postteq_with_support_single_color_sparse: color_idx inválido");
-    }
-
-    const auto& post_active = post_net.active_idx_by_color[color_idx];
-    const auto& full_active = full_net.active_idx_by_color[color_idx];
-
-    if (post_active.empty() || full_active.empty()) {
-        out_path.clear();
-        out_len = -1;
-        return false;
-    }
-
-    int base_subgraph = std::numeric_limits<int>::max();
-    int top_subgraph  = -1;
-
-    for (const int idx : post_active) {
-        const int g = grid.grow_coord(idx);
-        base_subgraph = std::min(base_subgraph, g);
-        top_subgraph  = std::max(top_subgraph, g);
-    }
-
-    std::queue<int> q;
-    std::unordered_set<int> visited;
-    std::unordered_map<int, int> parent;
-
-    visited.reserve(full_active.size() * 2 + 1);
-    parent.reserve(full_active.size() * 2 + 1);
-
-    for (const int idx : post_active) {
-        if (grid.grow_coord(idx) != base_subgraph) continue;
-        visited.insert(idx);
-        parent[idx] = -1;
-        q.push(idx);
-    }
-
-    if (q.empty()) {
-        out_path.clear();
-        out_len = -1;
-        return false;
-    }
-
-    int target = -1;
-
-    while (!q.empty()) {
-        const int u = q.front();
-        q.pop();
-
-        if (grid.grow_coord(u) == top_subgraph &&
-            post_active.find(u) != post_active.end()) {
-            target = u;
-            break;
-        }
-
-        grid.for_each_neighbor(u, [&](const int v) {
-            if (v < 0) return;
-            if (full_active.find(v) == full_active.end()) return;
-            if (visited.find(v) != visited.end()) return;
-
-            visited.insert(v);
-            parent[v] = u;
-            q.push(v);
-        });
-    }
-
-    if (target < 0) {
-        out_path.clear();
-        out_len = -1;
-        return false;
-    }
-
-    out_path.clear();
-    int cur = target;
-    while (cur >= 0) {
-        out_path.push_back(cur);
-        cur = parent[cur];
-    }
-    std::reverse(out_path.begin(), out_path.end());
-
-    out_len = static_cast<int>(out_path.size()) - 1;
-    return true;
-}
-
-SubgraphAnalysis analyze_sparse_postteq_with_support(
-    const SparseEncodedNetwork& full_net,
-    const SparseSubgraph& post_net)
-{
-    if (post_net.shape.empty()) {
-        throw std::runtime_error("analyze_sparse_postteq_with_support: shape vazio");
-    }
-
-    const int L = post_net.shape[0];
-    const GridRegular grid(post_net.dim, L);
-
-    SubgraphAnalysis analysis;
-    analysis.net = post_net;
-
-    analysis.color_percolation.clear();
-    analysis.percolation_order.clear();
-
-    analysis.largest_component.assign(post_net.num_colors, 0);
-    analysis.sp_len.assign(post_net.num_colors, -1);
-    analysis.sp_path_lin.assign(post_net.num_colors, {});
-
-    for (int c = 0; c < post_net.num_colors; ++c) {
-        analysis.largest_component[c] =
-            largest_component_single_color_sparse(post_net, grid, c);
-
-        std::vector<int> path;
-        int path_len = -1;
-
-        const bool has_path =
-            shortest_path_postteq_with_support_single_color_sparse(
-                full_net, post_net, grid, c, path, path_len);
-
-        if (!has_path) continue;
-
-        analysis.sp_len[c] = path_len;
-        analysis.sp_path_lin[c] = std::move(path);
-    }
-
-    return analysis;
-}
-
-inline int color_to_active_value(const int num_colors, const int c) {
-    return (num_colors == 1 ? 1 : (c + 2));
-}
-
-struct DecodedValue {
-    bool never_activated = false;
-    bool blocked = false;
-    int color_1b = -1;
-    int color_idx = -1;
-    int time = -1;
-};
-
-DecodedValue decode_animation_value(
-    const long long code,
-    const int species_factor)
-{
-    DecodedValue out;
-
-    if (code == -1) {
-        out.never_activated = true;
-        return out;
-    }
-
-    if (code == 0) {
-        out.blocked = true;
-        return out;
-    }
-
-    out.color_1b = static_cast<int>(code / species_factor);
-    out.color_idx = out.color_1b - 1;
-    out.time = static_cast<int>(code % species_factor);
-    return out;
-}
-
-template <typename T>
-std::vector<T> copy_npy_vector(const cnpy::NpyArray& arr) {
-    const T* ptr = arr.data<T>();
-    const std::size_t n = arr.num_vals;
-    return std::vector<T>(ptr, ptr + n);
-}
-
-int read_scalar_int(const cnpy::NpyArray& arr) {
-    if (arr.word_size == sizeof(int)) {
-        return static_cast<int>(arr.data<int>()[0]);
-    }
-    if (arr.word_size == sizeof(long long)) {
-        return static_cast<int>(arr.data<long long>()[0]);
-    }
-    if (arr.word_size == sizeof(std::int64_t)) {
-        return static_cast<int>(arr.data<std::int64_t>()[0]);
-    }
-    throw std::runtime_error("read_scalar_int: tipo inteiro nao suportado no npz");
-}
-
-std::vector<int> read_vector_int(const cnpy::NpyArray& arr) {
-    if (arr.word_size == sizeof(int)) {
-        return copy_npy_vector<int>(arr);
-    }
-    if (arr.word_size == sizeof(long long)) {
-        std::vector<long long> tmp = copy_npy_vector<long long>(arr);
-        std::vector<int> out(tmp.size());
-        for (std::size_t i = 0; i < tmp.size(); ++i) out[i] = static_cast<int>(tmp[i]);
-        return out;
-    }
-    if (arr.word_size == sizeof(std::int64_t)) {
-        std::vector<std::int64_t> tmp = copy_npy_vector<std::int64_t>(arr);
-        std::vector<int> out(tmp.size());
-        for (std::size_t i = 0; i < tmp.size(); ++i) out[i] = static_cast<int>(tmp[i]);
-        return out;
-    }
-    throw std::runtime_error("read_vector_int: tipo inteiro nao suportado no npz");
-}
-
-std::vector<double> read_vector_double(const cnpy::NpyArray& arr) {
-    if (arr.word_size == sizeof(double)) {
-        return copy_npy_vector<double>(arr);
-    }
-    if (arr.word_size == sizeof(float)) {
-        std::vector<float> tmp = copy_npy_vector<float>(arr);
-        return std::vector<double>(tmp.begin(), tmp.end());
-    }
-    throw std::runtime_error("read_vector_double: tipo real nao suportado no npz");
-}
-
-std::vector<long long> read_vector_ll_from_state(const cnpy::NpyArray& arr) {
-    if (arr.word_size == sizeof(int)) {
-        std::vector<int> tmp = copy_npy_vector<int>(arr);
-        return std::vector<long long>(tmp.begin(), tmp.end());
-    }
-    if (arr.word_size == sizeof(long long)) {
-        return copy_npy_vector<long long>(arr);
-    }
-    if (arr.word_size == sizeof(std::int64_t)) {
-        std::vector<std::int64_t> tmp = copy_npy_vector<std::int64_t>(arr);
-        return std::vector<long long>(tmp.begin(), tmp.end());
-    }
-    throw std::runtime_error("read_vector_ll_from_state: tipo de data nao suportado no npz");
-}
-
-double mean_of(const std::vector<double>& x, const int begin, const int end) {
-    if (begin >= end) return 0.0;
-    const double s = std::accumulate(x.begin() + begin, x.begin() + end, 0.0);
-    return s / static_cast<double>(end - begin);
-}
-
-double std_of(const std::vector<double>& x, const int begin, const int end, const double mu) {
-    if (begin >= end) return 0.0;
-    double acc = 0.0;
-    for (int i = begin; i < end; ++i) {
-        const double d = x[i] - mu;
-        acc += d * d;
-    }
-    return std::sqrt(acc / static_cast<double>(end - begin));
-}
-
-std::vector<double> moving_average(const std::vector<double>& x, const int window) {
-    if (x.empty() || window <= 1) return x;
-
-    std::vector<double> out(x.size(), 0.0);
-    double acc = 0.0;
-    int left = 0;
-
-    for (int right = 0; right < static_cast<int>(x.size()); ++right) {
-        acc += x[right];
-        while (right - left + 1 > window) {
-            acc -= x[left];
-            ++left;
-        }
-        out[right] = acc / static_cast<double>(right - left + 1);
-    }
-
-    return out;
-}
-
-std::vector<double> build_mean_p_series(const TimeSeries& ts) {
-    if (ts.p_t.empty()) {
-        throw std::runtime_error("estimate_t_eq: TimeSeries p_t vazio");
-    }
-
-    const int num_colors = static_cast<int>(ts.p_t.size());
-    const int n = static_cast<int>(ts.p_t[0].size());
-    if (n == 0) {
-        throw std::runtime_error("estimate_t_eq: series p_t vazias");
-    }
-
-    for (int c = 1; c < num_colors; ++c) {
-        if (static_cast<int>(ts.p_t[c].size()) != n) {
-            throw std::runtime_error("estimate_t_eq: p_t com comprimentos inconsistentes");
-        }
-    }
-
-    std::vector<double> p_mean(n, 0.0);
-    for (int k = 0; k < n; ++k) {
-        for (int c = 0; c < num_colors; ++c) {
-            p_mean[k] += ts.p_t[c][k];
-        }
-        p_mean[k] /= static_cast<double>(num_colors);
-    }
-
-    return p_mean;
-}
-
-std::vector<int> build_path(const std::vector<int>& parent, int target) {
-    std::vector<int> path;
-    while (target >= 0) {
-        path.push_back(target);
-        target = parent[target];
-    }
-    std::reverse(path.begin(), path.end());
-    return path;
 }
 
 int largest_component_single_color(
@@ -795,6 +489,13 @@ SubgraphAnalysis analyze_sparse_isolated_subgraph(const SparseSubgraph& net)
 
 } // namespace
 
+// Minimal compatibility helper: analyze post-teq sparse subgraph (placeholder).
+SubgraphAnalysis analyze_sparse_postteq_with_support(
+    const SparseEncodedNetwork& /*encoded_net*/, const SparseSubgraph& post)
+{
+    return analyze_sparse_isolated_subgraph(post);
+}
+
 TimeSeries load_timeseries_from_json(const std::string& json_path)
 {
     std::ifstream fin(json_path);
@@ -806,6 +507,56 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
     fin >> j;
 
     TimeSeries ts;
+    ts.num_colors = 0;
+    ts.t_eq = -1;
+
+    auto get_matrix_double = [](const json& value) -> std::vector<std::vector<double>> {
+        return value.get<std::vector<std::vector<double>>>();
+    };
+
+    auto get_vector_double = [](const json& value) -> std::vector<double> {
+        return value.get<std::vector<double>>();
+    };
+
+    auto validate_timeseries_sizes = [&](const std::string& context) {
+        if (ts.t.empty()) {
+            throw std::runtime_error(context + ": vetor 't' vazio em " + json_path);
+        }
+
+        if (ts.p_t.empty()) {
+            throw std::runtime_error(context + ": matriz 'p_t' vazia em " + json_path);
+        }
+
+        if (ts.f_t.empty()) {
+            throw std::runtime_error(context + ": matriz 'f_t' vazia em " + json_path);
+        }
+
+        if (ts.p_t.size() != ts.f_t.size()) {
+            throw std::runtime_error(
+                context + ": numero de cores incompatível entre 'p_t' e 'f_t' em " + json_path);
+        }
+
+        const std::size_t ntimes = ts.t.size();
+        for (std::size_t c = 0; c < ts.p_t.size(); ++c) {
+            if (ts.p_t[c].size() != ntimes) {
+                throw std::runtime_error(
+                    context + ": comprimento de 'p_t' incompatível com 't' para uma cor em " + json_path);
+            }
+            if (ts.f_t[c].size() != ntimes) {
+                throw std::runtime_error(
+                    context + ": comprimento de 'f_t' incompatível com 't' para uma cor em " + json_path);
+            }
+        }
+
+        if (ts.num_colors <= 0) {
+            ts.num_colors = static_cast<int>(ts.p_t.size());
+        }
+
+        if (ts.num_colors != static_cast<int>(ts.p_t.size())) {
+            throw std::runtime_error(
+                context + ": num_colors incompatível com tamanho de 'p_t' em " + json_path);
+        }
+    };
 
     if (j.contains("time_series") || j.contains("ts_out")) {
         const json* root = nullptr;
@@ -824,10 +575,16 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
         ts.t = (*root)["t"].get<std::vector<int>>();
         ts.p_t = (*root)["p_t"].get<std::vector<std::vector<double>>>();
 
-        if (root->contains("Nt")) {
-            ts.Nt = (*root)["Nt"].get<std::vector<std::vector<int>>>();
+        if (root->contains("f_t")) {
+            ts.f_t = get_matrix_double((*root)["f_t"]);
+        } else if (root->contains("ft")) {
+            ts.f_t = get_matrix_double((*root)["ft"]);
+        } else if (root->contains("Nt")) {
+            // Compatibilidade apenas para leitura de arquivos antigos.
+            // No formato novo, esta matriz representa f(t), não N(t).
+            ts.f_t = get_matrix_double((*root)["Nt"]);
         } else {
-            ts.Nt.assign(ts.p_t.size(), std::vector<int>(ts.t.size(), 0));
+            ts.f_t.assign(ts.p_t.size(), std::vector<double>(ts.t.size(), 0.0));
         }
 
         if (root->contains("num_colors")) {
@@ -836,6 +593,13 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
             ts.num_colors = static_cast<int>(ts.p_t.size());
         }
 
+        if (root->contains("t_eq")) {
+            ts.t_eq = (*root)["t_eq"].get<int>();
+        } else if (j.contains("t_eq")) {
+            ts.t_eq = j["t_eq"].get<int>();
+        }
+
+        validate_timeseries_sizes("load_timeseries_from_json/time_series");
         return ts;
     }
 
@@ -865,8 +629,14 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
 
     ts.num_colors = num_colors;
     ts.p_t.assign(num_colors, {});
-    ts.Nt.assign(num_colors, {});
+    ts.f_t.assign(num_colors, {});
     std::vector<char> color_found(num_colors, 0);
+
+    if (j.contains("t_eq")) {
+        ts.t_eq = j["t_eq"].get<int>();
+    } else if (j.contains("percolation") && j["percolation"].contains("t_eq")) {
+        ts.t_eq = j["percolation"]["t_eq"].get<int>();
+    }
 
     bool t_initialized = false;
 
@@ -893,11 +663,19 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
         const std::vector<int> time = data["time"].get<std::vector<int>>();
         const std::vector<double> pt = data["pt"].get<std::vector<double>>();
 
-        std::vector<int> nt;
-        if (data.contains("nt")) {
-            nt = data["nt"].get<std::vector<int>>();
+        std::vector<double> ft;
+        if (data.contains("ft")) {
+            ft = get_vector_double(data["ft"]);
+        } else if (data.contains("f_t")) {
+            ft = get_vector_double(data["f_t"]);
+        } else if (data.contains("nt")) {
+            // Compatibilidade apenas para leitura de arquivos antigos.
+            // No formato novo, esta série representa f(t), não N(t).
+            ft = get_vector_double(data["nt"]);
+        } else if (data.contains("Nt")) {
+            ft = get_vector_double(data["Nt"]);
         } else {
-            nt.assign(time.size(), 0);
+            ft.assign(time.size(), 0.0);
         }
 
         if (time.size() != pt.size()) {
@@ -905,9 +683,9 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
                 "Comprimentos incompatíveis entre 'time' e 'pt' para color = " + std::to_string(color_1b));
         }
 
-        if (time.size() != nt.size()) {
+        if (time.size() != ft.size()) {
             throw std::runtime_error(
-                "Comprimentos incompatíveis entre 'time' e 'nt' para color = " + std::to_string(color_1b));
+                "Comprimentos incompatíveis entre 'time' e 'ft' para color = " + std::to_string(color_1b));
         }
 
         if (!t_initialized) {
@@ -925,7 +703,7 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
         }
 
         ts.p_t[color_idx] = pt;
-        ts.Nt[color_idx] = nt;
+        ts.f_t[color_idx] = ft;
         color_found[color_idx] = 1;
     }
 
@@ -937,97 +715,67 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
     for (int c = 0; c < num_colors; ++c) {
         if (!color_found[c]) {
             ts.p_t[c].assign(ts.t.size(), 0.0);
-            ts.Nt[c].assign(ts.t.size(), 0);
+            ts.f_t[c].assign(ts.t.size(), 0.0);
         }
     }
 
+    validate_timeseries_sizes("load_timeseries_from_json/results");
     return ts;
 }
-
 NetworkPattern load_encoded_network_from_npz(const std::string& npz_path)
 {
-    cnpy::npz_t npz = cnpy::npz_load(npz_path);
-
-    if (!npz.count("dim") || !npz.count("shape") || !npz.count("num_colors")) {
-        throw std::runtime_error(
-            "NPZ deve conter pelo menos: dim, shape, num_colors");
+    // Read compact .bin produced by save_network_compact_bin and convert to
+    // NetworkPattern encoded format (species*species_factor + activation_time).
+    NetworkCompact cnet;
+    if (!cnet.read_binary(npz_path)) {
+        throw std::runtime_error("load_encoded_network_from_npz: falha lendo binario " + npz_path);
     }
 
-    const int dim = read_scalar_int(npz["dim"]);
-    const int num_colors = read_scalar_int(npz["num_colors"]);
-    const std::vector<int> shape = read_vector_int(npz["shape"]);
+    const uint64_t total = static_cast<uint64_t>(cnet.N);
 
-    std::vector<double> rho;
-    if (npz.count("rho")) {
-        rho = read_vector_double(npz["rho"]);
+    // Infer shape/dimension like other loaders: prefer cube then square.
+    std::vector<int> shape;
+    int dim = 3;
+    int L3 = static_cast<int>(std::round(std::cbrt(static_cast<double>(total))));
+    if (static_cast<uint64_t>(L3) * L3 * L3 == total) {
+        dim = 3;
+        shape = {L3, L3, L3};
     } else {
-        rho.assign(num_colors, 1.0 / std::max(1, num_colors));
+        int L2 = static_cast<int>(std::round(std::sqrt(static_cast<double>(total))));
+        if (static_cast<uint64_t>(L2) * L2 == total) {
+            dim = 2;
+            shape = {L2, L2};
+        } else {
+            throw std::runtime_error("load_encoded_network_from_npz: não foi possível inferir dimensão/shape do .bin");
+        }
     }
 
+    int maxc = 0;
+    for (size_t i = 0; i < cnet.species.size(); ++i) {
+        maxc = std::max<int>(maxc, static_cast<int>(cnet.species[i]));
+    }
+    int num_colors = std::max(0, maxc);
+    if (num_colors <= 0) num_colors = 1;
+
+    std::vector<double> rho(num_colors, 0.0);
     NetworkPattern net(dim, shape, num_colors, rho);
+    net.seed = 0;
 
-    // Como no save novo só existem sítios ativos,
-    // todo o resto volta como -1 por padrão.
-    std::size_t total_size = 1;
-    for (int s : shape) {
-        if (s <= 0) {
-            throw std::runtime_error("load_encoded_network_from_npz: shape inválido");
+    net.data.assign(static_cast<std::size_t>(total), static_cast<NetworkPattern::state_t>(-1));
+
+    const int species_factor = 10000000;
+    for (size_t i = 0; i < cnet.species.size(); ++i) {
+        const int sp = static_cast<int>(cnet.species[i]);
+        if (sp <= 0) continue;
+        const uint32_t at = cnet.activation_time[i];
+        long long enc = static_cast<long long>(sp) * static_cast<long long>(species_factor) + static_cast<long long>(at);
+        if (enc > static_cast<long long>(std::numeric_limits<NetworkPattern::state_t>::max())) {
+            enc = static_cast<long long>(std::numeric_limits<NetworkPattern::state_t>::max());
         }
-        total_size *= static_cast<std::size_t>(s);
+        net.data[i] = static_cast<NetworkPattern::state_t>(enc);
     }
 
-    net.data.assign(total_size, static_cast<NetworkPattern::state_t>(-1));
-
-    // -------- modo antigo denso --------
-    if (npz.count("data")) {
-        const std::vector<long long> data_ll = read_vector_ll_from_state(npz["data"]);
-
-        if (data_ll.size() != total_size) {
-            throw std::runtime_error(
-                "load_encoded_network_from_npz: tamanho de data incompatível com shape");
-        }
-
-        net.data.resize(data_ll.size());
-        for (std::size_t i = 0; i < data_ll.size(); ++i) {
-            net.data[i] = static_cast<NetworkPattern::state_t>(data_ll[i]);
-        }
-
-        return net;
-    }
-
-    // -------- modo novo esparso --------
-    if (npz.count("active_idx") && npz.count("active_val")) {
-        const std::vector<int> idx = read_vector_int(npz["active_idx"]);
-        const std::vector<int> val = read_vector_int(npz["active_val"]);
-
-        if (idx.size() != val.size()) {
-            throw std::runtime_error(
-                "load_encoded_network_from_npz: active_idx.size != active_val.size");
-        }
-
-        for (std::size_t k = 0; k < idx.size(); ++k) {
-            const int lin = idx[k];
-            const int v   = val[k];
-
-            if (lin < 0 || static_cast<std::size_t>(lin) >= total_size) {
-                throw std::runtime_error(
-                    "load_encoded_network_from_npz: índice linear fora do intervalo");
-            }
-
-            if (v <= 0) {
-                throw std::runtime_error(
-                    "load_encoded_network_from_npz: active_val deve conter apenas valores > 0");
-            }
-
-            net.data[static_cast<std::size_t>(lin)] =
-                static_cast<NetworkPattern::state_t>(v);
-        }
-
-        return net;
-    }
-
-    throw std::runtime_error(
-        "NPZ não contém nem 'data' (modo antigo) nem 'active_idx'/'active_val' (modo esparso)");
+    return net;
 }
 
 int estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg)
@@ -1127,129 +875,58 @@ SparseEncodedNetwork load_sparse_encoded_network_from_npz(
             "load_sparse_encoded_network_from_npz: species_factor deve ser > 0");
     }
 
-    cnpy::npz_t npz = cnpy::npz_load(npz_path);
-
-    if (!npz.count("dim") || !npz.count("shape") || !npz.count("num_colors")) {
-        throw std::runtime_error(
-            "NPZ deve conter pelo menos: dim, shape, num_colors");
+    // Read compact .bin produced by save_network_compact_bin.
+    NetworkCompact cnet;
+    if (!cnet.read_binary(npz_path)) {
+        throw std::runtime_error("load_sparse_encoded_network_from_npz: falha lendo binario " + npz_path);
     }
 
     SparseEncodedNetwork net;
+    const uint64_t total = static_cast<uint64_t>(cnet.N);
 
-    net.dim        = read_scalar_int(npz["dim"]);
-    net.num_colors = read_scalar_int(npz["num_colors"]);
-    net.shape      = read_vector_int(npz["shape"]);
-
-    if (npz.count("seed")) {
-        net.seed = read_scalar_int(npz["seed"]);
+    // Infer shape/dimension
+    int dim = 3;
+    int L3 = static_cast<int>(std::round(std::cbrt(static_cast<double>(total))));
+    if (static_cast<uint64_t>(L3) * L3 * L3 == total) {
+        dim = 3;
+        net.shape = {L3, L3, L3};
     } else {
-        net.seed = 0;
-    }
-
-    if (npz.count("rho")) {
-        net.rho = read_vector_double(npz["rho"]);
-    } else {
-        net.rho.assign(net.num_colors, 1.0 / std::max(1, net.num_colors));
-    }
-
-    net.total_size = 1;
-    for (int s : net.shape) {
-        if (s <= 0) {
-            throw std::runtime_error(
-                "load_sparse_encoded_network_from_npz: shape inválido");
+        int L2 = static_cast<int>(std::round(std::sqrt(static_cast<double>(total))));
+        if (static_cast<uint64_t>(L2) * L2 == total) {
+            dim = 2;
+            net.shape = {L2, L2};
+        } else {
+            throw std::runtime_error("load_sparse_encoded_network_from_npz: não foi possível inferir dimensão/shape do .bin");
         }
-        net.total_size *= static_cast<std::size_t>(s);
     }
+
+    net.dim = dim;
+    net.total_size = static_cast<std::size_t>(total);
+    net.seed = 0;
+
+    int maxc = 0;
+    for (size_t i = 0; i < cnet.species.size(); ++i) {
+        maxc = std::max<int>(maxc, static_cast<int>(cnet.species[i]));
+    }
+    net.num_colors = std::max(0, maxc);
+    if (net.num_colors <= 0) net.num_colors = 1;
+    net.rho.assign(net.num_colors, 0.0);
 
     net.active_idx_by_color.assign(net.num_colors, {});
 
-    // modo novo esparso
-    if (npz.count("active_idx") && npz.count("active_val")) {
-        net.active_idx = read_vector_int(npz["active_idx"]);
-        net.active_val = read_vector_int(npz["active_val"]);
-
-        if (net.active_idx.size() != net.active_val.size()) {
-            throw std::runtime_error(
-                "load_sparse_encoded_network_from_npz: active_idx.size != active_val.size");
-        }
-
-        net.encoded_value_by_idx.reserve(net.active_idx.size() * 2 + 1);
-
-        for (std::size_t k = 0; k < net.active_idx.size(); ++k) {
-            const int lin = net.active_idx[k];
-            const int val = net.active_val[k];
-
-            if (lin < 0 || static_cast<std::size_t>(lin) >= net.total_size) {
-                throw std::runtime_error(
-                    "load_sparse_encoded_network_from_npz: índice linear fora do intervalo");
-            }
-
-            if (val <= 0) {
-                throw std::runtime_error(
-                    "load_sparse_encoded_network_from_npz: active_val deve conter apenas valores > 0");
-            }
-
-            const DecodedValue dv =
-                decode_animation_value(static_cast<long long>(val), species_factor);
-
-            if (dv.never_activated || dv.blocked) {
-                throw std::runtime_error(
-                    "load_sparse_encoded_network_from_npz: active_val não pode decodificar para -1/0");
-            }
-
-            if (dv.color_idx < 0 || dv.color_idx >= net.num_colors) {
-                throw std::runtime_error(
-                    "load_sparse_encoded_network_from_npz: cor decodificada inválida");
-            }
-
-            net.encoded_value_by_idx[lin] = val;
-            net.active_idx_by_color[dv.color_idx].insert(lin);
-        }
-
-        return net;
+    const int sf = species_factor;
+    for (std::size_t i = 0; i < cnet.species.size(); ++i) {
+        const int sp = static_cast<int>(cnet.species[i]);
+        if (sp <= 0) continue;
+        const int enc = sp * sf + static_cast<int>(cnet.activation_time[i]);
+        net.active_idx.push_back(static_cast<int>(i));
+        net.active_val.push_back(enc);
+        net.encoded_value_by_idx[static_cast<int>(i)] = enc;
+        const int cidx = sp - 1;
+        if (cidx >= 0 && cidx < net.num_colors) net.active_idx_by_color[cidx].insert(static_cast<int>(i));
     }
 
-    // modo antigo denso
-    if (npz.count("data")) {
-        const std::vector<long long> data_ll = read_vector_ll_from_state(npz["data"]);
-
-        if (data_ll.size() != net.total_size) {
-            throw std::runtime_error(
-                "load_sparse_encoded_network_from_npz: tamanho de data incompatível com shape");
-        }
-
-        net.active_idx.reserve(data_ll.size() / 16);
-        net.active_val.reserve(data_ll.size() / 16);
-        net.encoded_value_by_idx.reserve(data_ll.size() / 16);
-
-        for (std::size_t i = 0; i < data_ll.size(); ++i) {
-            const int val = static_cast<int>(data_ll[i]);
-
-            if (val <= 0) continue;
-
-            const DecodedValue dv =
-                decode_animation_value(static_cast<long long>(val), species_factor);
-
-            if (dv.never_activated || dv.blocked) continue;
-
-            if (dv.color_idx < 0 || dv.color_idx >= net.num_colors) {
-                throw std::runtime_error(
-                    "load_sparse_encoded_network_from_npz: cor decodificada inválida no modo denso");
-            }
-
-            const int lin = static_cast<int>(i);
-
-            net.active_idx.push_back(lin);
-            net.active_val.push_back(val);
-            net.encoded_value_by_idx[lin] = val;
-            net.active_idx_by_color[dv.color_idx].insert(lin);
-        }
-
-        return net;
-    }
-
-    throw std::runtime_error(
-        "NPZ não contém nem 'data' nem 'active_idx'/'active_val'");
+    return net;
 }
 
 SparseSubgraph make_empty_sparse_like(const SparseEncodedNetwork& encoded_net)

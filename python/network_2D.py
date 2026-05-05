@@ -20,7 +20,7 @@ seed = 1
 # Create file positions, if dont exist
 if not os.path.exists(file_positions):
     print("file positions don't exist, create it...")
-    convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.npz", dim)
+    convert_positions(path_dir, "P0_0.10_p0_1.00_seed_1.bin", dim)
     print("File with positions created")
 
 # Load positions

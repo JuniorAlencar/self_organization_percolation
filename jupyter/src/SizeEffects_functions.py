@@ -8,54 +8,60 @@ from matplotlib.lines import Line2D
 
 df_parameters = pd.read_csv("../SOP_data/best_parameters.csv", sep=',')
 df = pd.read_csv("../SOP_data/all_data.dat", sep=' ')
-def shortest_path_best(L_lst_filter, L_lst, nc, k, rho, P0, p0):
-    f_common = df_parameters[(df_parameters['k']==k) & (df_parameters['P0']==P0) & 
-                                (df_parameters['L'].isin(L_lst_filter)) & (df_parameters['n_s']==nc)]['fmin'].max()
-    
-    NT_lst = [int(L**2*f_common) for L in L_lst]
-    
-    print(f"fmin = {f_common} to n_s = {nc}")
-    
+def shortest_path_best(L_lst_filter, L_lst, nc, c, rho, P0, p0):
+    """
+    Seleciona os dados de menor caminho usando o novo padrão de parâmetros.
+
+    O arquivo best_parameters.csv deve fornecer a coluna fmin, interpretada aqui
+    como f_T. O filtro principal passa a usar c e f_T em vez de k e N_T.
+    """
+    f_common = df_parameters[
+        (df_parameters['c'] == c) &
+        (df_parameters['P0'] == P0) &
+        (df_parameters['L'].isin(L_lst_filter)) &
+        (df_parameters['n_s'] == nc)
+    ]['fmin'].max()
+
+    print(f"f_T = {f_common} to n_s = {nc}")
+
     df_base = df[
-        (df['k'] == 1.0e-06) &
+        (df['c'] == c) &
         (df['rho'] == rho) &
         (df['nc'] == nc) &
         (df['P0'] == P0) &
         (df['p0'] == p0)
     ].copy()
 
-    rows_nt = []
+    rows_ft = []
 
-    for L, Nt_target in zip(L_lst, NT_lst):
+    for L in L_lst:
         df_L = df_base[df_base['L'] == L].copy()
 
         if df_L.empty:
             continue
 
-        # pega apenas Nt únicos disponíveis para esse L
-        nts_disponiveis = df_L['Nt'].drop_duplicates()
+        fT_disponiveis = df_L['f_T'].drop_duplicates()
+        idx_min = (fT_disponiveis - f_common).abs().idxmin()
+        fT_escolhido = fT_disponiveis.loc[idx_min]
 
-        # índice do Nt mais próximo
-        idx_min = (nts_disponiveis - Nt_target).abs().idxmin()
-        Nt_escolhido = nts_disponiveis.loc[idx_min]
-
-        rows_nt.append({
+        rows_ft.append({
             'L': L,
-            'Nt_target': Nt_target,
-            'Nt_escolhido': Nt_escolhido
+            'f_T_target': f_common,
+            'f_T_escolhido': fT_escolhido,
         })
 
-    df_nt_match = pd.DataFrame(rows_nt)
+    df_ft_match = pd.DataFrame(rows_ft)
+    if df_ft_match.empty:
+        return df_base.iloc[0:0].copy()
 
     df_filter = df_base.merge(
-        df_nt_match[['L', 'Nt_escolhido']],
-        left_on=['L', 'Nt'],
-        right_on=['L', 'Nt_escolhido'],
+        df_ft_match[['L', 'f_T_escolhido']],
+        left_on=['L', 'f_T'],
+        right_on=['L', 'f_T_escolhido'],
         how='inner'
-    ).drop(columns='Nt_escolhido')
-    
-    return df_filter
+    ).drop(columns='f_T_escolhido')
 
+    return df_filter
 
 
 def linear(X, a, b):
