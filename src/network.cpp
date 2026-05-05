@@ -466,14 +466,12 @@ NetworkPattern network::create_network(
     NetworkPattern net(dim, shape, num_colors, rho);
     net.seed = rng.get_seed();
 
-    const bool track_temporal_network = save_compact;
+    const bool track_activation_code = save_compact;
 
     // activation times: UINT32_MAX means never activated
-    std::vector<uint32_t> activation_time;
-    if (track_temporal_network) {
-        activation_time.assign(static_cast<std::size_t>(grid.total_size),
-                               std::numeric_limits<uint32_t>::max());
-    }
+    std::vector<uint32_t> activation_time(
+        static_cast<std::size_t>(grid.total_size),
+        std::numeric_limits<uint32_t>::max());
 
     // Encoded activation code (species_factor encoding) to enable temporal
     // decomposition of shortest paths and components (pre/post t_eq) later.
@@ -483,7 +481,7 @@ NetworkPattern network::create_network(
             "create_network: num_of_samples must be smaller than SPECIES_FACTOR to encode times");
     }
     std::vector<NetworkPattern::state_t> activation_code;
-    if (track_temporal_network) {
+    if (track_activation_code) {
         activation_code.assign(static_cast<std::size_t>(grid.total_size),
                                static_cast<NetworkPattern::state_t>(-1));
     }
@@ -548,8 +546,8 @@ NetworkPattern network::create_network(
                 ++activated;
                 parent[idx] = -1;
                 if (idx >= 0 && idx < grid.total_size) {
-                    if (track_temporal_network) {
-                        activation_time[static_cast<std::size_t>(idx)] = 0;
+                    activation_time[static_cast<std::size_t>(idx)] = 0;
+                    if (track_activation_code) {
                         activation_code[static_cast<std::size_t>(idx)] =
                             static_cast<NetworkPattern::state_t>(color_mul[c]);
                     }
@@ -819,7 +817,7 @@ NetworkPattern network::create_network(
 
                 if (rng.uniform_real(0.0, 1.0) >= p_curr[cor_idx]) {
                     net.set(viz, 0);
-                    if (track_temporal_network) {
+                    if (track_activation_code) {
                         activation_code[static_cast<std::size_t>(viz)] =
                             static_cast<NetworkPattern::state_t>(0);
                     }
@@ -831,8 +829,8 @@ NetworkPattern network::create_network(
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
                 parent[viz] = chosen.activator;
-                if (track_temporal_network) {
-                    activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                if (track_activation_code) {
                     activation_code[static_cast<std::size_t>(viz)] =
                         static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 }
@@ -969,8 +967,8 @@ NetworkPattern network::create_network(
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
                 parent[viz] = chosen_u;
-                if (track_temporal_network) {
-                    activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                if (track_activation_code) {
                     activation_code[static_cast<std::size_t>(viz)] =
                         static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 }
@@ -1163,57 +1161,64 @@ NetworkPattern network::create_network(
         }
     }
 
-    if (track_temporal_network) {
-        ts_out.t_eq = estimate_t_eq_from_timeseries(
-            ts_out,
-            25,      // smoothing_window
-            25,      // min_stable_steps
-            2.0e-2,  // rel_tol
-            1.0e-6,  // abs_tol
-            2.0      // sigma_multiplier
-        );
-        ps_out.t_eq = ts_out.t_eq;
+    ts_out.t_eq = estimate_t_eq_from_timeseries(
+        ts_out,
+        25,      // smoothing_window
+        25,      // min_stable_steps
+        2.0e-2,  // rel_tol
+        1.0e-6,  // abs_tol
+        2.0      // sigma_multiplier
+    );
+    ps_out.t_eq = ts_out.t_eq;
 
-        // Decompose shortest path and largest component into pre/post t_eq
-        // using the encoded `activation_code` (species_factor encoding).
-        for (int c = 0; c < num_colors; ++c) {
-            if (ps_out.sp_len.size() <= static_cast<size_t>(c)) continue;
-            if (ps_out.sp_len[c] < 0) {
-                ps_out.sp_lin_preteq[c] = -1;
-                ps_out.sp_path_lin_preteq[c].clear();
-                ps_out.sp_lin_posteq[c] = -1;
-                ps_out.sp_path_lin_posteq[c].clear();
-                ps_out.M_size_preteq[c] = -1;
-                ps_out.M_size_posteq[c] = -1;
-                continue;
-            }
-
-            const std::vector<int>& path = ps_out.sp_path_lin[c];
+    for (int c = 0; c < num_colors; ++c) {
+        if (ps_out.sp_len.size() <= static_cast<size_t>(c)) continue;
+        if (ps_out.sp_len[c] < 0) {
+            ps_out.sp_lin_preteq[c] = -1;
             ps_out.sp_path_lin_preteq[c].clear();
+            ps_out.sp_lin_posteq[c] = -1;
             ps_out.sp_path_lin_posteq[c].clear();
-            int sp_pre = 0;
-            int sp_post = 0;
-            for (std::size_t k = 1; k < path.size(); ++k) {
-                const int idx = path[k];
-                int t_site = -1;
-                const bool ok = is_active_color_site_encoded(
-                    activation_code, idx, c, SPECIES_FACTOR, &t_site);
-                if (!ok) {
-                    throw std::runtime_error(
-                        "create_network: shortest path contains invalid encoded node");
-                }
-                if (t_site <= ps_out.t_eq) {
-                    ++sp_pre;
-                    ps_out.sp_path_lin_preteq[c].push_back(idx);
-                } else {
-                    ++sp_post;
-                    ps_out.sp_path_lin_posteq[c].push_back(idx);
-                }
-            }
-            ps_out.sp_lin_preteq[c] = sp_pre;
-            ps_out.sp_lin_posteq[c] = sp_post;
+            ps_out.M_size_preteq[c] = -1;
+            ps_out.M_size_posteq[c] = -1;
+            continue;
+        }
 
-            const int active_val = color_to_active_value(num_colors, c);
+        const int active_val = color_to_active_value(num_colors, c);
+        const std::vector<int>& path = ps_out.sp_path_lin[c];
+        ps_out.sp_path_lin_preteq[c].clear();
+        ps_out.sp_path_lin_posteq[c].clear();
+        if (!path.empty()) {
+            ps_out.sp_path_lin_preteq[c].push_back(path.front());
+            ps_out.sp_path_lin_posteq[c].push_back(path.front());
+        }
+
+        int sp_pre = 0;
+        int sp_post = 0;
+        for (std::size_t k = 1; k < path.size(); ++k) {
+            const int idx = path[k];
+            if (idx < 0 || idx >= grid.total_size ||
+                net.get(idx) != active_val ||
+                activation_time[static_cast<std::size_t>(idx)] ==
+                    std::numeric_limits<uint32_t>::max()) {
+                throw std::runtime_error(
+                    "create_network: shortest path contains invalid activation time");
+            }
+
+            if (static_cast<int>(activation_time[static_cast<std::size_t>(idx)]) <= ps_out.t_eq) {
+                ++sp_pre;
+                ps_out.sp_path_lin_preteq[c].push_back(idx);
+            } else {
+                ++sp_post;
+                ps_out.sp_path_lin_posteq[c].push_back(idx);
+            }
+        }
+        ps_out.sp_lin_preteq[c] = sp_pre;
+        ps_out.sp_lin_posteq[c] = sp_post;
+
+        int m_pre = 0;
+        int m_post = 0;
+
+        if (is_node) {
             std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
             std::vector<int> stack;
             std::vector<int> comp_nodes;
@@ -1249,25 +1254,48 @@ NetworkPattern network::create_network(
                 }
             }
 
-            int m_pre = 0;
-            int m_post = 0;
             for (const int idx : best_nodes) {
-                int t_site = -1;
-                const bool ok = is_active_color_site_encoded(
-                    activation_code, idx, c, SPECIES_FACTOR, &t_site);
-                if (!ok) {
+                if (activation_time[static_cast<std::size_t>(idx)] ==
+                    std::numeric_limits<uint32_t>::max()) {
                     throw std::runtime_error(
-                        "create_network: largest component contains invalid encoded node");
+                        "create_network: largest component contains invalid activation time");
                 }
-                if (t_site <= ps_out.t_eq) ++m_pre;
+                if (static_cast<int>(activation_time[static_cast<std::size_t>(idx)]) <= ps_out.t_eq) ++m_pre;
                 else ++m_post;
             }
-            ps_out.M_size_preteq[c] = m_pre;
-            ps_out.M_size_posteq[c] = m_post;
+        } else {
+            int best_root = -1;
+            int best_size = 0;
+
+            for (int idx = 0; idx < grid.total_size; ++idx) {
+                if (net.get(idx) != active_val) continue;
+                if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
+                const int root = dsu_find(idx);
+                const int size = -dsu[static_cast<std::size_t>(root)];
+                if (size > best_size) {
+                    best_size = size;
+                    best_root = root;
+                }
+            }
+
+            if (best_root >= 0) {
+                for (int idx = 0; idx < grid.total_size; ++idx) {
+                    if (net.get(idx) != active_val) continue;
+                    if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
+                    if (dsu_find(idx) != best_root) continue;
+                    if (activation_time[static_cast<std::size_t>(idx)] ==
+                        std::numeric_limits<uint32_t>::max()) {
+                        throw std::runtime_error(
+                            "create_network: largest bond component contains invalid activation time");
+                    }
+                    if (static_cast<int>(activation_time[static_cast<std::size_t>(idx)]) <= ps_out.t_eq) ++m_pre;
+                    else ++m_post;
+                }
+            }
         }
-    } else {
-        ts_out.t_eq = -1;
-        ps_out.t_eq = -1;
+
+        ps_out.M_size_preteq[c] = m_pre;
+        ps_out.M_size_posteq[c] = m_post;
     }
 
     if (save_compact) {
