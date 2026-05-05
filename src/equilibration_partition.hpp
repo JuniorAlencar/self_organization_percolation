@@ -50,6 +50,11 @@ struct SurfacesCuts {
     std::vector<Point3D> surface_posteq;
 };
 
+SurfacesCuts extract_exposed_surfaces(
+    const NetworkPattern& encoded_net,
+    const EquilibrationCutNetworks& cuts,
+    int species_factor = 10000000);
+
 SurfacesCuts extract_exposed_surfaces_from_cuts(
     const EquilibrationCutNetworks& cuts,
     int species_factor = 10000000);

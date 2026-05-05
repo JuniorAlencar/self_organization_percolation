@@ -614,6 +614,22 @@ EquilibrationCutNetworks build_equilibration_cut_networks(
     return EquilibrationCutNetworks(pre_net, post_net);
 }
 
+SurfacesCuts extract_exposed_surfaces(
+    const NetworkPattern& encoded_net,
+    const EquilibrationCutNetworks& cuts,
+    const int species_factor)
+{
+    if (species_factor <= 0) {
+        throw std::runtime_error(
+            "extract_exposed_surfaces: species_factor deve ser > 0");
+    }
+
+    SurfacesCuts out;
+    out.surface_preteq = extract_top_surface_points(cuts.pre_teq, species_factor);
+    out.surface_posteq = extract_top_surface_points(encoded_net, species_factor);
+    return out;
+}
+
 SurfacesCuts extract_exposed_surfaces_from_cuts(
     const EquilibrationCutNetworks& cuts,
     const int species_factor)
@@ -637,5 +653,5 @@ SurfacesCuts build_equilibration_exposed_surfaces(
     const EquilibrationCutNetworks cuts =
         build_equilibration_cut_networks(encoded_net, t_eq, species_factor);
 
-    return extract_exposed_surfaces_from_cuts(cuts, species_factor);
+    return extract_exposed_surfaces(encoded_net, cuts, species_factor);
 }

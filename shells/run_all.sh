@@ -361,17 +361,19 @@ run_script_measured() {
   set +e
   if [[ "$mode" == "probe" && "$RAM_PROBE_TIMEOUT" != "0" ]]; then
     /usr/bin/time -v timeout --preserve-status "$RAM_PROBE_TIMEOUT" "${cmd[@]}" >"$out_log" 2>"$time_log"
+  elif [[ "$mode" == "run" ]]; then
+    /usr/bin/time -v "${cmd[@]}" > >(tee "$out_log") 2> >(tee "$time_log" >&2)
   else
     /usr/bin/time -v "${cmd[@]}" >"$out_log" 2>"$time_log"
   fi
   local status=$?
   set -e
 
-  if [[ -s "$out_log" ]]; then
+  if [[ "$mode" != "run" && -s "$out_log" ]]; then
     cat "$out_log"
   fi
 
-  if [[ -s "$time_log" ]]; then
+  if [[ "$mode" != "run" && -s "$time_log" ]]; then
     cat "$time_log" >&2
   fi
 
