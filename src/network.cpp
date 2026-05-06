@@ -158,8 +158,14 @@ struct DecodedValue {
 
 
 struct FrontCandidate {
-    int activator = -1;
-    int color_idx = -1;
+    std::uint32_t activator = std::numeric_limits<std::uint32_t>::max();
+    std::uint8_t color_idx = std::numeric_limits<std::uint8_t>::max();
+
+    FrontCandidate() = default;
+
+    FrontCandidate(const int activator_, const int color_idx_)
+        : activator(static_cast<std::uint32_t>(activator_)),
+          color_idx(static_cast<std::uint8_t>(color_idx_)) {}
 };
 
 inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
@@ -212,7 +218,8 @@ struct SparseFrontCandidates {
 
     std::vector<int> touched_targets;
     std::vector<int> slot_of_target;
-    std::vector<std::array<FrontCandidate, max_candidates_per_target>> candidates;
+    std::vector<std::array<std::uint32_t, max_candidates_per_target>> activators;
+    std::vector<std::array<std::uint8_t, max_candidates_per_target>> colors;
     std::vector<unsigned char> counts;
 
     explicit SparseFrontCandidates(const int nsites = 0)
@@ -223,7 +230,8 @@ struct SparseFrontCandidates {
             slot_of_target[static_cast<std::size_t>(target)] = -1;
         }
         touched_targets.clear();
-        candidates.clear();
+        activators.clear();
+        colors.clear();
         counts.clear();
     }
 
@@ -233,15 +241,24 @@ struct SparseFrontCandidates {
             slot = static_cast<int>(counts.size());
             slot_of_target[static_cast<std::size_t>(target)] = slot;
             touched_targets.push_back(target);
-            candidates.emplace_back();
+            activators.emplace_back();
+            colors.emplace_back();
             counts.push_back(0);
         }
 
         unsigned char& count = counts[static_cast<std::size_t>(slot)];
         if (count < max_candidates_per_target) {
-            candidates[static_cast<std::size_t>(slot)][count] = candidate;
+            activators[static_cast<std::size_t>(slot)][count] = candidate.activator;
+            colors[static_cast<std::size_t>(slot)][count] = candidate.color_idx;
             ++count;
         }
+    }
+
+    FrontCandidate candidate(const std::size_t slot, const int idx) const {
+        return FrontCandidate{
+            static_cast<int>(activators[slot][static_cast<std::size_t>(idx)]),
+            static_cast<int>(colors[slot][static_cast<std::size_t>(idx)])
+        };
     }
 };
 
@@ -463,30 +480,27 @@ NetworkPattern network::create_network(
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
 
-    NetworkPattern net(dim, shape, num_colors, rho);
-    net.seed = rng.get_seed();
+    if (num_colors > 125) {
+        throw std::runtime_error(
+            "create_network: num_colors exceeds int8_t site-state encoding capacity");
+    }
 
-    const bool track_activation_code = save_compact;
+    const int net_seed = rng.get_seed();
+
+    std::vector<std::int8_t> site_state(
+        static_cast<std::size_t>(grid.total_size),
+        static_cast<std::int8_t>(-1));
+    auto get_site = [&](const int idx) -> int {
+        return static_cast<int>(site_state[static_cast<std::size_t>(idx)]);
+    };
+    auto set_site = [&](const int idx, const int value) {
+        site_state[static_cast<std::size_t>(idx)] = static_cast<std::int8_t>(value);
+    };
 
     // activation times: UINT32_MAX means never activated
     std::vector<uint32_t> activation_time(
         static_cast<std::size_t>(grid.total_size),
         std::numeric_limits<uint32_t>::max());
-
-    // Encoded activation code (species_factor encoding) to enable temporal
-    // decomposition of shortest paths and components (pre/post t_eq) later.
-    const int SPECIES_FACTOR = ANIMATION_SPECIES_FACTOR;
-    if (num_of_samples >= SPECIES_FACTOR) {
-        throw std::runtime_error(
-            "create_network: num_of_samples must be smaller than SPECIES_FACTOR to encode times");
-    }
-    std::vector<NetworkPattern::state_t> activation_code;
-    if (track_activation_code) {
-        activation_code.assign(static_cast<std::size_t>(grid.total_size),
-                               static_cast<NetworkPattern::state_t>(-1));
-    }
-    std::vector<int> color_mul(num_colors, 0);
-    for (int c = 0; c < num_colors; ++c) color_mul[c] = (c + 1) * SPECIES_FACTOR;
 
     std::vector<std::vector<double>> p_series(num_colors);
     std::vector<std::vector<double>> f_series(num_colors);
@@ -537,20 +551,16 @@ NetworkPattern network::create_network(
             const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
             const int z = 0;
             const int idx = grid.lin_index(x, y, z);
-            const int v = net.get(idx);
+            const int v = get_site(idx);
 
             if (v == prefer_neg || v == -1) {
-                net.set(idx, active_val);
+                set_site(idx, active_val);
                 frontier.push_back(idx);
                 ++N_current[c];
                 ++activated;
                 parent[idx] = -1;
                 if (idx >= 0 && idx < grid.total_size) {
                     activation_time[static_cast<std::size_t>(idx)] = 0;
-                    if (track_activation_code) {
-                        activation_code[static_cast<std::size_t>(idx)] =
-                            static_cast<NetworkPattern::state_t>(color_mul[c]);
-                    }
                 }
             }
             ++tries;
@@ -642,7 +652,7 @@ NetworkPattern network::create_network(
 
         for (int idx = 0; idx < grid.total_size; ++idx) {
             if (visited[idx]) continue;
-            if (net.get(idx) != active_val) continue;
+            if (get_site(idx) != active_val) continue;
 
             int comp_size = 0;
             stack.clear();
@@ -657,7 +667,7 @@ NetworkPattern network::create_network(
                 grid.for_each_neighbor(u, [&](const int v) {
                     if (v < 0) return;
                     if (visited[v]) return;
-                    if (net.get(v) != active_val) return;
+                    if (get_site(v) != active_val) return;
 
                     visited[v] = 1;
                     stack.push_back(v);
@@ -722,7 +732,7 @@ NetworkPattern network::create_network(
         int max_component = 0;
 
         for (int idx = 0; idx < grid.total_size; ++idx) {
-            if (net.get(idx) != active_val) continue;
+            if (get_site(idx) != active_val) continue;
             if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
             const int root = dsu_find(idx);
             max_component = std::max(
@@ -749,11 +759,11 @@ NetworkPattern network::create_network(
 
     // Marks the current frontier so active-active bonds between two frontier
     // sites can be tested only once without a hash table in the hot loop.
-    std::vector<unsigned char> in_current_frontier(
-        static_cast<std::size_t>(grid.total_size), 0);
+    std::vector<bool> in_current_frontier(
+        static_cast<std::size_t>(grid.total_size), false);
 
     for (int idx = 0; idx < grid.total_size; ++idx) {
-        if (net.get(idx) > 0) {
+        if (get_site(idx) > 0) {
             dsu_make_active(idx);
         }
     }
@@ -774,7 +784,7 @@ NetworkPattern network::create_network(
         next_frontier.clear();
         front_candidates.clear();
         for (const int idx : frontier) {
-            in_current_frontier[static_cast<std::size_t>(idx)] = 1;
+            in_current_frontier[static_cast<std::size_t>(idx)] = true;
         }
 
         if (is_node) {
@@ -784,7 +794,7 @@ NetworkPattern network::create_network(
             int neigh[6];
 
             for (const int idx : frontier) {
-                const int a_val = net.get(idx);
+                const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
                 const int cor_idx = value_to_color_index(num_colors, a_val);
@@ -795,7 +805,7 @@ NetworkPattern network::create_network(
                 for (int ni = 0; ni < nneigh; ++ni) {
                     const int viz_idx = neigh[ni];
 
-                    const int vv = net.get(viz_idx);
+                    const int vv = get_site(viz_idx);
                     if (vv >= 0) continue; // already active/blocked
 
                     const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
@@ -812,28 +822,20 @@ NetworkPattern network::create_network(
                 if (n_cand <= 0) continue;
 
                 const int pick = rng.uniform_int(0, n_cand - 1);
-                const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                const FrontCandidate chosen = front_candidates.candidate(slot, pick);
                 const int cor_idx = chosen.color_idx;
 
                 if (rng.uniform_real(0.0, 1.0) >= p_curr[cor_idx]) {
-                    net.set(viz, 0);
-                    if (track_activation_code) {
-                        activation_code[static_cast<std::size_t>(viz)] =
-                            static_cast<NetworkPattern::state_t>(0);
-                    }
+                    set_site(viz, 0);
                     continue;
                 }
 
                 const int new_val = color_to_active_value(num_colors, cor_idx);
-                net.set(viz, new_val);
+                set_site(viz, new_val);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
                 parent[viz] = chosen.activator;
                 activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
-                if (track_activation_code) {
-                    activation_code[static_cast<std::size_t>(viz)] =
-                        static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
-                }
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -855,7 +857,7 @@ NetworkPattern network::create_network(
             int neigh[6];
 
             for (const int idx : frontier) {
-                const int a_val = net.get(idx);
+                const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
                 const int cor_idx = value_to_color_index(num_colors, a_val);
@@ -866,7 +868,7 @@ NetworkPattern network::create_network(
                 for (int ni = 0; ni < nneigh; ++ni) {
                     const int viz_idx = neigh[ni];
 
-                    const int vv = net.get(viz_idx);
+                    const int vv = get_site(viz_idx);
 
                     if (vv == 0) {
                         continue; // blocked site
@@ -910,7 +912,7 @@ NetworkPattern network::create_network(
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
-                const int target_before = net.get(viz);
+                const int target_before = get_site(viz);
                 const bool target_without_species = (num_colors > 1 && target_before == -1);
 
                 int cor_idx = -1;
@@ -922,7 +924,7 @@ NetworkPattern network::create_network(
                     // accepted links. Once that species wins, all accepted
                     // links from that same species become effective.
                     const int pick = rng.uniform_int(0, n_cand - 1);
-                    const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                    const FrontCandidate chosen = front_candidates.candidate(slot, pick);
                     cor_idx = chosen.color_idx;
                     chosen_u = chosen.activator;
                 } else {
@@ -938,7 +940,7 @@ NetworkPattern network::create_network(
 
                     int same_color_count = 0;
                     for (int i = 0; i < n_cand; ++i) {
-                        if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
+                        if (front_candidates.candidate(slot, i).color_idx == cor_idx) {
                             ++same_color_count;
                         }
                     }
@@ -947,7 +949,7 @@ NetworkPattern network::create_network(
                     const int parent_pick = rng.uniform_int(0, same_color_count - 1);
                     int seen = 0;
                     for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
                         if (seen == parent_pick) {
                             chosen_u = fc.activator;
@@ -962,16 +964,12 @@ NetworkPattern network::create_network(
                 }
 
                 const int new_val = color_to_active_value(num_colors, cor_idx);
-                net.set(viz, new_val);
+                set_site(viz, new_val);
                 dsu_make_active(viz);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
                 parent[viz] = chosen_u;
                 activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
-                if (track_activation_code) {
-                    activation_code[static_cast<std::size_t>(viz)] =
-                        static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
-                }
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -986,13 +984,13 @@ NetworkPattern network::create_network(
 
                 if (target_without_species) {
                     for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
                         open_bond(fc.activator, viz);
                     }
                 } else {
                     for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
                         open_bond(fc.activator, viz);
                     }
@@ -1001,7 +999,7 @@ NetworkPattern network::create_network(
         }
 
         for (const int idx : frontier) {
-            in_current_frontier[static_cast<std::size_t>(idx)] = 0;
+            in_current_frontier[static_cast<std::size_t>(idx)] = false;
         }
 
         for (int c = 0; c < num_colors; ++c) {
@@ -1197,7 +1195,7 @@ NetworkPattern network::create_network(
         for (std::size_t k = 1; k < path.size(); ++k) {
             const int idx = path[k];
             if (idx < 0 || idx >= grid.total_size ||
-                net.get(idx) != active_val ||
+                get_site(idx) != active_val ||
                 activation_time[static_cast<std::size_t>(idx)] ==
                     std::numeric_limits<uint32_t>::max()) {
                 throw std::runtime_error(
@@ -1226,7 +1224,7 @@ NetworkPattern network::create_network(
 
             for (int idx = 0; idx < grid.total_size; ++idx) {
                 if (visited[static_cast<std::size_t>(idx)]) continue;
-                if (net.get(idx) != active_val) continue;
+                if (get_site(idx) != active_val) continue;
 
                 stack.clear();
                 comp_nodes.clear();
@@ -1242,7 +1240,7 @@ NetworkPattern network::create_network(
                     grid.for_each_neighbor(u, [&](const int v) {
                         if (v < 0) return;
                         if (visited[static_cast<std::size_t>(v)]) return;
-                        if (net.get(v) != active_val) return;
+                        if (get_site(v) != active_val) return;
 
                         visited[static_cast<std::size_t>(v)] = 1;
                         stack.push_back(v);
@@ -1268,7 +1266,7 @@ NetworkPattern network::create_network(
             int best_size = 0;
 
             for (int idx = 0; idx < grid.total_size; ++idx) {
-                if (net.get(idx) != active_val) continue;
+                if (get_site(idx) != active_val) continue;
                 if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
                 const int root = dsu_find(idx);
                 const int size = -dsu[static_cast<std::size_t>(root)];
@@ -1280,7 +1278,7 @@ NetworkPattern network::create_network(
 
             if (best_root >= 0) {
                 for (int idx = 0; idx < grid.total_size; ++idx) {
-                    if (net.get(idx) != active_val) continue;
+                    if (get_site(idx) != active_val) continue;
                     if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
                     if (dsu_find(idx) != best_root) continue;
                     if (activation_time[static_cast<std::size_t>(idx)] ==
@@ -1306,7 +1304,7 @@ NetworkPattern network::create_network(
 
         netc.species.resize(netc.N);
         for (NetworkCompact::index_t i = 0; i < netc.N; ++i) {
-            const int v = net.get(static_cast<int>(i));
+            const int v = get_site(static_cast<int>(i));
             if (v <= 0) {
                 netc.species[i] = 0;
             } else {
@@ -1328,7 +1326,7 @@ NetworkPattern network::create_network(
         if (!ps_out.color_percolation.empty()) {
             try {
                 std::ostringstream fn;
-                fn << "results/network_compact_seed_" << net.seed
+                fn << "results/network_compact_seed_" << net_seed
                    << "_L_" << lenght_network << "_T_" << num_of_samples << ".bin";
                 save_data sd;
                 sd.save_network_compact_bin(netc, fn.str());
@@ -1340,6 +1338,19 @@ NetworkPattern network::create_network(
         }
     }
 
+    std::vector<uint32_t>().swap(activation_time);
+    std::vector<int>().swap(parent);
+    std::vector<int>().swap(dsu);
+    std::vector<std::pair<uint32_t,uint32_t>>().swap(edge_pairs);
+    std::vector<bool>().swap(in_current_frontier);
+    SparseFrontCandidates empty_front_candidates;
+    std::swap(front_candidates, empty_front_candidates);
+
+    NetworkPattern net(dim, shape, num_colors, rho);
+    net.seed = net_seed;
+    for (int idx = 0; idx < grid.total_size; ++idx) {
+        net.set(idx, get_site(idx));
+    }
     return net;
 }
 
@@ -1362,7 +1373,20 @@ NetworkPattern network::animate_network(
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
 
-    NetworkPattern net(dim, shape, num_colors, rho);
+    if (num_colors > 125) {
+        throw std::runtime_error(
+            "animate_network: num_colors exceeds int8_t site-state encoding capacity");
+    }
+
+    std::vector<std::int8_t> site_state(
+        static_cast<std::size_t>(grid.total_size),
+        static_cast<std::int8_t>(-1));
+    auto get_site = [&](const int idx) -> int {
+        return static_cast<int>(site_state[static_cast<std::size_t>(idx)]);
+    };
+    auto set_site = [&](const int idx, const int value) {
+        site_state[static_cast<std::size_t>(idx)] = static_cast<std::int8_t>(value);
+    };
 
     // Codificação:
     //   -1 : nunca ativado
@@ -1463,10 +1487,10 @@ NetworkPattern network::animate_network(
             const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
             const int z = 0;
             const int idx = grid.lin_index(x, y, z);
-            const int v = net.get(idx);
+            const int v = get_site(idx);
 
             if (v == prefer_neg || v == -1) {
-                net.set(idx, active_val);
+                set_site(idx, active_val);
                 activation_code[static_cast<std::size_t>(idx)] =
                     static_cast<NetworkPattern::state_t>(color_mul[c]);
                 frontier.push_back(idx);
@@ -1549,7 +1573,7 @@ NetworkPattern network::animate_network(
 
         for (int idx = 0; idx < grid.total_size; ++idx) {
             if (visited[static_cast<std::size_t>(idx)]) continue;
-            if (net.get(idx) != active_val) continue;
+            if (get_site(idx) != active_val) continue;
 
             stack.clear();
             comp_nodes.clear();
@@ -1565,7 +1589,7 @@ NetworkPattern network::animate_network(
                 grid.for_each_neighbor(u, [&](const int v) {
                     if (v < 0) return;
                     if (visited[static_cast<std::size_t>(v)]) return;
-                    if (net.get(v) != active_val) return;
+                    if (get_site(v) != active_val) return;
 
                     visited[static_cast<std::size_t>(v)] = 1;
                     stack.push_back(v);
@@ -1668,7 +1692,7 @@ NetworkPattern network::animate_network(
             int neigh[6];
 
             for (const int idx : frontier) {
-                const int a_val = net.get(idx);
+                const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
                 const int cor_idx = value_to_color_index(num_colors, a_val);
@@ -1679,7 +1703,7 @@ NetworkPattern network::animate_network(
                 for (int ni = 0; ni < nneigh; ++ni) {
                     const int viz_idx = neigh[ni];
 
-                    const int vv = net.get(viz_idx);
+                    const int vv = get_site(viz_idx);
                     if (vv >= 0) continue;
 
                     const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
@@ -1696,18 +1720,18 @@ NetworkPattern network::animate_network(
                 if (n_cand <= 0) continue;
 
                 const int pick = rng.uniform_int(0, n_cand - 1);
-                const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                const FrontCandidate chosen = front_candidates.candidate(slot, pick);
                 const int cor_idx = chosen.color_idx;
 
                 if (rng.uniform_real(0.0, 1.0) >= p_curr[cor_idx]) {
-                    net.set(viz, 0);
+                    set_site(viz, 0);
                     activation_code[static_cast<std::size_t>(viz)] =
                         static_cast<NetworkPattern::state_t>(0);
                     continue;
                 }
 
                 const int new_val = color_to_active_value(num_colors, cor_idx);
-                net.set(viz, new_val);
+                set_site(viz, new_val);
                 activation_code[static_cast<std::size_t>(viz)] =
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
@@ -1737,7 +1761,7 @@ NetworkPattern network::animate_network(
             int neigh[6];
 
             for (const int idx : frontier) {
-                const int a_val = net.get(idx);
+                const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
                 const int cor_idx = value_to_color_index(num_colors, a_val);
@@ -1748,7 +1772,7 @@ NetworkPattern network::animate_network(
                 for (int ni = 0; ni < nneigh; ++ni) {
                     const int viz_idx = neigh[ni];
 
-                    const int vv = net.get(viz_idx);
+                    const int vv = get_site(viz_idx);
 
                     if (vv == 0) {
                         continue;
@@ -1786,7 +1810,7 @@ NetworkPattern network::animate_network(
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
-                const int target_before = net.get(viz);
+                const int target_before = get_site(viz);
                 const bool target_without_species = (num_colors > 1 && target_before == -1);
 
                 int cor_idx = -1;
@@ -1794,7 +1818,7 @@ NetworkPattern network::animate_network(
 
                 if (target_without_species) {
                     const int pick = rng.uniform_int(0, n_cand - 1);
-                    const FrontCandidate chosen = front_candidates.candidates[slot][pick];
+                    const FrontCandidate chosen = front_candidates.candidate(slot, pick);
                     cor_idx = chosen.color_idx;
                     chosen_u = chosen.activator;
                 } else {
@@ -1808,7 +1832,7 @@ NetworkPattern network::animate_network(
 
                     int same_color_count = 0;
                     for (int i = 0; i < n_cand; ++i) {
-                        if (front_candidates.candidates[slot][i].color_idx == cor_idx) {
+                        if (front_candidates.candidate(slot, i).color_idx == cor_idx) {
                             ++same_color_count;
                         }
                     }
@@ -1817,7 +1841,7 @@ NetworkPattern network::animate_network(
                     const int parent_pick = rng.uniform_int(0, same_color_count - 1);
                     int seen = 0;
                     for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
                         if (seen == parent_pick) {
                             chosen_u = fc.activator;
@@ -1832,7 +1856,7 @@ NetworkPattern network::animate_network(
                 }
 
                 const int new_val = color_to_active_value(num_colors, cor_idx);
-                net.set(viz, new_val);
+                set_site(viz, new_val);
                 activation_code[static_cast<std::size_t>(viz)] =
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
@@ -1852,7 +1876,7 @@ NetworkPattern network::animate_network(
 
                 if (target_without_species) {
                     for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
                         edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
                                                 static_cast<uint32_t>(viz));
@@ -1861,7 +1885,7 @@ NetworkPattern network::animate_network(
                     }
                 } else {
                     for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidates[slot][i];
+                        const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
                         edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
                                                 static_cast<uint32_t>(viz));
@@ -2047,7 +2071,16 @@ NetworkPattern network::animate_network(
         }
     }
 
-    NetworkPattern net_animation(dim, shape, num_colors, rho);
+    std::vector<std::int8_t>().swap(site_state);
+    std::vector<int>().swap(parent);
+    std::vector<int>().swap(frontier);
+    std::vector<int>().swap(next_frontier);
+    std::vector<std::vector<int>>().swap(largest_comp_nodes_cache);
+    std::unordered_set<std::uint64_t>().swap(tested_bonds);
+    SparseFrontCandidates empty_front_candidates;
+    std::swap(front_candidates, empty_front_candidates);
+
+    NetworkPattern net_animation(dim, shape, num_colors, rho, false);
     net_animation.data = std::move(activation_code);
     net_animation.edge_pairs = std::move(edge_pairs);
     return net_animation;

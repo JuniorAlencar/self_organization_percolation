@@ -254,28 +254,28 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
 void helpers::print_help(const char* prog) {
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <k> <N_t> <dim> <num_colors> <rho_val> <P0> <Equilibration>
+  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration>
 
 Arguments:
   L                : Length of network (int)
   p0               : Initial Density (double)
   seed             : -1 to random seed (int)
   type_percolation : bond or node (string)
-  k                : Check article (double)
-  N_t              : Check article (int)
+  c                : Feedback gain in p_i(t+1) = p_i(t) + c * (f_T - f_i(t)) (double)
+  f_T              : Target active-front fraction f_i(t) (double)
   dim              : Dimension of Network (2 or 3)
   num_colors       : Number of colors in network >= 1 (int)
   rho_val          : Density for each color (double)  [IMPORTANT => num_colors * rho_val <= 1.0]
   P0               : Fraction of active nodes in base [0 < P0 <= 1.0]
   Equilibration    : Return network with encoded time activation ['true' or 'false']
 Examples:
-  ./SOP 2000 1.0 -1 bond 1.0e-04 200 2 1 1.0 0.1 true
-  ./SOP  500  0.05 42 node 1.0e-04 100 3 3 0.25 0.5 false
+  ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true
+  ./SOP  500 0.05 42 node 1.0e-01 5.0e-02 3 3 0.25 0.5 false
 
 Tips:
   - Use seed = -1 to auto-generate a random seed.
   - 'bond' vs 'node' picks percolation type.
-  - Check the article for recommended ranges of k and N_t.
+  - Larger c reacts faster to deviations from f_T; f_T sets the target growth-front density.
 )" << std::endl;
 }
 

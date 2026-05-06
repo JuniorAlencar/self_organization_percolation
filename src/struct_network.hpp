@@ -29,7 +29,8 @@ struct NetworkPattern {
     std::vector<double> rho;        // Fração global por cor (aplicada na rede toda)
     std::vector<std::pair<uint32_t, uint32_t>> edge_pairs; // Arestas dirigidas u -> v
 
-    NetworkPattern(int dim_, const std::vector<int>& shape_, int num_colors_, const std::vector<double>& rho_)
+    NetworkPattern(int dim_, const std::vector<int>& shape_, int num_colors_,
+                   const std::vector<double>& rho_, bool initialize_data = true)
         : dim(dim_),
           num_colors(num_colors_),
           seed(-1),
@@ -46,8 +47,10 @@ struct NetworkPattern {
         const std::size_t total_sites = static_cast<std::size_t>(std::accumulate(
             shape.begin(), shape.end(), 1LL, std::multiplies<long long>()));
 
-        // Inicializa a rede com todos os valores como -1 (sem cor / inativo sem cor)
-        data.assign(total_sites, static_cast<state_t>(-1));
+        if (initialize_data) {
+            // Inicializa a rede com todos os valores como -1 (sem cor / inativo sem cor)
+            data.assign(total_sites, static_cast<state_t>(-1));
+        }
     }
 
     inline int get(int idx) const {

@@ -47,19 +47,20 @@ make
 This will generate the <b>SOP</b> executable. Run the code outside the build folder
 
 ```bash
-./build/SOP <L> <N_samples> <$\boldsymbol{p_0}$> <seed> <type_percolation> <k> <$\boldsymbol{N_t}$> <dim> <num_colors> <$\boldsymbol{\rho}$>
+./build/SOP <L> <$\boldsymbol{p_0}$> <seed> <type_percolation> <c> <$\boldsymbol{f_T}$> <dim> <num_colors> <$\boldsymbol{\rho}$> <P0> <Equilibration>
 ```
 where  
 <b> L </b>: Side of network;  
-<b> N_samples </b>: Number of implementations (time);  
 $\boldsymbol{p_0}$: Initial growth probability;  
 <b> seed </b>: Seed to implemetantion (If it is <b> -1 </b> it generates a random integer seed);  
 <b> type_percolation </b>: Define the type of percolation -> bond or node;  
-<b> $k$ </b>: kinetic coefficient (see SOP_paper.pdf in docs);  
-$\boldsymbol{N_t}$: threshold parameter (see SOP_paper.pdf in docs);  
+<b> c </b>: feedback gain in $p_i(t+1) = p_i(t) + c[f_T - f_i(t)]$;  
+$\boldsymbol{f_T}$: target active-front fraction;  
 <b> dim </b>: dimension of network;    
 <b> num_colors </b>: Number of colors in network;  
 $\boldsymbol{\rho}$: Density of network for each color;  
+<b> P0 </b>: Fraction of initially active nodes on the base;  
+<b> Equilibration </b>: `true` returns the encoded activation-time network, `false` returns the final state network;  
 
 <b> VERY IMPORTANT!</b>  
 The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1, the gap will be filled with uncolored sites. If num_colors*$\rho$ = 1, all sites in the network will be uniformly and equally colored.
@@ -93,7 +94,6 @@ with the update rule with these changes given by
 $p(t+1) = p(t) + \gamma[1-N(t)/cL^{d-1}]$.
 
 For more information, see discussion_SOP.pdf in /docs.
-
 
 
 
