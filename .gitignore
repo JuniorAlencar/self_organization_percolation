@@ -10,6 +10,7 @@
 /animation/*
 /network
 /results
+/article
 .agents
 .pyenv
 .codex

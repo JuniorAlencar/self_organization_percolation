@@ -1,0 +1,1948 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="282.03488mm"
+   height="326.26633mm"
+   viewBox="0 0 282.03489 326.26633"
+   version="1.1"
+   id="svg18370"
+   xml:space="preserve"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   sodipodi:docname="Competation.svg"
+   inkscape:export-filename="competation.pdf"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+   id="namedview18372"
+   pagecolor="#ffffff"
+   bordercolor="#000000"
+   borderopacity="0.25"
+   inkscape:showpageshadow="2"
+   inkscape:pageopacity="0.0"
+   inkscape:pagecheckerboard="0"
+   inkscape:deskcolor="#d1d1d1"
+   inkscape:document-units="mm"
+   showgrid="false"
+   inkscape:zoom="0.77326038"
+   inkscape:cx="318.13346"
+   inkscape:cy="635.62031"
+   inkscape:window-width="1854"
+   inkscape:window-height="1011"
+   inkscape:window-x="66"
+   inkscape:window-y="32"
+   inkscape:window-maximized="1"
+   inkscape:current-layer="layer1" />
+  <defs
+   id="defs18367"><linearGradient
+   inkscape:collect="always"
+   id="linearGradient1541"><stop
+     style="stop-color:#000000;stop-opacity:1;"
+     offset="0"
+     id="stop1537" /><stop
+     style="stop-color:#000000;stop-opacity:0;"
+     offset="1"
+     id="stop1539" /></linearGradient><rect
+   x="560.88666"
+   y="-168.29218"
+   width="471.12668"
+   height="160.22385"
+   id="rect23959" /><rect
+   x="570.27405"
+   y="-132.16496"
+   width="489.38718"
+   height="133.1375"
+   id="rect23901" />
+    <radialGradient
+   id="sphereGrad"
+   cx="358.37201"
+   cy="359.23599"
+   r="12.263999"
+   fx="358.37201"
+   fy="359.23599"
+   gradientUnits="userSpaceOnUse">
+      <stop
+   offset="0%"
+   stop-color="#f2f2f2"
+   id="stop1353" />
+      <stop
+   offset="42%"
+   stop-color="#b9b9b9"
+   id="stop1355" />
+      <stop
+   offset="100%"
+   stop-color="#747474"
+   id="stop1357" />
+    </radialGradient>
+  <radialGradient
+   inkscape:collect="always"
+   xlink:href="#sphereGrad"
+   id="radialGradient23845"
+   gradientUnits="userSpaceOnUse"
+   cx="358.37201"
+   cy="359.23599"
+   fx="358.37201"
+   fy="359.23599"
+   r="12.263999" /><linearGradient
+   inkscape:collect="always"
+   xlink:href="#linearGradient1541"
+   id="linearGradient1543"
+   x1="61"
+   y1="53.365002"
+   x2="129"
+   y2="53.365002"
+   gradientUnits="userSpaceOnUse" /><radialGradient
+   inkscape:collect="always"
+   xlink:href="#sphereGrad"
+   id="radialGradient2199"
+   gradientUnits="userSpaceOnUse"
+   cx="358.37201"
+   cy="359.23599"
+   fx="358.37201"
+   fy="359.23599"
+   r="12.263999" /><radialGradient
+   inkscape:collect="always"
+   xlink:href="#sphereGrad"
+   id="radialGradient2310"
+   gradientUnits="userSpaceOnUse"
+   cx="358.37201"
+   cy="359.23599"
+   fx="358.37201"
+   fy="359.23599"
+   r="12.263999" /></defs>
+  <g
+   inkscape:label="Initial_Configuration"
+   inkscape:groupmode="layer"
+   id="layer1"
+   transform="translate(-24.560402,16.923663)"
+   style="display:inline">
+    <g
+   id="center-to-symbol-connections-only"
+   style="display:none">
+      <line
+   id="center-link-back-z"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.62"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.38"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="29" />
+      <line
+   id="center-link-back-left"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="62"
+   y2="48" />
+      <line
+   id="center-link-back-right"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="128"
+   y2="48" />
+      <line
+   id="center-link-front-left"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="47"
+   y2="104" />
+      <line
+   id="center-link-front-right"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="143"
+   y2="104" />
+      <line
+   id="center-link-front-z"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.35"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.95"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="124" />
+    </g>
+    <g
+   id="g19604"
+   transform="matrix(1.02,0,0,1.02,-547.7973,-519.5307)">
+      <g
+   id="cube-filled-symbol"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="628.36,538.78 637,533.7 645.64,538.78 637,543.85 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon1802" />
+        <polygon
+   points="628.36,550.22 628.36,538.78 637,543.85 637,555.3 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon1804" />
+        <polygon
+   points="645.64,550.22 645.64,538.78 637,543.85 637,555.3 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon1806" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path1808" />
+      </g>
+      <g
+   id="cube-hollow-replica-overlap"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="646.6,538.14 637,543.78 627.4,538.14 637,532.5 "
+   stroke-width="1.55"
+   id="polygon1811" />
+        <polygon
+   points="637,543.78 637,556.5 627.4,550.86 627.4,538.14 "
+   stroke-width="1.55"
+   id="polygon1813" />
+        <polygon
+   points="637,543.78 637,556.5 646.6,550.86 646.6,538.14 "
+   stroke-width="1.55"
+   id="polygon1815" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path1817" />
+      </g>
+    </g>
+    <g
+   id="g20863"
+   transform="matrix(1.08,0,0,1.08,-618.69678,-532.79722)">
+      <g
+   id="g20851"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="637,533.7 645.64,538.78 637,543.85 628.36,538.78 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20843" />
+        <polygon
+   points="628.36,538.78 637,543.85 637,555.3 628.36,550.22 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20845" />
+        <polygon
+   points="645.64,538.78 637,543.85 637,555.3 645.64,550.22 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20847" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path20849" />
+      </g>
+      <g
+   id="g20861"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="637,543.78 627.4,538.14 637,532.5 646.6,538.14 "
+   stroke-width="1.55"
+   id="polygon20853" />
+        <polygon
+   points="637,556.5 627.4,550.86 627.4,538.14 637,543.78 "
+   stroke-width="1.55"
+   id="polygon20855" />
+        <polygon
+   points="637,556.5 646.6,550.86 646.6,538.14 637,543.78 "
+   stroke-width="1.55"
+   id="polygon20857" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path20859" />
+      </g>
+    </g>
+    <g
+   id="g20841"
+   transform="matrix(1.08,0,0,1.08,-552.69678,-532.79722)">
+      <g
+   id="g20829"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="645.64,538.78 637,543.85 628.36,538.78 637,533.7 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20821" />
+        <polygon
+   points="637,543.85 637,555.3 628.36,550.22 628.36,538.78 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20823" />
+        <polygon
+   points="637,543.85 637,555.3 645.64,550.22 645.64,538.78 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20825" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path20827" />
+      </g>
+      <g
+   id="g20839"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="627.4,538.14 637,532.5 646.6,538.14 637,543.78 "
+   stroke-width="1.55"
+   id="polygon20831" />
+        <polygon
+   points="627.4,550.86 627.4,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon20833" />
+        <polygon
+   points="646.6,550.86 646.6,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon20835" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path20837" />
+      </g>
+    </g><g
+   id="g22564"
+   inkscape:label="Candidates_connections"
+   style="display:inline;fill:none;fill-opacity:1;stroke:#fa00e5;stroke-width:2;stroke-dasharray:none;stroke-opacity:1">
+      <line
+   id="line22552"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.62"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.38"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="29"
+   style="fill:none;fill-opacity:1;stroke:#fa00e5;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line22554"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="62"
+   y2="48"
+   style="fill:none;fill-opacity:1;stroke:#fa00e5;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line22556"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="128"
+   y2="48"
+   style="fill:none;fill-opacity:1;stroke:#fa00e5;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line22558"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="47"
+   y2="104"
+   style="display:inline;fill:none;fill-opacity:1;stroke:#fa00e5;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line22560"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="143"
+   y2="104"
+   style="display:inline;fill:none;fill-opacity:1;stroke:#fa00e5;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line22562"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.35"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.95"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="124"
+   style="display:none;fill:none;fill-opacity:1;stroke:#fa00e5;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+    </g>
+    <g
+   id="gray-sphere"
+   transform="matrix(1.3925438,0,0,1.3925438,-407.6258,-427.40157)">
+      <ellipse
+   cx="362.29999"
+   cy="369.14001"
+   rx="7.73"
+   ry="2.52"
+   fill="#000000"
+   opacity="0.13"
+   id="ellipse1362" />
+      <circle
+   cx="361"
+   cy="362.73999"
+   r="8.3999996"
+   fill="url(#sphereGrad)"
+   stroke="#5f6368"
+   stroke-width="0.72"
+   opacity="1"
+   id="circle1364"
+   style="fill:url(#radialGradient2310)" />
+      <circle
+   cx="357.89999"
+   cy="359.23999"
+   r="1.9299999"
+   fill="#ffffff"
+   stroke="none"
+   stroke-width="1"
+   opacity="0.45"
+   id="circle1366" />
+    </g>
+    <g
+   id="g19632"
+   transform="matrix(1.58,0,0,1.58,-516.42753,-746.6252)">
+      <g
+   id="pyramid-filled-symbol"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="350.21,550.53 371.79,550.53 361,555.17 "
+   fill="#1769c2"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.4"
+   id="polygon2017" />
+        <polygon
+   points="361,530.58 350.21,550.53 361,549.49 "
+   fill="#3298ff"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2019" />
+        <polygon
+   points="361,530.58 371.79,550.53 361,549.49 "
+   fill="#0d55b8"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2021" />
+        <polygon
+   points="361,530.58 350.21,550.53 371.79,550.53 "
+   fill="#207cea"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.78"
+   id="polygon2023" />
+      </g>
+      <g
+   id="pyramid-hollow-replica-overlap"
+   opacity="0.98"
+   fill="none"
+   stroke="#052957"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="361,556.28 349.1,551.16 372.9,551.16 "
+   stroke-width="1.45"
+   opacity="0.85"
+   id="polygon2026" />
+        <polygon
+   points="361,550 361,529.14 349.1,551.16 "
+   stroke-width="1.6"
+   id="polygon2028" />
+        <polygon
+   points="361,550 361,529.14 372.9,551.16 "
+   stroke-width="1.6"
+   id="polygon2030" />
+        <polygon
+   points="372.9,551.16 361,529.14 349.1,551.16 "
+   stroke-width="1.6"
+   id="polygon2032" />
+        <path
+   d="m 361,529.14 v 27.14"
+   stroke-width="1.2"
+   opacity="0.85"
+   id="path2034" />
+      </g>
+    </g>
+    <g
+   id="g20819"
+   transform="matrix(1.58,0,0,1.58,-420.42753,-746.6252)">
+      <g
+   id="g20805"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="371.79,550.53 361,555.17 350.21,550.53 "
+   fill="#1769c2"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.4"
+   id="polygon20797" />
+        <polygon
+   points="350.21,550.53 361,549.49 361,530.58 "
+   fill="#3298ff"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20799" />
+        <polygon
+   points="371.79,550.53 361,549.49 361,530.58 "
+   fill="#0d55b8"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20801" />
+        <polygon
+   points="350.21,550.53 371.79,550.53 361,530.58 "
+   fill="#207cea"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.78"
+   id="polygon20803" />
+      </g>
+      <g
+   id="g20817"
+   opacity="0.98"
+   fill="none"
+   stroke="#052957"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="349.1,551.16 372.9,551.16 361,556.28 "
+   stroke-width="1.45"
+   opacity="0.85"
+   id="polygon20807" />
+        <polygon
+   points="361,529.14 349.1,551.16 361,550 "
+   stroke-width="1.6"
+   id="polygon20809" />
+        <polygon
+   points="361,529.14 372.9,551.16 361,550 "
+   stroke-width="1.6"
+   id="polygon20811" />
+        <polygon
+   points="361,529.14 349.1,551.16 372.9,551.16 "
+   stroke-width="1.6"
+   id="polygon20813" />
+        <path
+   d="m 361,529.14 v 27.14"
+   stroke-width="1.2"
+   opacity="0.85"
+   id="path20815" />
+      </g>
+    </g>
+    <g
+   id="g20885"
+   transform="matrix(1.5,0,0,1.5,-850.3292,-682.6628)">
+      <g
+   id="g20873"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="645.64,538.78 637,543.85 628.36,538.78 637,533.7 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20865" />
+        <polygon
+   points="637,543.85 637,555.3 628.36,550.22 628.36,538.78 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20867" />
+        <polygon
+   points="637,543.85 637,555.3 645.64,550.22 645.64,538.78 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon20869" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path20871" />
+      </g>
+      <g
+   id="g20883"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="627.4,538.14 637,532.5 646.6,538.14 637,543.78 "
+   stroke-width="1.55"
+   id="polygon20875" />
+        <polygon
+   points="627.4,550.86 627.4,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon20877" />
+        <polygon
+   points="646.6,550.86 646.6,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon20879" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path20881" />
+      </g>
+    </g>
+  </g><rect
+   style="display:inline;opacity:1;fill:none;stroke:#000000;stroke-width:2.04288;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
+   id="rect2371"
+   width="140.29211"
+   height="159.75813"
+   x="1.02144"
+   y="1.02144" />
+<text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#2b1100;stroke:#000000;stroke-width:0.661001;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;paint-order:markers fill stroke"
+   x="2.6163738"
+   y="14.75034"
+   id="text22446"
+   inkscape:label="pt"><tspan
+     sodipodi:role="line"
+     id="tspan22444"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.661"
+     x="2.6163738"
+     y="14.75034">p(t) = 0.6542</tspan></text><g
+   inkscape:label="Select_connection"
+   inkscape:groupmode="layer"
+   id="g23843"
+   transform="translate(116.19808,16.923663)"
+   style="display:inline">
+    <g
+   id="g23683"
+   style="display:none">
+      <line
+   id="line23671"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.62"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.38"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="29" />
+      <line
+   id="line23673"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="62"
+   y2="48" />
+      <line
+   id="line23675"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="128"
+   y2="48" />
+      <line
+   id="line23677"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="47"
+   y2="104" />
+      <line
+   id="line23679"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="143"
+   y2="104" />
+      <line
+   id="line23681"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.35"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.95"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="124" />
+    </g>
+    <g
+   id="g23705"
+   transform="matrix(1.02,0,0,1.02,-547.7973,-519.5307)">
+      <g
+   id="g23693"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="645.64,538.78 637,543.85 628.36,538.78 637,533.7 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23685" />
+        <polygon
+   points="637,543.85 637,555.3 628.36,550.22 628.36,538.78 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23687" />
+        <polygon
+   points="637,543.85 637,555.3 645.64,550.22 645.64,538.78 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23689" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path23691" />
+      </g>
+      <g
+   id="g23703"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="627.4,538.14 637,532.5 646.6,538.14 637,543.78 "
+   stroke-width="1.55"
+   id="polygon23695" />
+        <polygon
+   points="627.4,550.86 627.4,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon23697" />
+        <polygon
+   points="646.6,550.86 646.6,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon23699" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path23701" />
+      </g>
+    </g>
+    <g
+   id="g23727"
+   transform="matrix(1.08,0,0,1.08,-618.69678,-532.79722)">
+      <g
+   id="g23715"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="637,543.85 628.36,538.78 637,533.7 645.64,538.78 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23707" />
+        <polygon
+   points="637,555.3 628.36,550.22 628.36,538.78 637,543.85 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23709" />
+        <polygon
+   points="637,555.3 645.64,550.22 645.64,538.78 637,543.85 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23711" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path23713" />
+      </g>
+      <g
+   id="g23725"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="637,532.5 646.6,538.14 637,543.78 627.4,538.14 "
+   stroke-width="1.55"
+   id="polygon23717" />
+        <polygon
+   points="627.4,538.14 637,543.78 637,556.5 627.4,550.86 "
+   stroke-width="1.55"
+   id="polygon23719" />
+        <polygon
+   points="646.6,538.14 637,543.78 637,556.5 646.6,550.86 "
+   stroke-width="1.55"
+   id="polygon23721" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path23723" />
+      </g>
+    </g>
+    <g
+   id="g23749"
+   transform="matrix(1.08,0,0,1.08,-552.69678,-532.79722)">
+      <g
+   id="g23737"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="628.36,538.78 637,533.7 645.64,538.78 637,543.85 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23729" />
+        <polygon
+   points="628.36,550.22 628.36,538.78 637,543.85 637,555.3 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23731" />
+        <polygon
+   points="645.64,550.22 645.64,538.78 637,543.85 637,555.3 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23733" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path23735" />
+      </g>
+      <g
+   id="g23747"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="646.6,538.14 637,543.78 627.4,538.14 637,532.5 "
+   stroke-width="1.55"
+   id="polygon23739" />
+        <polygon
+   points="637,543.78 637,556.5 627.4,550.86 627.4,538.14 "
+   stroke-width="1.55"
+   id="polygon23741" />
+        <polygon
+   points="637,543.78 637,556.5 646.6,550.86 646.6,538.14 "
+   stroke-width="1.55"
+   id="polygon23743" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path23745" />
+      </g>
+    </g><g
+   id="g23763"
+   inkscape:label="Candidates_connections"
+   style="display:inline;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1">
+      <line
+   id="line23751"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.62"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.38"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="29"
+   style="display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#00e223;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line23753"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="62"
+   y2="48"
+   style="display:none;opacity:1;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line23755"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="128"
+   y2="48"
+   style="display:none;opacity:1;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line23757"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="47"
+   y2="104"
+   style="display:none;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line23759"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="143"
+   y2="104"
+   style="display:none;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line23761"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.35"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.95"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="124"
+   style="display:none;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+    </g>
+    <g
+   id="g23771"
+   transform="matrix(1.3925438,0,0,1.3925438,-407.6258,-427.40157)">
+      <ellipse
+   cx="362.29999"
+   cy="369.14001"
+   rx="7.73"
+   ry="2.52"
+   fill="#000000"
+   opacity="0.13"
+   id="ellipse23765" />
+      <circle
+   cx="361"
+   cy="362.73999"
+   r="8.3999996"
+   fill="url(#sphereGrad)"
+   stroke="#5f6368"
+   stroke-width="0.72"
+   opacity="1"
+   id="circle23767"
+   style="fill:url(#radialGradient23845)" />
+      <circle
+   cx="357.89999"
+   cy="359.23999"
+   r="1.9299999"
+   fill="#ffffff"
+   stroke="none"
+   stroke-width="1"
+   opacity="0.45"
+   id="circle23769" />
+    </g>
+    <g
+   id="g23795"
+   transform="matrix(1.58,0,0,1.58,-516.42753,-746.6252)">
+      <g
+   id="g23781"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="361,555.17 350.21,550.53 371.79,550.53 "
+   fill="#1769c2"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.4"
+   id="polygon23773" />
+        <polygon
+   points="361,549.49 361,530.58 350.21,550.53 "
+   fill="#3298ff"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23775" />
+        <polygon
+   points="361,549.49 361,530.58 371.79,550.53 "
+   fill="#0d55b8"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23777" />
+        <polygon
+   points="371.79,550.53 361,530.58 350.21,550.53 "
+   fill="#207cea"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.78"
+   id="polygon23779" />
+      </g>
+      <g
+   id="g23793"
+   opacity="0.98"
+   fill="none"
+   stroke="#052957"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="372.9,551.16 361,556.28 349.1,551.16 "
+   stroke-width="1.45"
+   opacity="0.85"
+   id="polygon23783" />
+        <polygon
+   points="349.1,551.16 361,550 361,529.14 "
+   stroke-width="1.6"
+   id="polygon23785" />
+        <polygon
+   points="372.9,551.16 361,550 361,529.14 "
+   stroke-width="1.6"
+   id="polygon23787" />
+        <polygon
+   points="349.1,551.16 372.9,551.16 361,529.14 "
+   stroke-width="1.6"
+   id="polygon23789" />
+        <path
+   d="m 361,529.14 v 27.14"
+   stroke-width="1.2"
+   opacity="0.85"
+   id="path23791" />
+      </g>
+    </g>
+    <g
+   id="g23819"
+   transform="matrix(1.58,0,0,1.58,-420.42753,-746.6252)">
+      <g
+   id="g23805"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="350.21,550.53 371.79,550.53 361,555.17 "
+   fill="#1769c2"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.4"
+   id="polygon23797" />
+        <polygon
+   points="361,530.58 350.21,550.53 361,549.49 "
+   fill="#3298ff"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23799" />
+        <polygon
+   points="361,530.58 371.79,550.53 361,549.49 "
+   fill="#0d55b8"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23801" />
+        <polygon
+   points="361,530.58 350.21,550.53 371.79,550.53 "
+   fill="#207cea"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.78"
+   id="polygon23803" />
+      </g>
+      <g
+   id="g23817"
+   opacity="0.98"
+   fill="none"
+   stroke="#052957"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="361,556.28 349.1,551.16 372.9,551.16 "
+   stroke-width="1.45"
+   opacity="0.85"
+   id="polygon23807" />
+        <polygon
+   points="361,550 361,529.14 349.1,551.16 "
+   stroke-width="1.6"
+   id="polygon23809" />
+        <polygon
+   points="361,550 361,529.14 372.9,551.16 "
+   stroke-width="1.6"
+   id="polygon23811" />
+        <polygon
+   points="372.9,551.16 361,529.14 349.1,551.16 "
+   stroke-width="1.6"
+   id="polygon23813" />
+        <path
+   d="m 361,529.14 v 27.14"
+   stroke-width="1.2"
+   opacity="0.85"
+   id="path23815" />
+      </g>
+    </g>
+    <g
+   id="g23841"
+   transform="matrix(1.5,0,0,1.5,-850.3292,-682.6628)">
+      <g
+   id="g23829"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="628.36,538.78 637,533.7 645.64,538.78 637,543.85 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23821" />
+        <polygon
+   points="628.36,550.22 628.36,538.78 637,543.85 637,555.3 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23823" />
+        <polygon
+   points="645.64,550.22 645.64,538.78 637,543.85 637,555.3 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon23825" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path23827" />
+      </g>
+      <g
+   id="g23839"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="646.6,538.14 637,543.78 627.4,538.14 637,532.5 "
+   stroke-width="1.55"
+   id="polygon23831" />
+        <polygon
+   points="637,543.78 637,556.5 627.4,550.86 627.4,538.14 "
+   stroke-width="1.55"
+   id="polygon23833" />
+        <polygon
+   points="637,543.78 637,556.5 646.6,550.86 646.6,538.14 "
+   stroke-width="1.55"
+   id="polygon23835" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path23837" />
+      </g>
+    </g>
+  </g><text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#2b1100;stroke:#000000;stroke-width:0.661001;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;paint-order:markers fill stroke"
+   x="143.02208"
+   y="7.6621466"
+   id="text1655"
+   inkscape:label="random"><tspan
+     sodipodi:role="line"
+     id="tspan1711"
+     x="143.02208"
+     y="7.6621466"
+     dy="7">Select random</tspan><tspan
+     sodipodi:role="line"
+     id="tspan1713"
+     x="143.02208"
+     y="29.710772">connection</tspan></text><g
+   inkscape:label="Effective_all_connections"
+   inkscape:groupmode="layer"
+   id="g2197"
+   transform="translate(45.81884,181.85845)"
+   style="display:inline">
+    <g
+   id="g2037"
+   style="display:none">
+      <line
+   id="line2025"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.62"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.38"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="29" />
+      <line
+   id="line2027"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="62"
+   y2="48" />
+      <line
+   id="line2029"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="128"
+   y2="48" />
+      <line
+   id="line2031"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="47"
+   y2="104" />
+      <line
+   id="line2033"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="143"
+   y2="104" />
+      <line
+   id="line2035"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.35"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.95"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="124" />
+    </g>
+    <g
+   id="g2059"
+   transform="matrix(1.02,0,0,1.02,-547.7973,-519.5307)">
+      <g
+   id="g2047"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="645.64,538.78 637,543.85 628.36,538.78 637,533.7 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2039" />
+        <polygon
+   points="637,543.85 637,555.3 628.36,550.22 628.36,538.78 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2041" />
+        <polygon
+   points="637,543.85 637,555.3 645.64,550.22 645.64,538.78 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2043" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path2045" />
+      </g>
+      <g
+   id="g2057"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="627.4,538.14 637,532.5 646.6,538.14 637,543.78 "
+   stroke-width="1.55"
+   id="polygon2049" />
+        <polygon
+   points="627.4,550.86 627.4,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon2051" />
+        <polygon
+   points="646.6,550.86 646.6,538.14 637,543.78 637,556.5 "
+   stroke-width="1.55"
+   id="polygon2053" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path2055" />
+      </g>
+    </g>
+    <g
+   id="g2081"
+   transform="matrix(1.08,0,0,1.08,-618.69678,-532.79722)">
+      <g
+   id="g2069"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="637,543.85 628.36,538.78 637,533.7 645.64,538.78 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2061" />
+        <polygon
+   points="637,555.3 628.36,550.22 628.36,538.78 637,543.85 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2063" />
+        <polygon
+   points="637,555.3 645.64,550.22 645.64,538.78 637,543.85 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2065" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path2067" />
+      </g>
+      <g
+   id="g2079"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="637,532.5 646.6,538.14 637,543.78 627.4,538.14 "
+   stroke-width="1.55"
+   id="polygon2071" />
+        <polygon
+   points="627.4,538.14 637,543.78 637,556.5 627.4,550.86 "
+   stroke-width="1.55"
+   id="polygon2073" />
+        <polygon
+   points="646.6,538.14 637,543.78 637,556.5 646.6,550.86 "
+   stroke-width="1.55"
+   id="polygon2075" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path2077" />
+      </g>
+    </g>
+    <g
+   id="g2103"
+   transform="matrix(1.08,0,0,1.08,-552.69678,-532.79722)">
+      <g
+   id="g2091"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="628.36,538.78 637,533.7 645.64,538.78 637,543.85 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2083" />
+        <polygon
+   points="628.36,550.22 628.36,538.78 637,543.85 637,555.3 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2085" />
+        <polygon
+   points="645.64,550.22 645.64,538.78 637,543.85 637,555.3 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2087" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path2089" />
+      </g>
+      <g
+   id="g2101"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="646.6,538.14 637,543.78 627.4,538.14 637,532.5 "
+   stroke-width="1.55"
+   id="polygon2093" />
+        <polygon
+   points="637,543.78 637,556.5 627.4,550.86 627.4,538.14 "
+   stroke-width="1.55"
+   id="polygon2095" />
+        <polygon
+   points="637,543.78 637,556.5 646.6,550.86 646.6,538.14 "
+   stroke-width="1.55"
+   id="polygon2097" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path2099" />
+      </g>
+    </g><g
+   id="g2117"
+   inkscape:label="Candidates_connections"
+   style="display:inline;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1">
+      <line
+   id="line2105"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.62"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.38"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="29"
+   style="display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line2107"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="62"
+   y2="48"
+   style="display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line2109"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="0.76"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.48"
+   x1="95.083"
+   y1="77.730003"
+   x2="128"
+   y2="48"
+   style="display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line2111"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="47"
+   y2="104"
+   style="display:none;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line2113"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.15"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.86"
+   x1="95.083"
+   y1="77.730003"
+   x2="143"
+   y2="104"
+   style="display:none;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+      <line
+   id="line2115"
+   fill="none"
+   stroke="#4b5563"
+   stroke-width="1.35"
+   stroke-linecap="round"
+   stroke-linejoin="round"
+   opacity="0.95"
+   x1="95.083"
+   y1="77.730003"
+   x2="95.083"
+   y2="124"
+   style="display:none;fill:none;fill-opacity:1;stroke:#000000;stroke-width:2;stroke-dasharray:none;stroke-opacity:1" />
+    </g>
+    <g
+   id="g2125"
+   transform="matrix(1.3925438,0,0,1.3925438,-407.6258,-427.40157)">
+      <ellipse
+   cx="362.29999"
+   cy="369.14001"
+   rx="7.73"
+   ry="2.52"
+   fill="#000000"
+   opacity="0.13"
+   id="ellipse2119" />
+      <circle
+   cx="361"
+   cy="362.73999"
+   r="8.3999996"
+   fill="url(#sphereGrad)"
+   stroke="#5f6368"
+   stroke-width="0.72"
+   opacity="1"
+   id="circle2121"
+   style="fill:url(#radialGradient2199)" />
+      <circle
+   cx="357.89999"
+   cy="359.23999"
+   r="1.9299999"
+   fill="#ffffff"
+   stroke="none"
+   stroke-width="1"
+   opacity="0.45"
+   id="circle2123" />
+    </g>
+    <g
+   id="g2149"
+   transform="matrix(1.58,0,0,1.58,-516.42753,-746.6252)">
+      <g
+   id="g2135"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="361,555.17 350.21,550.53 371.79,550.53 "
+   fill="#1769c2"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.4"
+   id="polygon2127" />
+        <polygon
+   points="361,549.49 361,530.58 350.21,550.53 "
+   fill="#3298ff"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2129" />
+        <polygon
+   points="361,549.49 361,530.58 371.79,550.53 "
+   fill="#0d55b8"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2131" />
+        <polygon
+   points="371.79,550.53 361,530.58 350.21,550.53 "
+   fill="#207cea"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.78"
+   id="polygon2133" />
+      </g>
+      <g
+   id="g2147"
+   opacity="0.98"
+   fill="none"
+   stroke="#052957"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="372.9,551.16 361,556.28 349.1,551.16 "
+   stroke-width="1.45"
+   opacity="0.85"
+   id="polygon2137" />
+        <polygon
+   points="349.1,551.16 361,550 361,529.14 "
+   stroke-width="1.6"
+   id="polygon2139" />
+        <polygon
+   points="372.9,551.16 361,550 361,529.14 "
+   stroke-width="1.6"
+   id="polygon2141" />
+        <polygon
+   points="349.1,551.16 372.9,551.16 361,529.14 "
+   stroke-width="1.6"
+   id="polygon2143" />
+        <path
+   d="m 361,529.14 v 27.14"
+   stroke-width="1.2"
+   opacity="0.85"
+   id="path2145" />
+      </g>
+    </g>
+    <g
+   id="g2173"
+   transform="matrix(1.58,0,0,1.58,-420.42753,-746.6252)">
+      <g
+   id="g2159"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="350.21,550.53 371.79,550.53 361,555.17 "
+   fill="#1769c2"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.4"
+   id="polygon2151" />
+        <polygon
+   points="361,530.58 350.21,550.53 361,549.49 "
+   fill="#3298ff"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2153" />
+        <polygon
+   points="361,530.58 371.79,550.53 361,549.49 "
+   fill="#0d55b8"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2155" />
+        <polygon
+   points="361,530.58 350.21,550.53 371.79,550.53 "
+   fill="#207cea"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="0.78"
+   id="polygon2157" />
+      </g>
+      <g
+   id="g2171"
+   opacity="0.98"
+   fill="none"
+   stroke="#052957"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-4.4000541,-4.3400882)">
+        <polygon
+   points="361,556.28 349.1,551.16 372.9,551.16 "
+   stroke-width="1.45"
+   opacity="0.85"
+   id="polygon2161" />
+        <polygon
+   points="361,550 361,529.14 349.1,551.16 "
+   stroke-width="1.6"
+   id="polygon2163" />
+        <polygon
+   points="361,550 361,529.14 372.9,551.16 "
+   stroke-width="1.6"
+   id="polygon2165" />
+        <polygon
+   points="372.9,551.16 361,529.14 349.1,551.16 "
+   stroke-width="1.6"
+   id="polygon2167" />
+        <path
+   d="m 361,529.14 v 27.14"
+   stroke-width="1.2"
+   opacity="0.85"
+   id="path2169" />
+      </g>
+    </g>
+    <g
+   id="g2195"
+   transform="matrix(1.5,0,0,1.5,-850.3292,-682.6628)">
+      <g
+   id="g2183"
+   opacity="1"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="628.36,538.78 637,533.7 645.64,538.78 637,543.85 "
+   fill="#ff625d"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2175" />
+        <polygon
+   points="628.36,550.22 628.36,538.78 637,543.85 637,555.3 "
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2177" />
+        <polygon
+   points="645.64,550.22 645.64,538.78 637,543.85 637,555.3 "
+   fill="#b81718"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   id="polygon2179" />
+        <path
+   d="M 637,543.85 V 555.3"
+   fill="none"
+   stroke="#15ff24"
+   stroke-width="3.04"
+   opacity="1"
+   id="path2181" />
+      </g>
+      <g
+   id="g2193"
+   opacity="0.98"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-linejoin="round"
+   stroke-linecap="round"
+   transform="translate(-6.725,-6.7250124)">
+        <polygon
+   points="646.6,538.14 637,543.78 627.4,538.14 637,532.5 "
+   stroke-width="1.55"
+   id="polygon2185" />
+        <polygon
+   points="637,543.78 637,556.5 627.4,550.86 627.4,538.14 "
+   stroke-width="1.55"
+   id="polygon2187" />
+        <polygon
+   points="637,543.78 637,556.5 646.6,550.86 646.6,538.14 "
+   stroke-width="1.55"
+   id="polygon2189" />
+        <path
+   d="M 637,543.78 V 556.5"
+   stroke-width="1.25"
+   opacity="0.92"
+   id="path2191" />
+      </g>
+    </g>
+  </g><text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#2b1100;stroke:#000000;stroke-width:0.661001;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;paint-order:markers fill stroke"
+   x="72.872147"
+   y="168.74422"
+   id="text2306"
+   inkscape:label="make_all_types"><tspan
+     sodipodi:role="line"
+     id="tspan2304"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.661"
+     x="72.872147"
+     y="168.74422"
+     dy="6">Make same type</tspan><tspan
+     sodipodi:role="line"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.661"
+     x="72.872147"
+     y="190.79285"
+     id="tspan2308">connections</tspan></text><rect
+   style="display:inline;opacity:1;fill:none;stroke:#000000;stroke-width:2.04288;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
+   id="rect2374"
+   width="140.29213"
+   height="159.75812"
+   x="140.72131"
+   y="1.02144" /><rect
+   style="display:inline;opacity:1;fill:none;stroke:#000000;stroke-width:2.06983;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
+   id="rect2376"
+   width="140.26518"
+   height="164.03319"
+   x="71.635696"
+   y="161.19823" /><text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;opacity:1;fill:#2b1100;fill-opacity:1;stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
+   x="258.85272"
+   y="15.229023"
+   id="text2384"
+   inkscape:label="(a)"><tspan
+     sodipodi:role="line"
+     id="tspan2382"
+     style="fill:#2b1100;fill-opacity:1;stroke:none;stroke-width:2"
+     x="258.85272"
+     y="15.229023">(b)</tspan></text><text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;opacity:1;fill:#2b1100;fill-opacity:1;stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
+   x="120.22874"
+   y="15.40177"
+   id="text2388"
+   inkscape:label="(b)"><tspan
+     sodipodi:role="line"
+     id="tspan2386"
+     style="fill:#2b1100;fill-opacity:1;stroke:none;stroke-width:2"
+     x="120.22874"
+     y="15.40177">(a)</tspan></text><text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;font-family:STIX;-inkscape-font-specification:'STIX, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;opacity:1;fill:#2b1100;fill-opacity:1;stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
+   x="191.79059"
+   y="174.86887"
+   id="text2494"
+   inkscape:label="(c)"><tspan
+     sodipodi:role="line"
+     id="tspan2492"
+     style="fill:#2b1100;fill-opacity:1;stroke:none;stroke-width:2"
+     x="191.79059"
+     y="174.86887">(c)</tspan></text></svg>

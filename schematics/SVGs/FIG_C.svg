@@ -7,7 +7,7 @@
    id="svg3797"
    sodipodi:docname="FIG_C.svg"
    inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
-   inkscape:export-filename="SVGs/FIG_B.svg"
+   inkscape:export-filename="../PNGs/FIG_C.png"
    inkscape:export-xdpi="96"
    inkscape:export-ydpi="96"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
@@ -26,12 +26,12 @@
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
      inkscape:zoom="1.1421053"
-     inkscape:cx="140.09216"
-     inkscape:cy="279.74653"
-     inkscape:window-width="1920"
-     inkscape:window-height="1043"
-     inkscape:window-x="1920"
-     inkscape:window-y="0"
+     inkscape:cx="279.30875"
+     inkscape:cy="282.37326"
+     inkscape:window-width="1854"
+     inkscape:window-height="1011"
+     inkscape:window-x="66"
+     inkscape:window-y="32"
      inkscape:window-maximized="1"
      inkscape:current-layer="svg3797" />
   <defs
@@ -501,7 +501,7 @@
   <g
      id="vertical-layer-alignment"
      transform="translate(-67.65902,-78.644037)"
-     style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal">
+     style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal">
     <line
        x1="223"
        y1="615.56"
@@ -513,7 +513,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3191"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="315"
        y1="615.56"
@@ -525,7 +525,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3193"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="407"
        y1="615.56"
@@ -537,7 +537,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3195"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="499"
        y1="615.56"
@@ -549,7 +549,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3197"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="269"
        y1="588.56"
@@ -561,7 +561,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3199"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="361"
        y1="588.56"
@@ -573,7 +573,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3201"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="453"
        y1="588.56"
@@ -585,7 +585,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3203"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="545"
        y1="588.56"
@@ -597,7 +597,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3205"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="315"
        y1="561.56"
@@ -609,7 +609,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3207"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="407"
        y1="561.56"
@@ -621,7 +621,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3209"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="499"
        y1="561.56"
@@ -633,7 +633,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3211"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="591"
        y1="561.56"
@@ -645,7 +645,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3213"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="361"
        y1="534.56"
@@ -657,7 +657,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3215"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="453"
        y1="534.56"
@@ -669,7 +669,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3217"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="545"
        y1="534.56"
@@ -681,7 +681,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3219"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:none;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
     <line
        x1="637"
        y1="534.56"
@@ -693,7 +693,7 @@
        stroke-linecap="round"
        stroke-dasharray="none"
        id="line3221"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868344;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal" />
   </g>
   <g
      id="base-filled-symbols"
@@ -705,7 +705,7 @@
        id="g3232"
        style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="361,555.17 350.21,550.53 371.79,550.53 "
+         points="371.79,550.53 361,555.17 350.21,550.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -713,21 +713,21 @@
          id="polygon3224"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="361,549.49 361,530.58 350.21,550.53 "
+         points="350.21,550.53 361,549.49 361,530.58 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3226"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="361,549.49 361,530.58 371.79,550.53 "
+         points="371.79,550.53 361,549.49 361,530.58 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3228"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="371.79,550.53 361,530.58 350.21,550.53 "
+         points="350.21,550.53 371.79,550.53 361,530.58 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -741,7 +741,7 @@
        id="g3242"
        style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="453,555.17 442.21,550.53 463.79,550.53 "
+         points="463.79,550.53 453,555.17 442.21,550.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -749,21 +749,21 @@
          id="polygon3234"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="453,549.49 453,530.58 442.21,550.53 "
+         points="442.21,550.53 453,549.49 453,530.58 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3236"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="453,549.49 453,530.58 463.79,550.53 "
+         points="463.79,550.53 453,549.49 453,530.58 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3238"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="463.79,550.53 453,530.58 442.21,550.53 "
+         points="442.21,550.53 463.79,550.53 453,530.58 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -777,21 +777,21 @@
        id="g3252"
        style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="536.36,538.78 545,533.7 553.64,538.78 545,543.85 "
+         points="553.64,538.78 545,543.85 536.36,538.78 545,533.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3244"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="536.36,550.22 536.36,538.78 545,543.85 545,555.3 "
+         points="545,543.85 545,555.3 536.36,550.22 536.36,538.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3246"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="553.64,550.22 553.64,538.78 545,543.85 545,555.3 "
+         points="545,543.85 545,555.3 553.64,550.22 553.64,538.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -811,21 +811,21 @@
        id="g3262"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="637,543.85 628.36,538.78 637,533.7 645.64,538.78 "
+         points="637,533.7 645.64,538.78 637,543.85 628.36,538.78 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3254"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="637,555.3 628.36,550.22 628.36,538.78 637,543.85 "
+         points="628.36,538.78 637,543.85 637,555.3 628.36,550.22 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3256"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="637,555.3 645.64,550.22 645.64,538.78 637,543.85 "
+         points="645.64,538.78 637,543.85 637,555.3 645.64,550.22 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -845,21 +845,21 @@
        id="g3272"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="315,560.7 323.64,565.78 315,570.85 306.36,565.78 "
+         points="315,570.85 306.36,565.78 315,560.7 323.64,565.78 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3264"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="306.36,565.78 315,570.85 315,582.3 306.36,577.22 "
+         points="315,582.3 306.36,577.22 306.36,565.78 315,570.85 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3266"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="323.64,565.78 315,570.85 315,582.3 323.64,577.22 "
+         points="315,582.3 323.64,577.22 323.64,565.78 315,570.85 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -879,21 +879,21 @@
        id="g3282"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="407,570.85 398.36,565.78 407,560.7 415.64,565.78 "
+         points="407,560.7 415.64,565.78 407,570.85 398.36,565.78 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3274"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="407,582.3 398.36,577.22 398.36,565.78 407,570.85 "
+         points="398.36,565.78 407,570.85 407,582.3 398.36,577.22 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3276"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="407,582.3 415.64,577.22 415.64,565.78 407,570.85 "
+         points="415.64,565.78 407,570.85 407,582.3 415.64,577.22 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -913,7 +913,7 @@
        id="g3292"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="509.79,577.53 499,582.17 488.21,577.53 "
+         points="488.21,577.53 509.79,577.53 499,582.17 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -921,21 +921,21 @@
          id="polygon3284"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="488.21,577.53 499,576.49 499,557.58 "
+         points="499,557.58 488.21,577.53 499,576.49 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3286"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="509.79,577.53 499,576.49 499,557.58 "
+         points="499,557.58 509.79,577.53 499,576.49 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3288"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="488.21,577.53 509.79,577.53 499,557.58 "
+         points="499,557.58 488.21,577.53 509.79,577.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -949,7 +949,7 @@
        id="g3302"
        style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="591,582.17 580.21,577.53 601.79,577.53 "
+         points="601.79,577.53 591,582.17 580.21,577.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -957,21 +957,21 @@
          id="polygon3294"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="591,576.49 591,557.58 580.21,577.53 "
+         points="580.21,577.53 591,576.49 591,557.58 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3296"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="591,576.49 591,557.58 601.79,577.53 "
+         points="601.79,577.53 591,576.49 591,557.58 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3298"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="601.79,577.53 591,557.58 580.21,577.53 "
+         points="580.21,577.53 601.79,577.53 591,557.58 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -985,7 +985,7 @@
        id="g3312"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="279.79,604.53 269,609.17 258.21,604.53 "
+         points="258.21,604.53 279.79,604.53 269,609.17 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -993,21 +993,21 @@
          id="polygon3304"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="258.21,604.53 269,603.49 269,584.58 "
+         points="269,584.58 258.21,604.53 269,603.49 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3306"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="279.79,604.53 269,603.49 269,584.58 "
+         points="269,584.58 279.79,604.53 269,603.49 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3308"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="258.21,604.53 279.79,604.53 269,584.58 "
+         points="269,584.58 258.21,604.53 279.79,604.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -1021,21 +1021,21 @@
        id="g3322"
        style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="369.64,592.78 361,597.85 352.36,592.78 361,587.7 "
+         points="352.36,592.78 361,587.7 369.64,592.78 361,597.85 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3314"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="361,597.85 361,609.3 352.36,604.22 352.36,592.78 "
+         points="352.36,604.22 352.36,592.78 361,597.85 361,609.3 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3316"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="361,597.85 361,609.3 369.64,604.22 369.64,592.78 "
+         points="369.64,604.22 369.64,592.78 361,597.85 361,609.3 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -1055,21 +1055,21 @@
        id="g3332"
        style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="444.36,592.78 453,587.7 461.64,592.78 453,597.85 "
+         points="461.64,592.78 453,597.85 444.36,592.78 453,587.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3324"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="444.36,604.22 444.36,592.78 453,597.85 453,609.3 "
+         points="453,597.85 453,609.3 444.36,604.22 444.36,592.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3326"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="461.64,604.22 461.64,592.78 453,597.85 453,609.3 "
+         points="453,597.85 453,609.3 461.64,604.22 461.64,592.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -1089,7 +1089,7 @@
        id="g3342"
        style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="555.79,604.53 545,609.17 534.21,604.53 "
+         points="534.21,604.53 555.79,604.53 545,609.17 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -1097,21 +1097,21 @@
          id="polygon3334"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="534.21,604.53 545,603.49 545,584.58 "
+         points="545,584.58 534.21,604.53 545,603.49 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3336"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="555.79,604.53 545,603.49 545,584.58 "
+         points="545,584.58 555.79,604.53 545,603.49 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3338"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="534.21,604.53 555.79,604.53 545,584.58 "
+         points="545,584.58 534.21,604.53 555.79,604.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -1125,21 +1125,21 @@
        id="g3352"
        style="display:none;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="214.36,619.78 223,614.7 231.64,619.78 223,624.85 "
+         points="231.64,619.78 223,624.85 214.36,619.78 223,614.7 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3344"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="214.36,631.22 214.36,619.78 223,624.85 223,636.3 "
+         points="223,624.85 223,636.3 214.36,631.22 214.36,619.78 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3346"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="231.64,631.22 231.64,619.78 223,624.85 223,636.3 "
+         points="223,624.85 223,636.3 231.64,631.22 231.64,619.78 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -1159,7 +1159,7 @@
        id="g3362"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="304.21,631.53 325.79,631.53 315,636.17 "
+         points="315,636.17 304.21,631.53 325.79,631.53 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -1167,21 +1167,21 @@
          id="polygon3354"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="315,611.58 304.21,631.53 315,630.49 "
+         points="315,630.49 315,611.58 304.21,631.53 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3356"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="315,611.58 325.79,631.53 315,630.49 "
+         points="315,630.49 315,611.58 325.79,631.53 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3358"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="315,611.58 304.21,631.53 325.79,631.53 "
+         points="325.79,631.53 315,611.58 304.21,631.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -1195,7 +1195,7 @@
        id="g3372"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="417.79,631.53 407,636.17 396.21,631.53 "
+         points="396.21,631.53 417.79,631.53 407,636.17 "
          fill="#1769c2"
          stroke="#0b2c63"
          stroke-width="0.7"
@@ -1203,21 +1203,21 @@
          id="polygon3364"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="396.21,631.53 407,630.49 407,611.58 "
+         points="407,611.58 396.21,631.53 407,630.49 "
          fill="#3298ff"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3366"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="417.79,631.53 407,630.49 407,611.58 "
+         points="407,611.58 417.79,631.53 407,630.49 "
          fill="#0d55b8"
          stroke="#0b2c63"
          stroke-width="0.82"
          id="polygon3368"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="396.21,631.53 417.79,631.53 407,611.58 "
+         points="407,611.58 396.21,631.53 417.79,631.53 "
          fill="#207cea"
          stroke="#0b2c63"
          stroke-width="0.82"
@@ -1231,21 +1231,21 @@
        id="g3382"
        style="display:inline;stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1">
       <polygon
-         points="499,624.85 490.36,619.78 499,614.7 507.64,619.78 "
+         points="499,614.7 507.64,619.78 499,624.85 490.36,619.78 "
          fill="#ff625d"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3374"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="499,636.3 490.36,631.22 490.36,619.78 499,624.85 "
+         points="490.36,619.78 499,624.85 499,636.3 490.36,631.22 "
          fill="#d92d29"
          stroke="#7b1512"
          stroke-width="0.85"
          id="polygon3376"
          style="stroke:#15ff24;stroke-width:3.04;stroke-dasharray:none;stroke-opacity:1" />
       <polygon
-         points="499,636.3 507.64,631.22 507.64,619.78 499,624.85 "
+         points="507.64,619.78 499,624.85 499,636.3 507.64,631.22 "
          fill="#b81718"
          stroke="#7b1512"
          stroke-width="0.85"
@@ -1264,7 +1264,7 @@
      id="base-connections-centered"
      stroke-linejoin="round"
      transform="translate(-67.65902,-78.644037)"
-     style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1">
+     style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1">
     <line
        x1="223"
        y1="625.5"
@@ -1275,7 +1275,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3385"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="315"
        y1="625.5"
@@ -1286,7 +1286,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3387"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="407"
        y1="625.5"
@@ -1297,7 +1297,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3389"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="269"
        y1="598.5"
@@ -1308,7 +1308,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3391"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="361"
        y1="598.5"
@@ -1319,7 +1319,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3393"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="453"
        y1="598.5"
@@ -1330,7 +1330,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3395"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="315"
        y1="571.5"
@@ -1341,7 +1341,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3397"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="407"
        y1="571.5"
@@ -1352,7 +1352,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3399"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="499"
        y1="571.5"
@@ -1363,7 +1363,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3401"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="361"
        y1="544.5"
@@ -1374,7 +1374,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3403"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="453"
        y1="544.5"
@@ -1385,7 +1385,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3405"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="545"
        y1="544.5"
@@ -1396,7 +1396,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3407"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="223"
        y1="625.5"
@@ -1407,7 +1407,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3409"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="269"
        y1="598.5"
@@ -1418,7 +1418,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3411"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="315"
        y1="571.5"
@@ -1429,7 +1429,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3413"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="315"
        y1="625.5"
@@ -1440,7 +1440,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3415"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="361"
        y1="598.5"
@@ -1451,7 +1451,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3417"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="407"
        y1="571.5"
@@ -1462,7 +1462,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3419"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="407"
        y1="625.5"
@@ -1473,7 +1473,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3421"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="453"
        y1="598.5"
@@ -1484,7 +1484,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3423"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="499"
        y1="571.5"
@@ -1495,7 +1495,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3425"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="499"
        y1="625.5"
@@ -1506,7 +1506,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3427"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="545"
        y1="598.5"
@@ -1517,7 +1517,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3429"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="591"
        y1="571.5"
@@ -1528,7 +1528,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3431"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="223"
        y1="625.5"
@@ -1539,7 +1539,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3433"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="499"
        y1="625.5"
@@ -1550,7 +1550,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3435"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="269"
        y1="598.5"
@@ -1561,7 +1561,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3437"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="545"
        y1="598.5"
@@ -1572,7 +1572,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3439"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="315"
        y1="571.5"
@@ -1583,7 +1583,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3441"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="591"
        y1="571.5"
@@ -1594,7 +1594,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3443"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="361"
        y1="544.5"
@@ -1605,7 +1605,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3445"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="637"
        y1="544.5"
@@ -1616,7 +1616,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3447"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="223"
        y1="625.5"
@@ -1627,7 +1627,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3449"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="361"
        y1="544.5"
@@ -1638,7 +1638,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3451"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="315"
        y1="625.5"
@@ -1649,7 +1649,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3453"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="453"
        y1="544.5"
@@ -1660,7 +1660,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3455"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="407"
        y1="625.5"
@@ -1671,7 +1671,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3457"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="545"
        y1="544.5"
@@ -1682,7 +1682,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3459"
-       style="display:none;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:none;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="499"
        y1="625.5"
@@ -1693,7 +1693,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3461"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
     <line
        x1="637"
        y1="544.5"
@@ -1704,7 +1704,7 @@
        opacity="0.92"
        stroke-linecap="round"
        id="line3463"
-       style="display:inline;stroke:#de0109;stroke-width:1.89848;stroke-dasharray:none;stroke-opacity:1" />
+       style="display:inline;stroke:#000000;stroke-width:1.89868;stroke-dasharray:none;stroke-opacity:1" />
   </g>
   <g
      id="base-hollow-replica-overlap"
