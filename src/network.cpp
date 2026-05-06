@@ -208,6 +208,54 @@ inline bool mark_bond_if_new(std::unordered_set<std::uint64_t>& tested_bonds,
     return tested_bonds.insert(undirected_edge_key(u, v)).second;
 }
 
+struct TestedBondBitmap {
+    const GridRegular& grid;
+    std::vector<std::uint64_t> words;
+
+    explicit TestedBondBitmap(const GridRegular& grid_)
+        : grid(grid_),
+          words((static_cast<std::size_t>(grid_.dim) *
+                     static_cast<std::size_t>(grid_.total_size) +
+                 63u) / 64u,
+                0u) {}
+
+    std::uint64_t edge_index(const int u, const int v) const {
+        if (grid.neighbor_xp(u) == v) return static_cast<std::uint64_t>(u);
+        if (grid.neighbor_xp(v) == u) return static_cast<std::uint64_t>(v);
+
+        if (grid.dim >= 2) {
+            const std::uint64_t y_offset = static_cast<std::uint64_t>(grid.total_size);
+            if (grid.neighbor_yp(u) == v) return y_offset + static_cast<std::uint64_t>(u);
+            if (grid.neighbor_yp(v) == u) return y_offset + static_cast<std::uint64_t>(v);
+        }
+
+        if (grid.dim == 3) {
+            const std::uint64_t z_offset = 2ull * static_cast<std::uint64_t>(grid.total_size);
+            if (grid.neighbor_zp(u) == v) return z_offset + static_cast<std::uint64_t>(u);
+            if (grid.neighbor_zp(v) == u) return z_offset + static_cast<std::uint64_t>(v);
+        }
+
+        throw std::runtime_error("TestedBondBitmap: non-neighbor bond");
+    }
+
+    bool mark_if_new(const int u, const int v) {
+        const std::uint64_t bit = edge_index(u, v);
+        const std::size_t word_idx = static_cast<std::size_t>(bit >> 6u);
+        const std::uint64_t mask = 1ull << (bit & 63u);
+        std::uint64_t& word = words[word_idx];
+        if ((word & mask) != 0u) return false;
+        word |= mask;
+        return true;
+    }
+};
+
+inline bool mark_bond_if_new(TestedBondBitmap& tested_bonds,
+                             const int u,
+                             const int v)
+{
+    return tested_bonds.mark_if_new(u, v);
+}
+
 inline double topology_uniform01(std::mt19937_64& rng)
 {
     return std::generate_canonical<double, 53>(rng);
@@ -746,6 +794,7 @@ NetworkPattern network::create_network(
 
     // To store chosen edge pairs during the simulation.
     std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
+    TestedBondBitmap tested_bonds(grid);
     auto open_bond = [&](const int u, const int v)
     {
         dsu_union(u, v);
@@ -756,11 +805,6 @@ NetworkPattern network::create_network(
                                     static_cast<uint32_t>(u));
         }
     };
-
-    // Marks the current frontier so active-active bonds between two frontier
-    // sites can be tested only once without a hash table in the hot loop.
-    std::vector<bool> in_current_frontier(
-        static_cast<std::size_t>(grid.total_size), false);
 
     for (int idx = 0; idx < grid.total_size; ++idx) {
         if (get_site(idx) > 0) {
@@ -783,9 +827,6 @@ NetworkPattern network::create_network(
         std::fill(f_current.begin(), f_current.end(), 0.0);
         next_frontier.clear();
         front_candidates.clear();
-        for (const int idx : frontier) {
-            in_current_frontier[static_cast<std::size_t>(idx)] = true;
-        }
 
         if (is_node) {
             // Site percolation (Leath/SOP): each perimeter target exposed by
@@ -883,10 +924,7 @@ NetworkPattern network::create_network(
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
 
-                        if (in_current_frontier[static_cast<std::size_t>(viz_idx)] &&
-                            idx > viz_idx) {
-                            continue;
-                        }
+                        if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
 
                         if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
                             open_bond(idx, viz_idx);
@@ -900,6 +938,8 @@ NetworkPattern network::create_network(
                     const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
                     const bool no_color   = (vv == -1);
                     if (!same_color && !no_color) continue;
+
+                    if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
 
                     if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
                         front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
@@ -996,10 +1036,6 @@ NetworkPattern network::create_network(
                     }
                 }
             }
-        }
-
-        for (const int idx : frontier) {
-            in_current_frontier[static_cast<std::size_t>(idx)] = false;
         }
 
         for (int c = 0; c < num_colors; ++c) {
@@ -1342,7 +1378,6 @@ NetworkPattern network::create_network(
     std::vector<int>().swap(parent);
     std::vector<int>().swap(dsu);
     std::vector<std::pair<uint32_t,uint32_t>>().swap(edge_pairs);
-    std::vector<bool>().swap(in_current_frontier);
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
 
@@ -1673,7 +1708,7 @@ NetworkPattern network::animate_network(
     };
 
     std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
-    std::unordered_set<std::uint64_t> tested_bonds;
+    TestedBondBitmap tested_bonds(grid);
     const std::uint64_t topology_seed =
         static_cast<std::uint64_t>(rng.get_seed()) ^
         0x9E3779B97F4A7C15ULL ^
@@ -2076,7 +2111,6 @@ NetworkPattern network::animate_network(
     std::vector<int>().swap(frontier);
     std::vector<int>().swap(next_frontier);
     std::vector<std::vector<int>>().swap(largest_comp_nodes_cache);
-    std::unordered_set<std::uint64_t>().swap(tested_bonds);
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
 
