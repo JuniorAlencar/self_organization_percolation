@@ -1845,79 +1845,99 @@ def plot_top_surface_from_network(path_dir, filename, path_out_html=None,
     )
 
 
-def _normalize_network_blocks(blocks):
+NETWORK_CALCULATIONS = {
+    "active_sites_3d",
+    "network_edges",
+    "surface_heatmap",
+    "surface_3d",
+    "surface_posteq_3d",
+    "active_sites_by_color",
+}
+
+
+def _normalize_network_calculations(calculations):
     aliases = {
-        "1": "01",
-        "01": "01",
-        "active": "01",
-        "active_sites": "01",
-        "sitios": "01",
-        "sítios": "01",
-        "2": "02",
-        "02": "02",
-        "edges": "02",
-        "links": "02",
-        "ligacoes": "02",
-        "ligações": "02",
-        "3": "03",
-        "03": "03",
-        "heatmap": "03",
-        "surface_heatmap": "03",
-        "4": "04",
-        "04": "04",
-        "surface": "04",
-        "surface3d": "04",
-        "network_surface_3d": "04",
-        "04b": "04b",
-        "top": "04b",
-        "top_surface": "04b",
-        "active_top_surface": "04b",
-        "5": "05",
-        "05": "05",
-        "species": "05",
-        "colors": "05",
-        "clusters": "05",
-        "cores": "05",
+        "1": "active_sites_3d",
+        "01": "active_sites_3d",
+        "active": "active_sites_3d",
+        "active_sites": "active_sites_3d",
+        "active_sites_3d": "active_sites_3d",
+        "sitios": "active_sites_3d",
+        "sítios": "active_sites_3d",
+        "2": "network_edges",
+        "02": "network_edges",
+        "edges": "network_edges",
+        "links": "network_edges",
+        "network_edges": "network_edges",
+        "ligacoes": "network_edges",
+        "ligações": "network_edges",
+        "3": "surface_heatmap",
+        "03": "surface_heatmap",
+        "heatmap": "surface_heatmap",
+        "surface_heatmap": "surface_heatmap",
+        "4": "surface_3d",
+        "04": "surface_3d",
+        "surface": "surface_3d",
+        "surface3d": "surface_3d",
+        "surface_3d": "surface_3d",
+        "network_surface_3d": "surface_3d",
+        "04b": "surface_posteq_3d",
+        "posteq": "surface_posteq_3d",
+        "surface_posteq": "surface_posteq_3d",
+        "surface_posteq_3d": "surface_posteq_3d",
+        "top": "surface_posteq_3d",
+        "top_surface": "surface_posteq_3d",
+        "active_top_surface": "surface_posteq_3d",
+        "5": "active_sites_by_color",
+        "05": "active_sites_by_color",
+        "species": "active_sites_by_color",
+        "colors": "active_sites_by_color",
+        "clusters": "active_sites_by_color",
+        "cores": "active_sites_by_color",
+        "active_sites_by_color": "active_sites_by_color",
     }
-    all_blocks = {"01", "02", "03", "04", "04b", "05"}
 
-    if blocks is None:
-        return all_blocks
+    if calculations is None:
+        return set(NETWORK_CALCULATIONS)
 
-    if isinstance(blocks, str):
-        blocks_clean = blocks.strip().lower()
-        if blocks_clean in ("all", "todos", "*"):
-            return all_blocks
-        raw_blocks = [part.strip().lower() for part in blocks_clean.split(",")]
-    elif isinstance(blocks, (int, np.integer)):
-        raw_blocks = [str(int(blocks))]
+    if isinstance(calculations, str):
+        calculations_clean = calculations.strip().lower()
+        if calculations_clean in ("all", "todos", "*"):
+            return set(NETWORK_CALCULATIONS)
+        raw_calculations = [part.strip().lower() for part in calculations_clean.split(",")]
+    elif isinstance(calculations, (int, np.integer)):
+        raw_calculations = [str(int(calculations))]
     else:
-        raw_blocks = []
-        for block in blocks:
-            if isinstance(block, (int, np.integer)):
-                raw_blocks.append(str(int(block)))
+        raw_calculations = []
+        for calculation in calculations:
+            if isinstance(calculation, (int, np.integer)):
+                raw_calculations.append(str(int(calculation)))
             else:
-                raw_blocks.append(str(block).strip().lower())
+                raw_calculations.append(str(calculation).strip().lower())
 
     selected = set()
     invalid = []
-    for block in raw_blocks:
-        if not block:
+    for calculation in raw_calculations:
+        if not calculation:
             continue
-        normalized = aliases.get(block)
+        normalized = aliases.get(calculation)
         if normalized is None:
-            invalid.append(block)
+            invalid.append(calculation)
         else:
             selected.add(normalized)
 
     if invalid:
-        valid = ", ".join(sorted(all_blocks))
-        raise ValueError(f"Bloco(s) inválido(s): {invalid}. Use: {valid} ou 'all'.")
+        valid = ", ".join(sorted(NETWORK_CALCULATIONS))
+        raise ValueError(f"Cálculo(s) inválido(s): {invalid}. Use: {valid} ou 'all'.")
 
     if not selected:
-        raise ValueError("Nenhum bloco selecionado.")
+        raise ValueError("Nenhum cálculo selecionado.")
 
     return selected
+
+
+def _normalize_network_blocks(blocks):
+    return _normalize_network_calculations(blocks)
 
 
 def plot_run_network_blocks(path_dir,
@@ -1934,34 +1954,41 @@ def plot_run_network_blocks(path_dir,
                             edge_color_rule="source",
                             max_edges=None,
                             colors_to_plot=None,
-                            force_rebuild_positions=False):
+                            force_rebuild_positions=False,
+                            calculations=None):
     """
-    Separa a visualização de uma execução em blocos:
-      1. plot 3D dos sítios ativados;
-      2. rede de ligações;
-      3. surface com heatmap 2D;
-      4. surface 3D interativa análoga ao NETWORK SURFACE 3D do notebook;
-      4b. surface 3D do topo POSTEQ, lida de data_surfaces/surface_posteq;
-      5. um plot 3D por cor/cluster ativo.
+    Separa a visualização de uma execução em cálculos:
+      - active_sites_3d: plot 3D dos sítios ativados;
+      - network_edges: rede de ligações;
+      - surface_heatmap: surface com heatmap 2D;
+      - surface_3d: surface 3D interativa análoga ao NETWORK SURFACE 3D do notebook;
+      - surface_posteq_3d: surface 3D do topo POSTEQ, lida de data_surfaces/surface_posteq;
+      - active_sites_by_color: um plot 3D por cor/cluster ativo.
 
     Args:
-        blocks: bloco(s) a executar. Exemplos:
+        calculations: cálculo(s) a executar. Exemplos:
             None ou "all" -> todos;
-            "01" ou 1 -> apenas sítios ativos;
-            ["02", "05"] -> ligações e um plot por cor/cluster.
+            "active_sites_3d" -> apenas sítios ativos;
+            ["network_edges", "active_sites_by_color"] -> ligações e um plot por cor/cluster.
+        blocks: nome antigo de calculations, mantido por compatibilidade.
 
     Returns:
-        dict com os caminhos salvos apenas para os blocos executados.
+        dict com os caminhos salvos apenas para os cálculos executados.
     """
-    selected_blocks = _normalize_network_blocks(blocks)
+    if blocks is not None and calculations is not None:
+        raise ValueError("Use apenas 'calculations'. 'blocks' foi mantido só por compatibilidade.")
+
+    selected_calculations = _normalize_network_calculations(
+        calculations if calculations is not None else blocks
+    )
 
     if output_dir is None:
         output_dir = os.path.join(path_dir, "network_blocks")
     os.makedirs(output_dir, exist_ok=True)
 
-    needs_l = bool(selected_blocks & {"01", "05"})
-    needs_network = bool(selected_blocks & {"01", "02", "05"})
-    needs_surface = bool(selected_blocks & {"03", "04", "04b"})
+    needs_l = bool(selected_calculations & {"active_sites_3d", "active_sites_by_color"})
+    needs_network = bool(selected_calculations & {"active_sites_3d", "network_edges", "active_sites_by_color"})
+    needs_surface = bool(selected_calculations & {"surface_heatmap", "surface_3d", "surface_posteq_3d"})
 
     if L is None and needs_l:
         L = _infer_L_from_path(path_dir)
@@ -1988,7 +2015,7 @@ def plot_run_network_blocks(path_dir,
 
     results = {}
 
-    if "01" in selected_blocks:
+    if "active_sites_3d" in selected_calculations:
         active_sites_path = os.path.join(output_dir, "01_active_sites_3d.png")
         plot_3D_full_codec(
             path_dir=network_dir,
@@ -2004,7 +2031,7 @@ def plot_run_network_blocks(path_dir,
         )
         results["01_active_sites_3d"] = active_sites_path
 
-    if "02" in selected_blocks:
+    if "network_edges" in selected_calculations:
         network_edges_path = plot_network_links_from_folder(
             path_dir=path_dir,
             filename=network_filename,
@@ -2017,7 +2044,7 @@ def plot_run_network_blocks(path_dir,
         )
         results["02_network_edges"] = network_edges_path
 
-    if "03" in selected_blocks:
+    if "surface_heatmap" in selected_calculations:
         surface_heatmap_paths = plot_surfaces_from_json(
             path_surface_json=surface_json_path,
             path_out_dir=output_dir,
@@ -2026,7 +2053,7 @@ def plot_run_network_blocks(path_dir,
         )
         results["03_surface_heatmap"] = surface_heatmap_paths
 
-    if "04" in selected_blocks:
+    if "surface_3d" in selected_calculations:
         surface_3d_paths = plot_jupyter_style_surfaces_from_json(
             path_surface_json=surface_json_path,
             path_out_dir=output_dir,
@@ -2035,7 +2062,7 @@ def plot_run_network_blocks(path_dir,
         )
         results["04_jupyter_style_surfaces_3d"] = surface_3d_paths
 
-    if "04b" in selected_blocks:
+    if "surface_posteq_3d" in selected_calculations:
         top_surface_path = os.path.join(output_dir, "04b_surface_posteq_3d.html")
         fig_posteq = plot_surface_3d_from_json_key(
             path_surface_json=surface_json_path,
@@ -2049,7 +2076,7 @@ def plot_run_network_blocks(path_dir,
         results["04b_surface_posteq_3d"] = top_surface_path
         results["04b_legacy_top_surface_3d"] = legacy_top_surface_path
 
-    if "05" in selected_blocks:
+    if "active_sites_by_color" in selected_calculations:
         species_paths = plot_3D_full_codec_by_species(
             path_dir=network_dir,
             filename=network_filename,

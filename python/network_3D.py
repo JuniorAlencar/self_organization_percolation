@@ -17,12 +17,12 @@ def choose_percolation_network_file(path_dir):
     return candidates[-1]
 
 
-L = 512
+L = 128
 DIM = 3
 nc = 4
 rho = 1/nc
 c = 0.1
-fT = 0.01
+fT = 0.02
 path_dir = f"../SOP_data/raw/bond_percolation/num_colors_{nc}/dim_{DIM}/L_{L}/fT_constant/fT_{fT:.6e}/c_{c:.6e}/rho_{rho:.4e}/"
 filename = choose_percolation_network_file(path_dir)
 print(f"Selected network file: {filename}")
@@ -31,12 +31,17 @@ print(f"Selected network file: {filename}")
 output_dir = f"../network/Connections_L{L}_nc{nc}/"
 create_folder(output_dir)
 
+# Flags possíveis em calculations:
+#   "active_sites_3d", "network_edges", "surface_heatmap",
+#   "surface_3d", "surface_posteq_3d", "active_sites_by_color"
 results = plot_run_network_blocks(
     path_dir=path_dir,
     network_filename=filename,
     output_dir=output_dir,
     nc=nc,
-    blocks=["03", "04", "04b"],  # exemplos: "01", "02", "03", "04", "04b", "05", ["02", "05"]
+    calculations=[
+        "network_edges"
+    ],
     show_base=False,
     outline_mode="full",
     visual_profile="full",

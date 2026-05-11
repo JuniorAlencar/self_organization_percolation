@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         
         const bool has_percolation = !ps.color_percolation.empty();
-        const bool write_large_artifacts = animation && has_percolation && L == 1024;
+        const bool write_large_artifacts = animation && has_percolation;
 
         std::optional<EquilibrationCutNetworks> cuts;
         if (write_large_artifacts) {

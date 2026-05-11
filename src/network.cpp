@@ -194,6 +194,107 @@ inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
     return n;
 }
 
+struct OpenBondGraph {
+    std::vector<uint32_t> offsets;
+    std::vector<uint32_t> neighbors;
+
+    OpenBondGraph() = default;
+
+    OpenBondGraph(const int total_size,
+                  const std::vector<std::pair<uint32_t, uint32_t>>& edge_pairs)
+    {
+        build(total_size, edge_pairs);
+    }
+
+    void build(const int total_size,
+               const std::vector<std::pair<uint32_t, uint32_t>>& edge_pairs)
+    {
+        offsets.assign(static_cast<std::size_t>(total_size) + 1u, 0u);
+
+        for (const auto& edge : edge_pairs) {
+            if (edge.first >= static_cast<uint32_t>(total_size) ||
+                edge.second >= static_cast<uint32_t>(total_size)) {
+                continue;
+            }
+            ++offsets[static_cast<std::size_t>(edge.first) + 1u];
+        }
+
+        for (int i = 1; i <= total_size; ++i) {
+            offsets[static_cast<std::size_t>(i)] += offsets[static_cast<std::size_t>(i - 1)];
+        }
+
+        neighbors.assign(edge_pairs.size(), 0u);
+        std::vector<uint32_t> cursor(offsets.begin(), offsets.end());
+        for (const auto& edge : edge_pairs) {
+            if (edge.first >= static_cast<uint32_t>(total_size) ||
+                edge.second >= static_cast<uint32_t>(total_size)) {
+                continue;
+            }
+            neighbors[static_cast<std::size_t>(cursor[edge.first]++)] = edge.second;
+        }
+    }
+};
+
+struct ComponentSummary {
+    int seed = -1;
+    int size = 0;
+};
+
+struct TimeSplit {
+    int pre = 0;
+    int post = 0;
+};
+
+std::vector<int> shortest_open_bond_path_single_color(
+    const GridRegular& grid,
+    const OpenBondGraph& graph,
+    const int active_val,
+    const std::function<int(int)>& get_site)
+{
+    const int top_coord = (grid.dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
+    std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
+    std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
+    std::vector<int> queue;
+    queue.reserve(static_cast<std::size_t>(grid.total_size));
+
+    for (int idx = 0; idx < grid.total_size; ++idx) {
+        if (get_site(idx) != active_val) continue;
+        if (grid.grow_coord(idx) != 0) continue;
+        visited[static_cast<std::size_t>(idx)] = 1;
+        parent[static_cast<std::size_t>(idx)] = -1;
+        queue.push_back(idx);
+    }
+
+    int target = -1;
+    for (std::size_t qi = 0; qi < queue.size(); ++qi) {
+        const int u = queue[qi];
+        if (grid.grow_coord(u) == top_coord) {
+            target = u;
+            break;
+        }
+
+        const uint32_t begin = graph.offsets[static_cast<std::size_t>(u)];
+        const uint32_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
+        for (uint32_t k = begin; k < end; ++k) {
+            const int v = static_cast<int>(graph.neighbors[static_cast<std::size_t>(k)]);
+            if (visited[static_cast<std::size_t>(v)]) continue;
+            if (get_site(v) != active_val) continue;
+            visited[static_cast<std::size_t>(v)] = 1;
+            parent[static_cast<std::size_t>(v)] = u;
+            queue.push_back(v);
+        }
+    }
+
+    std::vector<int> path;
+    if (target < 0) return path;
+
+    for (int cur = target; cur >= 0; cur = parent[static_cast<std::size_t>(cur)]) {
+        path.push_back(cur);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
 inline std::uint64_t undirected_edge_key(const int u, const int v)
 {
     const std::uint32_t a = static_cast<std::uint32_t>(std::min(u, v));
@@ -559,7 +660,6 @@ NetworkPattern network::create_network(
     std::vector<int>    N_current(num_colors, 0);
     std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
-    std::vector<int>    parent(grid.total_size, -2);
     std::vector<int>    frontier;
     std::vector<int>    next_frontier;
     
@@ -606,7 +706,6 @@ NetworkPattern network::create_network(
                 frontier.push_back(idx);
                 ++N_current[c];
                 ++activated;
-                parent[idx] = -1;
                 if (idx >= 0 && idx < grid.total_size) {
                     activation_time[static_cast<std::size_t>(idx)] = 0;
                 }
@@ -639,56 +738,8 @@ NetworkPattern network::create_network(
     std::vector<bool> died(num_colors, false);
     std::vector<bool> finished(num_colors, false);
 
-    // Guarda o sítio que atingiu o topo para cada cor
-    std::vector<int> top_site_per_color(num_colors, -1);
-
     // Guarda a ordem bruta de chegada ao topo, mas só escreve no ps_out no final
     std::vector<int> percolation_rank(num_colors, -1);
-
-    auto build_path_from_parent = [&](int end_idx) -> std::vector<int>
-    {
-        std::vector<int> path;
-
-        if (end_idx < 0) {
-            return path;
-        }
-
-        int cur = end_idx;
-        while (cur >= 0) {
-            path.push_back(cur);
-            cur = parent[cur];
-        }
-
-        if (cur != -1) {
-            path.clear();
-            return path;
-        }
-
-        std::reverse(path.begin(), path.end());
-        return path;
-    };
-
-    auto is_valid_percolating_path = [&](const std::vector<int>& path) -> bool
-    {
-        if (path.empty()) {
-            return false;
-        }
-
-        const int top_coord = (dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
-
-        const int start_idx = path.front();
-        const int end_idx   = path.back();
-
-        if (grid.grow_coord(start_idx) != 0) {
-            return false;
-        }
-
-        if (grid.grow_coord(end_idx) != top_coord) {
-            return false;
-        }
-
-        return true;
-    };
 
     auto largest_component_single_color = [&](const int color_idx) -> int
     {
@@ -798,12 +849,10 @@ NetworkPattern network::create_network(
     auto open_bond = [&](const int u, const int v)
     {
         dsu_union(u, v);
-        if (save_compact) {
-            edge_pairs.emplace_back(static_cast<uint32_t>(u),
-                                    static_cast<uint32_t>(v));
-            edge_pairs.emplace_back(static_cast<uint32_t>(v),
-                                    static_cast<uint32_t>(u));
-        }
+        edge_pairs.emplace_back(static_cast<uint32_t>(u),
+                                static_cast<uint32_t>(v));
+        edge_pairs.emplace_back(static_cast<uint32_t>(v),
+                                static_cast<uint32_t>(u));
     };
 
     for (int idx = 0; idx < grid.total_size; ++idx) {
@@ -875,7 +924,6 @@ NetworkPattern network::create_network(
                 set_site(viz, new_val);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
-                parent[viz] = chosen.activator;
                 activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
 
                 const int h = grid.grow_coord(viz);
@@ -885,7 +933,6 @@ NetworkPattern network::create_network(
 
                 if (!percolated[cor_idx] && h == lenght_network - 1) {
                     percolated[cor_idx] = true;
-                    top_site_per_color[cor_idx] = viz;
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
 
@@ -1008,7 +1055,6 @@ NetworkPattern network::create_network(
                 dsu_make_active(viz);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
-                parent[viz] = chosen_u;
                 activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
 
                 const int h = grid.grow_coord(viz);
@@ -1018,7 +1064,6 @@ NetworkPattern network::create_network(
 
                 if (!percolated[cor_idx] && h == lenght_network - 1) {
                     percolated[cor_idx] = true;
-                    top_site_per_color[cor_idx] = viz;
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
 
@@ -1118,6 +1163,7 @@ NetworkPattern network::create_network(
             };
             std::vector<ValidPercolation> valid_percs;
             valid_percs.reserve(num_colors);
+            const OpenBondGraph open_bond_graph(grid.total_size, edge_pairs);
 
             for (int c = 0; c < num_colors; ++c) {
                 // morreu antes de percolar -> ignora
@@ -1134,11 +1180,11 @@ NetworkPattern network::create_network(
                     continue;
                 }
 
-                // monta caminho até o sítio que tocou o topo
-                std::vector<int> path = build_path_from_parent(top_site_per_color[c]);
+                const int active_val = color_to_active_value(num_colors, c);
+                std::vector<int> path =
+                    shortest_open_bond_path_single_color(grid, open_bond_graph, active_val, get_site);
 
-                // valida caminho base -> topo
-                if (!is_valid_percolating_path(path)) {
+                if (path.empty()) {
                     ps_out.sp_len[c] = -1;
                     ps_out.sp_path_lin[c].clear();
                     continue;
@@ -1375,7 +1421,6 @@ NetworkPattern network::create_network(
     }
 
     std::vector<uint32_t>().swap(activation_time);
-    std::vector<int>().swap(parent);
     std::vector<int>().swap(dsu);
     std::vector<std::pair<uint32_t,uint32_t>>().swap(edge_pairs);
     SparseFrontCandidates empty_front_candidates;
@@ -1464,8 +1509,6 @@ NetworkPattern network::animate_network(
     std::vector<int>    N_current(num_colors, 0);
     std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
-    std::vector<int>    parent(grid.total_size, -2);
-    std::vector<int>    top_site_per_color(num_colors, -1);
     std::vector<int>    frontier;
     std::vector<int>    next_frontier;
 
@@ -1531,7 +1574,6 @@ NetworkPattern network::animate_network(
                 frontier.push_back(idx);
                 ++N_current[c];
                 ++activated;
-                parent[idx] = -1;
             }
             ++tries;
         }
@@ -1548,78 +1590,32 @@ NetworkPattern network::animate_network(
     std::vector<bool> finished(num_colors, false);
     std::vector<int>  percolation_rank(num_colors, -1);
 
-    // cache do maior componente global por cor
-    std::vector<std::vector<int>> largest_comp_nodes_cache(num_colors);
+    // cache leve do maior componente global por cor: semente + tamanho.
+    std::vector<ComponentSummary> largest_comp_cache(num_colors);
     bool global_metrics_finalized = false;
+    std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
 
-    auto build_path_from_parent = [&](int end_idx) -> std::vector<int>
-    {
-        std::vector<int> path;
-
-        if (end_idx < 0) {
-            return path;
-        }
-
-        int cur = end_idx;
-        while (cur >= 0) {
-            path.push_back(cur);
-            cur = parent[cur];
-        }
-
-        if (cur != -1) {
-            path.clear();
-            return path;
-        }
-
-        std::reverse(path.begin(), path.end());
-        return path;
-    };
-
-    auto is_valid_percolating_path = [&](const std::vector<int>& path) -> bool
-    {
-        if (path.empty()) {
-            return false;
-        }
-
-        const int top_coord = (dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
-
-        const int start_idx = path.front();
-        const int end_idx   = path.back();
-
-        if (grid.grow_coord(start_idx) != 0) {
-            return false;
-        }
-
-        if (grid.grow_coord(end_idx) != top_coord) {
-            return false;
-        }
-
-        return true;
-    };
-
-    auto largest_component_nodes_single_color = [&](const int color_idx) -> std::vector<int>
+    auto largest_component_single_color_summary = [&](const int color_idx) -> ComponentSummary
     {
         const int active_val = color_to_active_value(num_colors, color_idx);
 
         std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
         std::vector<int> stack;
-        std::vector<int> comp_nodes;
-        std::vector<int> best_nodes;
+        ComponentSummary best;
 
         for (int idx = 0; idx < grid.total_size; ++idx) {
             if (visited[static_cast<std::size_t>(idx)]) continue;
             if (get_site(idx) != active_val) continue;
 
+            int comp_size = 0;
             stack.clear();
-            comp_nodes.clear();
-
             stack.push_back(idx);
             visited[static_cast<std::size_t>(idx)] = 1;
 
             while (!stack.empty()) {
                 const int u = stack.back();
                 stack.pop_back();
-                comp_nodes.push_back(u);
+                ++comp_size;
 
                 grid.for_each_neighbor(u, [&](const int v) {
                     if (v < 0) return;
@@ -1631,12 +1627,134 @@ NetworkPattern network::animate_network(
                 });
             }
 
-            if (comp_nodes.size() > best_nodes.size()) {
-                best_nodes = comp_nodes;
+            if (comp_size > best.size) {
+                best.seed = idx;
+                best.size = comp_size;
             }
         }
 
-        return best_nodes;
+        return best;
+    };
+
+    auto largest_open_component_single_color_summary =
+        [&](const int color_idx, const OpenBondGraph& graph) -> ComponentSummary
+    {
+        const int active_val = color_to_active_value(num_colors, color_idx);
+
+        std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
+        std::vector<int> stack;
+        ComponentSummary best;
+
+        for (int idx = 0; idx < grid.total_size; ++idx) {
+            if (visited[static_cast<std::size_t>(idx)]) continue;
+            if (get_site(idx) != active_val) continue;
+
+            int comp_size = 0;
+            stack.clear();
+            stack.push_back(idx);
+            visited[static_cast<std::size_t>(idx)] = 1;
+
+            while (!stack.empty()) {
+                const int u = stack.back();
+                stack.pop_back();
+                ++comp_size;
+
+                const uint32_t begin = graph.offsets[static_cast<std::size_t>(u)];
+                const uint32_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
+                for (uint32_t k = begin; k < end; ++k) {
+                    const int v = static_cast<int>(graph.neighbors[static_cast<std::size_t>(k)]);
+                    if (visited[static_cast<std::size_t>(v)]) continue;
+                    if (get_site(v) != active_val) continue;
+                    visited[static_cast<std::size_t>(v)] = 1;
+                    stack.push_back(v);
+                }
+            }
+
+            if (comp_size > best.size) {
+                best.seed = idx;
+                best.size = comp_size;
+            }
+        }
+
+        return best;
+    };
+
+    auto count_component_time_split_single_color =
+        [&](const int seed, const int color_idx) -> TimeSplit
+    {
+        TimeSplit split;
+        if (seed < 0) return split;
+
+        const int active_val = color_to_active_value(num_colors, color_idx);
+        std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
+        std::vector<int> stack;
+        stack.push_back(seed);
+        visited[static_cast<std::size_t>(seed)] = 1;
+
+        while (!stack.empty()) {
+            const int u = stack.back();
+            stack.pop_back();
+
+            int t_site = -1;
+            const bool ok = is_active_color_site_encoded(
+                activation_code, u, color_idx, SPECIES_FACTOR, &t_site);
+            if (!ok) {
+                throw std::runtime_error(
+                    "animate_network: maior componente contém nó inválido no encoded");
+            }
+            if (t_site <= ps_out.t_eq) ++split.pre;
+            else ++split.post;
+
+            grid.for_each_neighbor(u, [&](const int v) {
+                if (v < 0) return;
+                if (visited[static_cast<std::size_t>(v)]) return;
+                if (get_site(v) != active_val) return;
+                visited[static_cast<std::size_t>(v)] = 1;
+                stack.push_back(v);
+            });
+        }
+
+        return split;
+    };
+
+    auto count_open_component_time_split_single_color =
+        [&](const int seed, const int color_idx, const OpenBondGraph& graph) -> TimeSplit
+    {
+        TimeSplit split;
+        if (seed < 0) return split;
+
+        const int active_val = color_to_active_value(num_colors, color_idx);
+        std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
+        std::vector<int> stack;
+        stack.push_back(seed);
+        visited[static_cast<std::size_t>(seed)] = 1;
+
+        while (!stack.empty()) {
+            const int u = stack.back();
+            stack.pop_back();
+
+            int t_site = -1;
+            const bool ok = is_active_color_site_encoded(
+                activation_code, u, color_idx, SPECIES_FACTOR, &t_site);
+            if (!ok) {
+                throw std::runtime_error(
+                    "animate_network: maior componente contém nó inválido no encoded");
+            }
+            if (t_site <= ps_out.t_eq) ++split.pre;
+            else ++split.post;
+
+            const uint32_t begin = graph.offsets[static_cast<std::size_t>(u)];
+            const uint32_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
+            for (uint32_t k = begin; k < end; ++k) {
+                const int v = static_cast<int>(graph.neighbors[static_cast<std::size_t>(k)]);
+                if (visited[static_cast<std::size_t>(v)]) continue;
+                if (get_site(v) != active_val) continue;
+                visited[static_cast<std::size_t>(v)] = 1;
+                stack.push_back(v);
+            }
+        }
+
+        return split;
     };
 
     auto finalize_global_metrics = [&]()
@@ -1648,9 +1766,8 @@ NetworkPattern network::animate_network(
         ps_out.sp_len.assign(num_colors, -1);
         ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
 
-        for (int c = 0; c < num_colors; ++c) {
-            largest_comp_nodes_cache[c].clear();
-        }
+        std::fill(largest_comp_cache.begin(), largest_comp_cache.end(), ComponentSummary{});
+        const OpenBondGraph open_bond_graph(grid.total_size, edge_pairs);
 
         struct ValidPercolation {
             int rank;
@@ -1673,9 +1790,11 @@ NetworkPattern network::animate_network(
                 continue;
             }
 
-            std::vector<int> path = build_path_from_parent(top_site_per_color[c]);
+            const int active_val = color_to_active_value(num_colors, c);
+            std::vector<int> path =
+                shortest_open_bond_path_single_color(grid, open_bond_graph, active_val, get_site);
 
-            if (!is_valid_percolating_path(path)) {
+            if (path.empty()) {
                 ps_out.sp_len[c] = -1;
                 ps_out.sp_path_lin[c].clear();
                 continue;
@@ -1684,7 +1803,9 @@ NetworkPattern network::animate_network(
             ps_out.sp_path_lin[c] = std::move(path);
             ps_out.sp_len[c] = static_cast<int>(ps_out.sp_path_lin[c].size()) - 1;
 
-            largest_comp_nodes_cache[c] = largest_component_nodes_single_color(c);
+            largest_comp_cache[c] = is_node
+                ? largest_component_single_color_summary(c)
+                : largest_open_component_single_color_summary(c, open_bond_graph);
 
             valid_percs.push_back({percolation_rank[c], c});
         }
@@ -1700,14 +1821,12 @@ NetworkPattern network::animate_network(
 
             ps_out.color_percolation.push_back(c + 1);
             ps_out.percolation_order.push_back(++valid_order_ctr);
-            ps_out.M_size_at_perc.push_back(
-                static_cast<int>(largest_comp_nodes_cache[c].size()));
+            ps_out.M_size_at_perc.push_back(largest_comp_cache[c].size);
         }
 
         global_metrics_finalized = true;
     };
 
-    std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
     TestedBondBitmap tested_bonds(grid);
     const std::uint64_t topology_seed =
         static_cast<std::uint64_t>(rng.get_seed()) ^
@@ -1771,7 +1890,6 @@ NetworkPattern network::animate_network(
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
-                parent[viz] = chosen.activator;
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -1780,7 +1898,6 @@ NetworkPattern network::animate_network(
 
                 if (!percolated[cor_idx] && h == lenght_network - 1) {
                     percolated[cor_idx] = true;
-                    top_site_per_color[cor_idx] = viz;
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
 
@@ -1896,7 +2013,6 @@ NetworkPattern network::animate_network(
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
-                parent[viz] = chosen_u;
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -1905,7 +2021,6 @@ NetworkPattern network::animate_network(
 
                 if (!percolated[cor_idx] && h == lenght_network - 1) {
                     percolated[cor_idx] = true;
-                    top_site_per_color[cor_idx] = viz;
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
 
@@ -2022,6 +2137,11 @@ NetworkPattern network::animate_network(
     );
     ps_out.t_eq = ts_out.t_eq;
 
+    OpenBondGraph open_bond_graph_for_splits;
+    if (!is_node) {
+        open_bond_graph_for_splits.build(grid.total_size, edge_pairs);
+    }
+
     for (int c = 0; c < num_colors; ++c) {
         if (ps_out.sp_len[c] < 0 || ps_out.sp_path_lin[c].empty()) {
             ps_out.sp_lin_preteq[c] = -1;
@@ -2036,7 +2156,7 @@ NetworkPattern network::animate_network(
         // ------------------------------------------------------------
         // Decomposição temporal do shortest path global
         // ------------------------------------------------------------
-                int sp_pre = 0;
+        int sp_pre = 0;
         int sp_post = 0;
 
         ps_out.sp_path_lin_preteq[c].clear();
@@ -2077,26 +2197,13 @@ NetworkPattern network::animate_network(
         // ------------------------------------------------------------
         // Decomposição temporal do maior componente global
         // ------------------------------------------------------------
-        int m_pre = 0;
-        int m_post = 0;
+        const TimeSplit comp_split = is_node
+            ? count_component_time_split_single_color(largest_comp_cache[c].seed, c)
+            : count_open_component_time_split_single_color(
+                largest_comp_cache[c].seed, c, open_bond_graph_for_splits);
 
-        const std::vector<int>& comp_nodes = largest_comp_nodes_cache[c];
-        for (const int idx : comp_nodes) {
-            int t_site = -1;
-            const bool ok = is_active_color_site_encoded(
-                activation_code, idx, c, SPECIES_FACTOR, &t_site);
-
-            if (!ok) {
-                throw std::runtime_error(
-                    "animate_network: maior componente contém nó inválido no encoded");
-            }
-
-            if (t_site <= ps_out.t_eq) ++m_pre;
-            else ++m_post;
-        }
-
-        ps_out.M_size_preteq[c] = m_pre;
-        ps_out.M_size_posteq[c] = m_post;
+        ps_out.M_size_preteq[c] = comp_split.pre;
+        ps_out.M_size_posteq[c] = comp_split.post;
     }
 
     ps_out.rho.clear();
@@ -2107,10 +2214,9 @@ NetworkPattern network::animate_network(
     }
 
     std::vector<std::int8_t>().swap(site_state);
-    std::vector<int>().swap(parent);
     std::vector<int>().swap(frontier);
     std::vector<int>().swap(next_frontier);
-    std::vector<std::vector<int>>().swap(largest_comp_nodes_cache);
+    std::vector<ComponentSummary>().swap(largest_comp_cache);
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
 
