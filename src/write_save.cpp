@@ -367,15 +367,7 @@ void save_data::save_network_compact_bin(const NetworkCompact& net,
         std::filesystem::create_directories(out_path.parent_path());
     }
 
-    // Make a copy and normalize species to small integer codes (0..255)
-    NetworkCompact tmp = net;
-    for (std::size_t i = 0; i < tmp.species.size(); ++i) {
-        uint8_t s = tmp.species[i];
-        // normalize: any non-zero -> keep as-is but clamp to 255
-        tmp.species[i] = (s == 0) ? 0 : (s > 255 ? 255 : s);
-    }
-
-    if (!tmp.write_binary(filename)) {
+    if (!net.write_binary(filename)) {
         throw std::runtime_error("save_network_compact_bin: falha ao gravar " + filename);
     }
 }

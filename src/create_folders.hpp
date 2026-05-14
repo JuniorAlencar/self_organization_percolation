@@ -25,7 +25,9 @@ class FolderCreator {
             std::string type_percolation,
             double p0,
             double P0,
-            double rho
+            double rho,
+            bool teste = false,
+            int height_stop_multiplier = 1
         );
 
     private:

@@ -16,6 +16,10 @@ def main() -> None:
         description="Atualiza published/properties_sizes_bundle.json e all_data_sizes.dat a partir de SOP_data/raw."
     )
     parser.add_argument("--sop-root", default=str(default_sop_root()))
+    parser.add_argument("--raw-dir", default="raw")
+    parser.add_argument("--published-dir", default="published")
+    parser.add_argument("--manifests-dir", default="manifests_sizes")
+    parser.add_argument("--output-suffix", default="")
     parser.add_argument("--clear-data", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument(
@@ -34,6 +38,10 @@ def main() -> None:
     process_all_data_sizes(
         clear_data=args.clear_data,
         sop_root=str(sop_root),
+        raw_dir=args.raw_dir,
+        published_dir=args.published_dir,
+        manifests_dir=args.manifests_dir,
+        output_suffix=args.output_suffix,
         p0_lst=args.p0,
         verbose=not args.quiet,
     )

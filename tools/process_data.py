@@ -530,6 +530,10 @@ def process_all_data_sizes(
     clear_data: bool = False,
     *,
     sop_root: str = "../SOP_data",
+    raw_dir: str = "raw",
+    published_dir: str = "published",
+    manifests_dir: str = "manifests_sizes",
+    output_suffix: str = "",
     p0_lst: Optional[List[float]] = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
@@ -539,9 +543,10 @@ def process_all_data_sizes(
             p0_lst = None
 
     sop_root = os.path.abspath(sop_root)
-    raw_root = os.path.join(sop_root, "raw")
-    published_root = os.path.join(sop_root, "published")
-    manifests_root = os.path.join(sop_root, "manifests_sizes")
+    raw_root = os.path.join(sop_root, raw_dir)
+    published_root = os.path.join(sop_root, published_dir)
+    manifests_root = os.path.join(sop_root, manifests_dir)
+    all_data_sizes_name = f"all_data_sizes{output_suffix}.dat"
 
     ensure_dir(raw_root)
     ensure_dir(published_root)
@@ -579,15 +584,15 @@ def process_all_data_sizes(
         )
 
     if verbose:
-        print("Processamento [sizes] finalizado. Construindo SOP_data/all_data_sizes.dat ...")
+        print(f"Processamento [sizes] finalizado. Construindo SOP_data/{all_data_sizes_name} ...")
 
     df = build_sizes_dataframe(
         published_root=published_root,
-        output_file=os.path.join(sop_root, "all_data_sizes.dat"),
+        output_file=os.path.join(sop_root, all_data_sizes_name),
     )
 
     if verbose:
-        print(f"[write] {os.path.join(sop_root, 'all_data_sizes.dat')} ({len(df)} linhas)")
+        print(f"[write] {os.path.join(sop_root, all_data_sizes_name)} ({len(df)} linhas)")
 
     return df
 
@@ -1349,6 +1354,7 @@ def compute_means_for_folder(
     n_boot: int = 20000,
     rng_seed: int = 12345,
     window_roll: int | None = None,
+    time_series_only: bool = False,
     clear_data: bool = False,
     verbose: bool = True,
 ) -> Optional[str]:
@@ -1424,6 +1430,7 @@ def compute_means_for_folder(
 
     processed_files = set(map(str, manifest.get("processed_json_files", [])))
     new_files = [bn for bn in current_seed_files if bn not in processed_files]
+    manifest_time_series_only = bool(manifest.get("time_series_only", False))
 
     if verbose:
         print(
@@ -1431,7 +1438,12 @@ def compute_means_for_folder(
             f"| parseable={len(current_seed_files)} | new={len(new_files)} | clear_data={clear_data}"
         )
 
-    if (not clear_data) and os.path.isfile(out_path) and len(new_files) == 0:
+    if (
+        (not clear_data)
+        and os.path.isfile(out_path)
+        and len(new_files) == 0
+        and manifest_time_series_only == bool(time_series_only)
+    ):
         if verbose:
             print(f"[skip] atualizado: {out_path}")
         return out_path
@@ -1462,6 +1474,7 @@ def compute_means_for_folder(
                 }
                 for g in selected_groups
             ],
+            "time_series_only": bool(time_series_only),
         },
         "p0_groups": [],
     }
@@ -1634,13 +1647,15 @@ def compute_means_for_folder(
                 "t0_global": _safe_float(t0_global),
                 "pc_method": "combine orders of ensemble-mean tails after global t_eq read from sample json meta",
             },
-            "colors": {
+        }
+
+        if not time_series_only:
+            p0_group["colors"] = {
                 "Nsamples": int(colors_arr.size),
                 "nc": _safe_float(nc_mean),
                 "nc_std": _safe_float(nc_std),
                 "nc_err": _safe_float(nc_err),
-            },
-        }
+            }
 
         bundle["p0_groups"].append(p0_group)
 
@@ -1650,9 +1665,10 @@ def compute_means_for_folder(
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(bundle, f, ensure_ascii=False, indent=2, allow_nan=False)
 
-    with open(colors_path, "w", encoding="utf-8") as f:
-        for val in colors_per_sample_all:
-            f.write(f"{int(val)}\n")
+    if not time_series_only:
+        with open(colors_path, "w", encoding="utf-8") as f:
+            for val in colors_per_sample_all:
+                f.write(f"{int(val)}\n")
 
     manifest.update({
         "group_relpath": rel_group,
@@ -1660,6 +1676,7 @@ def compute_means_for_folder(
         "processed_json_files": sorted(current_seed_files),
         "n_processed_json_files": len(current_seed_files),
         "summary_file": out_path,
+        "time_series_only": bool(time_series_only),
         "last_update": pd.Timestamp.utcnow().isoformat(),
     })
     _save_manifest(manifests_root, rel_group, manifest)
@@ -1839,6 +1856,11 @@ def process_all_data(
     clear_data: bool = False,
     *,
     sop_root: str = "../SOP_data",
+    raw_dir: str = "raw",
+    published_dir: str = "published",
+    manifests_dir: str = "manifests",
+    output_suffix: str = "",
+    time_series_only: bool = False,
     p0_lst: Optional[List[float]] = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
@@ -1848,9 +1870,11 @@ def process_all_data(
             p0_lst = None
 
     sop_root = os.path.abspath(sop_root)
-    raw_root = os.path.join(sop_root, "raw")
-    published_root = os.path.join(sop_root, "published")
-    manifests_root = os.path.join(sop_root, "manifests")
+    raw_root = os.path.join(sop_root, raw_dir)
+    published_root = os.path.join(sop_root, published_dir)
+    manifests_root = os.path.join(sop_root, manifests_dir)
+    all_data_name = f"all_data{output_suffix}.dat"
+    all_colors_name = f"all_colors{output_suffix}.dat"
 
     ensure_dir(raw_root)
     ensure_dir(published_root)
@@ -1883,29 +1907,37 @@ def process_all_data(
             published_root=published_root,
             manifests_root=manifests_root,
             rel_group=REL_GROUP,
+            time_series_only=time_series_only,
             clear_data=clear_data,
             verbose=verbose,
         )
 
     if verbose:
-        print("Processamento finalizado. Construindo SOP_data/all_data.dat ...")
+        print(f"Processamento finalizado. Construindo SOP_data/{all_data_name} ...")
 
     df = build_properties_dataframe(
         published_root=published_root,
-        output_file=os.path.join(sop_root, "all_data.dat"),
+        output_file=os.path.join(sop_root, all_data_name),
     )
 
     if verbose:
-        print(f"[write] {os.path.join(sop_root, 'all_data.dat')} ({len(df)} linhas)")
-        print("Construindo SOP_data/all_colors.dat ...")
+        print(f"[write] {os.path.join(sop_root, all_data_name)} ({len(df)} linhas)")
+
+    if time_series_only:
+        if verbose:
+            print("Modo NL-stop: p_mean/p_err calculados; pulando all_colors.")
+        return df
+
+    if verbose:
+        print(f"Construindo SOP_data/{all_colors_name} ...")
 
     df_colors = build_colors_dataframe(
         published_root=published_root,
-        output_file=os.path.join(sop_root, "all_colors.dat"),
+        output_file=os.path.join(sop_root, all_colors_name),
     )
 
     if verbose:
-        print(f"[write] {os.path.join(sop_root, 'all_colors.dat')} ({len(df_colors)} linhas)")
+        print(f"[write] {os.path.join(sop_root, all_colors_name)} ({len(df_colors)} linhas)")
     return df
 
 if __name__ == "__main__":

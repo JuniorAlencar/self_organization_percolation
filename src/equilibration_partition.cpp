@@ -571,8 +571,6 @@ EquilibrationCutNetworks build_equilibration_cut_networks(
 
     pre_net.seed = encoded_net.seed;
     post_net.seed = encoded_net.seed;
-    pre_net.edge_pairs = encoded_net.edge_pairs;
-    post_net.edge_pairs = encoded_net.edge_pairs;
 
     const std::size_t total_size = encoded_net.data.size();
     pre_net.data.assign(total_size, static_cast<NetworkPattern::state_t>(-1));
