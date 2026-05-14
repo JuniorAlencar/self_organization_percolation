@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import json
 import re
 from typing import Any
 
-from sop_paths import load_config, get_data_dirs, parse_group_relpath, group_dict_to_key, get_group_dirs
+from sop_paths import load_config, get_data_dirs, parse_group_relpath, group_dict_to_key
 
 FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
@@ -69,13 +70,29 @@ def parse_group_relpath_compat(group_relpath: Path) -> tuple[dict[str, Any], str
         return group_dict, group_key
 
 
-def build_index(cfg_path: str = "../config/sop_data_config.yaml") -> None:
+def _safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
+
+
+def build_index(
+    cfg_path: str = "../config/sop_data_config.yaml",
+    *,
+    sop_root: str | None = None,
+    raw_dir: str | None = None,
+) -> None:
     cfg = load_config(cfg_path)
+    if sop_root is not None:
+        cfg["data_root"] = sop_root
+    if raw_dir is not None:
+        cfg["raw_dir"] = raw_dir
     dirs = get_data_dirs(cfg)
 
     groups = {}
 
-    for group_dir in get_group_dirs(dirs["raw"]):
+    for group_dir in sorted(dirs["raw"].rglob("rho_*")):
+        if not group_dir.is_dir() or not (group_dir / "data").is_dir():
+            continue
+
         group_relpath = group_dir.relative_to(dirs["raw"])
 
         try:
@@ -96,7 +113,8 @@ def build_index(cfg_path: str = "../config/sop_data_config.yaml") -> None:
             "json_files": json_files,
         }
 
-    out_file = dirs["tmp"] / f"raw_groups_index_{cfg['machine_name']}.json"
+    raw_tag = _safe_name(str(cfg["raw_dir"]))
+    out_file = dirs["tmp"] / f"{raw_tag}_groups_index_{cfg['machine_name']}.json"
     with out_file.open("w", encoding="utf-8") as f:
         json.dump(groups, f, indent=2, ensure_ascii=False)
 
@@ -105,4 +123,14 @@ def build_index(cfg_path: str = "../config/sop_data_config.yaml") -> None:
 
 
 if __name__ == "__main__":
-    build_index()
+    parser = argparse.ArgumentParser(
+        description="Indexa grupos de amostras a partir de SOP_data/raw ou raw_NL_stop."
+    )
+    parser.add_argument(
+        "--config",
+        default=str((Path(__file__).resolve().parent / ".." / "config" / "sop_data_config.yaml").resolve()),
+    )
+    parser.add_argument("--sop-root", default=None)
+    parser.add_argument("--raw-dir", default=None)
+    args = parser.parse_args()
+    build_index(args.config, sop_root=args.sop_root, raw_dir=args.raw_dir)

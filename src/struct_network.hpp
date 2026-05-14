@@ -144,7 +144,7 @@ struct NetworkCompact {
     inline std::size_t num_edges() const { return edges.size(); }
 
     // Build CSR from a list of edge pairs (u,v). Assumes 0 <= u,v < N.
-    void build_csr_from_edge_pairs(std::vector<std::pair<index_t,index_t>> &pairs) {
+    void build_csr_from_edge_pairs(const std::vector<std::pair<index_t,index_t>> &pairs) {
         // Count degree
         edge_offsets.assign(N + 1, 0);
         for (const auto &e : pairs) {

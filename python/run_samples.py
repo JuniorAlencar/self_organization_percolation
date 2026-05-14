@@ -51,18 +51,20 @@ type_perc = 'bond'
 #         shell_data(L, type_perc, p0, seed, k, NT, dim,
 #                 nc, num_runs[idx], rho, exec_name, P0, Equilibration, num_threads[idx],multi)
 
-#L_lst =       [128, 192, 256, 304, 362, 430, 512, 608, 724, 851, 1024]
-#num_runs =    [400, 350, 300, 250, 150, 125, 100, 80, 30, 15, 10]
-L_lst = [128, 256, 512, 1024]
-num_runs =    [400, 300, 100, 10]
-#f_T = np.linspace(0.01, 0.50, 25)
-#c_lst = [0.01, 0.05, 0.25, 0.50, 0.75, 1.0]
+# L_lst =       [256, 320, 384, 512, 640, 768, 1024]
+# num_runs =    [150, 100, 50, 25,   15,  10, 5]
+# f_T = np.linspace(0.001, 0.30, 25)
+# c_lst = [0.01, 0.05, 0.25, 0.50]
+L_lst =       [256]
+num_runs =    [150]
 f_T = [0.1]
-c_lst = [0.15]
+c_lst = [0.01]
 multi=True
 Equilibration = 'false'
 nc = 1
-p0 = 0.3
+p0 = 0.6
+P0 = 1.0
+
 for c in c_lst:
         for ft in f_T:
             for idx, L in enumerate(L_lst):            
@@ -72,7 +74,7 @@ for c in c_lst:
                     # n_points = 50
                     # rho = custom_range(start, stop, n_points)
                     rho = [1/nc]
-                    exec_name = f"ft_{ft:.2f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
+                    exec_name = f"ft_{ft:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_P{P0}.sh"
                     
                     shell_data(L, type_perc, p0, seed, c, ft, dim,
                             nc, num_runs[idx], [1/nc], exec_name, P0, Equilibration, multi)

@@ -8,6 +8,7 @@
 #include "helpers_partitions.hpp"
 #include "network_partitions.hpp"
 #include "equilibration_partition.hpp"
+#include "height_stop_config.hpp"
 
 #include <iomanip>
 #include <cstdlib>
@@ -53,6 +54,8 @@ int main(int argc, char* argv[]) {
         double rho_val = 1.0;
         double P0 = 0.1;
         std::string equilibration = "true";
+        
+        const bool teste = false;
 
         if (argc == 12) {
             L = std::stoi(argv[1]);
@@ -148,7 +151,9 @@ int main(int argc, char* argv[]) {
                 type_percolation,
                 pp0,
                 P0,
-                rho_val
+                rho_val,
+                teste,
+                HEIGHT_STOP_MULTIPLIER
             );
 
         std::cerr << "[DBG] ps sizes -> "
@@ -180,7 +185,9 @@ int main(int argc, char* argv[]) {
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         
         const bool has_percolation = !ps.color_percolation.empty();
-        const bool write_large_artifacts = animation && has_percolation;
+        const bool calculate_detailed_properties = (HEIGHT_STOP_MULTIPLIER == 1);
+        const bool write_large_artifacts =
+            calculate_detailed_properties && animation && has_percolation;
 
         std::optional<EquilibrationCutNetworks> cuts;
         if (write_large_artifacts) {
@@ -198,6 +205,9 @@ int main(int argc, char* argv[]) {
             saver.save_surfaces_as_npz(surfaces, surfaces_filename);
         } else if (animation && !has_percolation) {
             std::cout << "[INFO] No percolating species found; skipping surface file."
+                      << std::endl;
+        } else if (animation && !calculate_detailed_properties) {
+            std::cout << "[INFO] NL-stop mode: skipping network/surface artifacts."
                       << std::endl;
         }
 
@@ -230,18 +240,8 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                std::vector<std::pair<NetworkCompact::index_t, NetworkCompact::index_t>> pairs;
-                pairs.reserve(np.edge_pairs.size());
-                for (const auto& edge : np.edge_pairs) {
-                    const auto u = static_cast<NetworkCompact::index_t>(edge.first);
-                    const auto v = static_cast<NetworkCompact::index_t>(edge.second);
-                    if (u >= nc.N || v >= nc.N) continue;
-                    if (nc.species[u] == 0 || nc.species[v] == 0) continue;
-                    pairs.emplace_back(u, v);
-                }
-
-                if (!pairs.empty()) {
-                    nc.build_csr_from_edge_pairs(pairs);
+                if (!np.edge_pairs.empty()) {
+                    nc.build_csr_from_edge_pairs(np.edge_pairs);
                 } else {
                     nc.edge_offsets.assign(nc.N + 1, 0);
                     nc.edges.clear();
@@ -282,35 +282,74 @@ int main(int argc, char* argv[]) {
                 NetworkCompact pre_c = convert_to_compact(cuts->pre_teq);
                 NetworkCompact post_c = convert_to_compact(cuts->post_teq);
 
-                if (have_csr && base_full.N == pre_c.N) {
-                    // Build CSR for pre and post by selecting only edges between active nodes
-                    std::vector<std::pair<NetworkCompact::index_t, NetworkCompact::index_t>> pairs_pre;
-                    std::vector<std::pair<NetworkCompact::index_t, NetworkCompact::index_t>> pairs_post;
+                auto rebuild_pre_post_csr = [](NetworkCompact& pre,
+                                               NetworkCompact& post,
+                                               const NetworkCompact& base) {
+                    pre.edge_offsets.assign(pre.N + 1, 0);
+                    post.edge_offsets.assign(post.N + 1, 0);
 
-                    pairs_pre.reserve(base_full.edges.size());
-                    pairs_post.reserve(base_full.edges.size());
+                    for (NetworkCompact::index_t u = 0; u < base.N; ++u) {
+                        const bool pre_u = pre.species[u] != 0;
+                        const bool post_u = post.species[u] != 0;
+                        if (!pre_u && !post_u) continue;
 
-                    for (NetworkCompact::index_t u = 0; u < base_full.N; ++u) {
-                        const NetworkCompact::index_t start = base_full.neighbors_start(u);
-                        const NetworkCompact::index_t end = base_full.neighbors_end(u);
-                        if (start >= end) continue;
+                        const NetworkCompact::index_t start = base.neighbors_start(u);
+                        const NetworkCompact::index_t end = base.neighbors_end(u);
                         for (NetworkCompact::index_t k = start; k < end; ++k) {
-                            const NetworkCompact::index_t v = base_full.edges[static_cast<std::size_t>(k)];
-                            if (v >= base_full.N) continue;
-                            if (pre_c.species[u] != 0 && pre_c.species[v] != 0) {
-                                pairs_pre.emplace_back(u, v);
+                            const NetworkCompact::index_t v =
+                                base.edges[static_cast<std::size_t>(k)];
+                            if (v >= base.N) continue;
+                            if (pre_u && pre.species[v] != 0) {
+                                ++pre.edge_offsets[static_cast<std::size_t>(u) + 1u];
                             }
-                            if (post_c.species[u] != 0 && post_c.species[v] != 0) {
-                                pairs_post.emplace_back(u, v);
+                            if (post_u && post.species[v] != 0) {
+                                ++post.edge_offsets[static_cast<std::size_t>(u) + 1u];
                             }
                         }
                     }
 
-                    if (!pairs_pre.empty()) pre_c.build_csr_from_edge_pairs(pairs_pre);
-                    else pre_c.edge_offsets.assign(pre_c.N + 1, 0);
+                    for (NetworkCompact::index_t i = 1; i <= pre.N; ++i) {
+                        pre.edge_offsets[static_cast<std::size_t>(i)] +=
+                            pre.edge_offsets[static_cast<std::size_t>(i - 1)];
+                        post.edge_offsets[static_cast<std::size_t>(i)] +=
+                            post.edge_offsets[static_cast<std::size_t>(i - 1)];
+                    }
 
-                    if (!pairs_post.empty()) post_c.build_csr_from_edge_pairs(pairs_post);
-                    else post_c.edge_offsets.assign(post_c.N + 1, 0);
+                    pre.edges.assign(pre.edge_offsets.back(), 0);
+                    post.edges.assign(post.edge_offsets.back(), 0);
+
+                    std::vector<NetworkCompact::index_t> pre_cursor(
+                        pre.edge_offsets.begin(),
+                        pre.edge_offsets.end());
+                    std::vector<NetworkCompact::index_t> post_cursor(
+                        post.edge_offsets.begin(),
+                        post.edge_offsets.end());
+
+                    for (NetworkCompact::index_t u = 0; u < base.N; ++u) {
+                        const bool pre_u = pre.species[u] != 0;
+                        const bool post_u = post.species[u] != 0;
+                        if (!pre_u && !post_u) continue;
+
+                        const NetworkCompact::index_t start = base.neighbors_start(u);
+                        const NetworkCompact::index_t end = base.neighbors_end(u);
+                        for (NetworkCompact::index_t k = start; k < end; ++k) {
+                            const NetworkCompact::index_t v =
+                                base.edges[static_cast<std::size_t>(k)];
+                            if (v >= base.N) continue;
+                            if (pre_u && pre.species[v] != 0) {
+                                pre.edges[static_cast<std::size_t>(pre_cursor[u]++)] = v;
+                            }
+                            if (post_u && post.species[v] != 0) {
+                                post.edges[static_cast<std::size_t>(post_cursor[u]++)] = v;
+                            }
+                        }
+                    }
+                };
+
+                if (have_csr && base_full.N == pre_c.N) {
+                    // Build CSR for pre and post by selecting only edges
+                    // between active nodes, without materializing edge pairs.
+                    rebuild_pre_post_csr(pre_c, post_c, base_full);
                 }
 
                 const std::string net_preteq_filename = network_preteq + "/" + sample_base + ".bin";
@@ -318,13 +357,18 @@ int main(int argc, char* argv[]) {
                 saver.save_network_compact_bin(pre_c, net_preteq_filename);
                 saver.save_network_compact_bin(post_c, net_posteq_filename);
 
-                // Additionally save filtered (reindexed) active-only compact networks
-                NetworkCompact pre_filtered = pre_c.filter_active();
-                NetworkCompact post_filtered = post_c.filter_active();
+                // Additionally save filtered (reindexed) active-only compact networks.
+                // Build and write them one at a time to avoid doubling the peak RAM.
                 const std::string net_preteq_active = network_preteq + "/" + sample_base + "_active.bin";
                 const std::string net_posteq_active = network_posteq + "/" + sample_base + "_active.bin";
-                saver.save_network_compact_bin(pre_filtered, net_preteq_active);
-                saver.save_network_compact_bin(post_filtered, net_posteq_active);
+                {
+                    NetworkCompact pre_filtered = pre_c.filter_active();
+                    saver.save_network_compact_bin(pre_filtered, net_preteq_active);
+                }
+                {
+                    NetworkCompact post_filtered = post_c.filter_active();
+                    saver.save_network_compact_bin(post_filtered, net_posteq_active);
+                }
             } catch (const std::exception &e) {
                 std::cerr << "Warning: failed to save pre/post teq compact networks: " << e.what() << '\n';
             }

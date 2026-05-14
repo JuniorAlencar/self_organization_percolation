@@ -17,14 +17,20 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
     std::string type_percolation,
     double /* p0 */,
     double /* P0 */,
-    double rho
+    double rho,
+    bool teste,
+    int height_stop_multiplier
     )
 {
     char main_folder[256];
+    std::string raw_folder = "raw";
+    if (teste) {
+        raw_folder = "raw_" + std::to_string(height_stop_multiplier) + "L_stop";
+    }
 
 
-    sprintf(main_folder, "%s/raw/%s_percolation/num_colors_%d/dim_%d/L_%d",
-            base_path.c_str(), type_percolation.c_str(), n_colors, dim, L);
+    sprintf(main_folder, "%s/%s/%s_percolation/num_colors_%d/dim_%d/L_%d",
+            base_path.c_str(), raw_folder.c_str(), type_percolation.c_str(), n_colors, dim, L);
         
 
     std::string full_path;
@@ -55,6 +61,5 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
 
     return {network_path, data_path, data_path_equilibration, data_network_preteq, data_network_posteq};
 }
-
 
 
