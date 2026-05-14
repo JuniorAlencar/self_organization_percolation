@@ -351,12 +351,14 @@ def compute_sizes_for_folder(
             "seed_used": [],
             "p0_groups_detected": sorted({float(g["p0"]) for g in selected_groups}),
             "P0_groups_detected": sorted({float(g["P0"]) for g in selected_groups}),
+            "sample_groups_detected": _sample_group_summaries(selected_groups),
         },
         "p0_groups": [],
     }
 
     seed_used_set = set()
     current_valid_files: set[str] = set()
+    valid_selected_groups: List[Dict[str, Any]] = []
 
     for group in selected_groups:
         P0_value = float(group["P0"])
@@ -392,6 +394,8 @@ def compute_sizes_for_folder(
                 print(f"[sizes] sem samples válidas em {data_dir} para P0={P0_value:.2f}, p0={p0_value:.2f}")
             continue
 
+        valid_selected_groups.append(group)
+
         mean_by_order: Dict[int, Dict[str, Any]] = {}
         for ordk, lst in per_order.items():
             mean_by_order[ordk] = _average_sizes_by_order(lst)
@@ -410,11 +414,21 @@ def compute_sizes_for_folder(
             "orders": orders_blocks,
         })
 
+    _ensure_bundle_group_P0_values(bundle, valid_selected_groups)
+    _ensure_sample_group_summaries(bundle, selected_groups)
+
     bundle["meta"]["seed_used"] = sorted(seed_used_set)
     bundle = _sanitize_for_json(bundle)
 
     processed_files = set(map(str, manifest.get("processed_json_files", [])))
-    if (not clear_data) and os.path.isfile(out_path) and processed_files == current_valid_files:
+    existing_group_keys = _bundle_group_keys(out_path) if os.path.isfile(out_path) else None
+    bundle_groups_match = existing_group_keys == _detected_group_keys(valid_selected_groups)
+    if (
+        (not clear_data)
+        and os.path.isfile(out_path)
+        and processed_files == current_valid_files
+        and bundle_groups_match
+    ):
         if verbose:
             print(f"[sizes skip] atualizado: {out_path}")
         return out_path
@@ -659,21 +673,13 @@ def _extract_seed_from_filename(fp: str) -> int | None:
     return int(m.group("seed"))
 
 
-def parse_filename(path):
-    name = Path(path).name
-
-    mP0 = RE_P0.search(name)
-    mp0 = RE_p0.search(name)
-    ms = RE_seed.search(name)
-
-    if not (mP0 and mp0 and ms):
+def parse_filename(path: str | Path) -> Dict[str, Any]:
+    parsed = _parse_fname(str(path))
+    if parsed is None:
         raise ValueError(f"Nome inválido: {path}")
 
-    return {
-        "P0": float(mP0.group("P0")),
-        "p0": float(mp0.group("p0")),
-        "seed": int(ms.group("seed")),
-    }
+    P0_value, p0_value, seed = parsed
+    return {"P0": P0_value, "p0": p0_value, "seed": seed}
 
 
 def read_experiment_json(path):
@@ -1215,6 +1221,24 @@ def _discover_sample_groups(
     return out
 
 
+def _sample_group_summaries(selected_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "P0_value": float(group["P0"]),
+            "p0_value": float(group["p0"]),
+            "n_files": int(group["n_files"]),
+        }
+        for group in selected_groups
+    ]
+
+
+def _detected_group_keys(selected_groups: List[Dict[str, Any]]) -> set[Tuple[float, float]]:
+    return {
+        (float(group["P0"]), float(group["p0"]))
+        for group in selected_groups
+    }
+
+
 def _parse_params_from_path(path: str) -> Optional[Tuple[str, int, float, float, int, float, int]]:
     m = PARAM_RE.search(path.replace("\\", "/"))
     if not m:
@@ -1336,6 +1360,84 @@ def _save_manifest(manifest_root: str | Path, rel_group_dir: str | Path, manifes
         json.dump(_sanitize_for_json(manifest), f, ensure_ascii=False, indent=2, allow_nan=False)
     return path
 
+
+def _bundle_group_keys(bundle_path: str | Path) -> Optional[set[Tuple[float, float]]]:
+    try:
+        with Path(bundle_path).open("r", encoding="utf-8") as f:
+            js = json.load(f)
+    except Exception:
+        return None
+
+    p0_groups = js.get("p0_groups", [])
+    if not isinstance(p0_groups, list):
+        return None
+
+    keys: set[Tuple[float, float]] = set()
+    for group in p0_groups:
+        if not isinstance(group, dict):
+            return None
+        P0_value = _safe_float(group.get("P0_value", None))
+        p0_value = _safe_float(group.get("p0_value", None))
+        if P0_value is None or p0_value is None:
+            return None
+        keys.add((float(P0_value), float(p0_value)))
+
+    return keys
+
+
+def _ensure_bundle_group_P0_values(
+    bundle: Dict[str, Any],
+    selected_groups: List[Dict[str, Any]],
+) -> None:
+    p0_groups = bundle.get("p0_groups", [])
+    if not isinstance(p0_groups, list):
+        raise ValueError("Bundle inválido: 'p0_groups' não é uma lista.")
+
+    if len(p0_groups) != len(selected_groups):
+        raise ValueError(
+            "Bundle inválido: número de p0_groups difere dos grupos detectados "
+            f"({len(p0_groups)} != {len(selected_groups)})."
+        )
+
+    for idx, (p0_group, detected_group) in enumerate(zip(p0_groups, selected_groups)):
+        if not isinstance(p0_group, dict):
+            raise ValueError(f"Bundle inválido: p0_groups[{idx}] não é um objeto.")
+
+        detected_P0 = float(detected_group["P0"])
+        detected_p0 = float(detected_group["p0"])
+        group_p0 = _safe_float(p0_group.get("p0_value", None))
+
+        if group_p0 is None or not _float_close(group_p0, detected_p0):
+            raise ValueError(
+                f"Bundle inválido: p0_groups[{idx}] tem p0_value={group_p0}, "
+                f"mas o grupo detectado tem p0={detected_p0}."
+            )
+
+        group_P0 = _safe_float(p0_group.get("P0_value", None))
+        if group_P0 is None:
+            group_P0 = detected_P0
+
+        if not _float_close(group_P0, detected_P0):
+            raise ValueError(
+                f"Bundle inválido: p0_groups[{idx}] tem P0_value={group_P0}, "
+                f"mas o grupo detectado tem P0={detected_P0}."
+            )
+
+        p0_groups[idx] = {
+            "P0_value": float(detected_P0),
+            **{k: v for k, v in p0_group.items() if k != "P0_value"},
+        }
+
+
+def _ensure_sample_group_summaries(
+    bundle: Dict[str, Any],
+    selected_groups: List[Dict[str, Any]],
+) -> None:
+    meta = bundle.get("meta", {})
+    if not isinstance(meta, dict):
+        raise ValueError("Bundle inválido: 'meta' não é um objeto.")
+    meta["sample_groups_detected"] = _sample_group_summaries(selected_groups)
+
 def compute_means_for_folder(
     type_perc: str,
     num_colors: int,
@@ -1431,18 +1533,27 @@ def compute_means_for_folder(
     processed_files = set(map(str, manifest.get("processed_json_files", [])))
     new_files = [bn for bn in current_seed_files if bn not in processed_files]
     manifest_time_series_only = bool(manifest.get("time_series_only", False))
+    detected_group_keys = _detected_group_keys(selected_groups)
+    existing_group_keys = _bundle_group_keys(out_path) if os.path.isfile(out_path) else None
+    bundle_groups_match = existing_group_keys == detected_group_keys
 
     if verbose:
         print(
             f"[group] {rel_group} | total_json={len(all_jsons)} "
             f"| parseable={len(current_seed_files)} | new={len(new_files)} | clear_data={clear_data}"
         )
+        if os.path.isfile(out_path) and not bundle_groups_match:
+            print(
+                f"[rebuild] grupos no bundle diferem dos raw detectados: "
+                f"bundle={sorted(existing_group_keys or [])} raw={sorted(detected_group_keys)}"
+            )
 
     if (
         (not clear_data)
         and os.path.isfile(out_path)
         and len(new_files) == 0
         and manifest_time_series_only == bool(time_series_only)
+        and bundle_groups_match
     ):
         if verbose:
             print(f"[skip] atualizado: {out_path}")
@@ -1466,14 +1577,7 @@ def compute_means_for_folder(
             "seed_used": [],
             "p0_groups_detected": sorted({float(g["p0"]) for g in selected_groups}),
             "P0_groups_detected": sorted({float(g["P0"]) for g in selected_groups}),
-            "sample_groups_detected": [
-                {
-                    "P0_value": float(g["P0"]),
-                    "p0_value": float(g["p0"]),
-                    "n_files": int(g["n_files"]),
-                }
-                for g in selected_groups
-            ],
+            "sample_groups_detected": _sample_group_summaries(selected_groups),
             "time_series_only": bool(time_series_only),
         },
         "p0_groups": [],
@@ -1658,6 +1762,9 @@ def compute_means_for_folder(
             }
 
         bundle["p0_groups"].append(p0_group)
+
+    _ensure_bundle_group_P0_values(bundle, selected_groups)
+    _ensure_sample_group_summaries(bundle, selected_groups)
 
     bundle["meta"]["seed_used"] = sorted(seed_used_set)
     bundle = _sanitize_for_json(bundle)
