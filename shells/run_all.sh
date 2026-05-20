@@ -499,6 +499,7 @@ mapfile -t scripts < <(printf '%s\n' ./*.sh | sort -V)
 log "Found ${#scripts[@]} shell script(s)."
 
 ran_any=0
+failed_any=0
 
 for f in "${scripts[@]}"; do
   base="$(basename "$f")"
@@ -517,14 +518,23 @@ for f in "${scripts[@]}"; do
   log "------------------------------------------------------------"
 
   if [[ "$AUTO_RAM_JOBS" -eq 1 ]]; then
-    run_with_auto_ram_jobs "$f" "$base" || true
+    if ! run_with_auto_ram_jobs "$f" "$base"; then
+      failed_any=1
+    fi
   else
-    run_without_auto_ram_jobs "$f" "$base" || true
+    if ! run_without_auto_ram_jobs "$f" "$base"; then
+      failed_any=1
+    fi
   fi
 done
 
 if [[ "$ran_any" -eq 0 ]]; then
   log "No runnable scripts found."
+fi
+
+if [[ "$failed_any" -ne 0 ]]; then
+  log "[ERROR] One or more scripts failed."
+  exit 1
 fi
 
 log "All scripts were processed."

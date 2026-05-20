@@ -57,33 +57,30 @@ type_perc = 'bond'
 # c_lst = [0.01, 0.05, 0.25, 0.50]
 L_lst =       [256]
 num_runs =    [150]
-#f_T = [0.2, 0.3, 0.4]
+#f_T = [0.1, 0.2, 0.3, 0.4]
+
 #c_lst = [0.15]
 multi=True
 Equilibration = 'false'
-nc = 2
-#p0 = 0.6
+nc = 1
+p0 = 0.6
 P0 = 0.1
-parms_need = [(2, 256, 150, 0.3),
- (2, 256, 150, 0.7),
- (2, 256,150, 1.0),
- (2, 1024,5, 1.0),
- (4, 1024,5, 1.0),
- (8, 512,25, 0.3),
- (8, 512,25, 0.7),
- (8, 512,25, 1.0),
- (8, 1024,5, 1.0)]
-ft=0.1
-c=0.15
-print(parms_need)
-for parm in parms_need:
-        nc, L, num_run, p0 = parm
+c = 0.15
+fT = 0.1
+#ft=0.1
+c_lst = [0.15]
+# L, n_samples, nc, p0
+parms = [(1024, 5, 2, 0.3), (1024, 5, 2, 0.7), (1024, 5, 2, 1.0),
+         (1024, 5, 4, 0.3), (1024, 5, 4, 0.7), (1024, 5, 4, 1.0),
+         (1024, 5, 8, 0.3), (1024, 5, 8, 0.7), (1024, 5, 8, 1.0),
+         (1024, 5, 1, 0.6), (1024, 5, 1, 0.6),
+         (1024, 5, 2, 0.6), (1024, 5, 4, 0.6), (1024, 5, 8, 0.6)]
+for par in parms:
+        L, n_samples, nc, p0 = par
         rho = [1/nc]
-        exec_name = f"ft_{p0:.3f}L_{L}_c_{0.15}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
-                        
-        shell_data(L, type_perc, p0, seed, c, ft, dim,
-                nc, num_run, [1/nc], exec_name, P0, Equilibration, multi)
-
+        exec_name = f"ft_{fT:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
+        shell_data(L, type_perc, p0, seed, c, fT, dim,
+                nc, n_samples, rho, exec_name, P0, Equilibration, multi)
 # for c in c_lst:
 #         for ft in f_T:
 #                 for idx, L in enumerate(L_lst):            
