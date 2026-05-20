@@ -11,6 +11,8 @@
 #include <sstream>
 #include <random>
 #include <array>
+#include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include <cstdint>
 
@@ -353,6 +355,17 @@ struct TestedBondBitmap {
         word |= mask;
         return true;
     }
+
+    void mark_open(const int u, const int v) {
+        const std::uint64_t bit = edge_index(u, v);
+        words[static_cast<std::size_t>(bit >> 6u)] |= (1ull << (bit & 63u));
+    }
+
+    bool contains(const int u, const int v) const {
+        const std::uint64_t bit = edge_index(u, v);
+        const std::uint64_t word = words[static_cast<std::size_t>(bit >> 6u)];
+        return (word & (1ull << (bit & 63u))) != 0u;
+    }
 };
 
 inline bool mark_bond_if_new(TestedBondBitmap& tested_bonds,
@@ -360,6 +373,62 @@ inline bool mark_bond_if_new(TestedBondBitmap& tested_bonds,
                              const int v)
 {
     return tested_bonds.mark_if_new(u, v);
+}
+
+std::vector<int> shortest_open_bond_path_single_color(
+    const GridRegular& grid,
+    const TestedBondBitmap& open_bonds,
+    const int active_val,
+    const std::function<int(int)>& get_site)
+{
+    std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
+    std::vector<int> current;
+    std::vector<int> next;
+    current.reserve(static_cast<std::size_t>(compute_base_size(grid)));
+    next.reserve(static_cast<std::size_t>(compute_base_size(grid)));
+
+    for (int idx = 0; idx < grid.total_size; ++idx) {
+        if (grid.grow_coord(idx) != 0) continue;
+        if (get_site(idx) != active_val) continue;
+        parent[static_cast<std::size_t>(idx)] = -1;
+        current.push_back(idx);
+    }
+
+    int reached_top = -1;
+    int neigh[6];
+
+    while (!current.empty() && reached_top < 0) {
+        next.clear();
+
+        for (const int u : current) {
+            if (grid.grow_coord(u) == grid.grow_top_coord()) {
+                reached_top = u;
+                break;
+            }
+
+            const int nneigh = collect_neighbors(grid, u, neigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const int v = neigh[ni];
+                if (parent[static_cast<std::size_t>(v)] != -2) continue;
+                if (get_site(v) != active_val) continue;
+                if (!open_bonds.contains(u, v)) continue;
+
+                parent[static_cast<std::size_t>(v)] = u;
+                next.push_back(v);
+            }
+        }
+
+        current.swap(next);
+    }
+
+    if (reached_top < 0) return {};
+
+    std::vector<int> path;
+    for (int at = reached_top; at != -1; at = parent[static_cast<std::size_t>(at)]) {
+        path.push_back(at);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
 }
 
 inline double topology_uniform01(std::mt19937_64& rng)
@@ -371,18 +440,26 @@ struct SparseFrontCandidates {
     static constexpr int max_candidates_per_target = 16;
 
     std::vector<int> touched_targets;
-    std::vector<int> slot_of_target;
+    std::unordered_map<int, int> slot_of_target;
     std::vector<std::array<std::uint32_t, max_candidates_per_target>> activators;
     std::vector<std::array<std::uint8_t, max_candidates_per_target>> colors;
     std::vector<unsigned char> counts;
 
     explicit SparseFrontCandidates(const int nsites = 0)
-        : slot_of_target(static_cast<std::size_t>(nsites), -1) {}
+    {
+        (void)nsites;
+    }
+
+    void reserve_frontier(const std::size_t expected_targets) {
+        touched_targets.reserve(expected_targets);
+        activators.reserve(expected_targets);
+        colors.reserve(expected_targets);
+        counts.reserve(expected_targets);
+        slot_of_target.reserve(expected_targets);
+    }
 
     void clear() {
-        for (const int target : touched_targets) {
-            slot_of_target[static_cast<std::size_t>(target)] = -1;
-        }
+        slot_of_target.clear();
         touched_targets.clear();
         activators.clear();
         colors.clear();
@@ -390,14 +467,17 @@ struct SparseFrontCandidates {
     }
 
     void add(const int target, const FrontCandidate candidate) {
-        int slot = slot_of_target[static_cast<std::size_t>(target)];
-        if (slot < 0) {
+        int slot = -1;
+        const auto it = slot_of_target.find(target);
+        if (it == slot_of_target.end()) {
             slot = static_cast<int>(counts.size());
-            slot_of_target[static_cast<std::size_t>(target)] = slot;
+            slot_of_target.emplace(target, slot);
             touched_targets.push_back(target);
             activators.emplace_back();
             colors.emplace_back();
             counts.push_back(0);
+        } else {
+            slot = it->second;
         }
 
         unsigned char& count = counts[static_cast<std::size_t>(slot)];
@@ -673,6 +753,7 @@ NetworkPattern network::create_network(
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
     SparseFrontCandidates front_candidates(grid.total_size);
+    front_candidates.reserve_frontier(static_cast<std::size_t>(base_size));
 
     auto commit_step = [&](const int t_k,
                            const std::vector<double>& p_vec,
@@ -885,14 +966,25 @@ NetworkPattern network::create_network(
     // To store chosen edge pairs during the simulation.
     std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
     TestedBondBitmap tested_bonds(grid);
+    std::unique_ptr<TestedBondBitmap> open_bonds;
+    if constexpr (calculate_detailed_properties) {
+        if (!is_node) {
+            open_bonds = std::make_unique<TestedBondBitmap>(grid);
+        }
+    }
     auto open_bond = [&](const int u, const int v)
     {
         if constexpr (calculate_detailed_properties) {
             dsu_union(u, v);
-            edge_pairs.emplace_back(static_cast<uint32_t>(u),
-                                    static_cast<uint32_t>(v));
-            edge_pairs.emplace_back(static_cast<uint32_t>(v),
-                                    static_cast<uint32_t>(u));
+            if (open_bonds) {
+                open_bonds->mark_open(u, v);
+            }
+            if (save_compact || is_node) {
+                edge_pairs.emplace_back(static_cast<uint32_t>(u),
+                                        static_cast<uint32_t>(v));
+                edge_pairs.emplace_back(static_cast<uint32_t>(v),
+                                        static_cast<uint32_t>(u));
+            }
         }
     };
 
@@ -1209,7 +1301,10 @@ NetworkPattern network::create_network(
             };
             std::vector<ValidPercolation> valid_percs;
             valid_percs.reserve(num_colors);
-            const OpenBondGraph open_bond_graph(grid.total_size, edge_pairs);
+            std::unique_ptr<OpenBondGraph> open_bond_graph;
+            if (is_node) {
+                open_bond_graph = std::make_unique<OpenBondGraph>(grid.total_size, edge_pairs);
+            }
 
             for (int c = 0; c < num_colors; ++c) {
                 // morreu antes de percolar -> ignora
@@ -1227,8 +1322,11 @@ NetworkPattern network::create_network(
                 }
 
                 const int active_val = color_to_active_value(num_colors, c);
-                std::vector<int> path =
-                    shortest_open_bond_path_single_color(grid, open_bond_graph, active_val, get_site);
+                std::vector<int> path = is_node
+                    ? shortest_open_bond_path_single_color(
+                        grid, *open_bond_graph, active_val, get_site)
+                    : shortest_open_bond_path_single_color(
+                        grid, *open_bonds, active_val, get_site);
 
                 if (path.empty()) {
                     ps_out.sp_len[c] = -1;
@@ -1474,10 +1572,12 @@ NetworkPattern network::create_network(
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
 
-    NetworkPattern net(dim, shape, num_colors, rho);
+    NetworkPattern net(dim, shape, num_colors, rho, save_compact);
     net.seed = net_seed;
-    for (int idx = 0; idx < grid.total_size; ++idx) {
-        net.set(idx, get_site(idx));
+    if (save_compact) {
+        for (int idx = 0; idx < grid.total_size; ++idx) {
+            net.set(idx, get_site(idx));
+        }
     }
     return net;
 }
@@ -1565,6 +1665,7 @@ NetworkPattern network::animate_network(
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
     SparseFrontCandidates front_candidates(grid.total_size);
+    front_candidates.reserve_frontier(static_cast<std::size_t>(base_size));
 
     auto commit_step = [&](const int t_k,
                            const std::vector<double>& p_vec,
