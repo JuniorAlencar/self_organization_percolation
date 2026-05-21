@@ -167,12 +167,23 @@ struct DecodedValue {
 struct FrontCandidate {
     std::uint32_t activator = std::numeric_limits<std::uint32_t>::max();
     std::uint8_t color_idx = std::numeric_limits<std::uint8_t>::max();
+    std::uint64_t edge_bit = std::numeric_limits<std::uint64_t>::max();
 
     FrontCandidate() = default;
 
     FrontCandidate(const int activator_, const int color_idx_)
         : activator(static_cast<std::uint32_t>(activator_)),
           color_idx(static_cast<std::uint8_t>(color_idx_)) {}
+
+    FrontCandidate(const int activator_, const int color_idx_, const std::uint64_t edge_bit_)
+        : activator(static_cast<std::uint32_t>(activator_)),
+          color_idx(static_cast<std::uint8_t>(color_idx_)),
+          edge_bit(edge_bit_) {}
+};
+
+struct NeighborBond {
+    int idx = -1;
+    std::uint64_t edge_bit = std::numeric_limits<std::uint64_t>::max();
 };
 
 inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
@@ -196,6 +207,34 @@ inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
         const int zp = grid.neighbor_zp(idx);
         if (zm >= 0) out[n++] = zm;
         if (zp >= 0) out[n++] = zp;
+    }
+
+    return n;
+}
+
+inline int collect_neighbor_bonds(const GridRegular& grid, const int idx, NeighborBond out[6])
+{
+    int n = 0;
+
+    const int xm = grid.neighbor_xm(idx);
+    const int xp = grid.neighbor_xp(idx);
+    if (xm >= 0) out[n++] = NeighborBond{xm, static_cast<std::uint64_t>(xm)};
+    if (xp >= 0) out[n++] = NeighborBond{xp, static_cast<std::uint64_t>(idx)};
+
+    if (grid.dim >= 2) {
+        const std::uint64_t y_offset = static_cast<std::uint64_t>(grid.total_size);
+        const int ym = grid.neighbor_ym(idx);
+        const int yp = grid.neighbor_yp(idx);
+        if (ym >= 0) out[n++] = NeighborBond{ym, y_offset + static_cast<std::uint64_t>(ym)};
+        if (yp >= 0) out[n++] = NeighborBond{yp, y_offset + static_cast<std::uint64_t>(idx)};
+    }
+
+    if (grid.dim == 3) {
+        const std::uint64_t z_offset = 2ull * static_cast<std::uint64_t>(grid.total_size);
+        const int zm = grid.neighbor_zm(idx);
+        const int zp = grid.neighbor_zp(idx);
+        if (zm >= 0) out[n++] = NeighborBond{zm, z_offset + static_cast<std::uint64_t>(zm)};
+        if (zp >= 0) out[n++] = NeighborBond{zp, z_offset + static_cast<std::uint64_t>(idx)};
     }
 
     return n;
@@ -302,6 +341,60 @@ std::vector<int> shortest_open_bond_path_single_color(
     return path;
 }
 
+std::vector<int> shortest_site_path_single_color(
+    const GridRegular& grid,
+    const int active_val,
+    const std::function<int(int)>& get_site)
+{
+    std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
+    std::vector<int> current;
+    std::vector<int> next;
+    current.reserve(static_cast<std::size_t>(compute_base_size(grid)));
+    next.reserve(static_cast<std::size_t>(compute_base_size(grid)));
+
+    for (int idx = 0; idx < grid.total_size; ++idx) {
+        if (grid.grow_coord(idx) != 0) continue;
+        if (get_site(idx) != active_val) continue;
+        parent[static_cast<std::size_t>(idx)] = -1;
+        current.push_back(idx);
+    }
+
+    int reached_top = -1;
+    int neigh[6];
+
+    while (!current.empty() && reached_top < 0) {
+        next.clear();
+
+        for (const int u : current) {
+            if (grid.grow_coord(u) == grid.grow_top_coord()) {
+                reached_top = u;
+                break;
+            }
+
+            const int nneigh = collect_neighbors(grid, u, neigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const int v = neigh[ni];
+                if (parent[static_cast<std::size_t>(v)] != -2) continue;
+                if (get_site(v) != active_val) continue;
+
+                parent[static_cast<std::size_t>(v)] = u;
+                next.push_back(v);
+            }
+        }
+
+        current.swap(next);
+    }
+
+    if (reached_top < 0) return {};
+
+    std::vector<int> path;
+    for (int at = reached_top; at != -1; at = parent[static_cast<std::size_t>(at)]) {
+        path.push_back(at);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
 inline std::uint64_t undirected_edge_key(const int u, const int v)
 {
     const std::uint32_t a = static_cast<std::uint32_t>(std::min(u, v));
@@ -328,19 +421,39 @@ struct TestedBondBitmap {
                 0u) {}
 
     std::uint64_t edge_index(const int u, const int v) const {
-        if (grid.neighbor_xp(u) == v) return static_cast<std::uint64_t>(u);
-        if (grid.neighbor_xp(v) == u) return static_cast<std::uint64_t>(v);
+        const int lo = std::min(u, v);
+        const int hi = std::max(u, v);
+        const int diff = hi - lo;
+
+        // X bonds occupy [0, total_size). X is periodic for the 2D/3D
+        // geometries used here, so the wrap bond is anchored at x = SX - 1.
+        if (lo / grid.SX == hi / grid.SX) {
+            if (diff == 1) {
+                return static_cast<std::uint64_t>(lo);
+            }
+            if (diff == grid.SX - 1) {
+                return static_cast<std::uint64_t>(hi);
+            }
+        }
 
         if (grid.dim >= 2) {
             const std::uint64_t y_offset = static_cast<std::uint64_t>(grid.total_size);
-            if (grid.neighbor_yp(u) == v) return y_offset + static_cast<std::uint64_t>(u);
-            if (grid.neighbor_yp(v) == u) return y_offset + static_cast<std::uint64_t>(v);
+            if (lo % grid.SX == hi % grid.SX) {
+                if (diff == grid.SX) {
+                    return y_offset + static_cast<std::uint64_t>(lo);
+                }
+                // Y is periodic only when growth is along Z (3D).
+                if (grid.grow_axis != 1 &&
+                    diff == grid.SX * (grid.SY - 1) &&
+                    lo / grid.stride_z == hi / grid.stride_z) {
+                    return y_offset + static_cast<std::uint64_t>(hi);
+                }
+            }
         }
 
-        if (grid.dim == 3) {
+        if (grid.dim == 3 && diff == grid.stride_z) {
             const std::uint64_t z_offset = 2ull * static_cast<std::uint64_t>(grid.total_size);
-            if (grid.neighbor_zp(u) == v) return z_offset + static_cast<std::uint64_t>(u);
-            if (grid.neighbor_zp(v) == u) return z_offset + static_cast<std::uint64_t>(v);
+            return z_offset + static_cast<std::uint64_t>(lo);
         }
 
         throw std::runtime_error("TestedBondBitmap: non-neighbor bond");
@@ -348,6 +461,10 @@ struct TestedBondBitmap {
 
     bool mark_if_new(const int u, const int v) {
         const std::uint64_t bit = edge_index(u, v);
+        return mark_if_new(bit);
+    }
+
+    bool mark_if_new(const std::uint64_t bit) {
         const std::size_t word_idx = static_cast<std::size_t>(bit >> 6u);
         const std::uint64_t mask = 1ull << (bit & 63u);
         std::uint64_t& word = words[word_idx];
@@ -358,11 +475,19 @@ struct TestedBondBitmap {
 
     void mark_open(const int u, const int v) {
         const std::uint64_t bit = edge_index(u, v);
+        mark_open(bit);
+    }
+
+    void mark_open(const std::uint64_t bit) {
         words[static_cast<std::size_t>(bit >> 6u)] |= (1ull << (bit & 63u));
     }
 
     bool contains(const int u, const int v) const {
         const std::uint64_t bit = edge_index(u, v);
+        return contains(bit);
+    }
+
+    bool contains(const std::uint64_t bit) const {
         const std::uint64_t word = words[static_cast<std::size_t>(bit >> 6u)];
         return (word & (1ull << (bit & 63u))) != 0u;
     }
@@ -443,6 +568,7 @@ struct SparseFrontCandidates {
     std::unordered_map<int, int> slot_of_target;
     std::vector<std::array<std::uint32_t, max_candidates_per_target>> activators;
     std::vector<std::array<std::uint8_t, max_candidates_per_target>> colors;
+    std::vector<std::array<std::uint64_t, max_candidates_per_target>> edge_bits;
     std::vector<unsigned char> counts;
 
     explicit SparseFrontCandidates(const int nsites = 0)
@@ -454,6 +580,7 @@ struct SparseFrontCandidates {
         touched_targets.reserve(expected_targets);
         activators.reserve(expected_targets);
         colors.reserve(expected_targets);
+        edge_bits.reserve(expected_targets);
         counts.reserve(expected_targets);
         slot_of_target.reserve(expected_targets);
     }
@@ -463,6 +590,7 @@ struct SparseFrontCandidates {
         touched_targets.clear();
         activators.clear();
         colors.clear();
+        edge_bits.clear();
         counts.clear();
     }
 
@@ -475,6 +603,7 @@ struct SparseFrontCandidates {
             touched_targets.push_back(target);
             activators.emplace_back();
             colors.emplace_back();
+            edge_bits.emplace_back();
             counts.push_back(0);
         } else {
             slot = it->second;
@@ -484,6 +613,7 @@ struct SparseFrontCandidates {
         if (count < max_candidates_per_target) {
             activators[static_cast<std::size_t>(slot)][count] = candidate.activator;
             colors[static_cast<std::size_t>(slot)][count] = candidate.color_idx;
+            edge_bits[static_cast<std::size_t>(slot)][count] = candidate.edge_bit;
             ++count;
         }
     }
@@ -491,7 +621,8 @@ struct SparseFrontCandidates {
     FrontCandidate candidate(const std::size_t slot, const int idx) const {
         return FrontCandidate{
             static_cast<int>(activators[slot][static_cast<std::size_t>(idx)]),
-            static_cast<int>(colors[slot][static_cast<std::size_t>(idx)])
+            static_cast<int>(colors[slot][static_cast<std::size_t>(idx)]),
+            edge_bits[slot][static_cast<std::size_t>(idx)]
         };
     }
 };
@@ -972,12 +1103,19 @@ NetworkPattern network::create_network(
             open_bonds = std::make_unique<TestedBondBitmap>(grid);
         }
     }
-    auto open_bond = [&](const int u, const int v)
+    auto open_bond = [&](const int u,
+                         const int v,
+                         const std::uint64_t edge_bit =
+                             std::numeric_limits<std::uint64_t>::max())
     {
         if constexpr (calculate_detailed_properties) {
             dsu_union(u, v);
             if (open_bonds) {
-                open_bonds->mark_open(u, v);
+                if (edge_bit == std::numeric_limits<std::uint64_t>::max()) {
+                    open_bonds->mark_open(u, v);
+                } else {
+                    open_bonds->mark_open(edge_bit);
+                }
             }
             if (save_compact || is_node) {
                 edge_pairs.emplace_back(static_cast<uint32_t>(u),
@@ -1075,7 +1213,7 @@ NetworkPattern network::create_network(
             // Bond percolation (SOP): test every allowed bond from the current
             // growth front. A target activates if at least one incident allowed
             // bond opens in this time step.
-            int neigh[6];
+            NeighborBond neigh[6];
 
             for (const int idx : frontier) {
                 const int a_val = get_site(idx);
@@ -1085,9 +1223,10 @@ NetworkPattern network::create_network(
                 if (cor_idx < 0 || cor_idx >= num_colors) continue;
                 if (finished[cor_idx]) continue;
 
-                const int nneigh = collect_neighbors(grid, idx, neigh);
+                const int nneigh = collect_neighbor_bonds(grid, idx, neigh);
                 for (int ni = 0; ni < nneigh; ++ni) {
-                    const int viz_idx = neigh[ni];
+                    const int viz_idx = neigh[ni].idx;
+                    const std::uint64_t edge_bit = neigh[ni].edge_bit;
 
                     const int vv = get_site(viz_idx);
 
@@ -1104,10 +1243,10 @@ NetworkPattern network::create_network(
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
 
-                        if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
+                        if (!tested_bonds.mark_if_new(edge_bit)) continue;
 
                         if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
-                            open_bond(idx, viz_idx);
+                            open_bond(idx, viz_idx, edge_bit);
                         }
                         continue;
                     }
@@ -1119,10 +1258,10 @@ NetworkPattern network::create_network(
                     const bool no_color   = (vv == -1);
                     if (!same_color && !no_color) continue;
 
-                    if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
+                    if (!tested_bonds.mark_if_new(edge_bit)) continue;
 
                     if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
-                        front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
+                        front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx, edge_bit});
                     }
                 }
             }
@@ -1204,13 +1343,13 @@ NetworkPattern network::create_network(
                     for (int i = 0; i < n_cand; ++i) {
                         const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
-                        open_bond(fc.activator, viz);
+                        open_bond(fc.activator, viz, fc.edge_bit);
                     }
                 } else {
                     for (int i = 0; i < n_cand; ++i) {
                         const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
-                        open_bond(fc.activator, viz);
+                        open_bond(fc.activator, viz, fc.edge_bit);
                     }
                 }
             }
@@ -1301,10 +1440,6 @@ NetworkPattern network::create_network(
             };
             std::vector<ValidPercolation> valid_percs;
             valid_percs.reserve(num_colors);
-            std::unique_ptr<OpenBondGraph> open_bond_graph;
-            if (is_node) {
-                open_bond_graph = std::make_unique<OpenBondGraph>(grid.total_size, edge_pairs);
-            }
 
             for (int c = 0; c < num_colors; ++c) {
                 // morreu antes de percolar -> ignora
@@ -1323,8 +1458,7 @@ NetworkPattern network::create_network(
 
                 const int active_val = color_to_active_value(num_colors, c);
                 std::vector<int> path = is_node
-                    ? shortest_open_bond_path_single_color(
-                        grid, *open_bond_graph, active_val, get_site)
+                    ? shortest_site_path_single_color(grid, active_val, get_site)
                     : shortest_open_bond_path_single_color(
                         grid, *open_bonds, active_val, get_site);
 
@@ -1941,8 +2075,10 @@ NetworkPattern network::animate_network(
             }
 
             const int active_val = color_to_active_value(num_colors, c);
-            std::vector<int> path =
-                shortest_open_bond_path_single_color(grid, open_bond_graph, active_val, get_site);
+            std::vector<int> path = is_node
+                ? shortest_site_path_single_color(grid, active_val, get_site)
+                : shortest_open_bond_path_single_color(
+                    grid, open_bond_graph, active_val, get_site);
 
             if (path.empty()) {
                 ps_out.sp_len[c] = -1;
@@ -2097,7 +2233,7 @@ NetworkPattern network::animate_network(
             // Same activation logic used by create_network for bond/SOP.
             // All accepted bonds from the current front are collected before
             // any target site is activated, removing for-loop order bias.
-            int neigh[6];
+            NeighborBond neigh[6];
 
             for (const int idx : frontier) {
                 const int a_val = get_site(idx);
@@ -2107,9 +2243,10 @@ NetworkPattern network::animate_network(
                 if (cor_idx < 0 || cor_idx >= num_colors) continue;
                 if (finished[cor_idx]) continue;
 
-                const int nneigh = collect_neighbors(grid, idx, neigh);
+                const int nneigh = collect_neighbor_bonds(grid, idx, neigh);
                 for (int ni = 0; ni < nneigh; ++ni) {
-                    const int viz_idx = neigh[ni];
+                    const int viz_idx = neigh[ni].idx;
+                    const std::uint64_t edge_bit = neigh[ni].edge_bit;
 
                     const int vv = get_site(viz_idx);
 
@@ -2121,7 +2258,7 @@ NetworkPattern network::animate_network(
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
 
-                        if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
+                        if (!tested_bonds.mark_if_new(edge_bit)) continue;
 
                         if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
                             if constexpr (calculate_detailed_properties) {
@@ -2138,10 +2275,10 @@ NetworkPattern network::animate_network(
                     const bool no_color   = (vv == -1);
                     if (!same_color && !no_color) continue;
 
-                    if (!mark_bond_if_new(tested_bonds, idx, viz_idx)) continue;
+                    if (!tested_bonds.mark_if_new(edge_bit)) continue;
 
                     if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
-                        front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx});
+                        front_candidates.add(viz_idx, FrontCandidate{idx, cor_idx, edge_bit});
                     }
                 }
             }
