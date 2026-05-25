@@ -14,7 +14,7 @@ EXCLUDED_SCRIPTS=(
 # CPU throttling options
 # -----------------------------------------------------------------------------
 LIMIT_CPU_CLOCK="${LIMIT_CPU_CLOCK:-1}"
-CPU_MAX_FREQ="${CPU_MAX_FREQ:-3.8GHz}"
+CPU_MAX_FREQ="${CPU_MAX_FREQ:-4.0GHz}"
 CPU_GOVERNOR="${CPU_GOVERNOR:-ondemand}"
 
 # -----------------------------------------------------------------------------
