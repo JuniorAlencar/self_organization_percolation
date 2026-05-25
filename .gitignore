@@ -24,3 +24,4 @@ shells/after/
 .process_equilibration
 *.html
 /shells/dps
+/Network
