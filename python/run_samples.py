@@ -55,8 +55,8 @@ type_perc = 'bond'
 # num_runs =    [150, 100, 50, 25,   15,  10, 5]
 # f_T = np.linspace(0.001, 0.30, 25)
 # c_lst = [0.01, 0.05, 0.25, 0.50]
-L_lst =       [256]
-num_runs =    [150]
+L_lst =       [1024]
+num_runs =    [5]
 #f_T = [0.1, 0.2, 0.3, 0.4]
 
 #c_lst = [0.15]
@@ -64,33 +64,24 @@ multi=True
 Equilibration = 'false'
 nc = 1
 p0 = 0.6
-P0 = 0.1
+#P0 = 0.1
 c = 0.15
-fT = 0.1
+f_T = [0.1]
 #ft=0.1
 c_lst = [0.15]
 # L, n_samples, nc, p0
-parms = [(1024, 5, 2, 0.3), (1024, 5, 2, 0.7), (1024, 5, 2, 1.0),
-         (1024, 5, 4, 0.3), (1024, 5, 4, 0.7), (1024, 5, 4, 1.0),
-         (1024, 5, 8, 0.3), (1024, 5, 8, 0.7), (1024, 5, 8, 1.0),
-         (1024, 5, 1, 0.6), (1024, 5, 1, 0.6),
-         (1024, 5, 2, 0.6), (1024, 5, 4, 0.6), (1024, 5, 8, 0.6)]
-for par in parms:
-        L, n_samples, nc, p0 = par
-        rho = [1/nc]
-        exec_name = f"ft_{fT:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
-        shell_data(L, type_perc, p0, seed, c, fT, dim,
-                nc, n_samples, rho, exec_name, P0, Equilibration, multi)
-# for c in c_lst:
-#         for ft in f_T:
-#                 for idx, L in enumerate(L_lst):            
-#                         # start = 1/(P0*L**2)
-#                         # print(start)
-#                         # stop = 1/(2*nc)
-#                         # n_points = 50
-#                         # rho = custom_range(start, stop, n_points)
-#                         rho = [1/nc]
-#                         exec_name = f"ft_{ft:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}.sh"
-                        
-#                         shell_data(L, type_perc, p0, seed, c, ft, dim,
-#                                 nc, num_runs[idx], [1/nc], exec_name, P0, Equilibration, multi)
+P0_lst = [0.25, 0.50, 1.0]
+for P0 in P0_lst:
+        for c in c_lst:
+                for ft in f_T:
+                        for idx, L in enumerate(L_lst):            
+                                # start = 1/(P0*L**2)
+                                # print(start)
+                                # stop = 1/(2*nc)
+                                # n_points = 50
+                                # rho = custom_range(start, stop, n_points)
+                                rho = [1/nc]
+                                exec_name = f"ft_{ft:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}.sh"
+                                
+                                shell_data(L, type_perc, p0, seed, c, ft, dim,
+                                        nc, num_runs[idx], [1/nc], exec_name, P0, Equilibration, multi)
