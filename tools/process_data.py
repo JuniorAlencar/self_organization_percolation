@@ -95,8 +95,8 @@ def _build_group_relpath(
         f"dim_{dim}",
         f"L_{L}",
         "fT_constant",
-        f"fT_{f_T:.4e}",
-        f"c_{c:.4e}",
+        f"fT_{f_T:.6e}",
+        f"c_{c:.6e}",
         f"rho_{rho:.4e}",
     )
 
@@ -578,7 +578,7 @@ def process_all_data_sizes(
 
     for tp, nc, DIM, L, FT, C, RHO, REL_GROUP in iterator:
         iterator.set_postfix_str(
-            f"{tp} nc={nc} dim={DIM} L={L} f_T={FT:.4e} c={C:.4e} rho={RHO:.4e}"
+            f"{tp} nc={nc} dim={DIM} L={L} f_T={FT:.6e} c={C:.6e} rho={RHO:.4e}"
         )
         compute_sizes_for_folder(
             type_perc=tp,
@@ -1999,7 +1999,7 @@ def process_all_data(
 
     for tp, nc, DIM, L, FT, C, RHO, REL_GROUP in iterator:
         iterator.set_postfix_str(
-            f"{tp} nc={nc} dim={DIM} L={L} f_T={FT:.4e} c={C:.4e} rho={RHO:.4e}"
+            f"{tp} nc={nc} dim={DIM} L={L} f_T={FT:.6e} c={C:.6e} rho={RHO:.4e}"
         )
         compute_means_for_folder(
             type_perc=tp,
