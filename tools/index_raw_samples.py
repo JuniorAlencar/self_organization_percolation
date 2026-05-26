@@ -38,20 +38,27 @@ def parse_group_relpath_c_fT(group_relpath: Path) -> dict[str, Any]:
         "dim": int(g["dim"]),
         "L": int(g["L"]),
         "f_T": float(g["f_T"]),
+        "f_T_str": g["f_T"],
         "c": float(g["c"]),
+        "c_str": g["c"],
         "rho": float(g["rho"]),
+        "rho_str": g["rho"],
     }
 
 
 def group_dict_to_key_c_fT(group_dict: dict[str, Any]) -> str:
+    f_T_text = group_dict.get("f_T_str") or f"{float(group_dict['f_T']):.6e}"
+    c_text = group_dict.get("c_str") or f"{float(group_dict['c']):.6e}"
+    rho_text = group_dict.get("rho_str") or f"{float(group_dict['rho']):.4e}"
+
     return (
         f"{group_dict['type_perc']}"
         f"_nc{int(group_dict['num_colors'])}"
         f"_dim{int(group_dict['dim'])}"
         f"_L{int(group_dict['L'])}"
-        f"_fT{float(group_dict['f_T']):.4e}"
-        f"_c{float(group_dict['c']):.4e}"
-        f"_rho{float(group_dict['rho']):.4e}"
+        f"_fT{f_T_text}"
+        f"_c{c_text}"
+        f"_rho{rho_text}"
     )
 
 
