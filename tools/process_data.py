@@ -71,6 +71,8 @@ DEFAULT_SIZE_COLS = [
     "S_perc_posteq", "S_perc_posteq_err",
 ]
 
+MEAN_PROCESSING_VERSION = 2
+
 
 
 def _float_close(a: float, b: float, *, rel_tol: float = 1e-12, abs_tol: float = 1e-15) -> bool:
@@ -1011,7 +1013,9 @@ def _load_orders_new(fp: str) -> Optional[dict[int, dict]]:
 
         t = data.get("time", data.get("t", None))
         pt = data.get("pt", None)
-        ft = data.get("ft", data.get("f_t", None))
+        # Legacy raw files still store the active-front fraction series as "nt".
+        # Treat it as ft here so published bundles expose ft_mean/ft_std/ft_sem.
+        ft = data.get("ft", data.get("f_t", data.get("nt", data.get("N_T", data.get("NT", None)))))
 
         if t is not None:
             t = np.asarray(t, dtype=float)
@@ -1554,6 +1558,7 @@ def compute_means_for_folder(
     processed_files = set(map(str, manifest.get("processed_json_files", [])))
     new_files = [bn for bn in current_seed_files if bn not in processed_files]
     manifest_time_series_only = bool(manifest.get("time_series_only", False))
+    manifest_processing_version = int(manifest.get("mean_processing_version", 0) or 0)
     detected_group_keys = _detected_group_keys(selected_groups)
     existing_group_keys = _bundle_group_keys(out_path) if os.path.isfile(out_path) else None
     bundle_groups_match = existing_group_keys == detected_group_keys
@@ -1568,12 +1573,18 @@ def compute_means_for_folder(
                 f"[rebuild] grupos no bundle diferem dos raw detectados: "
                 f"bundle={sorted(existing_group_keys or [])} raw={sorted(detected_group_keys)}"
             )
+        if os.path.isfile(out_path) and manifest_processing_version != MEAN_PROCESSING_VERSION:
+            print(
+                f"[rebuild] versão do processamento mudou: "
+                f"manifest={manifest_processing_version} atual={MEAN_PROCESSING_VERSION}"
+            )
 
     if (
         (not clear_data)
         and os.path.isfile(out_path)
         and len(new_files) == 0
         and manifest_time_series_only == bool(time_series_only)
+        and manifest_processing_version == MEAN_PROCESSING_VERSION
         and bundle_groups_match
     ):
         if verbose:
@@ -1600,6 +1611,7 @@ def compute_means_for_folder(
             "P0_groups_detected": sorted({float(g["P0"]) for g in selected_groups}),
             "sample_groups_detected": _sample_group_summaries(selected_groups),
             "time_series_only": bool(time_series_only),
+            "mean_processing_version": MEAN_PROCESSING_VERSION,
         },
         "p0_groups": [],
     }
@@ -1805,6 +1817,7 @@ def compute_means_for_folder(
         "n_processed_json_files": len(current_seed_files),
         "summary_file": out_path,
         "time_series_only": bool(time_series_only),
+        "mean_processing_version": MEAN_PROCESSING_VERSION,
         "last_update": pd.Timestamp.utcnow().isoformat(),
     })
     _save_manifest(manifests_root, rel_group, manifest)
