@@ -329,6 +329,8 @@ def compute_sizes_for_folder(
             os.remove(out_path)
         manifest["processed_json_files"] = []
         manifest["n_processed_json_files"] = 0
+        manifest["input_json_files"] = []
+        manifest["n_input_json_files"] = 0
         manifest["summary_file"] = None
         manifest["last_update"] = None
         if verbose:
@@ -337,6 +339,36 @@ def compute_sizes_for_folder(
     all_jsons = sorted(glob.glob(os.path.join(data_dir, "*.json")))
     selected_p0_filter = None if not p0_list else [float(p) for p in p0_list]
     selected_groups = _discover_sample_groups(all_jsons, p0_filter=selected_p0_filter)
+    current_seed_files = sorted({os.path.basename(fp) for g in selected_groups for fp in g["files"]})
+
+    manifest_input_files = manifest.get("input_json_files", None)
+    if manifest_input_files is None:
+        manifest_input_files = manifest.get("processed_json_files", [])
+    input_files_done = set(map(str, manifest_input_files)) == set(current_seed_files)
+    detected_group_keys = _detected_group_keys(selected_groups)
+    existing_group_keys = _bundle_group_keys(out_path) if os.path.isfile(out_path) else None
+    bundle_groups_match = existing_group_keys == detected_group_keys
+
+    if verbose:
+        print(
+            f"[sizes group] {rel_group} | total_json={len(all_jsons)} "
+            f"| parseable={len(current_seed_files)} | clear_data={clear_data}"
+        )
+        if os.path.isfile(out_path) and not bundle_groups_match:
+            print(
+                f"[sizes rebuild] grupos no bundle diferem dos raw detectados: "
+                f"bundle={sorted(existing_group_keys or [])} raw={sorted(detected_group_keys)}"
+            )
+
+    if (
+        (not clear_data)
+        and os.path.isfile(out_path)
+        and input_files_done
+        and bundle_groups_match
+    ):
+        if verbose:
+            print(f"[sizes skip] atualizado: {out_path}")
+        return out_path
 
     bundle: Dict[str, Any] = {
         "meta": {
@@ -420,25 +452,14 @@ def compute_sizes_for_folder(
     bundle["meta"]["seed_used"] = sorted(seed_used_set)
     bundle = _sanitize_for_json(bundle)
 
-    processed_files = set(map(str, manifest.get("processed_json_files", [])))
-    existing_group_keys = _bundle_group_keys(out_path) if os.path.isfile(out_path) else None
-    bundle_groups_match = existing_group_keys == _detected_group_keys(valid_selected_groups)
-    if (
-        (not clear_data)
-        and os.path.isfile(out_path)
-        and processed_files == current_valid_files
-        and bundle_groups_match
-    ):
-        if verbose:
-            print(f"[sizes skip] atualizado: {out_path}")
-        return out_path
-
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(bundle, f, ensure_ascii=False, indent=2, allow_nan=False)
 
     manifest.update({
         "group_relpath": rel_group,
         "data_dir": data_dir,
+        "input_json_files": sorted(current_seed_files),
+        "n_input_json_files": len(current_seed_files),
         "processed_json_files": sorted(current_valid_files),
         "n_processed_json_files": len(current_valid_files),
         "summary_file": out_path,
