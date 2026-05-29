@@ -7,16 +7,18 @@
 
 struct EquilibrationConfig {
     int species_factor = 10000000;
-    int smoothing_window = 25;
+    int smoothing_window = 15;
+    int window_block = 20;
     int min_stable_steps = 25;
     double rel_tol = 2.0e-2;
     double abs_tol = 1.0e-6;
+    double s_prime_threshold = 1.0e-6;
     double sigma_multiplier = 2.0;
 };
 
 // Estima t_eq usando a série média p(t).
 // O TimeSeries esperado é o novo formato: p_t[cor][t], f_t[cor][t] e t[t].
-int estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg = {});
+double estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg = {});
 
 void compute_equilibration_partition_metrics(
     const NetworkPattern& encoded_net,
@@ -35,7 +37,7 @@ struct EquilibrationCutNetworks {
 
 EquilibrationCutNetworks build_equilibration_cut_networks(
     const NetworkPattern& encoded_net,
-    int t_eq,
+    double t_eq,
     int species_factor = 10000000);
 
 struct Point3D {
@@ -61,7 +63,7 @@ SurfacesCuts extract_exposed_surfaces_from_cuts(
 
 SurfacesCuts build_equilibration_exposed_surfaces(
     const NetworkPattern& encoded_net,
-    int t_eq,
+    double t_eq,
     int species_factor = 10000000);
 
 #endif // EQUILIBRATION_PARTITION_HPP

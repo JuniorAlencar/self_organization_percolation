@@ -11,6 +11,7 @@
 #include "height_stop_config.hpp"
 
 #include <iomanip>
+#include <cmath>
 #include <cstdlib>
 #include <sstream>
 #include <iostream>
@@ -187,7 +188,10 @@ int main(int argc, char* argv[]) {
         const bool has_percolation = !ps.color_percolation.empty();
         const bool calculate_detailed_properties = (HEIGHT_STOP_MULTIPLIER == 1);
         const bool write_large_artifacts =
-            calculate_detailed_properties && animation && has_percolation;
+            calculate_detailed_properties &&
+            animation &&
+            has_percolation &&
+            std::isfinite(ps.t_eq);
 
         std::optional<EquilibrationCutNetworks> cuts;
         if (write_large_artifacts) {

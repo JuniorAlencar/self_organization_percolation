@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -31,6 +32,15 @@ void write_json_array(std::ostream& os, const std::vector<T>& v)
         if (i + 1 < v.size()) os << ", ";
     }
     os << "]";
+}
+
+void write_json_nullable_double(std::ostream& os, const double value)
+{
+    if (std::isfinite(value)) {
+        os << std::setprecision(17) << value;
+    } else {
+        os << "null";
+    }
 }
 
 template <typename T>
@@ -263,7 +273,9 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "    \"rho\": ";
     write_json_array(ofs, ps.rho);
     ofs << ",\n";
-    ofs << "    \"t_eq\": " << ps.t_eq << "\n";
+    ofs << "    \"t_eq\": ";
+    write_json_nullable_double(ofs, ps.t_eq);
+    ofs << "\n";
     ofs << "  },\n";
 
     ofs << "  \"results\": {\n";
@@ -382,7 +394,9 @@ void save_data::save_reanalysis_json(const ReanalysisResult& result,
     }
 
     ofs << "{\n";
-    ofs << "  \"t_eq\": " << result.t_eq << ",\n";
+    ofs << "  \"t_eq\": ";
+    write_json_nullable_double(ofs, result.t_eq);
+    ofs << ",\n";
 
     write_subgraph_json(ofs, "pre_teq", result.pre_teq, true);
     write_subgraph_json(ofs, "post_teq", result.post_teq, false);

@@ -70,7 +70,7 @@ f_T = [0.1]
 #ft=0.1
 c_lst = [0.15]
 # L, n_samples, nc, p0
-P0_lst = [0.25, 0.50, 1.0]
+P0_lst = 0.1
 # for P0 in P0_lst:
 #         for c in c_lst:
 #                 for ft in f_T:
@@ -80,10 +80,9 @@ P0_lst = [0.25, 0.50, 1.0]
                                 # stop = 1/(2*nc)
                                 # n_points = 50
                                 # rho = custom_range(start, stop, n_points)
-for P0 in P0_lst:
 
-        rho = 1/nc
-        exec_name = f"ft_{f_T[0]:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}.sh"
+rho = 1/nc
+exec_name = f"ft_{f_T[0]:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}.sh"
 
-        shell_data(L, type_perc, p0, seed, c, f_T[0], dim,
-                nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi)
+shell_data(L, type_perc, p0, seed, c, f_T[0], dim,
+        nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi)

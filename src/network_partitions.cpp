@@ -382,10 +382,13 @@ NetworkPattern make_empty_like(const NetworkPattern& net)
 
 NetworkPattern build_preteq_network(
     const NetworkPattern& encoded_net,
-    const int t_eq,
+    const double t_eq,
     const int species_factor)
 {
     NetworkPattern filtered = make_empty_like(encoded_net);
+    if (!std::isfinite(t_eq)) {
+        return filtered;
+    }
 
     for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
         const long long code = static_cast<long long>(encoded_net.data[i]);
@@ -416,10 +419,13 @@ NetworkPattern build_preteq_network(
 
 NetworkPattern build_postteq_network(
     const NetworkPattern& encoded_net,
-    const int t_eq,
+    const double t_eq,
     const int species_factor)
 {
     NetworkPattern filtered = make_empty_like(encoded_net);
+    if (!std::isfinite(t_eq)) {
+        return filtered;
+    }
 
     for (std::size_t i = 0; i < encoded_net.data.size(); ++i) {
         const long long code = static_cast<long long>(encoded_net.data[i]);
@@ -508,7 +514,7 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
 
     TimeSeries ts;
     ts.num_colors = 0;
-    ts.t_eq = -1;
+    ts.t_eq = std::numeric_limits<double>::quiet_NaN();
 
     auto get_matrix_double = [](const json& value) -> std::vector<std::vector<double>> {
         return value.get<std::vector<std::vector<double>>>();
@@ -593,10 +599,10 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
             ts.num_colors = static_cast<int>(ts.p_t.size());
         }
 
-        if (root->contains("t_eq")) {
-            ts.t_eq = (*root)["t_eq"].get<int>();
-        } else if (j.contains("t_eq")) {
-            ts.t_eq = j["t_eq"].get<int>();
+        if (root->contains("t_eq") && !(*root)["t_eq"].is_null()) {
+            ts.t_eq = (*root)["t_eq"].get<double>();
+        } else if (j.contains("t_eq") && !j["t_eq"].is_null()) {
+            ts.t_eq = j["t_eq"].get<double>();
         }
 
         validate_timeseries_sizes("load_timeseries_from_json/time_series");
@@ -632,10 +638,14 @@ TimeSeries load_timeseries_from_json(const std::string& json_path)
     ts.f_t.assign(num_colors, {});
     std::vector<char> color_found(num_colors, 0);
 
-    if (j.contains("t_eq")) {
-        ts.t_eq = j["t_eq"].get<int>();
-    } else if (j.contains("percolation") && j["percolation"].contains("t_eq")) {
-        ts.t_eq = j["percolation"]["t_eq"].get<int>();
+    if (j.contains("t_eq") && !j["t_eq"].is_null()) {
+        ts.t_eq = j["t_eq"].get<double>();
+    } else if (
+        j.contains("percolation") &&
+        j["percolation"].contains("t_eq") &&
+        !j["percolation"]["t_eq"].is_null()
+    ) {
+        ts.t_eq = j["percolation"]["t_eq"].get<double>();
     }
 
     bool t_initialized = false;
@@ -778,51 +788,63 @@ NetworkPattern load_encoded_network_from_npz(const std::string& npz_path)
     return net;
 }
 
-int estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg)
+double estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg)
 {
     if (ts.t.empty()) {
         throw std::runtime_error("estimate_t_eq: TimeSeries t vazio");
     }
 
     const std::vector<double> p_mean = build_mean_p_series(ts);
-    const std::vector<double> p_smoothed = moving_average(p_mean, cfg.smoothing_window);
+    const std::vector<double> p_smoothed = centered_moving_average(p_mean, cfg.smoothing_window);
 
-    const int n = static_cast<int>(p_smoothed.size());
-    const int tail_len = std::max(cfg.min_stable_steps, std::min(n, std::max(20, n / 5)));
-    const int tail_begin = std::max(0, n - tail_len);
+    std::vector<double> t_j;
+    std::vector<double> j_w;
+    block_mean_regular_time(ts.t, p_smoothed, cfg.window_block, t_j, j_w);
+    if (j_w.size() < 3) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 
-    const double ref_mean = mean_of(p_smoothed, tail_begin, n);
-    const double ref_std = std_of(p_smoothed, tail_begin, n, ref_mean);
+    const int ns = static_cast<int>(j_w.size()) - 1;
+    std::vector<double> s(static_cast<std::size_t>(ns), 0.0);
+    std::vector<double> t_s(static_cast<std::size_t>(ns), 0.0);
+    for (int i = 0; i < ns; ++i) {
+        s[static_cast<std::size_t>(i)] =
+            std::abs(j_w[static_cast<std::size_t>(i + 1)] - j_w[static_cast<std::size_t>(i)]);
+        t_s[static_cast<std::size_t>(i)] =
+            0.5 * (t_j[static_cast<std::size_t>(i)] + t_j[static_cast<std::size_t>(i + 1)]);
+    }
 
-    const double tol = std::max(
-        cfg.abs_tol,
-        std::max(cfg.rel_tol * std::abs(ref_mean), cfg.sigma_multiplier * ref_std));
+    if (ns < 2) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 
-    const int stable_len = std::max(5, cfg.min_stable_steps);
-
-    for (int i = 0; i < n; ++i) {
-        const int end = std::min(n, i + stable_len);
-
-        bool stable = true;
-        for (int k = i; k < end; ++k) {
-            if (std::abs(p_smoothed[k] - ref_mean) > tol) {
-                stable = false;
-                break;
+    for (int i = 0; i < ns; ++i) {
+        double sp = std::numeric_limits<double>::quiet_NaN();
+        if (i == 0) {
+            const double dt = t_s[1] - t_s[0];
+            if (dt != 0.0) sp = (s[1] - s[0]) / dt;
+        } else if (i == ns - 1) {
+            const double dt = t_s[static_cast<std::size_t>(i)] - t_s[static_cast<std::size_t>(i - 1)];
+            if (dt != 0.0) {
+                sp = (s[static_cast<std::size_t>(i)] - s[static_cast<std::size_t>(i - 1)]) / dt;
+            }
+        } else {
+            const double dt =
+                t_s[static_cast<std::size_t>(i + 1)] - t_s[static_cast<std::size_t>(i - 1)];
+            if (dt != 0.0) {
+                sp = (s[static_cast<std::size_t>(i + 1)] - s[static_cast<std::size_t>(i - 1)]) / dt;
             }
         }
 
-        if (!stable) continue;
-
-        const double suffix_mean = mean_of(p_smoothed, i, n);
-        if (std::abs(suffix_mean - ref_mean) > tol) continue;
-
-        return ts.t[i];
+        if (std::isfinite(sp) && sp < cfg.s_prime_threshold) {
+            return t_s[static_cast<std::size_t>(i)];
+        }
     }
 
-    return ts.t[tail_begin];
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
-int estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig& cfg)
+double estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig& cfg)
 {
     const TimeSeries ts = load_timeseries_from_json(json_path);
     return estimate_t_eq(ts, cfg);
@@ -830,7 +852,7 @@ int estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig
 
 NetworkPattern rebuild_network_from_animation(
     const NetworkPattern& encoded_net,
-    const int t_eq,
+    const double t_eq,
     const int species_factor)
 {
     return build_preteq_network(encoded_net, t_eq, species_factor);
@@ -943,10 +965,13 @@ SparseSubgraph make_empty_sparse_like(const SparseEncodedNetwork& encoded_net)
 
 SparseSubgraph build_preteq_sparse_subgraph(
     const SparseEncodedNetwork& encoded_net,
-    const int t_eq,
+    const double t_eq,
     const int species_factor)
 {
     SparseSubgraph out = make_empty_sparse_like(encoded_net);
+    if (!std::isfinite(t_eq)) {
+        return out;
+    }
 
     out.active_idx.reserve(encoded_net.active_idx.size() / 2);
     out.active_val.reserve(encoded_net.active_val.size() / 2);
@@ -977,10 +1002,13 @@ SparseSubgraph build_preteq_sparse_subgraph(
 
 SparseSubgraph build_postteq_sparse_subgraph(
     const SparseEncodedNetwork& encoded_net,
-    const int t_eq,
+    const double t_eq,
     const int species_factor)
 {
     SparseSubgraph out = make_empty_sparse_like(encoded_net);
+    if (!std::isfinite(t_eq)) {
+        return out;
+    }
 
     out.active_idx.reserve(encoded_net.active_idx.size() / 2);
     out.active_val.reserve(encoded_net.active_val.size() / 2);
@@ -1008,4 +1036,3 @@ SparseSubgraph build_postteq_sparse_subgraph(
 
     return out;
 }
-

@@ -168,6 +168,67 @@ std::vector<double> moving_average(const std::vector<double>& x, const int windo
     return out;
 }
 
+std::vector<double> centered_moving_average(const std::vector<double>& x, const int window)
+{
+    if (x.empty() || window <= 1) return x;
+
+    const int n = static_cast<int>(x.size());
+    const int half_left = window / 2;
+    const int half_right = window - half_left - 1;
+
+    std::vector<double> prefix(static_cast<std::size_t>(n + 1), 0.0);
+    for (int i = 0; i < n; ++i) {
+        prefix[static_cast<std::size_t>(i + 1)] =
+            prefix[static_cast<std::size_t>(i)] + x[static_cast<std::size_t>(i)];
+    }
+
+    std::vector<double> out(static_cast<std::size_t>(n), 0.0);
+    for (int i = 0; i < n; ++i) {
+        const int a = std::max(0, i - half_left);
+        const int b = std::min(n, i + half_right + 1);
+        out[static_cast<std::size_t>(i)] =
+            (prefix[static_cast<std::size_t>(b)] - prefix[static_cast<std::size_t>(a)]) /
+            static_cast<double>(b - a);
+    }
+
+    return out;
+}
+
+void block_mean_regular_time(const std::vector<int>& t,
+                             const std::vector<double>& y,
+                             const int window_block,
+                             std::vector<double>& t_center,
+                             std::vector<double>& j_w)
+{
+    t_center.clear();
+    j_w.clear();
+    if (window_block < 1) {
+        throw std::runtime_error("block_mean_regular_time: window_block deve ser >= 1");
+    }
+
+    const int n = std::min(static_cast<int>(t.size()), static_cast<int>(y.size()));
+    const int n_blocks = n / window_block;
+    if (n_blocks <= 0) return;
+
+    for (int k = 0; k < n_blocks; ++k) {
+        const int i0 = k * window_block;
+        const int i1 = i0 + window_block;
+        double st = 0.0;
+        double sy = 0.0;
+        int count = 0;
+        for (int i = i0; i < i1; ++i) {
+            const double yi = y[static_cast<std::size_t>(i)];
+            if (!std::isfinite(yi)) continue;
+            st += static_cast<double>(t[static_cast<std::size_t>(i)]);
+            sy += yi;
+            ++count;
+        }
+        if (count == 0) continue;
+        t_center.push_back(st / static_cast<double>(count));
+        j_w.push_back(sy / static_cast<double>(count));
+    }
+}
+
 void validate_timeseries_layout(const TimeSeries& ts,
                                 const std::string& caller,
                                 const bool require_f_t)
@@ -406,46 +467,58 @@ std::vector<Point3D> extract_top_surface_points(
 
 } // namespace
 
-int estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg)
+double estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg)
 {
     validate_timeseries_layout(ts, "estimate_t_eq", true);
 
     const std::vector<double> p_mean = build_mean_p_series(ts);
-    const std::vector<double> p_smoothed = moving_average(p_mean, cfg.smoothing_window);
+    const std::vector<double> p_smoothed = centered_moving_average(p_mean, cfg.smoothing_window);
 
-    const int n = static_cast<int>(p_smoothed.size());
-    const int tail_len = std::max(cfg.min_stable_steps, std::min(n, std::max(20, n / 5)));
-    const int tail_begin = std::max(0, n - tail_len);
+    std::vector<double> t_j;
+    std::vector<double> j_w;
+    block_mean_regular_time(ts.t, p_smoothed, cfg.window_block, t_j, j_w);
+    if (j_w.size() < 3) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 
-    const double ref_mean = mean_of(p_smoothed, tail_begin, n);
-    const double ref_std = std_of(p_smoothed, tail_begin, n, ref_mean);
+    const int ns = static_cast<int>(j_w.size()) - 1;
+    std::vector<double> s(static_cast<std::size_t>(ns), 0.0);
+    std::vector<double> t_s(static_cast<std::size_t>(ns), 0.0);
+    for (int i = 0; i < ns; ++i) {
+        s[static_cast<std::size_t>(i)] =
+            std::abs(j_w[static_cast<std::size_t>(i + 1)] - j_w[static_cast<std::size_t>(i)]);
+        t_s[static_cast<std::size_t>(i)] =
+            0.5 * (t_j[static_cast<std::size_t>(i)] + t_j[static_cast<std::size_t>(i + 1)]);
+    }
 
-    const double tol = std::max(
-        cfg.abs_tol,
-        std::max(cfg.rel_tol * std::abs(ref_mean), cfg.sigma_multiplier * ref_std));
+    if (ns < 2) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 
-    const int stable_len = std::max(5, cfg.min_stable_steps);
-
-    for (int i = 0; i < n; ++i) {
-        const int end = std::min(n, i + stable_len);
-
-        bool stable = true;
-        for (int k = i; k < end; ++k) {
-            if (std::abs(p_smoothed[k] - ref_mean) > tol) {
-                stable = false;
-                break;
+    for (int i = 0; i < ns; ++i) {
+        double sp = std::numeric_limits<double>::quiet_NaN();
+        if (i == 0) {
+            const double dt = t_s[1] - t_s[0];
+            if (dt != 0.0) sp = (s[1] - s[0]) / dt;
+        } else if (i == ns - 1) {
+            const double dt = t_s[static_cast<std::size_t>(i)] - t_s[static_cast<std::size_t>(i - 1)];
+            if (dt != 0.0) {
+                sp = (s[static_cast<std::size_t>(i)] - s[static_cast<std::size_t>(i - 1)]) / dt;
+            }
+        } else {
+            const double dt =
+                t_s[static_cast<std::size_t>(i + 1)] - t_s[static_cast<std::size_t>(i - 1)];
+            if (dt != 0.0) {
+                sp = (s[static_cast<std::size_t>(i + 1)] - s[static_cast<std::size_t>(i - 1)]) / dt;
             }
         }
 
-        if (!stable) continue;
-
-        const double suffix_mean = mean_of(p_smoothed, i, n);
-        if (std::abs(suffix_mean - ref_mean) > tol) continue;
-
-        return ts.t[static_cast<std::size_t>(i)];
+        if (std::isfinite(sp) && sp < cfg.s_prime_threshold) {
+            return t_s[static_cast<std::size_t>(i)];
+        }
     }
 
-    return ts.t[static_cast<std::size_t>(tail_begin)];
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 void compute_equilibration_partition_metrics(
@@ -469,12 +542,16 @@ void compute_equilibration_partition_metrics(
             "compute_equilibration_partition_metrics: TimeSeries.num_colors incompatível com a rede");
     }
 
-    ps.t_eq = (ts.t_eq >= 0) ? ts.t_eq : estimate_t_eq(ts, cfg);
+    ps.t_eq = std::isfinite(ts.t_eq) ? ts.t_eq : estimate_t_eq(ts, cfg);
 
     ps.sp_lin_preteq.assign(num_colors, -1);
     ps.sp_lin_posteq.assign(num_colors, -1);
     ps.M_size_preteq.assign(num_colors, 0);
     ps.M_size_posteq.assign(num_colors, 0);
+
+    if (!std::isfinite(ps.t_eq)) {
+        return;
+    }
 
     for (int c = 0; c < num_colors; ++c) {
         const std::vector<int> comp_nodes =
@@ -537,7 +614,7 @@ void compute_equilibration_partition_metrics(
 
 EquilibrationCutNetworks build_equilibration_cut_networks(
     const NetworkPattern& encoded_net,
-    const int t_eq,
+    const double t_eq,
     const int species_factor)
 {
     if (encoded_net.shape.empty()) {
@@ -545,7 +622,7 @@ EquilibrationCutNetworks build_equilibration_cut_networks(
             "build_equilibration_cut_networks: shape vazio");
     }
 
-    if (t_eq < 0) {
+    if (!std::isfinite(t_eq)) {
         throw std::runtime_error(
             "build_equilibration_cut_networks: t_eq inválido");
     }
@@ -645,7 +722,7 @@ SurfacesCuts extract_exposed_surfaces_from_cuts(
 
 SurfacesCuts build_equilibration_exposed_surfaces(
     const NetworkPattern& encoded_net,
-    const int t_eq,
+    const double t_eq,
     const int species_factor)
 {
     const EquilibrationCutNetworks cuts =
