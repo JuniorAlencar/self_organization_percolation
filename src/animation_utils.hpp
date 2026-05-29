@@ -1,8 +1,10 @@
 #ifndef ANIMATION_UTILS_HPP
 #define ANIMATION_UTILS_HPP
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <stdexcept>
 #include <vector>
 
 constexpr int ANIMATION_SPECIES_FACTOR = 10000000;
@@ -73,6 +75,67 @@ inline std::vector<double> moving_average(const std::vector<double>& x, const in
     return out;
 }
 
+inline std::vector<double> centered_moving_average(const std::vector<double>& x, const int window)
+{
+    if (x.empty() || window <= 1) return x;
+
+    const int n = static_cast<int>(x.size());
+    const int half_left = window / 2;
+    const int half_right = window - half_left - 1;
+
+    std::vector<double> prefix(static_cast<std::size_t>(n + 1), 0.0);
+    for (int i = 0; i < n; ++i) {
+        prefix[static_cast<std::size_t>(i + 1)] =
+            prefix[static_cast<std::size_t>(i)] + x[static_cast<std::size_t>(i)];
+    }
+
+    std::vector<double> out(static_cast<std::size_t>(n), 0.0);
+    for (int i = 0; i < n; ++i) {
+        const int a = std::max(0, i - half_left);
+        const int b = std::min(n, i + half_right + 1);
+        out[static_cast<std::size_t>(i)] =
+            (prefix[static_cast<std::size_t>(b)] - prefix[static_cast<std::size_t>(a)]) /
+            static_cast<double>(b - a);
+    }
+
+    return out;
+}
+
+inline void block_mean_regular_time(const std::vector<int>& t,
+                                    const std::vector<double>& y,
+                                    const int window_block,
+                                    std::vector<double>& t_center,
+                                    std::vector<double>& j_w)
+{
+    t_center.clear();
+    j_w.clear();
+    if (window_block < 1) {
+        throw std::runtime_error("block_mean_regular_time: window_block deve ser >= 1");
+    }
+
+    const int n = std::min(static_cast<int>(t.size()), static_cast<int>(y.size()));
+    const int n_blocks = n / window_block;
+    if (n_blocks <= 0) return;
+
+    for (int k = 0; k < n_blocks; ++k) {
+        const int i0 = k * window_block;
+        const int i1 = i0 + window_block;
+        double st = 0.0;
+        double sy = 0.0;
+        int count = 0;
+        for (int i = i0; i < i1; ++i) {
+            const double yi = y[static_cast<std::size_t>(i)];
+            if (!std::isfinite(yi)) continue;
+            st += static_cast<double>(t[static_cast<std::size_t>(i)]);
+            sy += yi;
+            ++count;
+        }
+        if (count == 0) continue;
+        t_center.push_back(st / static_cast<double>(count));
+        j_w.push_back(sy / static_cast<double>(count));
+    }
+}
+
 inline std::vector<double> build_mean_p_series(const TimeSeries& ts)
 {
     if (ts.t.empty()) throw std::runtime_error("build_mean_p_series: TimeSeries.t vazio");
@@ -86,6 +149,8 @@ inline std::vector<double> build_mean_p_series(const TimeSeries& ts)
         if (row.size() != T) throw std::runtime_error("build_mean_p_series: linhas de p_t com tamanhos diferentes de t");
         for (std::size_t i = 0; i < T; ++i) p_mean[i] += row[i];
     }
+    const double inv = 1.0 / static_cast<double>(ts.p_t.size());
+    for (double& v : p_mean) v *= inv;
     return p_mean;
 }
 

@@ -1,0 +1,1 @@
+rsync -avz --ignore-existing junioralencar@apolo:codes/SOP/python/SOP_data/ ~/Documents/self_organization_percolation/SOP_data/

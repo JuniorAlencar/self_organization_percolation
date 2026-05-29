@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
@@ -98,7 +99,7 @@ struct NetworkPattern {
 
 struct TimeSeries {
     int num_colors = 0;
-    int t_eq = -1;
+    double t_eq = std::numeric_limits<double>::quiet_NaN();
     std::vector<std::vector<double>> p_t;   // [cor][t]
     std::vector<std::vector<double>> f_t;   // [cor][t], f_i(t) = N_i(t) / L^(dim-1)
     std::vector<int> t;                     // [t]
@@ -115,7 +116,7 @@ struct PercolationSeries {
     std::vector<std::vector<int>> sp_path_lin;
 
     // novos campos
-    int t_eq = -1;
+    double t_eq = std::numeric_limits<double>::quiet_NaN();
     std::vector<int> sp_lin_preteq;
     std::vector<std::vector<int>> sp_path_lin_preteq;
     std::vector<int> sp_lin_posteq;

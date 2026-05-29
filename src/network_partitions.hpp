@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -11,11 +12,13 @@
 struct ReanalysisConfig {
     int species_factor = 10000000;
 
-    int smoothing_window = 7;
+    int smoothing_window = 15;
+    int window_block = 20;
     int min_stable_steps = 20;
 
     double rel_tol = 2.0e-2;
     double abs_tol = 1.0e-6;
+    double s_prime_threshold = 1.0e-6;
     double sigma_multiplier = 2.0;
 };
 
@@ -65,7 +68,7 @@ struct SubgraphAnalysis {
 };
 
 struct ReanalysisResult {
-    int t_eq = 0;
+    double t_eq = std::numeric_limits<double>::quiet_NaN();
 
     SubgraphAnalysis pre_teq;
     SubgraphAnalysis post_teq;
@@ -77,17 +80,17 @@ SparseEncodedNetwork load_sparse_encoded_network_from_npz(
     const std::string& npz_path,
     int species_factor);
 
-int estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg);
-int estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig& cfg);
+double estimate_t_eq(const TimeSeries& ts, const ReanalysisConfig& cfg);
+double estimate_t_eq_from_json(const std::string& json_path, const ReanalysisConfig& cfg);
 
 SparseSubgraph build_preteq_sparse_subgraph(
     const SparseEncodedNetwork& encoded_net,
-    int t_eq,
+    double t_eq,
     int species_factor);
 
 SparseSubgraph build_postteq_sparse_subgraph(
     const SparseEncodedNetwork& encoded_net,
-    int t_eq,
+    double t_eq,
     int species_factor);
 
 ReanalysisResult reanalyze_animation(
