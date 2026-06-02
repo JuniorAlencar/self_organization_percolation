@@ -55,7 +55,8 @@ public:
         TimeSeries& ts_out,
         PercolationSeries& ps_out,
         all_random& rng,
-        bool save_compact = true);
+        bool save_compact = true,
+        bool calculate_detailed_properties = false);
 
     NetworkPattern initialize_network(
         int dim,
@@ -84,7 +85,8 @@ public:
         const std::vector<double>& rho,
         TimeSeries& ts_out,
         PercolationSeries& ps_out,
-        all_random& rng);
+        all_random& rng,
+        bool calculate_detailed_properties = false);
 
     NetworkPattern filter_percolating_clusters_from_encoded(
         const NetworkPattern& encoded_net) const;

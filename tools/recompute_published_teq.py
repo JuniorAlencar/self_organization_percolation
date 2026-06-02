@@ -76,17 +76,19 @@ def block_mean_regular_time(
     return np.asarray(centers, dtype=float), np.asarray(means, dtype=float)
 
 
-def first_teq_from_s_prime(
+def estimate_teq_block_derivative(
     t: Any,
     pt_mean: Any,
     *,
-    threshold: float,
+    s_prime_threshold: float,
     window_roll: int,
     window_block: int,
+    min_stable_steps: int,
+    rel_tol: float,
+    abs_tol: float,
     center: bool,
     drop_last: bool,
     use_rolling_for_blocks: bool,
-    abs_s_prime: bool,
 ) -> float | None:
     t_arr = np.asarray(t, dtype=float)
     p_arr = np.asarray(pt_mean, dtype=float)
@@ -128,12 +130,26 @@ def first_teq_from_s_prime(
         return None
 
     s_prime = np.gradient(s, t_s)
-    test_values = np.abs(s_prime) if abs_s_prime else s_prime
-    matches = np.flatnonzero(np.isfinite(test_values) & (test_values < threshold))
-    if matches.size == 0:
-        return None
+    stable_links_required = max(1, int(np.ceil(float(min_stable_steps) / max(1, window_block))))
+    stable_run = 0
 
-    return float(t_s[int(matches[0])])
+    for i in range(s.size):
+        p_scale = max(abs(float(j_w[i])), abs(float(j_w[i + 1])))
+        s_threshold = max(float(abs_tol), float(rel_tol) * p_scale)
+        stable = (
+            np.isfinite(s_prime[i])
+            and abs(float(s_prime[i])) < s_prime_threshold
+            and float(s[i]) <= s_threshold
+        )
+        if stable:
+            stable_run += 1
+            if stable_run >= stable_links_required:
+                first_stable = i - stable_run + 1
+                return float(t_s[first_stable])
+        else:
+            stable_run = 0
+
+    return None
 
 
 def null_order_pc_sop(existing: Any, n_boot: int) -> dict[str, Any]:
@@ -144,7 +160,7 @@ def null_order_pc_sop(existing: Any, n_boot: int) -> dict[str, Any]:
         "n_tail_points": 0,
         "n_boot": int(old.get("n_boot", n_boot) or n_boot),
         "t0": None,
-        "pc_method": "null: no s_prime below stability threshold",
+        "pc_method": "null: no persistent derivative-stable block sequence found",
     }
 
 
@@ -156,7 +172,7 @@ def null_group_pc_sop(existing: Any, n_boot: int) -> dict[str, Any]:
         "n_seeds": int(old.get("n_seeds", 0) or 0),
         "n_boot": int(old.get("n_boot", n_boot) or n_boot),
         "t0_global": None,
-        "pc_method": "null: no finite t_eq from s_prime threshold",
+        "pc_method": "null: no finite t_eq from block-derivative stability criterion",
     }
 
 
@@ -166,10 +182,12 @@ def update_bundle(
     threshold: float,
     window_roll: int,
     window_block: int,
+    min_stable_steps: int,
+    rel_tol: float,
+    abs_tol: float,
     center: bool,
     drop_last: bool,
     use_rolling_for_blocks: bool,
-    abs_s_prime: bool,
 ) -> tuple[bool, dict[str, int]]:
     meta = bundle.setdefault("meta", {})
     bootstrap = meta.get("bootstrap", {}) if isinstance(meta.get("bootstrap", {}), dict) else {}
@@ -184,14 +202,19 @@ def update_bundle(
     changed = False
 
     meta["t_eq_recompute"] = {
-        "method": "first t_s where s_prime < threshold from block means of pt_mean",
-        "threshold": float(threshold),
+        "method": (
+            "first persistent block sequence with small |delta p_block| "
+            "and small |d(delta p_block)/dt|"
+        ),
+        "s_prime_threshold": float(threshold),
         "window_roll": int(window_roll),
         "window_block": int(window_block),
+        "min_stable_steps": int(min_stable_steps),
+        "rel_tol": float(rel_tol),
+        "abs_tol": float(abs_tol),
         "center": bool(center),
         "drop_last": bool(drop_last),
         "use_rolling_for_blocks": bool(use_rolling_for_blocks),
-        "abs_s_prime": bool(abs_s_prime),
     }
 
     for group in bundle.get("p0_groups", []):
@@ -214,21 +237,23 @@ def update_bundle(
             pt = data.get("pt_mean", [])
             pt_sem = data.get("pt_sem", [])
 
-            t_eq = first_teq_from_s_prime(
+            t_eq = estimate_teq_block_derivative(
                 t,
                 pt,
-                threshold=threshold,
+                s_prime_threshold=threshold,
                 window_roll=window_roll,
                 window_block=window_block,
+                min_stable_steps=min_stable_steps,
+                rel_tol=rel_tol,
+                abs_tol=abs_tol,
                 center=center,
                 drop_last=drop_last,
                 use_rolling_for_blocks=use_rolling_for_blocks,
-                abs_s_prime=abs_s_prime,
             )
 
             if t_eq is None:
                 data["t_eq"] = None
-                data["t_eq_source"] = "none: no s_prime below stability threshold"
+                data["t_eq_source"] = "none: no persistent derivative-stable block sequence found"
                 data["pc_sop"] = null_order_pc_sop(data.get("pc_sop"), n_boot)
                 stats["orders_without_teq"] += 1
                 changed = True
@@ -246,7 +271,7 @@ def update_bundle(
 
             data["t_eq"] = float(t_eq)
             data["t_eq_source"] = (
-                "recomputed from first t_s where s_prime < stability threshold"
+                "recomputed from first persistent derivative-stable block sequence"
             )
             data["pc_sop"] = {
                 "mean": float(pc_mean) if math.isfinite(pc_mean) else None,
@@ -255,7 +280,7 @@ def update_bundle(
                 "n_boot": n_boot,
                 "t0": float(t_eq),
                 "pc_method": (
-                    "ensemble-mean tail after t_eq from s_prime stability threshold"
+                    "ensemble-mean tail after t_eq from block-derivative stability criterion"
                 ),
             }
 
@@ -278,7 +303,7 @@ def update_bundle(
                 "t0_global": t0_global,
                 "pc_method": (
                     "combine orders of ensemble-mean tails after order t_eq from "
-                    "s_prime stability threshold"
+                    "block-derivative stability criterion"
                 ),
             }
         else:
@@ -319,21 +344,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Recalcula t_eq e pc_sop nos properties_mean_bundle.json publicados "
-            "a partir do primeiro s_prime abaixo de um limiar."
+            "a partir do primeiro bloco persistentemente estável."
         )
     )
     parser.add_argument("--published-root", default=str(default_published_root()))
-    parser.add_argument("--threshold", type=float, default=1e-6)
+    parser.add_argument("--threshold", type=float, default=5.0e-4)
     parser.add_argument("--window-roll", type=int, default=15)
-    parser.add_argument("--window-block", type=int, default=20)
+    parser.add_argument("--window-block", type=int, default=10)
+    parser.add_argument("--min-stable-steps", type=int, default=15)
+    parser.add_argument("--rel-tol", type=float, default=2.5e-2)
+    parser.add_argument("--abs-tol", type=float, default=1.0e-6)
     parser.add_argument("--no-center", action="store_true")
     parser.add_argument("--keep-last-block", action="store_true")
     parser.add_argument("--raw-blocks", action="store_true")
-    parser.add_argument(
-        "--abs-s-prime",
-        action="store_true",
-        help="Usa abs(s_prime) < threshold em vez de s_prime < threshold.",
-    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--quiet", action="store_true")
@@ -365,10 +388,12 @@ def main() -> None:
             threshold=args.threshold,
             window_roll=args.window_roll,
             window_block=args.window_block,
+            min_stable_steps=args.min_stable_steps,
+            rel_tol=args.rel_tol,
+            abs_tol=args.abs_tol,
             center=not args.no_center,
             drop_last=not args.keep_last_block,
             use_rolling_for_blocks=not args.raw_blocks,
-            abs_s_prime=args.abs_s_prime,
         )
 
         total["files"] += 1

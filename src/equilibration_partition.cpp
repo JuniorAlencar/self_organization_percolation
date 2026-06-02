@@ -495,6 +495,12 @@ double estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg)
         return std::numeric_limits<double>::quiet_NaN();
     }
 
+    int stable_run = 0;
+    const int stable_links_required =
+        std::max(1, static_cast<int>(std::ceil(
+            static_cast<double>(cfg.min_stable_steps) /
+            static_cast<double>(std::max(1, cfg.window_block)))));
+
     for (int i = 0; i < ns; ++i) {
         double sp = std::numeric_limits<double>::quiet_NaN();
         if (i == 0) {
@@ -513,8 +519,23 @@ double estimate_t_eq(const TimeSeries& ts, const EquilibrationConfig& cfg)
             }
         }
 
-        if (std::isfinite(sp) && sp < cfg.s_prime_threshold) {
-            return t_s[static_cast<std::size_t>(i)];
+        const double p_scale = std::max(
+            std::abs(j_w[static_cast<std::size_t>(i)]),
+            std::abs(j_w[static_cast<std::size_t>(i + 1)]));
+        const double s_threshold = std::max(cfg.abs_tol, cfg.rel_tol * p_scale);
+        const bool stable =
+            std::isfinite(sp) &&
+            std::abs(sp) < cfg.s_prime_threshold &&
+            s[static_cast<std::size_t>(i)] <= s_threshold;
+
+        if (stable) {
+            ++stable_run;
+            if (stable_run >= stable_links_required) {
+                const int first_stable = i - stable_run + 1;
+                return t_s[static_cast<std::size_t>(first_stable)];
+            }
+        } else {
+            stable_run = 0;
         }
     }
 

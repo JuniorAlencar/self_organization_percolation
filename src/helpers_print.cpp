@@ -254,7 +254,7 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
 void helpers::print_help(const char* prog) {
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration>
+  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties]
 
 Arguments:
   L                : Length of network (int)
@@ -268,8 +268,10 @@ Arguments:
   rho_val          : Density for each color (double)  [IMPORTANT => num_colors * rho_val <= 1.0]
   P0               : Fraction of active nodes in base [0 < P0 <= 1.0]
   Equilibration    : Return network with encoded time activation ['true' or 'false']
+  Properties       : Optional; calculate shortest paths, largest components, surfaces/networks ['true' or 'false']; default false
 Examples:
   ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true
+  ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true true
   ./SOP  500 0.05 42 node 1.0e-01 5.0e-02 3 3 0.25 0.5 false
 
 Tips:

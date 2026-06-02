@@ -13,12 +13,12 @@ struct ReanalysisConfig {
     int species_factor = 10000000;
 
     int smoothing_window = 15;
-    int window_block = 20;
-    int min_stable_steps = 20;
+    int window_block = 10;
+    int min_stable_steps = 15;
 
-    double rel_tol = 2.0e-2;
+    double rel_tol = 2.5e-2;
     double abs_tol = 1.0e-6;
-    double s_prime_threshold = 1.0e-6;
+    double s_prime_threshold = 5.0e-4;
     double sigma_multiplier = 2.0;
 };
 

@@ -34,8 +34,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Allow either zero-argument (use defaults) or full-argument run
-    if (argc != 1 && argc != 12) {
+    // Allow either zero-argument (use defaults) or full-argument run.
+    // Optional final flag enables expensive geometric/network properties.
+    if (argc != 1 && argc != 12 && argc != 13) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -55,10 +56,11 @@ int main(int argc, char* argv[]) {
         double rho_val = 1.0;
         double P0 = 0.1;
         std::string equilibration = "true";
+        bool calculate_detailed_properties = false;
         
         const bool teste = false;
 
-        if (argc == 12) {
+        if (argc == 12 || argc == 13) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -70,6 +72,9 @@ int main(int argc, char* argv[]) {
             rho_val = std::stod(argv[9]);
             P0 = std::stod(argv[10]);
             equilibration = argv[11];
+            if (argc == 13) {
+                calculate_detailed_properties = helpers::parse_bool(argv[12]);
+            }
         }
 
         const bool animation = helpers::parse_bool(equilibration);
@@ -121,16 +126,20 @@ int main(int argc, char* argv[]) {
         
         network net_generator(N_samples, num_colors);
 
-        NetworkPattern net = animation
+        const bool build_full_network = animation && calculate_detailed_properties;
+
+        NetworkPattern net = build_full_network
             ? net_generator.animate_network(
                     dim, L, N_samples, c, f_T, type_f_T,
                     p0, P0, a, alpha, type_percolation,
-                    num_colors, rho, ts, ps, rng
+                    num_colors, rho, ts, ps, rng,
+                    calculate_detailed_properties
               )
             : net_generator.create_network(
                     dim, L, N_samples, c, f_T, type_f_T,
                     p0, P0, a, alpha, type_percolation,
-                    num_colors, rho, ts, ps, rng, false
+                    num_colors, rho, ts, ps, rng, false,
+                    calculate_detailed_properties
               );
 
         FolderCreator creator("./SOP_data");
@@ -186,10 +195,9 @@ int main(int argc, char* argv[]) {
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         
         const bool has_percolation = !ps.color_percolation.empty();
-        const bool calculate_detailed_properties = (HEIGHT_STOP_MULTIPLIER == 1);
         const bool write_large_artifacts =
             calculate_detailed_properties &&
-            animation &&
+            build_full_network &&
             has_percolation &&
             std::isfinite(ps.t_eq);
 
@@ -207,11 +215,11 @@ int main(int argc, char* argv[]) {
             SurfacesCuts surfaces =
                 extract_exposed_surfaces(net, *cuts, SPECIES_FACTOR);
             saver.save_surfaces_as_npz(surfaces, surfaces_filename);
-        } else if (animation && !has_percolation) {
+        } else if (build_full_network && !has_percolation) {
             std::cout << "[INFO] No percolating species found; skipping surface file."
                       << std::endl;
         } else if (animation && !calculate_detailed_properties) {
-            std::cout << "[INFO] NL-stop mode: skipping network/surface artifacts."
+            std::cout << "[INFO] Time-series-only mode: skipping network/surface artifacts."
                       << std::endl;
         }
 
