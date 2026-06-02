@@ -565,15 +565,15 @@ struct SparseFrontCandidates {
     static constexpr int max_candidates_per_target = 16;
 
     std::vector<int> touched_targets;
-    std::unordered_map<int, int> slot_of_target;
+    std::vector<int> slot_of_target;
     std::vector<std::array<std::uint32_t, max_candidates_per_target>> activators;
     std::vector<std::array<std::uint8_t, max_candidates_per_target>> colors;
     std::vector<std::array<std::uint64_t, max_candidates_per_target>> edge_bits;
     std::vector<unsigned char> counts;
 
     explicit SparseFrontCandidates(const int nsites = 0)
+        : slot_of_target(static_cast<std::size_t>(nsites), -1)
     {
-        (void)nsites;
     }
 
     void reserve_frontier(const std::size_t expected_targets) {
@@ -582,11 +582,12 @@ struct SparseFrontCandidates {
         colors.reserve(expected_targets);
         edge_bits.reserve(expected_targets);
         counts.reserve(expected_targets);
-        slot_of_target.reserve(expected_targets);
     }
 
     void clear() {
-        slot_of_target.clear();
+        for (const int target : touched_targets) {
+            slot_of_target[static_cast<std::size_t>(target)] = -1;
+        }
         touched_targets.clear();
         activators.clear();
         colors.clear();
@@ -595,18 +596,16 @@ struct SparseFrontCandidates {
     }
 
     void add(const int target, const FrontCandidate candidate) {
-        int slot = -1;
-        const auto it = slot_of_target.find(target);
-        if (it == slot_of_target.end()) {
+        int& slot_ref = slot_of_target[static_cast<std::size_t>(target)];
+        int slot = slot_ref;
+        if (slot < 0) {
             slot = static_cast<int>(counts.size());
-            slot_of_target.emplace(target, slot);
+            slot_ref = slot;
             touched_targets.push_back(target);
             activators.emplace_back();
             colors.emplace_back();
             edge_bits.emplace_back();
             counts.push_back(0);
-        } else {
-            slot = it->second;
         }
 
         unsigned char& count = counts[static_cast<std::size_t>(slot)];
@@ -813,8 +812,11 @@ inline std::vector<double> build_mean_p_series(const TimeSeries& ts)
 
 inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
                                             const int window_roll = 15,
-                                            const int window_block = 20,
-                                            const double threshold = 1.0e-6)
+                                            const int window_block = 10,
+                                            const int min_stable_steps = 15,
+                                            const double rel_tol = 2.5e-2,
+                                            const double abs_tol = 1.0e-6,
+                                            const double s_prime_threshold = 5.0e-4)
 {
     if (ts.t.empty()) {
         throw std::runtime_error("estimate_t_eq_from_timeseries: ts.t vazio");
@@ -844,6 +846,12 @@ inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
         return std::numeric_limits<double>::quiet_NaN();
     }
 
+    int stable_run = 0;
+    const int stable_links_required =
+        std::max(1, static_cast<int>(std::ceil(
+            static_cast<double>(min_stable_steps) /
+            static_cast<double>(std::max(1, window_block)))));
+
     for (int i = 0; i < ns; ++i) {
         double sp = std::numeric_limits<double>::quiet_NaN();
         if (i == 0) {
@@ -862,8 +870,23 @@ inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
             }
         }
 
-        if (std::isfinite(sp) && sp < threshold) {
-            return t_s[static_cast<std::size_t>(i)];
+        const double p_scale = std::max(
+            std::abs(j_w[static_cast<std::size_t>(i)]),
+            std::abs(j_w[static_cast<std::size_t>(i + 1)]));
+        const double s_threshold = std::max(abs_tol, rel_tol * p_scale);
+        const bool stable =
+            std::isfinite(sp) &&
+            std::abs(sp) < s_prime_threshold &&
+            s[static_cast<std::size_t>(i)] <= s_threshold;
+
+        if (stable) {
+            ++stable_run;
+            if (stable_run >= stable_links_required) {
+                const int first_stable = i - stable_run + 1;
+                return t_s[static_cast<std::size_t>(first_stable)];
+            }
+        } else {
+            stable_run = 0;
         }
     }
 
@@ -907,7 +930,8 @@ NetworkPattern network::create_network(
     const double c_value, const double f_T, const int type_f_T,
     const std::vector<double> p0, const double P0, const double a, const double alpha,
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-    TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng, const bool save_compact)
+    TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng,
+    const bool save_compact, const bool calculate_detailed_properties)
 {
     this->c = c_value;
     this->f_T = f_T;
@@ -918,7 +942,6 @@ NetworkPattern network::create_network(
         : std::vector<int>{grid.SX, grid.SY, grid.SZ};
 
     const bool is_node = (type_percolation == "node");
-    constexpr bool calculate_detailed_properties = (HEIGHT_STOP_MULTIPLIER == 1);
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
 
@@ -939,10 +962,20 @@ NetworkPattern network::create_network(
         site_state[static_cast<std::size_t>(idx)] = static_cast<std::int8_t>(value);
     };
 
+    const bool needs_activation_time = calculate_detailed_properties || save_compact;
+
     // activation times: UINT32_MAX means never activated
-    std::vector<uint32_t> activation_time(
-        static_cast<std::size_t>(grid.total_size),
-        std::numeric_limits<uint32_t>::max());
+    std::vector<uint32_t> activation_time;
+    if (needs_activation_time) {
+        activation_time.assign(
+            static_cast<std::size_t>(grid.total_size),
+            std::numeric_limits<uint32_t>::max());
+    }
+    auto set_activation_time = [&](const int idx, const uint32_t t_value)
+    {
+        if (!needs_activation_time) return;
+        activation_time[static_cast<std::size_t>(idx)] = t_value;
+    };
 
     std::vector<std::vector<double>> p_series(num_colors);
     std::vector<std::vector<double>> f_series(num_colors);
@@ -950,6 +983,7 @@ NetworkPattern network::create_network(
     t_list.reserve(num_of_samples);
 
     std::vector<double> p_curr = p0;
+    std::vector<double> p_next(num_colors, 0.0);
     std::vector<int>    N_current(num_colors, 0);
     std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
@@ -1000,9 +1034,7 @@ NetworkPattern network::create_network(
                 frontier.push_back(idx);
                 ++N_current[c];
                 ++activated;
-                if (idx >= 0 && idx < grid.total_size) {
-                    activation_time[static_cast<std::size_t>(idx)] = 0;
-                }
+                set_activation_time(idx, 0u);
             }
             ++tries;
         }
@@ -1110,10 +1142,14 @@ NetworkPattern network::create_network(
 
     // Union-find for open bonds. Encoding: 0 = inactive, negative = root
     // storing -component_size, positive = parent_index + 1.
-    std::vector<int> dsu(static_cast<std::size_t>(grid.total_size), 0);
+    std::vector<int> dsu;
+    if (calculate_detailed_properties) {
+        dsu.assign(static_cast<std::size_t>(grid.total_size), 0);
+    }
 
     auto dsu_make_active = [&](const int idx)
     {
+        if (!calculate_detailed_properties) return;
         if (idx < 0 || idx >= grid.total_size) return;
         if (dsu[static_cast<std::size_t>(idx)] != 0) return;
         dsu[static_cast<std::size_t>(idx)] = -1;
@@ -1135,6 +1171,7 @@ NetworkPattern network::create_network(
 
     auto dsu_union = [&](const int a, const int b)
     {
+        if (!calculate_detailed_properties) return;
         if (a < 0 || b < 0 || a >= grid.total_size || b >= grid.total_size) return;
         dsu_make_active(a);
         dsu_make_active(b);
@@ -1174,7 +1211,7 @@ NetworkPattern network::create_network(
     std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
     TestedBondBitmap tested_bonds(grid);
     std::unique_ptr<TestedBondBitmap> open_bonds;
-    if constexpr (calculate_detailed_properties) {
+    if (calculate_detailed_properties) {
         if (!is_node) {
             open_bonds = std::make_unique<TestedBondBitmap>(grid);
         }
@@ -1184,7 +1221,7 @@ NetworkPattern network::create_network(
                          const std::uint64_t edge_bit =
                              std::numeric_limits<std::uint64_t>::max())
     {
-        if constexpr (calculate_detailed_properties) {
+        if (calculate_detailed_properties) {
             dsu_union(u, v);
             if (open_bonds) {
                 if (edge_bit == std::numeric_limits<std::uint64_t>::max()) {
@@ -1202,9 +1239,11 @@ NetworkPattern network::create_network(
         }
     };
 
-    for (int idx = 0; idx < grid.total_size; ++idx) {
-        if (get_site(idx) > 0) {
-            dsu_make_active(idx);
+    if (calculate_detailed_properties) {
+        for (int idx = 0; idx < grid.total_size; ++idx) {
+            if (get_site(idx) > 0) {
+                dsu_make_active(idx);
+            }
         }
     }
 
@@ -1217,6 +1256,8 @@ NetworkPattern network::create_network(
         (static_cast<std::uint64_t>(lenght_network) << 32) ^
         (static_cast<std::uint64_t>(num_colors) << 48);
     std::mt19937_64 topology_rng(topology_seed);
+
+    constexpr int progress_interval = 200;
 
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
@@ -1271,7 +1312,7 @@ NetworkPattern network::create_network(
                 set_site(viz, new_val);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
-                activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                set_activation_time(viz, static_cast<uint32_t>(t));
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -1319,6 +1360,7 @@ NetworkPattern network::create_network(
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
 
+                        if (!calculate_detailed_properties) continue;
                         if (!tested_bonds.mark_if_new(edge_bit)) continue;
 
                         if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
@@ -1403,7 +1445,7 @@ NetworkPattern network::create_network(
                 dsu_make_active(viz);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
-                activation_time[static_cast<std::size_t>(viz)] = static_cast<uint32_t>(t);
+                set_activation_time(viz, static_cast<uint32_t>(t));
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -1435,17 +1477,20 @@ NetworkPattern network::create_network(
             f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
         }
 
-        if (t < 10 || t % 100 == 0) {
-            std::cout << "[" << type_percolation << "] t = " << t;
+        if (t < 10 || t % progress_interval == 0) {
+            std::cout << "[" << type_percolation << "] t=" << t
+                      << ", frontier=" << next_frontier.size();
             for (int c = 0; c < num_colors; ++c) {
                 std::cout
-                    << ", p" << (c + 1) << "(t)=" << p_curr[c]
-                    << ", f" << (c + 1) << "(t)="
-                    << f_current[c]
-                    << " max" << (c + 1) << "(t)=" << max_heights[c];
+                    << ", p" << (c + 1) << "=" << p_curr[c]
+                    << ", f" << (c + 1) << "=" << f_current[c]
+                    << ", h" << (c + 1) << "=" << max_heights[c]
+                    << "/" << grid.grow_top_coord();
             }
             std::cout << '\n';
         }
+
+        commit_step(t, p_curr, f_current);
 
         // Se a espécie não cresceu neste passo, então f_i(t) = 0.
         // Caso ainda não tenha percolado, ela morreu; caso já tenha percolado,
@@ -1501,7 +1546,7 @@ NetworkPattern network::create_network(
             all_terminal && any_percolated && any_dead;
 
         if (stop_all_dead || stop_all_percolated || stop_partial_percolation) {
-            if constexpr (!calculate_detailed_properties) {
+            if (!calculate_detailed_properties) {
                 finalize_time_series_only();
                 break;
             }
@@ -1571,14 +1616,12 @@ NetworkPattern network::create_network(
             break;
         }
 
-
-        std::vector<double> p_next(num_colors);
+        std::fill(p_next.begin(), p_next.end(), 0.0);
         for (int c = 0; c < num_colors; ++c) {
             p_next[c] = finished[c] ? p_curr[c]
                                     : generate_p(type_f_T, p_curr[c], t, f_current[c], c_value, f_T, a, alpha);
         }
 
-        commit_step(t, p_next, f_current);
         frontier.swap(next_frontier);
         p_curr.swap(p_next);
     }
@@ -1598,12 +1641,15 @@ NetworkPattern network::create_network(
     ts_out.t_eq = estimate_t_eq_from_timeseries(
         ts_out,
         15,      // window_roll
-        20,      // window_block
-        1.0e-6   // s_prime threshold
+        10,      // window_block
+        15,      // min stable steps
+        2.5e-2,  // relative block-change tolerance
+        1.0e-6,  // absolute block-change tolerance
+        5.0e-4   // |s_prime| threshold
     );
     ps_out.t_eq = ts_out.t_eq;
 
-    if constexpr (calculate_detailed_properties) {
+    if (calculate_detailed_properties) {
         if (!std::isfinite(ps_out.t_eq)) {
             for (int c = 0; c < num_colors; ++c) {
                 ps_out.sp_lin_preteq[c] = -1;
@@ -1806,7 +1852,8 @@ NetworkPattern network::animate_network(
     const double c_value, const double f_T, const int type_f_T,
     const std::vector<double> p0, const double P0, const double a, const double alpha,
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
-    TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng)
+    TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng,
+    const bool calculate_detailed_properties)
 {
     this->c = c_value;
     this->f_T = f_T;
@@ -1817,7 +1864,6 @@ NetworkPattern network::animate_network(
         : std::vector<int>{grid.SX, grid.SY, grid.SZ};
 
     const bool is_node = (type_percolation == "node");
-    constexpr bool calculate_detailed_properties = (HEIGHT_STOP_MULTIPLIER == 1);
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
 
@@ -1874,6 +1920,7 @@ NetworkPattern network::animate_network(
     t_list.reserve(num_of_samples);
 
     std::vector<double> p_curr = p0;
+    std::vector<double> p_next(num_colors, 0.0);
     std::vector<int>    N_current(num_colors, 0);
     std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
@@ -2241,6 +2288,8 @@ NetworkPattern network::animate_network(
         (static_cast<std::uint64_t>(num_colors) << 48);
     std::mt19937_64 topology_rng(topology_seed);
 
+    constexpr int progress_interval = 200;
+
     for (int t = 1; t < num_of_samples; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
         std::fill(f_current.begin(), f_current.end(), 0.0);
@@ -2307,7 +2356,7 @@ NetworkPattern network::animate_network(
                     percolation_rank[cor_idx] = ++order_ctr;
                 }
 
-                if constexpr (calculate_detailed_properties) {
+                if (calculate_detailed_properties) {
                     edge_pairs.emplace_back(static_cast<uint32_t>(chosen.activator),
                                             static_cast<uint32_t>(viz));
                     edge_pairs.emplace_back(static_cast<uint32_t>(viz),
@@ -2340,13 +2389,15 @@ NetworkPattern network::animate_network(
                     }
 
                     if (vv > 0) {
+                        if (!calculate_detailed_properties) continue;
+
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
 
                         if (!tested_bonds.mark_if_new(edge_bit)) continue;
 
                         if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
-                            if constexpr (calculate_detailed_properties) {
+                            if (calculate_detailed_properties) {
                                 edge_pairs.emplace_back(static_cast<uint32_t>(idx),
                                                         static_cast<uint32_t>(viz_idx));
                                 edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
@@ -2439,7 +2490,7 @@ NetworkPattern network::animate_network(
                     for (int i = 0; i < n_cand; ++i) {
                         const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
-                        if constexpr (calculate_detailed_properties) {
+                        if (calculate_detailed_properties) {
                             edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
                                                     static_cast<uint32_t>(viz));
                             edge_pairs.emplace_back(static_cast<uint32_t>(viz),
@@ -2450,7 +2501,7 @@ NetworkPattern network::animate_network(
                     for (int i = 0; i < n_cand; ++i) {
                         const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
-                        if constexpr (calculate_detailed_properties) {
+                        if (calculate_detailed_properties) {
                             edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
                                                     static_cast<uint32_t>(viz));
                             edge_pairs.emplace_back(static_cast<uint32_t>(viz),
@@ -2465,17 +2516,20 @@ NetworkPattern network::animate_network(
             f_current[c] = static_cast<double>(N_current[c]) / norm_factor;
         }
 
-        if (t < 10 || t % 100 == 0) {
-            std::cout << "[" << type_percolation << "] t = " << t;
+        if (t < 10 || t % progress_interval == 0) {
+            std::cout << "[" << type_percolation << "] t=" << t
+                      << ", frontier=" << next_frontier.size();
             for (int c = 0; c < num_colors; ++c) {
                 std::cout
-                    << ", p" << (c + 1) << "(t)=" << p_curr[c]
-                    << ", f" << (c + 1) << "(t)="
-                    << f_current[c]
-                    << " max" << (c + 1) << "(t)=" << max_heights[c];
+                    << ", p" << (c + 1) << "=" << p_curr[c]
+                    << ", f" << (c + 1) << "=" << f_current[c]
+                    << ", h" << (c + 1) << "=" << max_heights[c]
+                    << "/" << grid.grow_top_coord();
             }
             std::cout << '\n';
         }
+
+        commit_step(t, p_curr, f_current);
 
         for (int c = 0; c < num_colors; ++c) {
             if (f_current[c] <= 0.0) {
@@ -2516,7 +2570,7 @@ NetworkPattern network::animate_network(
             all_terminal && any_percolated && any_dead;
 
         if (stop_all_dead || stop_all_percolated || stop_partial_percolation) {
-            if constexpr (calculate_detailed_properties) {
+            if (calculate_detailed_properties) {
                 finalize_global_metrics();
             } else {
                 finalize_time_series_only();
@@ -2524,15 +2578,13 @@ NetworkPattern network::animate_network(
             break;
         }
 
-
-        std::vector<double> p_next(num_colors);
+        std::fill(p_next.begin(), p_next.end(), 0.0);
         for (int c = 0; c < num_colors; ++c) {
             p_next[c] = finished[c]
                 ? p_curr[c]
                 : generate_p(type_f_T, p_curr[c], t, f_current[c], c_value, f_T, a, alpha);
         }
 
-        commit_step(t, p_next, f_current);
         frontier.swap(next_frontier);
         p_curr.swap(p_next);
     }
@@ -2543,7 +2595,7 @@ NetworkPattern network::animate_network(
     ts_out.t   = std::move(t_list);
 
     if (!global_metrics_finalized) {
-        if constexpr (calculate_detailed_properties) {
+        if (calculate_detailed_properties) {
             finalize_global_metrics();
         } else {
             finalize_time_series_only();
@@ -2553,12 +2605,15 @@ NetworkPattern network::animate_network(
     ts_out.t_eq = estimate_t_eq_from_timeseries(
         ts_out,
         15,      // window_roll
-        20,      // window_block
-        1.0e-6   // s_prime threshold
+        10,      // window_block
+        15,      // min stable steps
+        2.5e-2,  // relative block-change tolerance
+        1.0e-6,  // absolute block-change tolerance
+        5.0e-4   // |s_prime| threshold
     );
     ps_out.t_eq = ts_out.t_eq;
 
-    if constexpr (calculate_detailed_properties) {
+    if (calculate_detailed_properties) {
         if (!std::isfinite(ps_out.t_eq)) {
             for (int c = 0; c < num_colors; ++c) {
                 ps_out.sp_lin_preteq[c] = -1;

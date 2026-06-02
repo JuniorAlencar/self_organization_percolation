@@ -275,7 +275,9 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << ",\n";
     ofs << "    \"t_eq\": ";
     write_json_nullable_double(ofs, ps.t_eq);
-    ofs << "\n";
+    ofs << ",\n";
+    ofs << "    \"pt_convention\": \"p_used_to_generate_same_time_step\",\n";
+    ofs << "    \"nt_convention\": \"new_active_front_fraction_same_time_step\"\n";
     ofs << "  },\n";
 
     ofs << "  \"results\": {\n";

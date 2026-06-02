@@ -71,7 +71,7 @@ DEFAULT_SIZE_COLS = [
     "S_perc_posteq", "S_perc_posteq_err",
 ]
 
-MEAN_PROCESSING_VERSION = 2
+MEAN_PROCESSING_VERSION = 3
 
 
 
@@ -1048,8 +1048,10 @@ def _average_by_order_new(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
         pt = d.get("pt", None)
         ft = d.get("ft", None)
         t_eq = _safe_float(d.get("t_eq", None))
-        if t_eq is not None:
-            t_eq_vals.append(float(t_eq))
+        if t_eq is None:
+            continue
+
+        t_eq_vals.append(float(t_eq))
 
         if t is None or pt is None:
             continue
@@ -1667,6 +1669,8 @@ def compute_means_for_folder(
 
             for ordk, data in orders.items():
                 data_local = dict(data)
+                if _safe_float(data_local.get("t_eq", None)) is None:
+                    continue
 
                 if x_max is not None and data_local.get("t") is not None:
                     t = np.asarray(data_local["t"], dtype=float)
