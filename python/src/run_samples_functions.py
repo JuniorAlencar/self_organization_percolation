@@ -21,12 +21,14 @@ def shell_data(
     P0: float,
     equlibration,
     multi: bool = False,
+    properties=False,
+    mode: str = "sop",
 ):
     """
     Generate a shell script to run SOP multiple times.
 
     New SOP executable signature:
-        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration>
+        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode]
 
     The old inputs k and N_T were removed. The update rule is now:
         p_i(t+1) = p_i(t) + c * (f_T - f_i(t))
@@ -54,6 +56,31 @@ def shell_data(
     if dim not in (2, 3):
         return "please, enter with dim = 2 or 3"
 
+    if isinstance(num_runs, (list, tuple, np.ndarray)):
+        if len(num_runs) != 1:
+            raise ValueError(
+                "num_runs must be a single integer for each generated shell script. "
+                "Pass num_runs[idx] when iterating over L values."
+            )
+        num_runs = num_runs[0]
+
+    num_runs = int(num_runs)
+
+    mode = str(mode).strip()
+    if mode not in ("sop", "growth_test"):
+        raise ValueError("mode must be 'sop' or 'growth_test'")
+
+    if isinstance(properties, bool):
+        properties = "true" if properties else "false"
+    else:
+        properties = str(properties).strip().lower()
+
+    if properties not in ("true", "false"):
+        raise ValueError("properties must be true/false")
+
+    if mode == "growth_test" and properties == "true":
+        raise ValueError("growth_test currently requires properties=false")
+
     os.makedirs("../shells", exist_ok=True)
     print("Creating shell script file in ../shells/")
 
@@ -80,6 +107,15 @@ dim={dim}
 num_colors={num_colors}
 P0={P0}
 Equilibration={equlibration}
+Properties={properties}
+Mode="{mode}"
+
+extra_args=()
+if [[ "$Mode" != "sop" ]]; then
+  extra_args=("$Properties" "$Mode")
+elif [[ "$Properties" == "true" ]]; then
+  extra_args=("$Properties")
+fi
 
 # --- safety knobs (can be overridden at runtime) ---
 MEMORY_SAFETY_FRACTION=${{MEMORY_SAFETY_FRACTION:-0.85}}
@@ -98,7 +134,7 @@ if ! command -v /usr/bin/time >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type c f_T dim num_colors P0 Equilibration
+export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode
 
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 if [[ "$TOTAL" -le 0 ]]; then
@@ -130,10 +166,10 @@ BENCH_RHO=${{rho[0]}}
 BENCH_LOG=$(mktemp)
 
 echo "[INFO] Running RAM benchmark for this parameter set..."
-echo "[INFO] Benchmark command: ./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $P0 $Equilibration"
+echo "[INFO] Benchmark command: ./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $P0 $Equilibration ${{extra_args[*]}}"
 
 /usr/bin/time -f "%M" -o "$BENCH_LOG" \
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$P0" "$Equilibration" >/dev/null
+  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$P0" "$Equilibration" "${{extra_args[@]}}" >/dev/null
 
 PEAK_RAM_KB=$(tr -dc '0-9' < "$BENCH_LOG")
 rm -f "$BENCH_LOG"
@@ -217,7 +253,13 @@ echo "[INFO] Running remaining $REMAINING simulation(s) with -j $JOBS ..."
 parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
   RUN={{2}}
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration"
+  extra_args=()
+  if [[ "$Mode" != "sop" ]]; then
+    extra_args=("$Properties" "$Mode")
+  elif [[ "$Properties" == "true" ]]; then
+    extra_args=("$Properties")
+  fi
+  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" "${{extra_args[@]}}"
 ' :::: "$TASK_FILE"
 
 echo "All runs completed."
@@ -243,6 +285,15 @@ dim={dim}
 num_colors={num_colors}
 Equilibration={equlibration}
 P0={P0}
+Properties={properties}
+Mode="{mode}"
+
+extra_args=()
+if [[ "$Mode" != "sop" ]]; then
+  extra_args=("$Properties" "$Mode")
+elif [[ "$Properties" == "true" ]]; then
+  extra_args=("$Properties")
+fi
 
 # --- pretty progress bar (single-line) ---
 progress_bar() {{
@@ -271,10 +322,10 @@ for ((run=1; run<=num_runs; run++)); do
 
     if [[ "$VERBOSE" -eq 1 ]]; then
       echo
-      echo "./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $RHO $P0 $Equilibration"
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration"
+      echo "./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $RHO $P0 $Equilibration ${{extra_args[*]}}"
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" "${{extra_args[@]}}"
     else
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" >/dev/null
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" "${{extra_args[@]}}" >/dev/null
     fi
   done
 done

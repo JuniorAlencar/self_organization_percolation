@@ -27,7 +27,9 @@ class FolderCreator {
             double P0,
             double rho,
             bool teste = false,
-            int height_stop_multiplier = 1
+            bool dynamic_height = false,
+            int height_extra_layers = 0,
+            int dynamics_window_steps = -1
         );
 
     private:

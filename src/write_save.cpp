@@ -43,6 +43,17 @@ void write_json_nullable_double(std::ostream& os, const double value)
     }
 }
 
+void write_json_nullable_double_array(std::ostream& os,
+                                      const std::vector<double>& v)
+{
+    os << "[";
+    for (size_t i = 0; i < v.size(); ++i) {
+        write_json_nullable_double(os, v[i]);
+        if (i + 1 < v.size()) os << ", ";
+    }
+    os << "]";
+}
+
 template <typename T>
 void write_json_row(std::ostream& os,
                     const std::vector<std::vector<T>>& m,
@@ -276,6 +287,43 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "    \"t_eq\": ";
     write_json_nullable_double(ofs, ps.t_eq);
     ofs << ",\n";
+    if (!ps.t_eq_by_species.empty()) {
+        ofs << "    \"t_eq_by_species\": ";
+        write_json_nullable_double_array(ofs, ps.t_eq_by_species);
+        ofs << ",\n";
+    }
+    if (!ps.z_max_final.empty()) {
+        ofs << "    \"z_max\": ";
+        write_json_array(ofs, ps.z_max_final);
+        ofs << ",\n";
+        ofs << "    \"z_max_final\": ";
+        write_json_array(ofs, ps.z_max_final);
+        ofs << ",\n";
+        if (ps.dynamics_window_steps > 0) {
+            ofs << "    \"growth_test_dynamics_window_steps\": "
+                << ps.dynamics_window_steps << ",\n";
+        }
+        if (ps.equilibrium_consecutive_steps > 0) {
+            ofs << "    \"growth_test_equilibrium_consecutive_steps\": "
+                << ps.equilibrium_consecutive_steps << ",\n";
+        }
+        if (std::isfinite(ps.equilibrium_rel_tol)) {
+            ofs << "    \"growth_test_equilibrium_rel_tol\": "
+                << ps.equilibrium_rel_tol << ",\n";
+        }
+        if (std::isfinite(ps.equilibrium_abs_tol)) {
+            ofs << "    \"growth_test_equilibrium_abs_tol\": "
+                << ps.equilibrium_abs_tol << ",\n";
+        }
+        if (ps.z_max_at_perc.empty()) {
+            ofs << "    \"results_convention\": \"growth_test_order_percolation_is_species_temporal_equilibration_order\",\n";
+        }
+    }
+    if (!ps.z_max_at_perc.empty()) {
+        ofs << "    \"z_max_at_perc\": ";
+        write_json_array(ofs, ps.z_max_at_perc);
+        ofs << ",\n";
+    }
     ofs << "    \"pt_convention\": \"p_used_to_generate_same_time_step\",\n";
     ofs << "    \"nt_convention\": \"new_active_front_fraction_same_time_step\"\n";
     ofs << "  },\n";
@@ -315,6 +363,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 ? ps.M_size_posteq[crow]
                 : -1;
 
+        const double t_eq_species =
+            (crow < static_cast<int>(ps.t_eq_by_species.size()))
+                ? ps.t_eq_by_species[static_cast<std::size_t>(crow)]
+                : std::numeric_limits<double>::quiet_NaN();
+
         const std::vector<int>* sp_path_lin_ptr = nullptr;
         if (crow < static_cast<int>(ps.sp_path_lin.size())) {
             sp_path_lin_ptr = &ps.sp_path_lin[crow];
@@ -342,6 +395,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"nt\": ";
         write_json_row(ofs, ts.f_t, crow);
         ofs << ",\n";
+        if (!ps.t_eq_by_species.empty()) {
+            ofs << "        \"t_eq_species\": ";
+            write_json_nullable_double(ofs, t_eq_species);
+            ofs << ",\n";
+        }
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
         ofs << "        \"sp_path_lin\": ";
         if (sp_path_lin_ptr) write_json_array(ofs, *sp_path_lin_ptr);

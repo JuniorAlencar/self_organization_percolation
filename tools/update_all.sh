@@ -32,7 +32,6 @@ done
 RAW_DIR="raw"
 PUBLISHED_DIR="published"
 MANIFESTS_DIR="manifests"
-MANIFESTS_SIZES_DIR="manifests_sizes"
 OUTPUT_SUFFIX=""
 
 if [[ -n "${HEIGHT_STOP_MULTIPLIER}" ]]; then
@@ -44,21 +43,17 @@ if [[ -n "${HEIGHT_STOP_MULTIPLIER}" ]]; then
   RAW_DIR="raw_${HEIGHT_STOP_MULTIPLIER}L_stop"
   PUBLISHED_DIR="published_${HEIGHT_STOP_MULTIPLIER}L_stop"
   MANIFESTS_DIR="manifests_${HEIGHT_STOP_MULTIPLIER}L_stop"
-  MANIFESTS_SIZES_DIR="manifests_sizes_${HEIGHT_STOP_MULTIPLIER}L_stop"
   OUTPUT_SUFFIX="_${HEIGHT_STOP_MULTIPLIER}L_stop"
 fi
 
 MEANS_EXTRA_ARGS=()
-RUN_SIZES=true
 if [[ -n "${HEIGHT_STOP_MULTIPLIER}" ]]; then
   MEANS_EXTRA_ARGS+=(--time-series-only)
-  RUN_SIZES=false
 fi
 
 mkdir -p \
   "${SOP_ROOT}/${RAW_DIR}" \
   "${SOP_ROOT}/${MANIFESTS_DIR}" \
-  "${SOP_ROOT}/${MANIFESTS_SIZES_DIR}" \
   "${SOP_ROOT}/${PUBLISHED_DIR}" \
   "${SOP_ROOT}/logs" \
   "${SOP_ROOT}/tmp"
@@ -75,15 +70,3 @@ python3 "${SCRIPT_DIR}/update_published_means.py" \
   --output-suffix "${OUTPUT_SUFFIX}" \
   "${MEANS_EXTRA_ARGS[@]}" \
   "${FORWARD_ARGS[@]}"
-
-if [[ "${RUN_SIZES}" == true ]]; then
-  python3 "${SCRIPT_DIR}/update_published_sizes.py" \
-    --sop-root "${SOP_ROOT}" \
-    --raw-dir "${RAW_DIR}" \
-    --published-dir "${PUBLISHED_DIR}" \
-    --manifests-dir "${MANIFESTS_SIZES_DIR}" \
-    --output-suffix "${OUTPUT_SUFFIX}" \
-    "${FORWARD_ARGS[@]}"
-else
-  echo "[INFO] NL-stop mode: skipping size/heavy property calculations; temporal p_mean was saved."
-fi
