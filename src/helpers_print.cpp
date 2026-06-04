@@ -254,7 +254,7 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
 void helpers::print_help(const char* prog) {
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties]
+  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode]
 
 Arguments:
   L                : Length of network (int)
@@ -269,15 +269,18 @@ Arguments:
   P0               : Fraction of active nodes in base [0 < P0 <= 1.0]
   Equilibration    : Return network with encoded time activation ['true' or 'false']
   Properties       : Optional; calculate shortest paths, largest components, surfaces/networks ['true' or 'false']; default false
+  Mode             : Optional; 'sop' (default) or 'growth_test'
 Examples:
   ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true
   ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true true
+  ./SOP  512 1.0 -1 bond 1.0e-02 6.0e-02 3 4 0.25 0.1 false false growth_test
   ./SOP  500 0.05 42 node 1.0e-01 5.0e-02 3 3 0.25 0.5 false
 
 Tips:
   - Use seed = -1 to auto-generate a random seed.
   - 'bond' vs 'node' picks percolation type.
   - Larger c reacts faster to deviations from f_T; f_T sets the target growth-front density.
+  - growth_test keeps the SOP output separate and grows height dynamically after z = L.
 )" << std::endl;
 }
 

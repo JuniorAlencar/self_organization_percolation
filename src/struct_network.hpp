@@ -117,12 +117,19 @@ struct PercolationSeries {
 
     // novos campos
     double t_eq = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> t_eq_by_species;
     std::vector<int> sp_lin_preteq;
     std::vector<std::vector<int>> sp_path_lin_preteq;
     std::vector<int> sp_lin_posteq;
     std::vector<std::vector<int>> sp_path_lin_posteq;
     std::vector<int> M_size_preteq;
     std::vector<int> M_size_posteq;
+    std::vector<int> z_max_at_perc;
+    std::vector<int> z_max_final;
+    int equilibrium_consecutive_steps = -1;
+    int dynamics_window_steps = -1;
+    double equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();
+    double equilibrium_abs_tol = std::numeric_limits<double>::quiet_NaN();
     
 };
 

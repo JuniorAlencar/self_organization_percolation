@@ -19,13 +19,17 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
     double /* P0 */,
     double rho,
     bool teste,
-    int height_stop_multiplier
+    bool dynamic_height,
+    int height_extra_layers,
+    int dynamics_window_steps
     )
 {
     char main_folder[256];
     std::string raw_folder = "raw";
     if (teste) {
-        raw_folder = "raw_" + std::to_string(height_stop_multiplier) + "L_stop";
+        raw_folder = dynamic_height
+            ? "raw_growth_test_dynamic"
+            : "raw_growth_test_extra_" + std::to_string(height_extra_layers);
     }
 
 
@@ -47,6 +51,10 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
         full_path = std::string(sub);
     }
 
+    if (teste && dynamic_height && dynamics_window_steps > 0) {
+        full_path += "/stationary_window_" + std::to_string(dynamics_window_steps);
+    }
+
     std::string network_path = full_path + "/network";
     std::string data_path = full_path + "/data";
     std::string data_path_equilibration = full_path + "/data_surfaces";
@@ -61,5 +69,3 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
 
     return {network_path, data_path, data_path_equilibration, data_network_preteq, data_network_posteq};
 }
-
-

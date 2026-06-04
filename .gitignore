@@ -20,6 +20,7 @@ shells/.run_all_ram_logs/*
 !shells/install_python_dependencies.sh
 !shells/run_python.sh
 !shells/process_equilibration.sh
+
 shells/after/
 .process_equilibration
 *.html

@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <optional>
+#include <algorithm>
 
 namespace rh = reanalysis_helpers;
 
@@ -36,7 +37,7 @@ int main(int argc, char* argv[]) {
 
     // Allow either zero-argument (use defaults) or full-argument run.
     // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && argc != 12 && argc != 13) {
+    if (argc != 1 && argc != 12 && argc != 13 && argc != 14) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -57,10 +58,9 @@ int main(int argc, char* argv[]) {
         double P0 = 0.1;
         std::string equilibration = "true";
         bool calculate_detailed_properties = false;
+        std::string run_mode = "sop";
         
-        const bool teste = false;
-
-        if (argc == 12 || argc == 13) {
+        if (argc == 12 || argc == 13 || argc == 14) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -72,9 +72,19 @@ int main(int argc, char* argv[]) {
             rho_val = std::stod(argv[9]);
             P0 = std::stod(argv[10]);
             equilibration = argv[11];
-            if (argc == 13) {
+            if (argc >= 13) {
                 calculate_detailed_properties = helpers::parse_bool(argv[12]);
             }
+            if (argc == 14) {
+                run_mode = argv[13];
+            }
+        }
+
+        const bool teste = (run_mode == "growth_test");
+        if (run_mode != "sop" && run_mode != "growth_test") {
+            std::cerr << "[ERROR] run mode must be 'sop' or 'growth_test'.\n";
+            helpers::print_help(argv[0]);
+            return 1;
         }
 
         const bool animation = helpers::parse_bool(equilibration);
@@ -119,6 +129,25 @@ int main(int argc, char* argv[]) {
         std::vector<double> p0(num_colors, pp0);
 
         int N_samples = 100000;
+        GrowthStopConfig stop_config;
+        if (teste) {
+            stop_config.height_multiplier = HEIGHT_STOP_MULTIPLIER;
+            stop_config.dynamic_height = true;
+            stop_config.stop_at_percolation = false;
+            stop_config.stop_at_equilibrium = true;
+            stop_config.equilibrium_consecutive_steps = 10;
+            stop_config.dynamics_window_steps =
+                GROWTH_TEST_DYNAMICS_WINDOW_FACTOR *
+                stop_config.equilibrium_consecutive_steps;
+            if (const char* env_window =
+                    std::getenv("GROWTH_TEST_DYNAMICS_WINDOW_STEPS")) {
+                stop_config.dynamics_window_steps = std::stoi(env_window);
+                if (stop_config.dynamics_window_steps <= 1) {
+                    throw std::runtime_error(
+                        "GROWTH_TEST_DYNAMICS_WINDOW_STEPS must be > 1");
+                }
+            }
+        }
         const int SPECIES_FACTOR = 10000000;
         int type_f_T = 0;
         double a = 0.0, alpha = 0.0;
@@ -133,13 +162,15 @@ int main(int argc, char* argv[]) {
                     dim, L, N_samples, c, f_T, type_f_T,
                     p0, P0, a, alpha, type_percolation,
                     num_colors, rho, ts, ps, rng,
-                    calculate_detailed_properties
+                    calculate_detailed_properties,
+                    stop_config
               )
             : net_generator.create_network(
                     dim, L, N_samples, c, f_T, type_f_T,
                     p0, P0, a, alpha, type_percolation,
                     num_colors, rho, ts, ps, rng, false,
-                    calculate_detailed_properties
+                    calculate_detailed_properties,
+                    stop_config
               );
 
         FolderCreator creator("./SOP_data");
@@ -163,7 +194,9 @@ int main(int argc, char* argv[]) {
                 P0,
                 rho_val,
                 teste,
-                HEIGHT_STOP_MULTIPLIER
+                stop_config.dynamic_height,
+                stop_config.height_extra_layers,
+                stop_config.dynamics_window_steps
             );
 
         std::cerr << "[DBG] ps sizes -> "

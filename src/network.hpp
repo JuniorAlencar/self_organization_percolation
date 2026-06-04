@@ -6,6 +6,7 @@
 
 #include "rand_utils.hpp"
 #include "LargestComponentBFS.hpp"
+#include "height_stop_config.hpp"
 
 class network {
 private:
@@ -56,7 +57,8 @@ public:
         PercolationSeries& ps_out,
         all_random& rng,
         bool save_compact = true,
-        bool calculate_detailed_properties = false);
+        bool calculate_detailed_properties = false,
+        GrowthStopConfig stop_config = GrowthStopConfig{});
 
     NetworkPattern initialize_network(
         int dim,
@@ -86,7 +88,8 @@ public:
         TimeSeries& ts_out,
         PercolationSeries& ps_out,
         all_random& rng,
-        bool calculate_detailed_properties = false);
+        bool calculate_detailed_properties = false,
+        GrowthStopConfig stop_config = GrowthStopConfig{});
 
     NetworkPattern filter_percolating_clusters_from_encoded(
         const NetworkPattern& encoded_net) const;

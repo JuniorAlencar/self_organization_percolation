@@ -55,27 +55,29 @@ type_perc = 'bond'
 # f_T = np.linspace(0.001, 0.30, 25)
 # c_lst = [0.01, 0.05, 0.25, 0.50]
 L =       1024
-nc = 2
 L_lst =       [256, 512, 1024]
 num_runs =    [150, 50, 5]
-nc_lst = [1, 2, 4, 8]
-#ft_lst = [0.02591667, 0.006710068, 0.004114583, 0.001519097]
-ft = 0.02591667
-c = 0.01
+nc = 1
+ft_lst = np.linspace(0.01, 0.4, 30)
+c_lst = [0.01, 0.03, 0.05, 0.07, 0.10]
 multi=True
 Equilibration = 'false'
-p0_lst = [0.3, 0.7, 1.0]
-
-for p0 in p0_lst:
-        for nc in nc_lst:        
+Properties = 'false'
+Mode = 'growth_test'  # use 'sop' for the original fixed-height SOP run
+p0 = 0.6
+P0 = 0.1
+for ft in ft_lst:
+        for c in c_lst:
                 for idx, L in enumerate(L_lst):            
                                         # start = 1/(P0*L**2)
                                         # print(start)
                                         # stop = 1/(2*nc)
                                         # n_points = 50
-                                        # rho = custom_range(start, stop, n_points)
+                                # rho = custom_range(start, stop, n_points)
                         rho = 1/nc
-                        exec_name = f"ft_{ft:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}.sh"
+                        mode_tag = "" if Mode == "sop" else f"_{Mode}"
+                        exec_name = f"ft_{ft:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}.sh"
 
                         shell_data(L, type_perc, p0, seed, c, ft, dim,
-                                nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi)
+                                nc, num_runs[idx], [1/nc], exec_name, P0, Equilibration, multi,
+                                properties=Properties, mode=Mode)
