@@ -34,6 +34,27 @@ struct GridRegular {
           stride_z(SX * (dim_ >= 2 ? L : 1)),
           total_size(SX * (dim_ >= 2 ? L : 1) * (dim_ == 3 ? L : 1)) {}
 
+    GridRegular(const int dim_, const std::vector<int>& shape)
+        : dim(dim_),
+          SX(shape.empty() ? 0 : shape[0]),
+          SY((dim_ >= 2 && shape.size() > 1) ? shape[1] : 1),
+          SZ((dim_ == 3 && shape.size() > 2) ? shape[2] : 1),
+          grow_axis(dim_ - 1),
+          stride_y(SX),
+          stride_z(SX * (dim_ >= 2 ? SY : 1)),
+          total_size(SX * (dim_ >= 2 ? SY : 1) * (dim_ == 3 ? SZ : 1))
+    {
+        if (dim != 2 && dim != 3) {
+            throw std::runtime_error("GridRegular: dim deve ser 2 ou 3");
+        }
+        if (static_cast<int>(shape.size()) != dim) {
+            throw std::runtime_error("GridRegular: shape incompatível com dim");
+        }
+        if (SX <= 0 || SY <= 0 || SZ <= 0) {
+            throw std::runtime_error("GridRegular: shape inválido");
+        }
+    }
+
     inline int x_of(const int idx) const { return idx % SX; }
     inline int y_of(const int idx) const { return (idx / SX) % SY; }
     inline int z_of(const int idx) const { return idx / (SX * SY); }
@@ -353,8 +374,11 @@ std::vector<Point3D> extract_top_surface_points(
         throw std::runtime_error("extract_top_surface_points: shape vazio");
     }
 
-    const int L = net.shape[0];
-    const GridRegular grid(net.dim, L);
+    const GridRegular grid(net.dim, net.shape);
+    if (static_cast<int>(net.data.size()) != grid.total_size) {
+        throw std::runtime_error(
+            "extract_top_surface_points: tamanho de data incompatível com shape");
+    }
 
     auto is_active_site = [&](const int idx, int* color_idx_out = nullptr) -> bool {
         if (idx < 0 || idx >= grid.total_size) {

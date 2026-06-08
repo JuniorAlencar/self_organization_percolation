@@ -3,6 +3,12 @@
 
 constexpr int HEIGHT_STOP_MULTIPLIER = 1;
 
+enum class InitialBaseLayout {
+    Random,
+    Blocks,
+    Alternating
+};
+
 struct GrowthStopConfig {
     int height_multiplier = HEIGHT_STOP_MULTIPLIER;
     int height_extra_layers = 0;
@@ -18,6 +24,7 @@ struct GrowthStopConfig {
     double derivative_abs_tol = 5.0e-4;
     double control_derivative_abs_tol = 5.0e-4;
     double derivative_sign_change_fraction = 0.35;
+    InitialBaseLayout initial_base_layout = InitialBaseLayout::Random;
 };
 
 constexpr int GROWTH_TEST_DYNAMICS_WINDOW_FACTOR = 30;

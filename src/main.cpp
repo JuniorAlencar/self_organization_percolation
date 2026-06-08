@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
 
     // Allow either zero-argument (use defaults) or full-argument run.
     // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && argc != 12 && argc != 13 && argc != 14) {
+    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -59,8 +59,9 @@ int main(int argc, char* argv[]) {
         std::string equilibration = "true";
         bool calculate_detailed_properties = false;
         std::string run_mode = "sop";
+        std::string initial_layout = "random";
         
-        if (argc == 12 || argc == 13 || argc == 14) {
+        if (argc == 12 || argc == 13 || argc == 14 || argc == 15) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -78,6 +79,10 @@ int main(int argc, char* argv[]) {
             if (argc == 14) {
                 run_mode = argv[13];
             }
+            if (argc == 15) {
+                run_mode = argv[13];
+                initial_layout = argv[14];
+            }
         }
 
         const bool teste = (run_mode == "growth_test");
@@ -86,6 +91,20 @@ int main(int argc, char* argv[]) {
             helpers::print_help(argv[0]);
             return 1;
         }
+
+        auto parse_initial_layout = [](const std::string& value) {
+            if (value == "random") return InitialBaseLayout::Random;
+            if (value == "blocks" || value == "quadrants" || value == "quadrantes") {
+                return InitialBaseLayout::Blocks;
+            }
+            if (value == "alternating" || value == "alternado") {
+                return InitialBaseLayout::Alternating;
+            }
+            throw std::invalid_argument(
+                "initial layout must be 'random', 'blocks', or 'alternating'");
+        };
+        const InitialBaseLayout initial_base_layout =
+            parse_initial_layout(initial_layout);
 
         const bool animation = helpers::parse_bool(equilibration);
 
@@ -130,6 +149,7 @@ int main(int argc, char* argv[]) {
 
         int N_samples = 100000;
         GrowthStopConfig stop_config;
+        stop_config.initial_base_layout = initial_base_layout;
         if (teste) {
             stop_config.height_multiplier = HEIGHT_STOP_MULTIPLIER;
             stop_config.dynamic_height = true;
@@ -222,17 +242,24 @@ int main(int argc, char* argv[]) {
                   << "_ts_" << timestamp_now
                   << "_P0_" << std::fixed << std::setprecision(2) << P0
                   << "_p0_" << std::fixed << std::setprecision(2) << pp0;
+        if (initial_layout != "random") {
+            base_name << "_base_" << helpers::sanitize_for_filename(initial_layout);
+        }
         save_data saver;
         
         const std::string sample_base = base_name.str();
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         
         const bool has_percolation = !ps.color_percolation.empty();
+        const bool dynamic_growth_artifacts =
+            teste && stop_config.dynamic_height;
         const bool write_large_artifacts =
             calculate_detailed_properties &&
             build_full_network &&
             has_percolation &&
             std::isfinite(ps.t_eq);
+        const bool write_classic_large_artifacts =
+            write_large_artifacts && !dynamic_growth_artifacts;
 
         std::optional<EquilibrationCutNetworks> cuts;
         if (write_large_artifacts) {
@@ -249,8 +276,13 @@ int main(int argc, char* argv[]) {
                 extract_exposed_surfaces(net, *cuts, SPECIES_FACTOR);
             saver.save_surfaces_as_npz(surfaces, surfaces_filename);
         } else if (build_full_network && !has_percolation) {
-            std::cout << "[INFO] No percolating species found; skipping surface file."
-                      << std::endl;
+            if (dynamic_growth_artifacts) {
+                std::cout << "[INFO] No stabilized species found; skipping surface file."
+                          << std::endl;
+            } else {
+                std::cout << "[INFO] No percolating species found; skipping surface file."
+                          << std::endl;
+            }
         } else if (animation && !calculate_detailed_properties) {
             std::cout << "[INFO] Time-series-only mode: skipping network/surface artifacts."
                       << std::endl;
@@ -304,18 +336,20 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Warning: failed to save full compact network: " << e.what() << '\n';
             }
 
-            // percolating clusters (compact)
-            try {
-                NetworkPattern net_perc_clusters = net_generator.filter_percolating_clusters_from_encoded(net);
-                NetworkCompact percc = convert_to_compact(net_perc_clusters);
-                const std::string net_PERCOLATION_filename = network_dir + "/" + sample_base + "_PERCOLATION" + ".bin";
-                saver.save_network_compact_bin(percc, net_PERCOLATION_filename);
-            } catch (const std::exception &e) {
-                std::cerr << "Warning: failed to save percolation compact network: " << e.what() << '\n';
+            if (write_classic_large_artifacts) {
+                // percolating clusters (compact)
+                try {
+                    NetworkPattern net_perc_clusters = net_generator.filter_percolating_clusters_from_encoded(net);
+                    NetworkCompact percc = convert_to_compact(net_perc_clusters);
+                    const std::string net_PERCOLATION_filename = network_dir + "/" + sample_base + "_PERCOLATION" + ".bin";
+                    saver.save_network_compact_bin(percc, net_PERCOLATION_filename);
+                } catch (const std::exception &e) {
+                    std::cerr << "Warning: failed to save percolation compact network: " << e.what() << '\n';
+                }
             }
 
             // pre/post teq networks: prefer to preserve CSR edges from the full compact
-            try {
+            if (write_classic_large_artifacts) try {
                 // Attempt to read the full compact file we saved above to reuse its CSR
                 NetworkCompact base_full;
                 bool have_csr = false;

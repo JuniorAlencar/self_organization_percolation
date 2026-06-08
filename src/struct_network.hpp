@@ -126,10 +126,14 @@ struct PercolationSeries {
     std::vector<int> M_size_posteq;
     std::vector<int> z_max_at_perc;
     std::vector<int> z_max_final;
+    std::vector<int> z_stat_by_species;
     int equilibrium_consecutive_steps = -1;
     int dynamics_window_steps = -1;
+    int dynamic_min_stop_height = -1;
+    int dynamic_max_stop_height = -1;
     double equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();
     double equilibrium_abs_tol = std::numeric_limits<double>::quiet_NaN();
+    std::string initial_base_layout;
     
 };
 

@@ -23,12 +23,13 @@ def shell_data(
     multi: bool = False,
     properties=False,
     mode: str = "sop",
+    initial_layout: str = "random",
 ):
     """
     Generate a shell script to run SOP multiple times.
 
     New SOP executable signature:
-        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode]
+        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout]
 
     The old inputs k and N_T were removed. The update rule is now:
         p_i(t+1) = p_i(t) + c * (f_T - f_i(t))
@@ -78,8 +79,10 @@ def shell_data(
     if properties not in ("true", "false"):
         raise ValueError("properties must be true/false")
 
-    if mode == "growth_test" and properties == "true":
-        raise ValueError("growth_test currently requires properties=false")
+    initial_layout = str(initial_layout).strip()
+    valid_layouts = {"random", "blocks", "quadrants", "quadrantes", "alternating", "alternado"}
+    if initial_layout not in valid_layouts:
+        raise ValueError("initial_layout must be 'random', 'blocks', or 'alternating'")
 
     os.makedirs("../shells", exist_ok=True)
     print("Creating shell script file in ../shells/")
@@ -109,9 +112,12 @@ P0={P0}
 Equilibration={equlibration}
 Properties={properties}
 Mode="{mode}"
+InitialLayout="{initial_layout}"
 
 extra_args=()
-if [[ "$Mode" != "sop" ]]; then
+if [[ "$InitialLayout" != "random" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout")
+elif [[ "$Mode" != "sop" ]]; then
   extra_args=("$Properties" "$Mode")
 elif [[ "$Properties" == "true" ]]; then
   extra_args=("$Properties")
@@ -134,7 +140,7 @@ if ! command -v /usr/bin/time >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode
+export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout
 
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 if [[ "$TOTAL" -le 0 ]]; then
@@ -254,7 +260,9 @@ parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
   RUN={{2}}
   extra_args=()
-  if [[ "$Mode" != "sop" ]]; then
+  if [[ "$InitialLayout" != "random" ]]; then
+    extra_args=("$Properties" "$Mode" "$InitialLayout")
+  elif [[ "$Mode" != "sop" ]]; then
     extra_args=("$Properties" "$Mode")
   elif [[ "$Properties" == "true" ]]; then
     extra_args=("$Properties")
@@ -287,9 +295,12 @@ Equilibration={equlibration}
 P0={P0}
 Properties={properties}
 Mode="{mode}"
+InitialLayout="{initial_layout}"
 
 extra_args=()
-if [[ "$Mode" != "sop" ]]; then
+if [[ "$InitialLayout" != "random" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout")
+elif [[ "$Mode" != "sop" ]]; then
   extra_args=("$Properties" "$Mode")
 elif [[ "$Properties" == "true" ]]; then
   extra_args=("$Properties")

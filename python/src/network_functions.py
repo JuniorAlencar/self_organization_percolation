@@ -2,7 +2,9 @@ import json
 import numpy as np
 import pandas as pd
 from mayavi import mlab
+mlab.options.offscreen = True
 import os 
+import subprocess
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib import patches  # coloque no topo do arquivo
@@ -27,16 +29,16 @@ TIME_BASE_3D = 10_000_000
 
 def _get_colors_used():
     return [
-        (0.9, 0.1, 0.1),    # 2 - red
-        (1.0, 0.5, 0.0),    # 3 - orange
-        (0.1, 0.9, 0.1),    # 4 - green
-        (0.1, 0.1, 0.9),    # 5 - blue
-        (0.8, 0.2, 0.8),    # 6 - purple
-        (0.2, 0.8, 0.8),    # 7 - teal
-        (1.0, 1.0, 0.0),    # 8 - yellow
-        (0.6, 0.4, 0.2),    # 9 - brown
-        (0.0, 0.0, 0.0),    # 10 - black
-        (0.65, 0.65, 0.65), # 11 - gray
+        (0.90, 0.05, 0.05), # red
+        (0.05, 0.20, 0.95), # blue
+        (0.00, 0.65, 0.18), # green
+        (0.95, 0.65, 0.00), # amber
+        (0.58, 0.00, 0.82), # purple
+        (0.00, 0.75, 0.85), # cyan
+        (0.98, 0.00, 0.45), # magenta
+        (0.15, 0.15, 0.15), # near black
+        (0.60, 0.32, 0.05), # brown
+        (0.55, 0.55, 0.55), # gray
     ]
 
 def _build_fixed_color_map(unique_colors, nc):
@@ -629,6 +631,468 @@ def _plot_points_df_same_style(
     print(f"network save in {path_out}")
     mlab.close(fig)
 
+
+def _plot_points_df_dynamic_height(
+    df,
+    shape,
+    nc,
+    path_out,
+    figure_name=None,
+    specific_color=None,
+    show_base=False,
+    visual_profile="full",
+    height_limit=None,
+):
+    df = df.copy()
+    for col in ("x", "y", "z", "color"):
+        if col not in df.columns:
+            raise ValueError(f"DataFrame sem coluna obrigatória: {col}")
+
+    df["x"] = df["x"].astype(int)
+    df["y"] = df["y"].astype(int)
+    df["z"] = df["z"].astype(int)
+    df["color"] = df["color"].astype(int)
+    df = df[df["color"] > 0].copy()
+    if df.empty:
+        raise ValueError("Nenhum ponto ativo para plotar.")
+
+    if figure_name is None:
+        figure_name = os.path.splitext(os.path.basename(path_out))[0]
+
+    SX, SY, SZ = (int(shape[0]), int(shape[1]), int(shape[2]))
+    if height_limit is not None:
+        hlim = int(height_limit)
+        if SZ > 1:
+            df = df[df["z"] <= hlim].copy()
+            SZ = min(SZ, hlim + 1)
+        else:
+            df = df[df["y"] <= hlim].copy()
+            SY = min(SY, hlim + 1)
+        if df.empty:
+            raise ValueError("Nenhum ponto ativo dentro do limite de altura.")
+
+    fig = _new_figure_3d(figure_name=figure_name)
+
+    unique_colors = sorted(df["color"].unique().tolist())
+    color_map = _build_fixed_color_map(unique_colors, nc)
+
+    if visual_profile == "full":
+        darken_factor = 0.90
+        edge_width = 0.35
+    elif visual_profile == "cut":
+        darken_factor = 0.90
+        edge_width = 0.5
+    else:
+        raise ValueError("visual_profile deve ser 'full' ou 'cut'.")
+
+    if specific_color is None:
+        colors_to_plot = unique_colors
+    else:
+        specific_color = int(specific_color)
+        if specific_color not in unique_colors:
+            mlab.close(fig)
+            raise ValueError(f"Cor {specific_color} não encontrada no frame.")
+        colors_to_plot = [specific_color]
+
+    for color in colors_to_plot:
+        df_color = df[df["color"] == color]
+        if df_color.empty:
+            continue
+
+        _draw_points3d_cube_cloud(
+            fig=fig,
+            x=df_color["x"].to_numpy(),
+            y=df_color["y"].to_numpy(),
+            z=df_color["z"].to_numpy(),
+            rgb=color_map[color],
+            darken_factor=darken_factor,
+            edge_width=edge_width,
+        )
+
+    z_extent = max(1, SZ)
+    extent = [0, SX, 0, SY, 0, z_extent]
+    mlab.outline(
+        extent=extent,
+        color=(0, 0, 0),
+        line_width=2.0,
+        figure=fig,
+    )
+
+    Lref = max(SX, SY, z_extent)
+    focal = (SX / 2, SY / 2, z_extent / 2)
+    if show_base:
+        mlab.view(
+            azimuth=0,
+            elevation=-90,
+            distance=2.8 * Lref,
+            focalpoint=(focal[0], focal[1], 0),
+            figure=fig,
+        )
+    else:
+        mlab.view(
+            azimuth=70,
+            elevation=65,
+            distance=3.1 * Lref,
+            focalpoint=focal,
+            figure=fig,
+        )
+
+    fig.scene.render()
+    out_dir = os.path.dirname(path_out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    mlab.savefig(path_out, magnification=4, figure=fig)
+    mlab.close(fig)
+
+def save_dynamic_height_cumulative_frames(
+    path_dir,
+    network_filename=None,
+    output_dir=None,
+    nc=4,
+    L=None,
+    dim=None,
+    frame_stride=1,
+    max_frames=None,
+    specific_color=None,
+    show_base=False,
+    visual_profile="full",
+    positions_file=None,
+    force_rebuild_positions=False,
+    prefix="frame",
+    height_limit=None,
+    stop_when_front_reaches_height=True,
+    resume=True,
+    memory_file=None,
+    overwrite_existing=False,
+):
+    """
+    Salva frames cumulativos da rede dinâmica.
+
+    Frame em t contém todos os sítios com activation_time <= t, ou seja:
+      t=0 -> base inicial;
+      t=1 -> base + sítios ativados em 1;
+      ...
+
+    Args:
+        path_dir: pasta da execução, contendo subpasta `network/`.
+        network_filename: arquivo `.bin`; se None escolhe a rede completa.
+        output_dir: pasta para PNGs; default `<path_dir>/dynamic_frames`.
+        frame_stride: usa todos os tempos se 1; use 5,10,... para reduzir frames.
+        max_frames: limite opcional de frames.
+        height_limit: limite opcional da direção de crescimento. Em dim=2 filtra
+            y <= height_limit; em dim=3 filtra z <= height_limit.
+        stop_when_front_reaches_height: se True, não gera tempos posteriores ao
+            primeiro instante em que a frente cumulativa alcança height_limit.
+
+        resume: se True, pula frames já existentes e continua a geração.
+        memory_file: arquivo JSON opcional para registrar o progresso.
+        overwrite_existing: se True, recria os frames mesmo que já existam.
+    """
+    if frame_stride < 1:
+        raise ValueError("frame_stride deve ser >= 1")
+
+    network_dir = os.path.join(path_dir, "network")
+    network_filename = _choose_network_file(path_dir, network_filename)
+
+    if output_dir is None:
+        output_dir = os.path.join(path_dir, "dynamic_frames")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    if memory_file is None:
+        memory_file = os.path.join(output_dir, f"{prefix}_resume_memory.json")
+
+    if positions_file is None:
+        positions_file = os.path.join(
+            output_dir,
+            f"{os.path.splitext(network_filename)[0]}_dynamic_positions.csv",
+        )
+
+    def _valid_frame(path_out):
+        return os.path.exists(path_out) and os.path.getsize(path_out) > 0
+
+    def _write_memory(done_items, total_frames):
+        payload = {
+            "path_dir": path_dir,
+            "output_dir": output_dir,
+            "network_file": os.path.join(network_dir, network_filename),
+            "positions_file": positions_file,
+            "prefix": prefix,
+            "frame_stride": int(frame_stride),
+            "max_frames": None if max_frames is None else int(max_frames),
+            "height_limit": None if height_limit is None else int(height_limit),
+            "stop_when_front_reaches_height": bool(stop_when_front_reaches_height),
+            "specific_color": specific_color,
+            "show_base": bool(show_base),
+            "visual_profile": visual_profile,
+            "total_frames": int(total_frames),
+            "done_frames": [
+                {
+                    "frame_idx": int(item["frame_idx"]),
+                    "time": int(item["time"]),
+                    "path": item["path"],
+                }
+                for item in done_items
+            ],
+        }
+
+        tmp_file = f"{memory_file}.tmp"
+
+        with open(tmp_file, "w") as f:
+            json.dump(payload, f, indent=2)
+
+        os.replace(tmp_file, memory_file)
+
+    if (not force_rebuild_positions) and os.path.exists(positions_file):
+        df = _read_positions_table(positions_file)
+
+        if L is None:
+            L = _infer_L_from_path(path_dir)
+
+        if dim is None:
+            dim = _infer_dim_from_path(path_dir)
+
+        info = _read_compact_bin(os.path.join(network_dir, network_filename))
+
+        if dim == 3:
+            shape = (int(L), int(L), int(info["N"]) // (int(L) * int(L)))
+        else:
+            shape = (int(L), int(info["N"]) // int(L), 1)
+
+        meta = {
+            "dim": dim,
+            "shape": shape,
+            "N": int(info["N"]),
+            "E": int(info["E"]),
+        }
+    else:
+        df, meta = positions_from_dynamic_height_compact_bin(
+            path_dir=network_dir,
+            filename=network_filename,
+            L=L,
+            dim=dim,
+            output_data=positions_file,
+        )
+
+    if df.empty:
+        raise ValueError("A rede não possui sítios ativos para animar.")
+
+    if height_limit is not None:
+        hlim = int(height_limit)
+        growth_col = "z" if int(meta["dim"]) == 3 else "y"
+
+        df = df[df[growth_col] <= hlim].copy()
+
+        if df.empty:
+            raise ValueError("Nenhum sítio ativo dentro do limite de altura.")
+
+        shape = tuple(int(v) for v in meta["shape"])
+
+        if int(meta["dim"]) == 3:
+            meta["shape"] = (shape[0], shape[1], min(shape[2], hlim + 1))
+        else:
+            meta["shape"] = (shape[0], min(shape[1], hlim + 1), shape[2])
+
+        if stop_when_front_reaches_height:
+            reached = df[df[growth_col] >= hlim]
+
+            if not reached.empty:
+                t_stop = int(reached["time"].min())
+                df = df[df["time"] <= t_stop].copy()
+
+    times = np.array(sorted(df["time"].astype(int).unique()), dtype=int)
+    times = times[::frame_stride]
+
+    if max_frames is not None:
+        times = times[:int(max_frames)]
+
+    expected_frames = []
+
+    for frame_idx, t in enumerate(times):
+        path_out = os.path.join(
+            output_dir,
+            f"{prefix}_{frame_idx:06d}_t{int(t):06d}.png",
+        )
+
+        expected_frames.append(
+            {
+                "frame_idx": int(frame_idx),
+                "time": int(t),
+                "path": path_out,
+            }
+        )
+
+    saved = []
+    done_items = []
+
+    start_idx = 0
+
+    if resume and not overwrite_existing:
+        while start_idx < len(expected_frames):
+            item = expected_frames[start_idx]
+
+            if not _valid_frame(item["path"]):
+                break
+
+            saved.append(item["path"])
+            done_items.append(item)
+            start_idx += 1
+
+        if start_idx > 0:
+            print(
+                f"[resume] {start_idx}/{len(expected_frames)} frames já existem. "
+                f"Continuando a partir do frame {start_idx}."
+            )
+
+        _write_memory(done_items, len(expected_frames))
+
+    for item in expected_frames[start_idx:]:
+        frame_idx = item["frame_idx"]
+        t = item["time"]
+        path_out = item["path"]
+
+        if resume and not overwrite_existing and _valid_frame(path_out):
+            saved.append(path_out)
+            done_items.append(item)
+
+            print(
+                f"[skip {frame_idx + 1}/{len(expected_frames)}] "
+                f"t={int(t)} já existe -> {path_out}"
+            )
+
+            _write_memory(done_items, len(expected_frames))
+            continue
+
+        df_frame = df[df["time"] <= int(t)]
+
+        _plot_points_df_dynamic_height(
+            df=df_frame,
+            shape=meta["shape"],
+            nc=nc,
+            path_out=path_out,
+            figure_name=f"{prefix}_{frame_idx:06d}",
+            specific_color=specific_color,
+            show_base=show_base,
+            visual_profile=visual_profile,
+            height_limit=height_limit,
+        )
+
+        saved.append(path_out)
+        done_items.append(item)
+
+        _write_memory(done_items, len(expected_frames))
+
+        print(
+            f"[frame {frame_idx + 1}/{len(expected_frames)}] "
+            f"t={int(t)} -> {path_out}"
+        )
+
+    return {
+        "frames": saved,
+        "output_dir": output_dir,
+        "positions_file": positions_file,
+        "network_file": os.path.join(network_dir, network_filename),
+        "shape": meta["shape"],
+        "times": times.tolist(),
+        "memory_file": memory_file,
+        "resume": resume,
+        "overwrite_existing": overwrite_existing,
+    }
+
+
+def write_gimp_crop_frames_script(
+    output_dir,
+    cropped_dir=None,
+    script_path=None,
+    frame_prefix="frame_",
+    background_rgb=(255, 255, 255),
+    threshold=8,
+    gimp_executable="gimp",
+    run=False,
+):
+    """
+    Gera um script batch do GIMP para limpar fundo e recortar cada frame.
+
+    Para cada PNG em `output_dir` cujo nome começa com `frame_prefix`, o script:
+      1. abre a imagem;
+      2. adiciona canal alfa;
+      3. seleciona o fundo branco por cor;
+      4. deleta o fundo;
+      5. recorta ao conteúdo;
+      6. salva em `cropped_dir`.
+
+    Retorna um dicionário com o caminho do script, comando sugerido e arquivos.
+    """
+    output_dir = os.path.abspath(output_dir)
+    if cropped_dir is None:
+        cropped_dir = os.path.join(output_dir, "cropped")
+    cropped_dir = os.path.abspath(cropped_dir)
+    os.makedirs(cropped_dir, exist_ok=True)
+
+    if script_path is None:
+        script_path = os.path.join(output_dir, "gimp_crop_frames.scm")
+    script_path = os.path.abspath(script_path)
+
+    frames = [
+        f for f in sorted(os.listdir(output_dir))
+        if f.lower().endswith(".png") and f.startswith(frame_prefix)
+    ]
+    if not frames:
+        raise FileNotFoundError(
+            f"Nenhum PNG começando com {frame_prefix!r} encontrado em {output_dir}"
+        )
+
+    def scm_string(path):
+        return '"' + str(path).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    r, g, b = (int(background_rgb[0]), int(background_rgb[1]), int(background_rgb[2]))
+
+    lines = [
+        "(define (sop-crop-frame input-path output-path threshold)",
+        "  (let* (",
+        "      (image (car (gimp-file-load RUN-NONINTERACTIVE input-path input-path)))",
+        "      (layer (car (gimp-image-get-active-layer image))))",
+        "    (gimp-layer-add-alpha layer)",
+        f"    (gimp-by-color-select layer '({r} {g} {b}) threshold CHANNEL-OP-REPLACE TRUE FALSE 0 FALSE)",
+        "    (gimp-edit-clear layer)",
+        "    (gimp-selection-none image)",
+        "    (plug-in-autocrop RUN-NONINTERACTIVE image layer)",
+        "    (set! layer (car (gimp-image-get-active-layer image)))",
+        "    (gimp-file-save RUN-NONINTERACTIVE image layer output-path output-path)",
+        "    (gimp-image-delete image)))",
+        "",
+    ]
+
+    for frame in frames:
+        in_path = os.path.join(output_dir, frame)
+        out_path = os.path.join(cropped_dir, frame)
+        lines.append(
+            f"(sop-crop-frame {scm_string(in_path)} {scm_string(out_path)} {int(threshold)})"
+        )
+
+    lines.append("(gimp-quit 0)")
+    lines.append("")
+
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    command = [
+        gimp_executable,
+        "-i",
+        "-b",
+        f"(load {scm_string(script_path)})",
+    ]
+
+    if run:
+        subprocess.run(command, check=True)
+
+    return {
+        "script_path": script_path,
+        "cropped_dir": cropped_dir,
+        "frames": [os.path.join(output_dir, f) for f in frames],
+        "command": command,
+    }
+
 def plot_3D_full_codec(path_dir, filename, path_out, figure_name, L, nc, seed=None,
                        time_base=TIME_BASE_3D,
                        specific_color=None,
@@ -1010,6 +1474,88 @@ def _infer_L_from_path(path_dir):
                 pass
 
     raise ValueError(f"Não foi possível inferir L a partir do caminho: {path_dir}")
+
+
+def _infer_dim_from_path(path_dir):
+    for part in path_dir.split(os.sep):
+        if part.startswith("dim_"):
+            try:
+                return int(part.split("dim_")[1])
+            except ValueError:
+                pass
+    raise ValueError(f"Não foi possível inferir dim a partir do caminho: {path_dir}")
+
+
+def positions_from_dynamic_height_compact_bin(path_dir,
+                                              filename,
+                                              L=None,
+                                              dim=None,
+                                              output_data=None):
+    """
+    Lê uma rede compacta `.bin` gerada pelo growth_test com altura dinâmica.
+
+    O formato C++ salva `pos_flat`, `species` e `activation_time`. Aqui a forma
+    não é inferida como cubo: para dim=3 usa L x L x H, e para dim=2 usa L x H.
+    Retorna um DataFrame com x, y, z, color, time e meta com shape=(SX,SY,SZ).
+    """
+    network_path = os.path.join(path_dir, filename)
+    if not os.path.exists(network_path):
+        raise FileNotFoundError(f"Arquivo de rede não encontrado: {network_path}")
+
+    if L is None:
+        L = _infer_L_from_path(path_dir)
+    if dim is None:
+        dim = _infer_dim_from_path(path_dir)
+
+    info = _read_compact_bin(network_path)
+    N = int(info["N"])
+    if dim == 3:
+        base = int(L) * int(L)
+        if N % base != 0:
+            raise ValueError(f"N={N} não é múltiplo de L*L={base}")
+        SX, SY, SZ = int(L), int(L), N // base
+    elif dim == 2:
+        if N % int(L) != 0:
+            raise ValueError(f"N={N} não é múltiplo de L={L}")
+        SX, SY, SZ = int(L), N // int(L), 1
+    else:
+        raise ValueError("dim deve ser 2 ou 3")
+
+    species = info["species"].astype(np.int64)
+    activation = info["activation_time"].astype(np.int64)
+    pos = info["pos_flat"].astype(np.int64)
+
+    mask = species > 0
+    idxs = pos[mask]
+    cols = species[mask]
+    times = activation[mask]
+
+    x = (idxs % SX).astype(np.int32)
+    y = ((idxs // SX) % SY).astype(np.int32)
+    if dim == 3:
+        z = (idxs // (SX * SY)).astype(np.int32)
+    else:
+        z = np.zeros_like(x)
+
+    df = pd.DataFrame({
+        "x": x,
+        "y": y,
+        "z": z,
+        "color": cols.astype(np.int32),
+        "time": times.astype(np.int64),
+    }).sort_values("time").reset_index(drop=True)
+
+    if output_data is not None:
+        _write_positions_table(df, output_data)
+
+    meta = {
+        "dim": dim,
+        "shape": (SX, SY, SZ),
+        "N": N,
+        "E": int(info["E"]),
+        "L": int(L),
+    }
+    return df, meta
 
 
 def plot_active_sites_from_folder(path_dir,

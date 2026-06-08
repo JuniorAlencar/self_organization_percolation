@@ -7,7 +7,7 @@
 *.zip
 *.csv
 *.gif
-/animation/*
+/animate/*
 /network
 /results
 /article

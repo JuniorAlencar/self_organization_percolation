@@ -54,6 +54,33 @@ void write_json_nullable_double_array(std::ostream& os,
     os << "]";
 }
 
+void write_json_nullable_int_array(std::ostream& os,
+                                   const std::vector<int>& v)
+{
+    os << "[";
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i] >= 0) {
+            os << v[i];
+        } else {
+            os << "null";
+        }
+        if (i + 1 < v.size()) os << ", ";
+    }
+    os << "]";
+}
+
+void write_json_path_edge_pairs(std::ostream& os, const std::vector<int>& path)
+{
+    os << "[";
+    if (path.size() >= 2) {
+        for (size_t i = 1; i < path.size(); ++i) {
+            os << "[" << path[i - 1] << ", " << path[i] << "]";
+            if (i + 1 < path.size()) os << ", ";
+        }
+    }
+    os << "]";
+}
+
 template <typename T>
 void write_json_row(std::ostream& os,
                     const std::vector<std::vector<T>>& m,
@@ -278,6 +305,51 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         });
     }
 
+    const bool growth_test_order_mode =
+        !ps.t_eq_by_species.empty() &&
+        !ps.z_max_final.empty() &&
+        ps.z_max_at_perc.empty();
+
+    std::vector<double> t_eq_ordered_for_json;
+    std::vector<int> z_max_ordered_for_json;
+    std::vector<int> z_stat_ordered_for_json;
+    if (growth_test_order_mode) {
+        t_eq_ordered_for_json.reserve(static_cast<size_t>(ts.num_colors));
+        z_max_ordered_for_json.reserve(idx.size());
+        z_stat_ordered_for_json.reserve(static_cast<size_t>(ts.num_colors));
+
+        for (const size_t i : idx) {
+            const int color_1b = ps.color_percolation[i];
+            const int crow = color_1b - 1;
+            if (crow < 0 || crow >= static_cast<int>(ps.t_eq_by_species.size())) {
+                continue;
+            }
+            const double t_eq_species =
+                ps.t_eq_by_species[static_cast<size_t>(crow)];
+            if (!std::isfinite(t_eq_species)) {
+                continue;
+            }
+
+            t_eq_ordered_for_json.push_back(t_eq_species);
+            if (crow < static_cast<int>(ps.z_max_final.size())) {
+                z_max_ordered_for_json.push_back(
+                    ps.z_max_final[static_cast<size_t>(crow)]);
+            }
+            if (crow < static_cast<int>(ps.z_stat_by_species.size())) {
+                z_stat_ordered_for_json.push_back(
+                    ps.z_stat_by_species[static_cast<size_t>(crow)]);
+            }
+        }
+
+        while (static_cast<int>(t_eq_ordered_for_json.size()) < ts.num_colors) {
+            t_eq_ordered_for_json.push_back(
+                std::numeric_limits<double>::quiet_NaN());
+        }
+        while (static_cast<int>(z_stat_ordered_for_json.size()) < ts.num_colors) {
+            z_stat_ordered_for_json.push_back(-1);
+        }
+    }
+
     ofs << "{\n";
     ofs << "  \"meta\": {\n";
     ofs << "    \"num_colors\": " << ts.num_colors << ",\n";
@@ -289,27 +361,72 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << ",\n";
     if (!ps.t_eq_by_species.empty()) {
         ofs << "    \"t_eq_by_species\": ";
-        write_json_nullable_double_array(ofs, ps.t_eq_by_species);
+        if (growth_test_order_mode) {
+            write_json_nullable_double_array(ofs, t_eq_ordered_for_json);
+        } else {
+            write_json_nullable_double_array(ofs, ps.t_eq_by_species);
+        }
         ofs << ",\n";
     }
     if (!ps.z_max_final.empty()) {
         ofs << "    \"z_max\": ";
-        write_json_array(ofs, ps.z_max_final);
+        if (growth_test_order_mode) {
+            write_json_nullable_int_array(ofs, z_max_ordered_for_json);
+        } else {
+            write_json_array(ofs, ps.z_max_final);
+        }
         ofs << ",\n";
-        ofs << "    \"z_max_final\": ";
-        write_json_array(ofs, ps.z_max_final);
-        ofs << ",\n";
+        if (!growth_test_order_mode) {
+            ofs << "    \"z_max_final\": ";
+            write_json_array(ofs, ps.z_max_final);
+            ofs << ",\n";
+        }
+        if (!ps.z_stat_by_species.empty()) {
+            ofs << "    \"z_stat\": ";
+            if (growth_test_order_mode) {
+                write_json_nullable_int_array(ofs, z_stat_ordered_for_json);
+            } else {
+                write_json_nullable_int_array(ofs, ps.z_stat_by_species);
+            }
+            ofs << ",\n";
+        }
         if (ps.dynamics_window_steps > 0) {
             ofs << "    \"growth_test_dynamics_window_steps\": "
                 << ps.dynamics_window_steps << ",\n";
         }
         if (ps.equilibrium_consecutive_steps > 0) {
+            ofs << "    \"growth_test_stop_criterion\": \"alive_species_pt_stability_min_z_L_dynamic_max_z_limit\",\n";
             ofs << "    \"growth_test_equilibrium_consecutive_steps\": "
                 << ps.equilibrium_consecutive_steps << ",\n";
+            if (ps.dynamic_min_stop_height >= 0) {
+                ofs << "    \"growth_test_dynamic_min_stop_height\": "
+                    << ps.dynamic_min_stop_height << ",\n";
+            }
+            if (ps.dynamic_max_stop_height >= 0) {
+                ofs << "    \"growth_test_dynamic_max_stop_height\": "
+                    << ps.dynamic_max_stop_height << ",\n";
+            }
+            ofs << "    \"growth_test_t_eq_smoothing_window\": 15,\n";
+            ofs << "    \"growth_test_t_eq_window_block\": 10,\n";
+            ofs << "    \"growth_test_t_eq_min_stable_steps\": "
+                << ps.equilibrium_consecutive_steps << ",\n";
+            if (ps.dynamics_window_steps > 0) {
+                ofs << "    \"growth_test_t_eq_validation_window_steps\": "
+                    << ps.dynamics_window_steps << ",\n";
+                ofs << "    \"growth_test_t_eq_validation\": \"stationary_window_plus_candidate_to_tail_stability\",\n";
+            }
+            ofs << "    \"growth_test_t_eq_series\": \"pt\",\n";
+            ofs << "    \"growth_test_t_eq_requires_target\": false,\n";
         }
         if (std::isfinite(ps.equilibrium_rel_tol)) {
             ofs << "    \"growth_test_equilibrium_rel_tol\": "
                 << ps.equilibrium_rel_tol << ",\n";
+            const double effective_rel_tol =
+                ps.equilibrium_rel_tol * 0.25;
+            ofs << "    \"growth_test_equilibrium_effective_rel_tol\": "
+                << effective_rel_tol << ",\n";
+            ofs << "    \"growth_test_equilibrium_rel_tol_scaling\": "
+                << "\"fixed_base_tol_times_0p25\",\n";
         }
         if (std::isfinite(ps.equilibrium_abs_tol)) {
             ofs << "    \"growth_test_equilibrium_abs_tol\": "
@@ -323,6 +440,9 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "    \"z_max_at_perc\": ";
         write_json_array(ofs, ps.z_max_at_perc);
         ofs << ",\n";
+    }
+    if (!ps.initial_base_layout.empty()) {
+        ofs << "    \"initial_base_layout\": \"" << ps.initial_base_layout << "\",\n";
     }
     ofs << "    \"pt_convention\": \"p_used_to_generate_same_time_step\",\n";
     ofs << "    \"nt_convention\": \"new_active_front_fraction_same_time_step\"\n";
@@ -403,6 +523,10 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"shortest_path_lin\": " << shortest_path_lin_value << ",\n";
         ofs << "        \"sp_path_lin\": ";
         if (sp_path_lin_ptr) write_json_array(ofs, *sp_path_lin_ptr);
+            else ofs << "[]";
+            ofs << ",\n";
+        ofs << "        \"sp_edge_pairs_lin\": ";
+        if (sp_path_lin_ptr) write_json_path_edge_pairs(ofs, *sp_path_lin_ptr);
             else ofs << "[]";
             ofs << ",\n";
 
