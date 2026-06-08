@@ -180,6 +180,123 @@ inline long long compute_base_size(const GridRegular& grid) {
                            : static_cast<long long>(grid.SX) * static_cast<long long>(grid.SY);
 }
 
+std::vector<int> base_candidates_for_color(const GridRegular& grid,
+                                           const int num_colors,
+                                           const int color_idx,
+                                           const InitialBaseLayout layout)
+{
+    std::vector<int> out;
+    if (color_idx < 0 || color_idx >= num_colors) return out;
+
+    if (layout == InitialBaseLayout::Blocks) {
+        if (grid.dim == 2) {
+            const int x0 = (color_idx * grid.SX) / num_colors;
+            const int x1 = ((color_idx + 1) * grid.SX) / num_colors;
+            out.reserve(static_cast<std::size_t>(std::max(0, x1 - x0)));
+            for (int x = x0; x < x1; ++x) {
+                out.push_back(grid.lin_index(x, 0, 0));
+            }
+            return out;
+        }
+
+        int nx = static_cast<int>(std::ceil(std::sqrt(
+            static_cast<double>(num_colors))));
+        while (nx < num_colors && (num_colors % nx) != 0) {
+            ++nx;
+        }
+        const int ny = (num_colors + nx - 1) / nx;
+        const int tx = color_idx % nx;
+        const int ty = color_idx / nx;
+        const int x0 = (tx * grid.SX) / nx;
+        const int x1 = ((tx + 1) * grid.SX) / nx;
+        const int y0 = (ty * grid.SY) / ny;
+        const int y1 = ((ty + 1) * grid.SY) / ny;
+
+        out.reserve(static_cast<std::size_t>(
+            std::max(0, x1 - x0) * std::max(0, y1 - y0)));
+        for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                out.push_back(grid.lin_index(x, y, 0));
+            }
+        }
+        return out;
+    }
+
+    if (layout == InitialBaseLayout::Alternating) {
+        if (grid.dim == 2) {
+            out.reserve(static_cast<std::size_t>(
+                (grid.SX + num_colors - 1) / num_colors));
+            for (int x = 0; x < grid.SX; ++x) {
+                if ((x % num_colors) == color_idx) {
+                    out.push_back(grid.lin_index(x, 0, 0));
+                }
+            }
+            return out;
+        }
+
+        out.reserve(static_cast<std::size_t>(
+            (grid.SX * grid.SY + num_colors - 1) / num_colors));
+        for (int y = 0; y < grid.SY; ++y) {
+            for (int x = 0; x < grid.SX; ++x) {
+                if (((x + grid.SX * y) % num_colors) == color_idx) {
+                    out.push_back(grid.lin_index(x, y, 0));
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+template <typename ActivateSite>
+int activate_deterministic_base_sites(const GridRegular& grid,
+                                      const int num_colors,
+                                      const int color_idx,
+                                      const int quota,
+                                      const InitialBaseLayout layout,
+                                      ActivateSite activate_site)
+{
+    if (quota <= 0) return 0;
+
+    const std::vector<int> candidates =
+        base_candidates_for_color(grid, num_colors, color_idx, layout);
+    if (candidates.empty()) return 0;
+
+    const int n_activate = std::min<int>(quota, candidates.size());
+    int activated = 0;
+    int last_pos = -1;
+    for (int k = 0; k < n_activate; ++k) {
+        int pos = static_cast<int>(
+            ((static_cast<long long>(2 * k + 1) *
+              static_cast<long long>(candidates.size())) /
+             static_cast<long long>(2 * n_activate)));
+        pos = std::min<int>(pos, static_cast<int>(candidates.size()) - 1);
+        if (pos <= last_pos) {
+            pos = std::min<int>(
+                last_pos + 1, static_cast<int>(candidates.size()) - 1);
+        }
+        last_pos = pos;
+
+        if (activate_site(candidates[static_cast<std::size_t>(pos)])) {
+            ++activated;
+        }
+    }
+    return activated;
+}
+
+const char* initial_base_layout_name(const InitialBaseLayout layout)
+{
+    switch (layout) {
+        case InitialBaseLayout::Blocks:
+            return "blocks";
+        case InitialBaseLayout::Alternating:
+            return "alternating";
+        case InitialBaseLayout::Random:
+        default:
+            return "random";
+    }
+}
+
 struct DecodedValue {
     bool never_activated = false;
     bool blocked = false;
@@ -377,9 +494,12 @@ std::vector<int> shortest_open_bond_path_single_color(
     const GridRegular& grid,
     const OpenBondGraph& graph,
     const int active_val,
-    const std::function<int(int)>& get_site)
+    const std::function<int(int)>& get_site,
+    const int target_height = -1)
 {
-    const int top_coord = (grid.dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
+    const int top_coord = (target_height >= 0)
+        ? std::min(target_height, grid.grow_top_coord())
+        : grid.grow_top_coord();
     std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
     std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
     std::vector<int> queue;
@@ -426,8 +546,12 @@ std::vector<int> shortest_open_bond_path_single_color(
 std::vector<int> shortest_site_path_single_color(
     const GridRegular& grid,
     const int active_val,
-    const std::function<int(int)>& get_site)
+    const std::function<int(int)>& get_site,
+    const int target_height = -1)
 {
+    const int top_coord = (target_height >= 0)
+        ? std::min(target_height, grid.grow_top_coord())
+        : grid.grow_top_coord();
     std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
     std::vector<int> current;
     std::vector<int> next;
@@ -448,7 +572,7 @@ std::vector<int> shortest_site_path_single_color(
         next.clear();
 
         for (const int u : current) {
-            if (grid.grow_coord(u) == grid.grow_top_coord()) {
+            if (grid.grow_coord(u) == top_coord) {
                 reached_top = u;
                 break;
             }
@@ -572,8 +696,12 @@ std::vector<int> shortest_open_bond_path_single_color(
     const GridRegular& grid,
     const TestedBondBitmap& open_bonds,
     const int active_val,
-    const std::function<int(int)>& get_site)
+    const std::function<int(int)>& get_site,
+    const int target_height = -1)
 {
+    const int top_coord = (target_height >= 0)
+        ? std::min(target_height, grid.grow_top_coord())
+        : grid.grow_top_coord();
     std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
     std::vector<int> current;
     std::vector<int> next;
@@ -594,7 +722,7 @@ std::vector<int> shortest_open_bond_path_single_color(
         next.clear();
 
         for (const int u : current) {
-            if (grid.grow_coord(u) == grid.grow_top_coord()) {
+            if (grid.grow_coord(u) == top_coord) {
                 reached_top = u;
                 break;
             }
@@ -891,7 +1019,8 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
                                         const double abs_tol = 1.0e-6,
                                         const double s_prime_threshold = 5.0e-4,
                                         const bool require_target = false,
-                                        const double target = 0.0)
+                                        const double target = 0.0,
+                                        const int validation_window_steps = 0)
 {
     if (t.empty()) {
         throw std::runtime_error("estimate_t_eq_from_series: t vazio");
@@ -927,6 +1056,89 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
         std::max(1, static_cast<int>(std::ceil(
             static_cast<double>(min_stable_steps) /
             static_cast<double>(std::max(1, window_block)))));
+    const int validation_links_required =
+        validation_window_steps > 0
+            ? std::max(1, static_cast<int>(std::ceil(
+                static_cast<double>(validation_window_steps) /
+                static_cast<double>(std::max(1, window_block)))))
+            : 0;
+
+    auto stationary_validation_ok = [&](const int first_point,
+                                        const int last_point) -> bool {
+        const int n_points = last_point - first_point + 1;
+        if (n_points < 3) return false;
+
+        const int edge_count = std::max(1, n_points / 3);
+        double first_mean = 0.0;
+        double last_mean = 0.0;
+        for (int k = 0; k < edge_count; ++k) {
+            first_mean += j_w[static_cast<std::size_t>(first_point + k)];
+            last_mean += j_w[static_cast<std::size_t>(last_point - k)];
+        }
+        first_mean /= static_cast<double>(edge_count);
+        last_mean /= static_cast<double>(edge_count);
+
+        const double drift_scale =
+            std::max(std::max(std::abs(first_mean), std::abs(last_mean)),
+                     1.0e-12);
+        const double drift_threshold = std::max(abs_tol, rel_tol * drift_scale);
+        if (std::abs(last_mean - first_mean) > drift_threshold) {
+            return false;
+        }
+
+        double sum_x = 0.0;
+        double sum_y = 0.0;
+        double sum_xx = 0.0;
+        double sum_xy = 0.0;
+        for (int k = first_point; k <= last_point; ++k) {
+            const double x =
+                t_j[static_cast<std::size_t>(k)] -
+                t_j[static_cast<std::size_t>(first_point)];
+            const double y = j_w[static_cast<std::size_t>(k)];
+            sum_x += x;
+            sum_y += y;
+            sum_xx += x * x;
+            sum_xy += x * y;
+        }
+        const double n = static_cast<double>(n_points);
+        const double denom = n * sum_xx - sum_x * sum_x;
+        if (denom > 0.0) {
+            const double slope = (n * sum_xy - sum_x * sum_y) / denom;
+            const double projected_drift =
+                std::abs(slope) *
+                (t_j[static_cast<std::size_t>(last_point)] -
+                 t_j[static_cast<std::size_t>(first_point)]);
+            if (projected_drift > drift_threshold) {
+                return false;
+            }
+        }
+
+        if (require_target) {
+            const double target_threshold =
+                std::max(abs_tol,
+                         rel_tol * std::max(std::abs(target), 1.0e-12));
+            const double window_mean = sum_y / n;
+            if (std::abs(window_mean - target) > target_threshold) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+
+    if (validation_links_required > 0) {
+        for (int first_point = 0;
+             first_point + validation_links_required < static_cast<int>(j_w.size());
+             ++first_point) {
+            const int last_point = first_point + validation_links_required;
+            const int tail_last_point = static_cast<int>(j_w.size()) - 1;
+            if (stationary_validation_ok(first_point, last_point) &&
+                stationary_validation_ok(first_point, tail_last_point)) {
+                return t_j[static_cast<std::size_t>(first_point)];
+            }
+        }
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 
     for (int i = 0; i < ns; ++i) {
         double sp = std::numeric_limits<double>::quiet_NaN();
@@ -967,6 +1179,67 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
             ++stable_run;
             if (stable_run >= stable_links_required) {
                 const int first_stable = i - stable_run + 1;
+                if (validation_links_required > 0) {
+                    const int validation_last =
+                        first_stable + validation_links_required - 1;
+                    if (validation_last >= ns) {
+                        continue;
+                    }
+
+                    const int first_point = first_stable;
+                    const int last_point = validation_last + 1;
+                    const int n_points = last_point - first_point + 1;
+                    const int edge_count = std::max(1, n_points / 3);
+                    double first_mean = 0.0;
+                    double last_mean = 0.0;
+                    for (int k = 0; k < edge_count; ++k) {
+                        first_mean +=
+                            j_w[static_cast<std::size_t>(first_point + k)];
+                        last_mean +=
+                            j_w[static_cast<std::size_t>(last_point - k)];
+                    }
+                    first_mean /= static_cast<double>(edge_count);
+                    last_mean /= static_cast<double>(edge_count);
+
+                    const double start = first_mean;
+                    const double end = last_mean;
+                    const double drift_scale =
+                        std::max(std::max(std::abs(start), std::abs(end)),
+                                 1.0e-12);
+                    const double drift_threshold =
+                        std::max(abs_tol, rel_tol * drift_scale);
+                    if (std::abs(end - start) > drift_threshold) {
+                        continue;
+                    }
+
+                    double sum_x = 0.0;
+                    double sum_y = 0.0;
+                    double sum_xx = 0.0;
+                    double sum_xy = 0.0;
+                    for (int k = first_point; k <= last_point; ++k) {
+                        const double x =
+                            t_j[static_cast<std::size_t>(k)] -
+                            t_j[static_cast<std::size_t>(first_point)];
+                        const double y = j_w[static_cast<std::size_t>(k)];
+                        sum_x += x;
+                        sum_y += y;
+                        sum_xx += x * x;
+                        sum_xy += x * y;
+                    }
+                    const double n = static_cast<double>(n_points);
+                    const double denom = n * sum_xx - sum_x * sum_x;
+                    if (denom > 0.0) {
+                        const double slope =
+                            (n * sum_xy - sum_x * sum_y) / denom;
+                        const double projected_drift =
+                            std::abs(slope) *
+                            (t_j[static_cast<std::size_t>(last_point)] -
+                             t_j[static_cast<std::size_t>(first_point)]);
+                        if (projected_drift > drift_threshold) {
+                            continue;
+                        }
+                    }
+                }
                 return t_s[static_cast<std::size_t>(first_stable)];
             }
         } else {
@@ -975,6 +1248,13 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
     }
 
     return std::numeric_limits<double>::quiet_NaN();
+}
+
+inline double growth_test_effective_rel_tol(const double base_rel_tol,
+                                            const int num_colors)
+{
+    (void) num_colors;
+    return base_rel_tol * 0.25;
 }
 
 inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
@@ -1011,7 +1291,8 @@ inline std::vector<double> estimate_t_eq_by_species_from_timeseries(
     const double s_prime_threshold = 5.0e-4,
     const bool use_front_fraction = false,
     const bool require_target = false,
-    const double target = 0.0)
+    const double target = 0.0,
+    const int validation_window_steps = 0)
 {
     if (ts.t.empty()) {
         throw std::runtime_error("estimate_t_eq_by_species_from_timeseries: ts.t vazio");
@@ -1039,7 +1320,8 @@ inline std::vector<double> estimate_t_eq_by_species_from_timeseries(
             abs_tol,
             s_prime_threshold,
             require_target,
-            target);
+            target,
+            validation_window_steps);
     }
     return out;
 }
@@ -1110,7 +1392,7 @@ inline void set_species_order_from_t_eq(PercolationSeries& ps,
     int order = 0;
     for (const auto& item : ordered) {
         ps.color_percolation.push_back(item.color_idx + 1);
-        ps.percolation_order.push_back(++order);
+        ps.percolation_order.push_back(order++);
     }
 }
 
@@ -1174,6 +1456,16 @@ NetworkPattern network::create_network(
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
         : (num_of_samples - 1);
+    const int dynamic_min_stop_height =
+        (stop_config.dynamic_height &&
+         stop_config.stop_at_equilibrium &&
+         !stop_config.stop_at_percolation)
+            ? lenght_network
+            : -1;
+    const int dynamic_max_stop_height =
+        (dynamic_min_stop_height >= 0)
+            ? static_cast<int>(std::ceil(8.0 * static_cast<double>(lenght_network)))
+            : -1;
 
     if (num_colors > 125) {
         throw std::runtime_error(
@@ -1247,31 +1539,50 @@ NetworkPattern network::create_network(
     }
 
     for (int c = 0; c < num_colors; ++c) {
-        int activated = 0;
-        int tries = 0;
-        const int max_tries = static_cast<int>(base_size) * 20;
         const int prefer_neg = color_to_negative_value(num_colors, c);
         const int active_val = color_to_active_value(num_colors, c);
 
-        while (activated < seeds_quota[c] && tries < max_tries) {
-            const int x = rng.uniform_int(0, grid.SX - 1);
-            const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
-            const int z = 0;
-            const int idx = grid.lin_index(x, y, z);
+        auto activate_base_site = [&](const int idx) -> bool {
             const int v = get_site(idx);
+            if (v != prefer_neg && v != -1) return false;
 
-            if (v == prefer_neg || v == -1) {
-                set_site(idx, active_val);
-                frontier.push_back(idx);
-                ++N_current[c];
-                ++activated;
-                set_activation_time(idx, 0u);
+            set_site(idx, active_val);
+            frontier.push_back(idx);
+            ++N_current[c];
+            set_activation_time(idx, 0u);
+            return true;
+        };
+
+        if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
+            int activated = 0;
+            int tries = 0;
+            const int max_tries = static_cast<int>(base_size) * 20;
+
+            while (activated < seeds_quota[c] && tries < max_tries) {
+                const int x = rng.uniform_int(0, grid.SX - 1);
+                const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
+                const int z = 0;
+                const int idx = grid.lin_index(x, y, z);
+
+                if (activate_base_site(idx)) {
+                    ++activated;
+                }
+                ++tries;
             }
-            ++tries;
+        } else {
+            activate_deterministic_base_sites(
+                grid,
+                num_colors,
+                c,
+                seeds_quota[static_cast<std::size_t>(c)],
+                stop_config.initial_base_layout,
+                activate_base_site);
         }
     }
 
     // initialize PercolationSeries temporal decomposition containers
+    ps_out.initial_base_layout =
+        initial_base_layout_name(stop_config.initial_base_layout);
     ps_out.sp_lin_preteq.assign(num_colors, -1);
     ps_out.sp_path_lin_preteq.assign(num_colors, std::vector<int>{});
     ps_out.sp_lin_posteq.assign(num_colors, -1);
@@ -1533,6 +1844,8 @@ NetworkPattern network::create_network(
         static_cast<std::size_t>(num_colors), 0);
     std::vector<bool> species_equilibrated(
         static_cast<std::size_t>(num_colors), false);
+    std::vector<int> z_stat_by_species(
+        static_cast<std::size_t>(num_colors), -1);
     std::deque<double> error_window;
     std::deque<double> derivative_window;
     std::vector<std::deque<double>> control_derivative_windows(
@@ -1848,24 +2161,45 @@ NetworkPattern network::create_network(
             all_terminal && any_percolated && any_dead;
 
         bool stop_equilibrated = false;
+        const int current_global_height =
+            *std::max_element(max_heights.begin(), max_heights.end());
+        const bool reached_max_dynamic_height =
+            dynamic_max_stop_height >= 0 &&
+            current_global_height >= dynamic_max_stop_height;
         if (stop_config.stop_at_equilibrium) {
             bool any_running = false;
             bool all_running_equilibrated = true;
-            const double tol = std::max(
-                stop_config.equilibrium_abs_tol,
-                stop_config.equilibrium_rel_tol * std::max(std::abs(f_T), 1.0e-12)
-            );
+            bool all_running_reached_min_height = true;
+            constexpr int teq_window_block = 10;
+            const double teq_rel_tol = growth_test_effective_rel_tol(
+                stop_config.equilibrium_rel_tol, num_colors);
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
+                if (dynamic_min_stop_height >= 0 &&
+                    max_heights[static_cast<std::size_t>(c)] < dynamic_min_stop_height) {
+                    all_running_reached_min_height = false;
+                }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
-                    const bool stable_now = std::abs(f_current[c] - f_T) <= tol;
-                    auto& stable_run =
-                        equilibrium_stable_run_by_species[static_cast<std::size_t>(c)];
-                    stable_run = stable_now ? (stable_run + 1) : 0;
-                    if (stable_run >= stop_config.equilibrium_consecutive_steps) {
-                        species_equilibrated[static_cast<std::size_t>(c)] = true;
+                    if (t % teq_window_block == 0) {
+                        const double t_eq_candidate = estimate_t_eq_from_series(
+                            t_list,
+                            p_series[static_cast<std::size_t>(c)],
+                            15,
+                            teq_window_block,
+                            stop_config.equilibrium_consecutive_steps,
+                            teq_rel_tol,
+                            stop_config.equilibrium_abs_tol,
+                            5.0e-4,
+                            false,
+                            0.0,
+                            stop_config.dynamics_window_steps);
+                        if (std::isfinite(t_eq_candidate)) {
+                            species_equilibrated[static_cast<std::size_t>(c)] = true;
+                            z_stat_by_species[static_cast<std::size_t>(c)] =
+                                max_heights[static_cast<std::size_t>(c)];
+                        }
                     }
                 }
 
@@ -1873,164 +2207,18 @@ NetworkPattern network::create_network(
                     all_running_equilibrated = false;
                 }
             }
-            stop_equilibrated = any_running && all_running_equilibrated;
+            if (any_running && all_running_equilibrated) {
+                stop_equilibrated =
+                    dynamic_min_stop_height >= 0
+                        ? all_running_reached_min_height
+                        : true;
+            }
         }
 
         const bool stop_hard_limit =
-            stop_config.stop_at_equilibrium && t >= hard_max_steps;
+            stop_config.stop_at_equilibrium &&
+            (t >= hard_max_steps || reached_max_dynamic_height);
         bool stop_stationary_dynamics = false;
-        if (stop_config.stop_at_equilibrium &&
-            stop_config.dynamics_window_steps > 1) {
-            double current_error = 0.0;
-            bool any_running = false;
-            const double scale = std::max(std::abs(f_T), stop_config.equilibrium_abs_tol);
-            for (int c = 0; c < num_colors; ++c) {
-                if (finished[c]) continue;
-                any_running = true;
-                current_error = std::max(
-                    current_error,
-                    std::abs(f_current[c] - f_T) / scale);
-            }
-
-            if (any_running) {
-                for (int c = 0; c < num_colors; ++c) {
-                    if (finished[c]) continue;
-                    auto& dw = control_derivative_windows[static_cast<std::size_t>(c)];
-                    dw.push_back(p_curr[static_cast<std::size_t>(c)] -
-                                 previous_p_for_dynamics[static_cast<std::size_t>(c)]);
-                    while (static_cast<int>(dw.size()) >
-                           stop_config.dynamics_window_steps) {
-                        dw.pop_front();
-                    }
-                }
-                previous_p_for_dynamics = p_curr;
-
-                if (std::isfinite(previous_error)) {
-                    derivative_window.push_back(current_error - previous_error);
-                    while (static_cast<int>(derivative_window.size()) >
-                           stop_config.dynamics_window_steps) {
-                        derivative_window.pop_front();
-                    }
-                }
-                previous_error = current_error;
-
-                error_window.push_back(current_error);
-                while (static_cast<int>(error_window.size()) >
-                       stop_config.dynamics_window_steps + 1) {
-                    error_window.pop_front();
-                }
-
-                if (static_cast<int>(derivative_window.size()) >=
-                        stop_config.dynamics_window_steps &&
-                    error_window.size() >= 2) {
-                    double mean_abs_derivative = 0.0;
-                    int finite_derivatives = 0;
-                    int sign_changes = 0;
-                    int prev_sign = 0;
-
-                    for (const double d : derivative_window) {
-                        if (!std::isfinite(d)) continue;
-                        mean_abs_derivative += std::abs(d);
-                        ++finite_derivatives;
-
-                        int sign = 0;
-                        if (d > stop_config.derivative_abs_tol) sign = 1;
-                        else if (d < -stop_config.derivative_abs_tol) sign = -1;
-                        if (sign != 0) {
-                            if (prev_sign != 0 && sign != prev_sign) {
-                                ++sign_changes;
-                            }
-                            prev_sign = sign;
-                        }
-                    }
-
-                    if (finite_derivatives > 0) {
-                        mean_abs_derivative /= static_cast<double>(finite_derivatives);
-                    }
-
-                    const double first_error = error_window.front();
-                    const double best_error = *std::min_element(
-                        error_window.begin(), error_window.end());
-                    const double relative_improvement =
-                        (first_error > 0.0)
-                            ? (first_error - best_error) / first_error
-                            : 0.0;
-                    const double sign_change_fraction =
-                        (finite_derivatives > 1)
-                            ? static_cast<double>(sign_changes) /
-                                  static_cast<double>(finite_derivatives - 1)
-                            : 0.0;
-
-                    const bool weak_improvement =
-                        relative_improvement < stop_config.min_rel_error_improvement;
-                    const bool small_derivatives =
-                        mean_abs_derivative <= stop_config.derivative_abs_tol;
-                    const bool oscillatory_derivatives =
-                        sign_change_fraction >=
-                        stop_config.derivative_sign_change_fraction;
-
-                    bool control_stationary = true;
-                    for (int c = 0; c < num_colors; ++c) {
-                        if (finished[c]) continue;
-                        const auto& dw =
-                            control_derivative_windows[static_cast<std::size_t>(c)];
-                        if (static_cast<int>(dw.size()) <
-                            stop_config.dynamics_window_steps) {
-                            control_stationary = false;
-                            break;
-                        }
-
-                        double mean_abs_dp = 0.0;
-                        int finite_dp = 0;
-                        int dp_sign_changes = 0;
-                        int prev_dp_sign = 0;
-                        for (const double dp : dw) {
-                            if (!std::isfinite(dp)) continue;
-                            mean_abs_dp += std::abs(dp);
-                            ++finite_dp;
-
-                            int sign = 0;
-                            if (dp > stop_config.control_derivative_abs_tol) sign = 1;
-                            else if (dp < -stop_config.control_derivative_abs_tol) sign = -1;
-                            if (sign != 0) {
-                                if (prev_dp_sign != 0 && sign != prev_dp_sign) {
-                                    ++dp_sign_changes;
-                                }
-                                prev_dp_sign = sign;
-                            }
-                        }
-
-                        if (finite_dp == 0) {
-                            control_stationary = false;
-                            break;
-                        }
-
-                        mean_abs_dp /= static_cast<double>(finite_dp);
-                        const double dp_sign_change_fraction =
-                            (finite_dp > 1)
-                                ? static_cast<double>(dp_sign_changes) /
-                                      static_cast<double>(finite_dp - 1)
-                                : 0.0;
-                        const bool small_control_derivative =
-                            mean_abs_dp <= stop_config.control_derivative_abs_tol;
-                        const bool oscillatory_control_derivative =
-                            dp_sign_change_fraction >=
-                            stop_config.derivative_sign_change_fraction;
-
-                        if (!small_control_derivative &&
-                            !oscillatory_control_derivative) {
-                            control_stationary = false;
-                            break;
-                        }
-                    }
-
-                    stop_stationary_dynamics =
-                        weak_improvement &&
-                        control_stationary &&
-                        (small_derivatives || oscillatory_derivatives);
-                }
-            }
-        }
 
         if (stop_all_dead || stop_all_percolated ||
             stop_partial_percolation || stop_equilibrated ||
@@ -2134,32 +2322,52 @@ NetworkPattern network::create_network(
             ps_out.z_max_at_perc.clear();
         }
         ps_out.z_max_final = max_heights;
+        ps_out.z_stat_by_species = z_stat_by_species;
         ps_out.equilibrium_consecutive_steps =
             stop_config.equilibrium_consecutive_steps;
         ps_out.dynamics_window_steps = stop_config.dynamics_window_steps;
+        ps_out.dynamic_min_stop_height = dynamic_min_stop_height;
+        ps_out.dynamic_max_stop_height = dynamic_max_stop_height;
         ps_out.equilibrium_rel_tol = stop_config.equilibrium_rel_tol;
         ps_out.equilibrium_abs_tol = stop_config.equilibrium_abs_tol;
     } else {
         ps_out.z_max_at_perc.clear();
         ps_out.z_max_final.clear();
+        ps_out.z_stat_by_species.clear();
         ps_out.equilibrium_consecutive_steps = -1;
         ps_out.dynamics_window_steps = -1;
+        ps_out.dynamic_min_stop_height = -1;
+        ps_out.dynamic_max_stop_height = -1;
         ps_out.equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();
         ps_out.equilibrium_abs_tol = std::numeric_limits<double>::quiet_NaN();
     }
 
     if (stop_config.stop_at_equilibrium && !stop_config.stop_at_percolation) {
+        constexpr int teq_window_block = 10;
+        const int teq_min_stable_steps =
+            stop_config.equilibrium_consecutive_steps;
+        const double teq_rel_tol = growth_test_effective_rel_tol(
+            stop_config.equilibrium_rel_tol, num_colors);
         ps_out.t_eq_by_species = estimate_t_eq_by_species_from_timeseries(
             ts_out,
             15,
-            10,
-            stop_config.equilibrium_consecutive_steps,
-            2.5e-2,
+            teq_window_block,
+            teq_min_stable_steps,
+            teq_rel_tol,
             1.0e-6,
             5.0e-4,
-            true,
-            true,
-            f_T);
+            false,
+            false,
+            0.0,
+            stop_config.dynamics_window_steps);
+        for (int c = 0; c < num_colors; ++c) {
+            if (died[static_cast<std::size_t>(c)] ||
+                !species_equilibrated[static_cast<std::size_t>(c)]) {
+                ps_out.t_eq_by_species[static_cast<std::size_t>(c)] =
+                    std::numeric_limits<double>::quiet_NaN();
+                ps_out.z_stat_by_species[static_cast<std::size_t>(c)] = -1;
+            }
+        }
         ts_out.t_eq = any_value_finite(ps_out.t_eq_by_species)
             ? mean_finite_values(ps_out.t_eq_by_species)
             : std::numeric_limits<double>::quiet_NaN();
@@ -2407,6 +2615,16 @@ NetworkPattern network::animate_network(
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
         : (num_of_samples - 1);
+    const int dynamic_min_stop_height =
+        (stop_config.dynamic_height &&
+         stop_config.stop_at_equilibrium &&
+         !stop_config.stop_at_percolation)
+            ? lenght_network
+            : -1;
+    const int dynamic_max_stop_height =
+        (dynamic_min_stop_height >= 0)
+            ? static_cast<int>(std::ceil(8.0 * static_cast<double>(lenght_network)))
+            : -1;
 
     if (num_colors > 125) {
         throw std::runtime_error(
@@ -2495,6 +2713,8 @@ NetworkPattern network::animate_network(
     }
 
     // métricas globais
+    ps_out.initial_base_layout =
+        initial_base_layout_name(stop_config.initial_base_layout);
     ps_out.color_percolation.clear();
     ps_out.percolation_order.clear();
     ps_out.M_size_at_perc.clear();
@@ -2512,28 +2732,45 @@ NetworkPattern network::animate_network(
 
     // Ativação inicial na base
     for (int c = 0; c < num_colors; ++c) {
-        int activated = 0;
-        int tries = 0;
-        const int max_tries = static_cast<int>(base_size) * 20;
         const int prefer_neg = color_to_negative_value(num_colors, c);
         const int active_val = color_to_active_value(num_colors, c);
 
-        while (activated < seeds_quota[c] && tries < max_tries) {
-            const int x = rng.uniform_int(0, grid.SX - 1);
-            const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
-            const int z = 0;
-            const int idx = grid.lin_index(x, y, z);
+        auto activate_base_site = [&](const int idx) -> bool {
             const int v = get_site(idx);
+            if (v != prefer_neg && v != -1) return false;
 
-            if (v == prefer_neg || v == -1) {
-                set_site(idx, active_val);
-                activation_code[static_cast<std::size_t>(idx)] =
-                    static_cast<NetworkPattern::state_t>(color_mul[c]);
-                frontier.push_back(idx);
-                ++N_current[c];
-                ++activated;
+            set_site(idx, active_val);
+            activation_code[static_cast<std::size_t>(idx)] =
+                static_cast<NetworkPattern::state_t>(color_mul[c]);
+            frontier.push_back(idx);
+            ++N_current[c];
+            return true;
+        };
+
+        if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
+            int activated = 0;
+            int tries = 0;
+            const int max_tries = static_cast<int>(base_size) * 20;
+
+            while (activated < seeds_quota[c] && tries < max_tries) {
+                const int x = rng.uniform_int(0, grid.SX - 1);
+                const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
+                const int z = 0;
+                const int idx = grid.lin_index(x, y, z);
+
+                if (activate_base_site(idx)) {
+                    ++activated;
+                }
+                ++tries;
             }
-            ++tries;
+        } else {
+            activate_deterministic_base_sites(
+                grid,
+                num_colors,
+                c,
+                seeds_quota[static_cast<std::size_t>(c)],
+                stop_config.initial_base_layout,
+                activate_base_site);
         }
     }
 
@@ -2547,6 +2784,18 @@ NetworkPattern network::animate_network(
     std::vector<bool> died(num_colors, false);
     std::vector<bool> finished(num_colors, false);
     std::vector<int>  percolation_rank(num_colors, -1);
+    std::vector<int> equilibrium_stable_run_by_species(
+        static_cast<std::size_t>(num_colors), 0);
+    std::vector<bool> species_equilibrated(
+        static_cast<std::size_t>(num_colors), false);
+    std::vector<int> z_stat_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::deque<double> error_window;
+    std::deque<double> derivative_window;
+    std::vector<std::deque<double>> control_derivative_windows(
+        static_cast<std::size_t>(num_colors));
+    std::vector<double> previous_p_for_dynamics = p_curr;
+    double previous_error = std::numeric_limits<double>::quiet_NaN();
 
     // cache leve do maior componente global por cor: semente + tamanho.
     std::vector<ComponentSummary> largest_comp_cache(num_colors);
@@ -2734,6 +2983,10 @@ NetworkPattern network::animate_network(
 
         std::vector<ValidPercolation> valid_percs;
         valid_percs.reserve(static_cast<std::size_t>(num_colors));
+        const bool dynamic_equilibrium_mode =
+            stop_config.dynamic_height &&
+            stop_config.stop_at_equilibrium &&
+            !stop_config.stop_at_percolation;
 
         for (int c = 0; c < num_colors; ++c) {
             if (died[c]) {
@@ -2742,17 +2995,24 @@ NetworkPattern network::animate_network(
                 continue;
             }
 
-            if (!percolated[c]) {
+            const bool valid_species = dynamic_equilibrium_mode
+                ? species_equilibrated[static_cast<std::size_t>(c)]
+                : percolated[c];
+            if (!valid_species) {
                 ps_out.sp_len[c] = -1;
                 ps_out.sp_path_lin[c].clear();
                 continue;
             }
 
             const int active_val = color_to_active_value(num_colors, c);
+            const int target_height = dynamic_equilibrium_mode
+                ? max_heights[static_cast<std::size_t>(c)]
+                : grid.grow_top_coord();
             std::vector<int> path = is_node
-                ? shortest_site_path_single_color(grid, active_val, get_site)
+                ? shortest_site_path_single_color(
+                    grid, active_val, get_site, target_height)
                 : shortest_open_bond_path_single_color(
-                    grid, open_bond_graph, active_val, get_site);
+                    grid, open_bond_graph, active_val, get_site, target_height);
 
             if (path.empty()) {
                 ps_out.sp_len[c] = -1;
@@ -2767,7 +3027,10 @@ NetworkPattern network::animate_network(
                 ? largest_component_single_color_summary(c)
                 : largest_open_component_single_color_summary(c, open_bond_graph);
 
-            valid_percs.push_back({percolation_rank[c], c});
+            valid_percs.push_back({
+                dynamic_equilibrium_mode ? c : percolation_rank[c],
+                c
+            });
         }
 
         std::sort(valid_percs.begin(), valid_percs.end(),
@@ -2824,12 +3087,7 @@ NetworkPattern network::animate_network(
 
     std::unique_ptr<TestedBondBitmap> tested_bonds_bitmap;
     DynamicTestedBondBitmap tested_bonds_dynamic;
-    if (stop_config.dynamic_height) {
-        if (calculate_detailed_properties) {
-            throw std::runtime_error(
-                "growth_test dynamic_height ainda nao suporta Properties=true.");
-        }
-    } else {
+    if (!stop_config.dynamic_height) {
         tested_bonds_bitmap = std::make_unique<TestedBondBitmap>(grid);
     }
     auto mark_tested_bond = [&](const std::uint64_t edge_bit) -> bool
@@ -2866,16 +3124,6 @@ NetworkPattern network::animate_network(
     std::mt19937_64 topology_rng(topology_seed);
 
     constexpr int progress_interval = 200;
-    std::vector<int> equilibrium_stable_run_by_species(
-        static_cast<std::size_t>(num_colors), 0);
-    std::vector<bool> species_equilibrated(
-        static_cast<std::size_t>(num_colors), false);
-    std::deque<double> error_window;
-    std::deque<double> derivative_window;
-    std::vector<std::deque<double>> control_derivative_windows(
-        static_cast<std::size_t>(num_colors));
-    std::vector<double> previous_p_for_dynamics = p_curr;
-    double previous_error = std::numeric_limits<double>::quiet_NaN();
 
     for (int t = 1; t <= hard_max_steps; ++t) {
         if (stop_config.dynamic_height && !frontier.empty()) {
@@ -3178,24 +3426,45 @@ NetworkPattern network::animate_network(
             all_terminal && any_percolated && any_dead;
 
         bool stop_equilibrated = false;
+        const int current_global_height =
+            *std::max_element(max_heights.begin(), max_heights.end());
+        const bool reached_max_dynamic_height =
+            dynamic_max_stop_height >= 0 &&
+            current_global_height >= dynamic_max_stop_height;
         if (stop_config.stop_at_equilibrium) {
             bool any_running = false;
             bool all_running_equilibrated = true;
-            const double tol = std::max(
-                stop_config.equilibrium_abs_tol,
-                stop_config.equilibrium_rel_tol * std::max(std::abs(f_T), 1.0e-12)
-            );
+            bool all_running_reached_min_height = true;
+            constexpr int teq_window_block = 10;
+            const double teq_rel_tol = growth_test_effective_rel_tol(
+                stop_config.equilibrium_rel_tol, num_colors);
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
+                if (dynamic_min_stop_height >= 0 &&
+                    max_heights[static_cast<std::size_t>(c)] < dynamic_min_stop_height) {
+                    all_running_reached_min_height = false;
+                }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
-                    const bool stable_now = std::abs(f_current[c] - f_T) <= tol;
-                    auto& stable_run =
-                        equilibrium_stable_run_by_species[static_cast<std::size_t>(c)];
-                    stable_run = stable_now ? (stable_run + 1) : 0;
-                    if (stable_run >= stop_config.equilibrium_consecutive_steps) {
-                        species_equilibrated[static_cast<std::size_t>(c)] = true;
+                    if (t % teq_window_block == 0) {
+                        const double t_eq_candidate = estimate_t_eq_from_series(
+                            t_list,
+                            p_series[static_cast<std::size_t>(c)],
+                            15,
+                            teq_window_block,
+                            stop_config.equilibrium_consecutive_steps,
+                            teq_rel_tol,
+                            stop_config.equilibrium_abs_tol,
+                            5.0e-4,
+                            false,
+                            0.0,
+                            stop_config.dynamics_window_steps);
+                        if (std::isfinite(t_eq_candidate)) {
+                            species_equilibrated[static_cast<std::size_t>(c)] = true;
+                            z_stat_by_species[static_cast<std::size_t>(c)] =
+                                max_heights[static_cast<std::size_t>(c)];
+                        }
                     }
                 }
 
@@ -3203,164 +3472,18 @@ NetworkPattern network::animate_network(
                     all_running_equilibrated = false;
                 }
             }
-            stop_equilibrated = any_running && all_running_equilibrated;
+            if (any_running && all_running_equilibrated) {
+                stop_equilibrated =
+                    dynamic_min_stop_height >= 0
+                        ? all_running_reached_min_height
+                        : true;
+            }
         }
 
         const bool stop_hard_limit =
-            stop_config.stop_at_equilibrium && t >= hard_max_steps;
+            stop_config.stop_at_equilibrium &&
+            (t >= hard_max_steps || reached_max_dynamic_height);
         bool stop_stationary_dynamics = false;
-        if (stop_config.stop_at_equilibrium &&
-            stop_config.dynamics_window_steps > 1) {
-            double current_error = 0.0;
-            bool any_running = false;
-            const double scale = std::max(std::abs(f_T), stop_config.equilibrium_abs_tol);
-            for (int c = 0; c < num_colors; ++c) {
-                if (finished[c]) continue;
-                any_running = true;
-                current_error = std::max(
-                    current_error,
-                    std::abs(f_current[c] - f_T) / scale);
-            }
-
-            if (any_running) {
-                for (int c = 0; c < num_colors; ++c) {
-                    if (finished[c]) continue;
-                    auto& dw = control_derivative_windows[static_cast<std::size_t>(c)];
-                    dw.push_back(p_curr[static_cast<std::size_t>(c)] -
-                                 previous_p_for_dynamics[static_cast<std::size_t>(c)]);
-                    while (static_cast<int>(dw.size()) >
-                           stop_config.dynamics_window_steps) {
-                        dw.pop_front();
-                    }
-                }
-                previous_p_for_dynamics = p_curr;
-
-                if (std::isfinite(previous_error)) {
-                    derivative_window.push_back(current_error - previous_error);
-                    while (static_cast<int>(derivative_window.size()) >
-                           stop_config.dynamics_window_steps) {
-                        derivative_window.pop_front();
-                    }
-                }
-                previous_error = current_error;
-
-                error_window.push_back(current_error);
-                while (static_cast<int>(error_window.size()) >
-                       stop_config.dynamics_window_steps + 1) {
-                    error_window.pop_front();
-                }
-
-                if (static_cast<int>(derivative_window.size()) >=
-                        stop_config.dynamics_window_steps &&
-                    error_window.size() >= 2) {
-                    double mean_abs_derivative = 0.0;
-                    int finite_derivatives = 0;
-                    int sign_changes = 0;
-                    int prev_sign = 0;
-
-                    for (const double d : derivative_window) {
-                        if (!std::isfinite(d)) continue;
-                        mean_abs_derivative += std::abs(d);
-                        ++finite_derivatives;
-
-                        int sign = 0;
-                        if (d > stop_config.derivative_abs_tol) sign = 1;
-                        else if (d < -stop_config.derivative_abs_tol) sign = -1;
-                        if (sign != 0) {
-                            if (prev_sign != 0 && sign != prev_sign) {
-                                ++sign_changes;
-                            }
-                            prev_sign = sign;
-                        }
-                    }
-
-                    if (finite_derivatives > 0) {
-                        mean_abs_derivative /= static_cast<double>(finite_derivatives);
-                    }
-
-                    const double first_error = error_window.front();
-                    const double best_error = *std::min_element(
-                        error_window.begin(), error_window.end());
-                    const double relative_improvement =
-                        (first_error > 0.0)
-                            ? (first_error - best_error) / first_error
-                            : 0.0;
-                    const double sign_change_fraction =
-                        (finite_derivatives > 1)
-                            ? static_cast<double>(sign_changes) /
-                                  static_cast<double>(finite_derivatives - 1)
-                            : 0.0;
-
-                    const bool weak_improvement =
-                        relative_improvement < stop_config.min_rel_error_improvement;
-                    const bool small_derivatives =
-                        mean_abs_derivative <= stop_config.derivative_abs_tol;
-                    const bool oscillatory_derivatives =
-                        sign_change_fraction >=
-                        stop_config.derivative_sign_change_fraction;
-
-                    bool control_stationary = true;
-                    for (int c = 0; c < num_colors; ++c) {
-                        if (finished[c]) continue;
-                        const auto& dw =
-                            control_derivative_windows[static_cast<std::size_t>(c)];
-                        if (static_cast<int>(dw.size()) <
-                            stop_config.dynamics_window_steps) {
-                            control_stationary = false;
-                            break;
-                        }
-
-                        double mean_abs_dp = 0.0;
-                        int finite_dp = 0;
-                        int dp_sign_changes = 0;
-                        int prev_dp_sign = 0;
-                        for (const double dp : dw) {
-                            if (!std::isfinite(dp)) continue;
-                            mean_abs_dp += std::abs(dp);
-                            ++finite_dp;
-
-                            int sign = 0;
-                            if (dp > stop_config.control_derivative_abs_tol) sign = 1;
-                            else if (dp < -stop_config.control_derivative_abs_tol) sign = -1;
-                            if (sign != 0) {
-                                if (prev_dp_sign != 0 && sign != prev_dp_sign) {
-                                    ++dp_sign_changes;
-                                }
-                                prev_dp_sign = sign;
-                            }
-                        }
-
-                        if (finite_dp == 0) {
-                            control_stationary = false;
-                            break;
-                        }
-
-                        mean_abs_dp /= static_cast<double>(finite_dp);
-                        const double dp_sign_change_fraction =
-                            (finite_dp > 1)
-                                ? static_cast<double>(dp_sign_changes) /
-                                      static_cast<double>(finite_dp - 1)
-                                : 0.0;
-                        const bool small_control_derivative =
-                            mean_abs_dp <= stop_config.control_derivative_abs_tol;
-                        const bool oscillatory_control_derivative =
-                            dp_sign_change_fraction >=
-                            stop_config.derivative_sign_change_fraction;
-
-                        if (!small_control_derivative &&
-                            !oscillatory_control_derivative) {
-                            control_stationary = false;
-                            break;
-                        }
-                    }
-
-                    stop_stationary_dynamics =
-                        weak_improvement &&
-                        control_stationary &&
-                        (small_derivatives || oscillatory_derivatives);
-                }
-            }
-        }
 
         if (stop_all_dead || stop_all_percolated ||
             stop_partial_percolation || stop_equilibrated ||
@@ -3398,17 +3521,31 @@ NetworkPattern network::animate_network(
     }
 
     if (stop_config.stop_at_equilibrium && !stop_config.stop_at_percolation) {
+        constexpr int teq_window_block = 10;
+        const int teq_min_stable_steps =
+            stop_config.equilibrium_consecutive_steps;
+        const double teq_rel_tol = growth_test_effective_rel_tol(
+            stop_config.equilibrium_rel_tol, num_colors);
         ps_out.t_eq_by_species = estimate_t_eq_by_species_from_timeseries(
             ts_out,
             15,
-            10,
-            stop_config.equilibrium_consecutive_steps,
-            2.5e-2,
+            teq_window_block,
+            teq_min_stable_steps,
+            teq_rel_tol,
             1.0e-6,
             5.0e-4,
-            true,
-            true,
-            f_T);
+            false,
+            false,
+            0.0,
+            stop_config.dynamics_window_steps);
+        for (int c = 0; c < num_colors; ++c) {
+            if (died[static_cast<std::size_t>(c)] ||
+                !species_equilibrated[static_cast<std::size_t>(c)]) {
+                ps_out.t_eq_by_species[static_cast<std::size_t>(c)] =
+                    std::numeric_limits<double>::quiet_NaN();
+                ps_out.z_stat_by_species[static_cast<std::size_t>(c)] = -1;
+            }
+        }
         ts_out.t_eq = any_value_finite(ps_out.t_eq_by_species)
             ? mean_finite_values(ps_out.t_eq_by_species)
             : std::numeric_limits<double>::quiet_NaN();
@@ -3441,6 +3578,18 @@ NetworkPattern network::animate_network(
                 ps_out.M_size_posteq[c] = 0;
             }
         } else {
+        if (stop_config.stop_at_equilibrium && !stop_config.stop_at_percolation) {
+            ps_out.M_size_at_perc.clear();
+            for (const int color_1b : ps_out.color_percolation) {
+                const int c = color_1b - 1;
+                if (c < 0 || c >= static_cast<int>(largest_comp_cache.size())) {
+                    ps_out.M_size_at_perc.push_back(-1);
+                    continue;
+                }
+                ps_out.M_size_at_perc.push_back(largest_comp_cache[c].size);
+            }
+        }
+
         OpenBondGraph open_bond_graph_for_splits;
         if (!is_node) {
             open_bond_graph_for_splits.build(grid.total_size, edge_pairs);
@@ -3526,16 +3675,22 @@ NetworkPattern network::animate_network(
             ps_out.z_max_at_perc.clear();
         }
         ps_out.z_max_final = max_heights;
+        ps_out.z_stat_by_species = z_stat_by_species;
         ps_out.equilibrium_consecutive_steps =
             stop_config.equilibrium_consecutive_steps;
         ps_out.dynamics_window_steps = stop_config.dynamics_window_steps;
+        ps_out.dynamic_min_stop_height = dynamic_min_stop_height;
+        ps_out.dynamic_max_stop_height = dynamic_max_stop_height;
         ps_out.equilibrium_rel_tol = stop_config.equilibrium_rel_tol;
         ps_out.equilibrium_abs_tol = stop_config.equilibrium_abs_tol;
     } else {
         ps_out.z_max_at_perc.clear();
         ps_out.z_max_final.clear();
+        ps_out.z_stat_by_species.clear();
         ps_out.equilibrium_consecutive_steps = -1;
         ps_out.dynamics_window_steps = -1;
+        ps_out.dynamic_min_stop_height = -1;
+        ps_out.dynamic_max_stop_height = -1;
         ps_out.equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();
         ps_out.equilibrium_abs_tol = std::numeric_limits<double>::quiet_NaN();
     }
@@ -3547,7 +3702,10 @@ NetworkPattern network::animate_network(
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
 
-    NetworkPattern net_animation(dim, shape, num_colors, rho, false);
+    const std::vector<int> final_shape = (dim == 2)
+        ? std::vector<int>{grid.SX, grid.SY}
+        : std::vector<int>{grid.SX, grid.SY, grid.SZ};
+    NetworkPattern net_animation(dim, final_shape, num_colors, rho, false);
     net_animation.data = std::move(activation_code);
     net_animation.edge_pairs = std::move(edge_pairs);
     return net_animation;

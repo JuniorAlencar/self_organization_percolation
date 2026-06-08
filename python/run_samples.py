@@ -54,20 +54,26 @@ type_perc = 'bond'
 
 # f_T = np.linspace(0.001, 0.30, 25)
 # c_lst = [0.01, 0.05, 0.25, 0.50]
-L =       1024
+#L =       1024
 L_lst =       [256, 512, 1024]
 num_runs =    [150, 50, 5]
 nc = 1
-ft_lst = np.linspace(0.01, 0.4, 30)
+ft = 0.02
+ft_lst = np.linspace(0.01, 0.4, 20)
 c_lst = [0.01, 0.03, 0.05, 0.07, 0.10]
+#c = 0.01
 multi=True
 Equilibration = 'false'
 Properties = 'false'
 Mode = 'growth_test'  # use 'sop' for the original fixed-height SOP run
+InitialLayout = 'random'  # 'random', 'blocks', or 'alternating'
 p0 = 0.6
+#P0_lst = [0.1, 0.25, 0.50, 1.0]
 P0 = 0.1
-for ft in ft_lst:
-        for c in c_lst:
+#for P0 in P0_lst:
+
+for c in c_lst:
+        for ft in ft_lst:        
                 for idx, L in enumerate(L_lst):            
                                         # start = 1/(P0*L**2)
                                         # print(start)
@@ -76,8 +82,10 @@ for ft in ft_lst:
                                 # rho = custom_range(start, stop, n_points)
                         rho = 1/nc
                         mode_tag = "" if Mode == "sop" else f"_{Mode}"
-                        exec_name = f"ft_{ft:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}.sh"
+                        layout_tag = "" if InitialLayout == "random" else f"_{InitialLayout}"
+                        exec_name = f"ft_{ft:.3f}L_{L}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}{layout_tag}.sh"
 
                         shell_data(L, type_perc, p0, seed, c, ft, dim,
                                 nc, num_runs[idx], [1/nc], exec_name, P0, Equilibration, multi,
-                                properties=Properties, mode=Mode)
+                                properties=Properties, mode=Mode,
+                                initial_layout=InitialLayout)
