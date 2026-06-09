@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -12,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+
+DYNAMIC_PROCESSING_VERSION = 2
 
 FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
@@ -49,6 +52,39 @@ ALL_COLORS_COLUMNS = [
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def manifest_path(manifests_root: Path, rel_group: Path) -> Path:
+    return manifests_root / rel_group / "manifest.json"
+
+
+def load_manifest(manifests_root: Path, rel_group: Path) -> dict[str, Any]:
+    path = manifest_path(manifests_root, rel_group)
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {
+        "processed_json_files": [],
+        "n_processed_json_files": 0,
+        "summary_file": None,
+        "last_update": None,
+    }
+
+
+def save_manifest(manifests_root: Path,
+                  rel_group: Path,
+                  manifest: dict[str, Any]) -> Path:
+    path = manifest_path(manifests_root, rel_group)
+    ensure_dir(path.parent)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(json_safe(manifest), f, ensure_ascii=False, indent=2, allow_nan=False)
+        f.write("\n")
+    return path
 
 
 def finite_float(value: Any) -> float | None:
@@ -295,10 +331,86 @@ def discover_data_dirs(raw_root: Path) -> list[Path]:
     )
 
 
+def rows_from_existing_bundle(bundle_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    with bundle_path.open("r", encoding="utf-8") as f:
+        bundle = json.load(f)
+    meta = bundle.get("meta", {}) if isinstance(bundle.get("meta", {}), dict) else {}
+    params = {
+        "type_perc": meta.get("type_perc"),
+        "dim": meta.get("dim"),
+        "L": meta.get("L"),
+        "f_T": meta.get("f_T"),
+        "c": meta.get("c"),
+        "nc": meta.get("nc"),
+        "rho": meta.get("rho"),
+        "stat_window": meta.get("stat_window", -1),
+    }
+
+    all_rows: list[dict[str, Any]] = []
+    all_color_rows: list[dict[str, Any]] = []
+    for p0_group in bundle.get("p0_groups", []):
+        if not isinstance(p0_group, dict):
+            continue
+        P0 = p0_group.get("P0_value")
+        p0 = p0_group.get("p0_value")
+        processed = p0_group.get("num_samples_total", 0)
+        colors = p0_group.get("colors", {})
+        if not isinstance(colors, dict):
+            colors = {}
+
+        all_color_rows.append({
+            **params,
+            "num_colors": params["nc"],
+            "p0": p0,
+            "P0": P0,
+            "N_samples": processed,
+            "nc": colors.get("nc"),
+            "nc_err": colors.get("nc_err"),
+            "nc_std": colors.get("nc_std"),
+        })
+
+        for order_block in p0_group.get("orders", []):
+            if not isinstance(order_block, dict):
+                continue
+            p_stats = order_block.get("p", {})
+            f_stats = order_block.get("f", {})
+            z_stats = order_block.get("z_max", {})
+            z_stat_stats = order_block.get("z_stat", {})
+            if not isinstance(p_stats, dict):
+                p_stats = {}
+            if not isinstance(f_stats, dict):
+                f_stats = {}
+            if not isinstance(z_stats, dict):
+                z_stats = {}
+            if not isinstance(z_stat_stats, dict):
+                z_stat_stats = {}
+
+            all_rows.append({
+                **params,
+                "p0": p0,
+                "P0": P0,
+                "order": order_block.get("order"),
+                "N_samples": order_block.get("N_samples", processed),
+                "N_samples_perc": order_block.get("N_samples_perc"),
+                "p_mean": p_stats.get("mean"),
+                "p_err": p_stats.get("err"),
+                "f_mean": f_stats.get("mean"),
+                "f_err": f_stats.get("err"),
+                "z_max_mean": z_stats.get("mean"),
+                "z_max_err": z_stats.get("err"),
+                "z_stat_mean": z_stat_stats.get("mean"),
+                "z_stat_err": z_stat_stats.get("err"),
+            })
+
+    return all_rows, all_color_rows
+
+
 def process_group(
     data_dir: Path,
     raw_root: Path,
     published_root: Path,
+    manifests_root: Path,
+    clear: bool = False,
 ) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]]:
     params = parse_data_dir(data_dir)
     if params is None:
@@ -307,6 +419,7 @@ def process_group(
     rel_group = data_dir.parent.relative_to(raw_root)
     out_dir = published_root / rel_group
     ensure_dir(out_dir)
+    out_path = out_dir / "properties_dynamic_bundle.json"
 
     json_files = sorted(data_dir.glob("*.json"))
     groups: dict[tuple[float, float], list[Path]] = defaultdict(list)
@@ -315,12 +428,28 @@ def process_group(
         if parsed_name is None:
             continue
         groups[parsed_name].append(fp)
+    current_json_files = sorted({fp.name for files in groups.values() for fp in files})
+
+    manifest = load_manifest(manifests_root, rel_group)
+    manifest_files = set(map(str, manifest.get("processed_json_files", [])))
+    manifest_version = int(manifest.get("dynamic_processing_version", 0) or 0)
+    if (
+        not clear
+        and out_path.exists()
+        and manifest_version == DYNAMIC_PROCESSING_VERSION
+        and manifest_files == set(current_json_files)
+    ):
+        all_rows, all_color_rows = rows_from_existing_bundle(out_path)
+        print(f"[skip] {out_path} ({len(all_rows)} rows)")
+        return out_path, all_rows, all_color_rows
 
     bundle: dict[str, Any] = {
         "meta": {
             **params,
             "raw_group": rel_group.as_posix(),
             "num_json_files": len(json_files),
+            "num_parseable_json_files": len(current_json_files),
+            "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
         },
         "p0_groups": [],
     }
@@ -437,10 +566,20 @@ def process_group(
 
         bundle["p0_groups"].append(p0_group)
 
-    out_path = out_dir / "properties_dynamic_bundle.json"
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(json_safe(bundle), f, ensure_ascii=False, indent=2)
         f.write("\n")
+
+    manifest.update({
+        "group_relpath": rel_group.as_posix(),
+        "data_dir": data_dir.as_posix(),
+        "processed_json_files": current_json_files,
+        "n_processed_json_files": len(current_json_files),
+        "summary_file": out_path.as_posix(),
+        "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+        "last_update": datetime.now(timezone.utc).isoformat(),
+    })
+    save_manifest(manifests_root, rel_group, manifest)
 
     return out_path, all_rows, all_color_rows
 
@@ -482,15 +621,18 @@ def main() -> int:
     parser.add_argument("--sop-root", default=str(Path(__file__).resolve().parents[1] / "SOP_data"))
     parser.add_argument("--raw-dir", default="raw_growth_test_dynamic")
     parser.add_argument("--published-dir", default="published_dynamic")
+    parser.add_argument("--manifests-dir", default="manifests_dynamic")
     parser.add_argument("--all-data-name", default="all_data_dynamic.dat")
     parser.add_argument("--all-colors-name", default="all_colors_dynamic.dat")
-    parser.add_argument("--clear", action="store_true", help="Rebuild output files. Current implementation always rewrites.")
+    parser.add_argument("--clear", action="store_true", help="Ignore manifest cache and rebuild dynamic bundles.")
     args = parser.parse_args()
 
     sop_root = Path(args.sop_root).expanduser().resolve()
     raw_root = sop_root / args.raw_dir
     published_root = sop_root / args.published_dir
+    manifests_root = sop_root / args.manifests_dir
     ensure_dir(published_root)
+    ensure_dir(manifests_root)
 
     data_dirs = discover_data_dirs(raw_root)
     print(f"[dynamic] data dirs found: {len(data_dirs)}")
@@ -498,7 +640,13 @@ def main() -> int:
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
     for data_dir in data_dirs:
-        out_path, rows, color_rows = process_group(data_dir, raw_root, published_root)
+        out_path, rows, color_rows = process_group(
+            data_dir,
+            raw_root,
+            published_root,
+            manifests_root,
+            clear=args.clear,
+        )
         all_rows.extend(rows)
         all_color_rows.extend(color_rows)
         print(f"[write] {out_path} ({len(rows)} rows)")
