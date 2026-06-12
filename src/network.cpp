@@ -1464,7 +1464,7 @@ NetworkPattern network::create_network(
             : -1;
     const int dynamic_max_stop_height =
         (dynamic_min_stop_height >= 0)
-            ? static_cast<int>(std::ceil(8.0 * static_cast<double>(lenght_network)))
+            ? static_cast<int>(std::ceil(7.0 * static_cast<double>(lenght_network)))
             : -1;
 
     if (num_colors > 125) {
@@ -2623,7 +2623,7 @@ NetworkPattern network::animate_network(
             : -1;
     const int dynamic_max_stop_height =
         (dynamic_min_stop_height >= 0)
-            ? static_cast<int>(std::ceil(8.0 * static_cast<double>(lenght_network)))
+            ? static_cast<int>(std::ceil(7.0 * static_cast<double>(lenght_network)))
             : -1;
 
     if (num_colors > 125) {
