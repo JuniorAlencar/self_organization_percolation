@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 
-DYNAMIC_PROCESSING_VERSION = 2
+DYNAMIC_PROCESSING_VERSION = 5
 
 FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
@@ -195,6 +195,125 @@ def tail_mean_after_t_eq(time: Any, values: Any, t_eq: float) -> float | None:
     return float(np.mean(y[mask]))
 
 
+def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
+    series_pt: list[tuple[np.ndarray, np.ndarray]] = []
+    series_ft: list[np.ndarray] = []
+    t_eq_vals: list[float] = []
+
+    for item in items:
+        t_eq = finite_float(item.get("t_eq_species"))
+        if t_eq is not None:
+            t_eq_vals.append(t_eq)
+
+        time = item.get("time")
+        pt = item.get("pt")
+        if time is None or pt is None:
+            continue
+        try:
+            t = np.asarray(time, dtype=float)
+            p = np.asarray(pt, dtype=float)
+        except Exception:
+            continue
+        n_pt = min(t.size, p.size)
+        if n_pt <= 1:
+            continue
+        series_pt.append((t[:n_pt], p[:n_pt]))
+
+        ft = item.get("ft")
+        if ft is not None:
+            try:
+                f = np.asarray(ft, dtype=float)
+            except Exception:
+                f = np.asarray([], dtype=float)
+            n_ft = min(n_pt, f.size)
+            if n_ft > 1:
+                series_ft.append(f[:n_ft])
+
+    out: dict[str, Any] = {}
+    if t_eq_vals:
+        arr = np.asarray(t_eq_vals, dtype=float)
+        out["t_eq"] = float(np.max(arr))
+        out["t_eq_mean"] = float(np.mean(arr))
+        out["t_eq_min"] = float(np.min(arr))
+        out["t_eq_max"] = float(np.max(arr))
+        out["n_t_eq"] = int(arr.size)
+    else:
+        out["t_eq"] = math.nan
+        out["t_eq_mean"] = math.nan
+        out["t_eq_min"] = math.nan
+        out["t_eq_max"] = math.nan
+        out["n_t_eq"] = 0
+
+    if not series_pt:
+        out.update({
+            "time": [],
+            "pt_mean": [],
+            "pt_std": [],
+            "pt_sem": [],
+            "ft_mean": [],
+            "ft_std": [],
+            "ft_sem": [],
+            "n_seeds_pt": 0,
+            "n_seeds_ft": 0,
+        })
+        return out
+
+    min_len_pt = min(p.size for _, p in series_pt)
+    t_common = series_pt[0][0][:min_len_pt]
+    pts = np.stack([p[:min_len_pt] for _, p in series_pt], axis=0)
+    nseed_pt = int(pts.shape[0])
+    pt_mean = np.mean(pts, axis=0)
+    if nseed_pt > 1:
+        pt_std = np.std(pts, axis=0, ddof=1)
+        pt_sem = pt_std / math.sqrt(nseed_pt)
+    else:
+        pt_std = np.zeros_like(pt_mean)
+        pt_sem = np.zeros_like(pt_mean)
+
+    out["time"] = t_common.tolist()
+    out["pt_mean"] = pt_mean.tolist()
+    out["pt_std"] = pt_std.tolist()
+    out["pt_sem"] = pt_sem.tolist()
+    out["n_seeds_pt"] = nseed_pt
+
+    if series_ft:
+        min_len_ft = min(f.size for f in series_ft)
+        min_len = min(min_len_pt, min_len_ft)
+        fts = np.stack([f[:min_len] for f in series_ft], axis=0)
+        nseed_ft = int(fts.shape[0])
+        ft_mean = np.mean(fts, axis=0)
+        if nseed_ft > 1:
+            ft_std = np.std(fts, axis=0, ddof=1)
+            ft_sem = ft_std / math.sqrt(nseed_ft)
+        else:
+            ft_std = np.zeros_like(ft_mean)
+            ft_sem = np.zeros_like(ft_mean)
+
+        pt_mean = np.mean(pts[:, :min_len], axis=0)
+        if nseed_pt > 1:
+            pt_std = np.std(pts[:, :min_len], axis=0, ddof=1)
+            pt_sem = pt_std / math.sqrt(nseed_pt)
+        else:
+            pt_std = np.zeros_like(pt_mean)
+            pt_sem = np.zeros_like(pt_mean)
+
+        out["time"] = t_common[:min_len].tolist()
+        out["pt_mean"] = pt_mean.tolist()
+        out["pt_std"] = pt_std.tolist()
+        out["pt_sem"] = pt_sem.tolist()
+        out["ft_mean"] = ft_mean.tolist()
+        out["ft_std"] = ft_std.tolist()
+        out["ft_sem"] = ft_sem.tolist()
+        out["n_seeds_ft"] = nseed_ft
+    else:
+        out["ft_mean"] = []
+        out["ft_std"] = []
+        out["ft_sem"] = []
+        out["n_seeds_ft"] = 0
+
+    return out
+
+
 def zmax_for_order(
     *,
     order_pos: int,
@@ -254,8 +373,11 @@ def load_dynamic_sample(path: Path) -> list[dict[str, Any]] | None:
     results = js.get("results", {}) if isinstance(js.get("results", {}), dict) else {}
     if not results:
         return []
+    meta_t_eq_for_fallback = meta.get("t_eq_by_species", [])
+    if not isinstance(meta_t_eq_for_fallback, list):
+        meta_t_eq_for_fallback = []
 
-    parsed_blocks: list[tuple[int, dict[str, Any]]] = []
+    candidate_blocks: list[tuple[int, dict[str, Any]]] = []
     for key, block in results.items():
         raw_order = parse_order_key(str(key))
         if raw_order is None:
@@ -263,15 +385,25 @@ def load_dynamic_sample(path: Path) -> list[dict[str, Any]] | None:
         data = (block or {}).get("data", {})
         if not isinstance(data, dict):
             continue
+        candidate_blocks.append((raw_order, dict(data)))
+
+    candidate_blocks.sort(key=lambda x: x[0])
+
+    parsed_blocks: list[tuple[int, dict[str, Any]]] = []
+    for order_pos, (raw_order, data) in enumerate(candidate_blocks):
         t_eq = finite_float(data.get("t_eq_species"))
         if t_eq is None:
+            t_eq = finite_float(data.get("t_eq"))
+        if t_eq is None and order_pos < len(meta_t_eq_for_fallback):
+            t_eq = finite_float(meta_t_eq_for_fallback[order_pos])
+        if t_eq is None:
             continue
+        data["t_eq_species"] = t_eq
         parsed_blocks.append((raw_order, data))
 
     if not parsed_blocks:
         return []
 
-    parsed_blocks.sort(key=lambda x: x[0])
     result_t_eq_order = [float(d.get("t_eq_species")) for _, d in parsed_blocks]
     meta_t_eq = meta.get("t_eq_by_species", [])
     meta_zmax = meta.get("z_max", meta.get("z_max_final", []))
@@ -315,6 +447,9 @@ def load_dynamic_sample(path: Path) -> list[dict[str, Any]] | None:
             "order": order_pos,
             "color": color_1b,
             "t_eq_species": t_eq,
+            "time": data.get("time"),
+            "pt": data.get("pt"),
+            "ft": data.get("nt"),
             "p_sample_mean": p_mean,
             "f_sample_mean": f_mean,
             "z_max": z_max,
@@ -511,12 +646,26 @@ def process_group(
             z_mean, z_err, n_z = mean_sem(z_vals)
             z_stat_mean, z_stat_err, n_z_stat = mean_sem(z_stat_vals)
             teq_mean, teq_err, n_teq = mean_sem(teq_vals)
+            series_data = average_dynamic_time_series(items)
 
             N_samples_perc = len(items)
             order_block = {
                 "order": order,
                 "N_samples": processed,
                 "N_samples_perc": N_samples_perc,
+                "data": {
+                    **series_data,
+                    "p_tail_mean": p_mean,
+                    "p_tail_err": p_err,
+                    "f_tail_mean": f_mean,
+                    "f_tail_err": f_err,
+                    "z_max_mean": z_mean,
+                    "z_max_err": z_err,
+                    "z_stat_mean": z_stat_mean,
+                    "z_stat_err": z_stat_err,
+                    "n_samples_perc": N_samples_perc,
+                    "n_samples_total": processed,
+                },
                 "t_eq_species": {
                     "mean": teq_mean,
                     "err": teq_err,
