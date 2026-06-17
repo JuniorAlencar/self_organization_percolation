@@ -367,6 +367,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             write_json_nullable_double_array(ofs, ps.t_eq_by_species);
         }
         ofs << ",\n";
+        if (growth_test_order_mode) {
+            ofs << "    \"growth_test_t_eq_by_species_by_color\": ";
+            write_json_nullable_double_array(ofs, ps.t_eq_by_species);
+            ofs << ",\n";
+        }
     }
     if (!ps.z_max_final.empty()) {
         ofs << "    \"z_max\": ";
@@ -376,6 +381,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             write_json_array(ofs, ps.z_max_final);
         }
         ofs << ",\n";
+        if (growth_test_order_mode) {
+            ofs << "    \"growth_test_z_max_by_color\": ";
+            write_json_array(ofs, ps.z_max_final);
+            ofs << ",\n";
+        }
         if (!growth_test_order_mode) {
             ofs << "    \"z_max_final\": ";
             write_json_array(ofs, ps.z_max_final);
@@ -389,10 +399,35 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 write_json_nullable_int_array(ofs, ps.z_stat_by_species);
             }
             ofs << ",\n";
+            if (growth_test_order_mode) {
+                ofs << "    \"growth_test_z_stat_by_color\": ";
+                write_json_nullable_int_array(ofs, ps.z_stat_by_species);
+                ofs << ",\n";
+            }
         }
         if (ps.dynamics_window_steps > 0) {
             ofs << "    \"growth_test_dynamics_window_steps\": "
                 << ps.dynamics_window_steps << ",\n";
+        }
+        if (!ps.species_final_status.empty()) {
+            ofs << "    \"growth_test_species_final_status_by_color\": ";
+            write_json_array(ofs, ps.species_final_status);
+            ofs << ",\n";
+            ofs << "    \"growth_test_species_final_status_legend\": "
+                << "\"1=stabilized,-1=died,0=not_stabilized_at_stop\",\n";
+            if (ps.species_final_status.size() >= 4) {
+                ofs << "    \"growth_test_species_4_died_marker\": "
+                    << (ps.species_final_status[3] == -1 ? "true" : "false")
+                    << ",\n";
+            }
+        }
+        if (!ps.growth_test_stop_reason.empty()) {
+            ofs << "    \"growth_test_stop_reason_actual\": \""
+                << ps.growth_test_stop_reason << "\",\n";
+        }
+        if (ps.growth_test_stop_time >= 0) {
+            ofs << "    \"growth_test_stop_time\": "
+                << ps.growth_test_stop_time << ",\n";
         }
         if (ps.equilibrium_consecutive_steps > 0) {
             ofs << "    \"growth_test_stop_criterion\": \"alive_species_pt_stability_min_z_L_dynamic_max_z_limit\",\n";
