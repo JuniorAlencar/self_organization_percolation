@@ -4,6 +4,8 @@ import pandas as pd
 from pathlib import Path
 from collections import Counter
 import math
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from collections.abc import Iterable
 
 def create_folder(folder_path):
@@ -301,3 +303,644 @@ def create_folder(folder_path):
         print(f"Folder created: {folder_path}")
     else:
         print(f"Folder already exists: {folder_path}")
+
+def latex_one_decimal(x, pos):
+    if abs(x) < 1e-12:
+        x = 0
+    return rf'${x:.1f}$'
+
+def panel_label_from_index(i):
+    letters = ""
+    while True:
+        letters = chr(ord('a') + i % 26) + letters
+        i = i // 26 - 1
+        if i < 0:
+            break
+    return letters
+
+def plot_nc_dynamic_grid(
+    df_dynamic,
+    df_series,
+    L_lst,
+    ns_lst,
+    c_lst,
+    window=300,
+    base=5,
+    dim=2,
+    order=0,
+    p0=0.8,
+    p_cut=0.95,
+    x_min=0,
+    tick_fs=16,
+    label_fs=18,
+    title_fs=18,
+    tick_len=8,
+    tick_width=1.4,
+    fs_legend=15,
+    markers=('o', 's', 'D', '^'),
+    ms=7,
+    mew=1.4,
+    print_bounds=True,
+    savepath=None,
+
+    # novos argumentos
+    wspace=0.02,
+    hspace=0.08,
+    ns_text_x=0.06,
+    ns_text_y=0.90,
+    ns_text_fs=18,
+    legend_loc='lower right',
+    panel_label_x=0.06,
+    panel_label_y=0.97,
+    panel_label_fs=18,
+):
+    """
+    Plota <nc> versus f_T usando df_dynamic, truncando superiormente por ft_max.
+
+    O ft_max é calculado a partir do df_series, depois do truncamento p_mean <= p_cut.
+    O ft_min é calculado a partir do df_dynamic.
+
+    Retorna:
+        fig, axes, parms, ft_bounds
+    """
+
+    if len(markers) < len(L_lst):
+        raise ValueError(
+            f"Número de markers insuficiente: len(markers)={len(markers)}, "
+            f"mas len(L_lst)={len(L_lst)}"
+        )
+
+    parms = {
+        'c': [],
+        'ft_min': [],
+        'ft_max': [],
+        'ns': [],
+        'dim': [],
+        'p0': [],
+    }
+
+    ft_bounds = {}
+
+    # ============================================================
+    # 1) Calcula ft_min e ft_max para cada par (ns, c)
+    # ============================================================
+
+    for ns in ns_lst:
+        rho = round(1 / ns, 5)
+
+        for c in c_lst:
+            ft_min_per_L = []
+            ft_max_per_L = []
+
+            # ----------------------------
+            # ft_min vem do df_dynamic
+            # ----------------------------
+            for L in L_lst:
+                df_d = df_dynamic[
+                    (np.isclose(df_dynamic['c'], c)) &
+                    (df_dynamic['num_colors'] == ns) &
+                    (np.isclose(df_dynamic['p0'], p0)) &
+                    (df_dynamic['dim'] == dim) &
+                    (df_dynamic['L'] == L) &
+                    (df_dynamic['stat_window'] == window)
+                ]
+
+                ft_valid = df_d.loc[
+                    np.isclose(df_d['nc'], ns),
+                    'f_T'
+                ].dropna()
+
+                if ft_valid.empty:
+                    raise ValueError(
+                        f"Nenhum ponto encontrado para calcular ft_min: "
+                        f"ns={ns}, c={c}, L={L}, p0={p0}, dim={dim}, window={window}"
+                    )
+
+                ft_min_per_L.append(ft_valid.min())
+
+            ft_min = max(ft_min_per_L)
+
+            # ----------------------------
+            # ft_max vem do df_series truncado
+            # ----------------------------
+            for L in L_lst:
+                df_s = df_series[
+                    (np.isclose(df_series['c'], c)) &
+                    (df_series['nc'] == ns) &
+                    (np.isclose(df_series['p0'], p0)) &
+                    (df_series['dim'] == dim) &
+                    (df_series['L'] == L) &
+                    (df_series['stat_window'] == window) &
+                    (df_series['order'] == order) &
+                    (np.isclose(df_series['rho'], rho))
+                ]
+
+                df_filter = df_s[
+                    df_s['f_T'] >= ft_min
+                ].dropna(subset=['f_T', 'p_mean'])
+
+                df_trunced = df_filter[
+                    df_filter['p_mean'] <= p_cut
+                ]
+
+                if df_trunced.empty:
+                    raise ValueError(
+                        f"Nenhum ponto encontrado para calcular ft_max: "
+                        f"ns={ns}, c={c}, L={L}, ft_min={ft_min}, "
+                        f"rho={rho}, p_cut={p_cut}"
+                    )
+
+                ft_max_per_L.append(df_trunced['f_T'].max())
+
+            ft_max = min(ft_max_per_L)
+
+            ft_bounds[(ns, c)] = {
+                'ft_min': ft_min,
+                'ft_max': ft_max,
+                'rho': rho,
+            }
+
+            parms['c'].append(c)
+            parms['ft_min'].append(ft_min)
+            parms['ft_max'].append(ft_max)
+            parms['ns'].append(ns)
+            parms['dim'].append(dim)
+            parms['p0'].append(p0)
+
+            if print_bounds:
+                print(
+                    f"ns={ns} | c={c:.2f} | rho={rho:.5f} | "
+                    f"ft_min={ft_min:.6f} | ft_max={ft_max:.6f}"
+                )
+
+    # ============================================================
+    # 2) Plota grade: linhas = ns, colunas = c
+    # ============================================================
+
+    nrows = len(ns_lst)
+    ncols = len(c_lst)
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(base * ncols, base * nrows),
+        sharey='row',
+        squeeze=False
+    )
+
+    for ax in axes.flat:
+        ax.set_box_aspect(1)
+
+        ax.tick_params(
+            axis='both',
+            which='major',
+            labelsize=tick_fs,
+            length=tick_len,
+            width=tick_width,
+            direction='in',
+            top=True,
+            right=True
+        )
+
+        ax.tick_params(
+            axis='both',
+            which='minor',
+            length=5,
+            width=1.4,
+            direction='in',
+            top=True,
+            right=True
+        )
+
+        ax.minorticks_on()
+
+        # força todos os ticks do eixo y a terem uma casa decimal
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(latex_one_decimal))
+
+    fig.subplots_adjust(
+        left=0.06,
+        right=0.98,
+        bottom=0.08,
+        top=0.93,
+        wspace=wspace,
+        hspace=hspace
+    )
+
+    for row, ns in enumerate(ns_lst):
+        for col, c in enumerate(c_lst):
+            ax = axes[row, col]
+
+            ft_min = ft_bounds[(ns, c)]['ft_min']
+            ft_max = ft_bounds[(ns, c)]['ft_max']
+
+            for idx_L, L in enumerate(L_lst):
+                df_d = df_dynamic[
+                    (np.isclose(df_dynamic['c'], c)) &
+                    (df_dynamic['num_colors'] == ns) &
+                    (np.isclose(df_dynamic['p0'], p0)) &
+                    (df_dynamic['dim'] == dim) &
+                    (df_dynamic['L'] == L) &
+                    (df_dynamic['stat_window'] == window)
+                ]
+
+                # Truncamento superior obtido a partir do df_series
+                df_plot = df_d[
+                    df_d['f_T'] <= ft_max
+                ].dropna(subset=['f_T', 'nc'])
+
+                df_plot = df_plot.sort_values('f_T')
+
+                ft = df_plot['f_T']
+                nc_plot = df_plot['nc']
+
+                ax.plot(
+                    ft,
+                    nc_plot,
+                    mew=mew,
+                    marker=markers[idx_L],
+                    ms=ms,
+                    ls='None',
+                    label=f'$L = {L}$',
+                    clip_on=False
+                )
+                panel_idx = row * ncols + col
+                panel_label = panel_label_from_index(panel_idx)
+
+                ax.text(
+                    panel_label_x,
+                    panel_label_y,
+                    rf'$({panel_label})$',
+                    transform=ax.transAxes,
+                    fontsize=panel_label_fs,
+                    ha='left',
+                    va='top'
+                )
+            ax.set_xlim(x_min, ft_max)
+
+            if row == 0:
+                ax.set_title(rf'$c = {c}$', fontsize=title_fs)
+
+            if col == 0:
+                ax.set_ylabel(r'$\langle n_c \rangle$', fontsize=label_fs)
+
+                ax.text(
+                    ns_text_x,
+                    ns_text_y,
+                    rf'$n_s = {ns}$',
+                    transform=ax.transAxes,
+                    fontsize=ns_text_fs,
+                    ha='left',
+                    va='top'
+                )
+
+                ax.legend(
+                    fontsize=fs_legend,
+                    loc=legend_loc,
+                    frameon=False
+                )
+
+            if row == nrows - 1:
+                ax.set_xlabel(r'$f_T$', fontsize=label_fs)
+
+    if savepath is not None:
+        plt.savefig(savepath, bbox_inches='tight')
+
+    return fig, axes, parms, ft_bounds
+
+def latex_two_decimal(x, pos):
+    if abs(x) < 1e-12:
+        x = 0
+    return rf'${x:.2f}$'
+
+def plot_pmean_series_grid(
+    df_dynamic,
+    df_series,
+    L_lst,
+    ns_lst,
+    c_lst,
+    window=300,
+    base=5,
+    dim=2,
+    order=0,
+    p0=0.8,
+    p_cut=0.95,
+    pc=0.5,
+    tick_fs=16,
+    label_fs=18,
+    title_fs=18,
+    tick_len=8,
+    tick_width=1.4,
+    fs_legend=15,
+    markers=('o', 's', 'D', '^'),
+    ms=7,
+    mew=1.4,
+    print_bounds=True,
+    savepath=None,
+
+    # espaçamento
+    wspace=0.02,
+    hspace=0.08,
+
+    # texto de ns
+    ns_text_x=0.06,
+    ns_text_y=0.82,
+    ns_text_fs=18,
+
+    # legenda
+    legend_loc='lower right',
+
+    # labels (a), (b), ...
+    panel_label_x=0.06,
+    panel_label_y=0.97,
+    panel_label_fs=18,
+
+    # linha horizontal em pc
+    draw_pc_line=True,
+    pc_lw=2.0,
+    pc_color='k',
+):
+    """
+    Plota p_mean versus f_T usando df_series.
+
+    A grade possui:
+        linhas  -> ns_lst
+        colunas -> c_lst
+
+    O intervalo [ft_min, ft_max] é calculado da mesma forma do código original:
+
+        ft_min:
+            vem do df_dynamic, pegando o menor f_T em que nc == ns
+            para cada L, e depois tomando o maior desses mínimos.
+
+        ft_max:
+            vem do df_series, depois do truncamento p_mean <= p_cut,
+            para cada L, e depois tomando o menor desses máximos.
+
+    Retorna:
+        fig, axes, parms, ft_bounds
+    """
+
+    if len(markers) < len(L_lst):
+        raise ValueError(
+            f"Número de markers insuficiente: len(markers)={len(markers)}, "
+            f"mas len(L_lst)={len(L_lst)}"
+        )
+
+    parms = {
+        'c': [],
+        'ft_min': [],
+        'ft_max': [],
+        'ns': [],
+        'dim': [],
+        'p0': [],
+    }
+
+    ft_bounds = {}
+
+    # ============================================================
+    # 1) Calcula ft_min e ft_max para cada par (ns, c)
+    # ============================================================
+
+    for ns in ns_lst:
+        rho = round(1 / ns, 5)
+
+        for c in c_lst:
+            ft_min_per_L = []
+            ft_max_per_L = []
+
+            # ----------------------------
+            # ft_min vem do df_dynamic
+            # ----------------------------
+            for L in L_lst:
+                df_d = df_dynamic[
+                    (np.isclose(df_dynamic['c'], c)) &
+                    (df_dynamic['num_colors'] == ns) &
+                    (np.isclose(df_dynamic['p0'], p0)) &
+                    (df_dynamic['dim'] == dim) &
+                    (df_dynamic['L'] == L) &
+                    (df_dynamic['stat_window'] == window)
+                ]
+
+                ft_valid = df_d.loc[
+                    np.isclose(df_d['nc'], ns),
+                    'f_T'
+                ].dropna()
+
+                if ft_valid.empty:
+                    raise ValueError(
+                        f"Nenhum ponto encontrado para calcular ft_min: "
+                        f"ns={ns}, c={c}, L={L}, p0={p0}, dim={dim}, window={window}"
+                    )
+
+                ft_min_per_L.append(ft_valid.min())
+
+            ft_min = max(ft_min_per_L)
+
+            # ----------------------------
+            # ft_max vem do df_series truncado
+            # ----------------------------
+            for L in L_lst:
+                df_s = df_series[
+                    (np.isclose(df_series['c'], c)) &
+                    (df_series['nc'] == ns) &
+                    (np.isclose(df_series['p0'], p0)) &
+                    (df_series['dim'] == dim) &
+                    (df_series['L'] == L) &
+                    (df_series['stat_window'] == window) &
+                    (df_series['order'] == order) &
+                    (np.isclose(df_series['rho'], rho))
+                ]
+
+                df_filter = df_s[
+                    df_s['f_T'] >= ft_min
+                ].dropna(subset=['f_T', 'p_mean'])
+
+                df_trunced = df_filter[
+                    df_filter['p_mean'] <= p_cut
+                ]
+
+                if df_trunced.empty:
+                    raise ValueError(
+                        f"Nenhum ponto encontrado para calcular ft_max: "
+                        f"ns={ns}, c={c}, L={L}, ft_min={ft_min}, "
+                        f"rho={rho}, p_cut={p_cut}"
+                    )
+
+                ft_max_per_L.append(df_trunced['f_T'].max())
+
+            ft_max = min(ft_max_per_L)
+
+            ft_bounds[(ns, c)] = {
+                'ft_min': ft_min,
+                'ft_max': ft_max,
+                'rho': rho,
+            }
+
+            parms['c'].append(c)
+            parms['ft_min'].append(ft_min)
+            parms['ft_max'].append(ft_max)
+            parms['ns'].append(ns)
+            parms['dim'].append(dim)
+            parms['p0'].append(p0)
+
+            if print_bounds:
+                print(
+                    f"ns={ns} | c={c:.2f} | rho={rho:.5f} | "
+                    f"ft_min={ft_min:.6f} | ft_max={ft_max:.6f}"
+                )
+
+    # ============================================================
+    # 2) Plota grade: linhas = ns, colunas = c
+    # ============================================================
+
+    nrows = len(ns_lst)
+    ncols = len(c_lst)
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(base * ncols, base * nrows),
+        sharey='row',
+        squeeze=False
+    )
+
+    for ax in axes.flat:
+        ax.set_box_aspect(1)
+
+        ax.tick_params(
+            axis='both',
+            which='major',
+            labelsize=tick_fs,
+            length=tick_len,
+            width=tick_width,
+            direction='in',
+            top=True,
+            right=True
+        )
+
+        ax.tick_params(
+            axis='both',
+            which='minor',
+            length=5,
+            width=1.4,
+            direction='in',
+            top=True,
+            right=True
+        )
+
+        ax.minorticks_on()
+
+        # Mantém formato com uma casa decimal e fonte LaTeX/mathtext
+        ax.yaxis.set_major_formatter(
+            mticker.FuncFormatter(latex_two_decimal)
+        )
+
+    fig.subplots_adjust(
+        left=0.06,
+        right=0.98,
+        bottom=0.08,
+        top=0.93,
+        wspace=wspace,
+        hspace=hspace
+    )
+
+    for row, ns in enumerate(ns_lst):
+        rho = round(1 / ns, 5)
+
+        for col, c in enumerate(c_lst):
+            ax = axes[row, col]
+
+            # ----------------------------
+            # Label (a), (b), (c), ...
+            # ----------------------------
+            panel_idx = row * ncols + col
+            panel_label = panel_label_from_index(panel_idx)
+
+            ax.text(
+                panel_label_x,
+                panel_label_y,
+                rf'$({panel_label})$',
+                transform=ax.transAxes,
+                fontsize=panel_label_fs,
+                ha='left',
+                va='top'
+            )
+
+            ft_min = ft_bounds[(ns, c)]['ft_min']
+            ft_max = ft_bounds[(ns, c)]['ft_max']
+
+            for idx_L, L in enumerate(L_lst):
+                df_s = df_series[
+                    (np.isclose(df_series['c'], c)) &
+                    (df_series['nc'] == ns) &
+                    (np.isclose(df_series['p0'], p0)) &
+                    (df_series['dim'] == dim) &
+                    (df_series['L'] == L) &
+                    (df_series['stat_window'] == window) &
+                    (df_series['order'] == order) &
+                    (np.isclose(df_series['rho'], rho))
+                ]
+
+                df_filter = df_s[
+                    (df_s['f_T'] >= ft_min) &
+                    (df_s['f_T'] <= ft_max)
+                ].dropna(subset=['f_T', 'p_mean'])
+
+                df_trunced = df_filter[
+                    df_filter['p_mean'] <= p_cut
+                ]
+
+                df_trunced = df_trunced.sort_values('f_T')
+
+                ft = df_trunced['f_T']
+                pmean = df_trunced['p_mean']
+
+                ax.plot(
+                    ft,
+                    pmean,
+                    marker=markers[idx_L],
+                    mew=mew,
+                    ms=ms,
+                    ls='None',
+                    label=f'$L = {L}$',
+                    clip_on=False
+                )
+
+            if draw_pc_line:
+                ax.axhline(
+                    y=pc,
+                    color=pc_color,
+                    lw=pc_lw
+                )
+
+            ax.set_xlim(ft_min, ft_max)
+
+            if row == 0:
+                ax.set_title(rf'$c = {c}$', fontsize=title_fs)
+
+            if col == 0:
+                ax.set_ylabel(r'$p^*$', fontsize=label_fs)
+
+                ax.text(
+                    ns_text_x,
+                    ns_text_y,
+                    rf'$n_s = {ns}$',
+                    transform=ax.transAxes,
+                    fontsize=ns_text_fs,
+                    ha='left',
+                    va='top'
+                )
+
+                ax.legend(
+                    fontsize=fs_legend,
+                    loc=legend_loc,
+                    frameon=False
+                )
+
+            if row == nrows - 1:
+                ax.set_xlabel(r'$f_T$', fontsize=label_fs)
+
+    if savepath is not None:
+        plt.savefig(savepath, bbox_inches='tight')
+
+    return fig, axes, parms, ft_bounds
