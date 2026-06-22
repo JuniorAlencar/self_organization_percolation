@@ -1,4 +1,5 @@
 {
+    "python.defaultInterpreterPath": "${workspaceFolder}/.pyenv/bin/python",
     "files.associations": {
         "cctype": "cpp",
         "cstddef": "cpp",
