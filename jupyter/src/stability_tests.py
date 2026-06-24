@@ -2,6 +2,7 @@ import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 def load_properties_bundle(fn):
     with open(fn, "r") as f:
@@ -334,3 +335,83 @@ def plot_s_all_orders(results, include_p_all=True, figsize=(10, 7), fs=14):
     ax.legend(fontsize=fs-3, ncols=2)
 
     return fig, ax
+
+
+def read_dynamic_bundle(bundle_path):
+    bundle_path = Path(bundle_path)
+
+    with bundle_path.open("r", encoding="utf-8") as f:
+        bundle = json.load(f)
+
+    meta = bundle.get("meta", {})
+    rows = []
+
+    for p0_group in bundle.get("p0_groups", []):
+        P0 = p0_group.get("P0_value")
+        p0 = p0_group.get("p0_value")
+        N_samples = p0_group.get("num_samples_total")
+
+        colors = p0_group.get("colors", {})
+
+        for order_block in p0_group.get("orders", []):
+            data = order_block.get("data", {})
+
+            t_eq_stats = order_block.get("t_eq_species", {})
+            p_stats = order_block.get("p", {})
+            f_stats = order_block.get("f", {})
+            z_stats = order_block.get("z_max", {})
+            z_stat_stats = order_block.get("z_stat", {})
+
+            rows.append({
+                "type_perc": meta.get("type_perc"),
+                "dim": meta.get("dim"),
+                "L": meta.get("L"),
+                "f_T": meta.get("f_T"),
+                "c": meta.get("c"),
+                "nc": meta.get("nc"),
+                "rho": meta.get("rho"),
+                "stat_window": meta.get("stat_window"),
+
+                "P0": P0,
+                "p0": p0,
+                "order": order_block.get("order"),
+
+                "N_samples": N_samples,
+                "N_samples_perc": order_block.get("N_samples_perc"),
+
+                "nc_mean": colors.get("nc"),
+                "nc_err": colors.get("nc_err"),
+                "nc_std": colors.get("nc_std"),
+
+                "t_eq": data.get("t_eq"),
+                "t_eq_mean": data.get("t_eq_mean"),
+                "t_eq_min": data.get("t_eq_min"),
+                "t_eq_max": data.get("t_eq_max"),
+                "t_eq_species_mean": t_eq_stats.get("mean"),
+                "t_eq_species_err": t_eq_stats.get("err"),
+
+                "p_star": p_stats.get("mean"),
+                "p_star_err": p_stats.get("err"),
+                "f_star": f_stats.get("mean"),
+                "f_star_err": f_stats.get("err"),
+
+                "p_tail_mean": data.get("p_tail_mean"),
+                "p_tail_err": data.get("p_tail_err"),
+                "f_tail_mean": data.get("f_tail_mean"),
+                "f_tail_err": data.get("f_tail_err"),
+
+                "z_max_mean": z_stats.get("mean"),
+                "z_max_err": z_stats.get("err"),
+                "z_stat_mean": z_stat_stats.get("mean"),
+                "z_stat_err": z_stat_stats.get("err"),
+
+                "time": data.get("time"),
+                "pt_mean": data.get("pt_mean"),
+                "pt_std": data.get("pt_std"),
+                "pt_sem": data.get("pt_sem"),
+                "ft_mean": data.get("ft_mean"),
+                "ft_std": data.get("ft_std"),
+                "ft_sem": data.get("ft_sem"),
+            })
+
+    return pd.DataFrame(rows)

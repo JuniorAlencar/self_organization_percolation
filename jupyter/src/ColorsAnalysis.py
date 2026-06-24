@@ -575,13 +575,13 @@ def plot_nc_dynamic_grid(
                     ha='left',
                     va='top'
                 )
-            ax.set_xlim(x_min, ft_max)
+            ax.set_xlim(-0.05, ft_max)
 
             if row == 0:
                 ax.set_title(rf'$c = {c}$', fontsize=title_fs)
 
             if col == 0:
-                ax.set_ylabel(r'$\langle n_c \rangle$', fontsize=label_fs)
+                ax.set_ylabel(r'$\langle n_s \rangle$', fontsize=label_fs)
 
                 ax.text(
                     ns_text_x,
