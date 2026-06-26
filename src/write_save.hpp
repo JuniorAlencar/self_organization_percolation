@@ -7,6 +7,7 @@
 #include "struct_network.hpp"
 #include "network_partitions.hpp"
 #include "equilibration_partition.hpp"
+#include "LateralCorrelation.hpp"
 
 class save_data {
 public:
@@ -37,6 +38,11 @@ public:
 
     void save_network_compact_bin(const NetworkCompact& net,
                                   const std::string& filename) const;
+
+    void save_lateral_observables_csv(
+        const std::string& output_dir,
+        const std::string& sample_id,
+        const LateralObservablesSeries& observables) const;
 };
 
 #endif

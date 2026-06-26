@@ -640,6 +640,9 @@ def collapse_for_c(
 
     return out
 
+import numpy as np
+
+
 def fit_linear_feedback_model(
     t,
     p,
@@ -652,65 +655,56 @@ def fit_linear_feedback_model(
     u_max=None,
     eta_max=None,
     fit_after_t_stat=False,
-    min_points=10
+    min_points=10,
+    memory_mode=None,
+    include_intercept=False,
 ):
     """
-    Ajusta o modelo linear efetivo:
+    Ajusta o modelo linear efetivo com ou sem memória.
+
+    Modelo original:
 
         u_{t+1} = u_t - c eta_t
         eta_{t+1} = a u_t + b eta_t
+
+    Modelo com atraso explícito:
+
+        eta_{t+1} = h0 + a u_t + b eta_t + d eta_{t-1}
+
+    Modelo com diferença temporal:
+
+        eta_{t+1} = h0 + a u_t + b eta_t + d(eta_t - eta_{t-1})
 
     com
 
         u_t = p_t - p*
         eta_t = f(t) - f_T
 
-    Aqui c NÃO é estimado. Ele é fornecido como parâmetro de controle.
-
     Parameters
     ----------
-    t : array
-        Vetor de tempos.
+    memory_mode : None, "eta_lag" ou "delta_eta"
+        None:
+            usa o modelo original.
+        "eta_lag":
+            usa eta_{t-1} como variável adicional.
+        "delta_eta":
+            usa eta_t - eta_{t-1} como variável adicional.
 
-    p : array
-        Série temporal p(t).
-
-    f : array
-        Série temporal f(t) = N(t)/L^(d-1).
-
-    fT : float
-        Valor alvo f_T.
-
-    c : float
-        Parâmetro de controle da regra de atualização do SOP.
-
-    t_stat : float, optional
-        Tempo a partir do qual o regime estacionário é considerado.
-        Usado para estimar p* se p_star não for fornecido.
-
-    p_star : float, optional
-        Valor estacionário de p. Se None, será estimado.
-
-    tail_fraction : float
-        Fração final da série usada para estimar p*, caso t_stat=None.
-
-    u_max : float, optional
-        Janela local em |u_t|.
-
-    eta_max : float, optional
-        Janela local em |eta_t|.
-
-    fit_after_t_stat : bool
-        Se True, usa apenas pontos com t >= t_stat no ajuste.
-
-    min_points : int
-        Número mínimo de pontos necessários para ajustar.
+    include_intercept : bool
+        Se True, inclui termo constante h0 no ajuste de eta_{t+1}.
 
     Returns
     -------
     result : dict
-        Dicionário com p_star, a, b, c, lambdas, Jacobiano e dados usados.
+        Dicionário com parâmetros ajustados, matriz dinâmica, autovalores,
+        métricas e dados usados no ajuste.
     """
+
+    valid_memory_modes = [None, "eta_lag", "delta_eta"]
+    if memory_mode not in valid_memory_modes:
+        raise ValueError(
+            f"memory_mode deve ser um destes valores: {valid_memory_modes}"
+        )
 
     t = np.asarray(t, dtype=float)
     p = np.asarray(p, dtype=float)
@@ -719,8 +713,14 @@ def fit_linear_feedback_model(
     if not (len(t) == len(p) == len(f)):
         raise ValueError("t, p e f devem ter o mesmo tamanho.")
 
-    if len(t) < 3:
-        raise ValueError("A série precisa ter pelo menos 3 pontos.")
+    if memory_mode is None:
+        if len(t) < 3:
+            raise ValueError("A série precisa ter pelo menos 3 pontos.")
+    else:
+        if len(t) < 4:
+            raise ValueError(
+                "A série precisa ter pelo menos 4 pontos para usar memória."
+            )
 
     # ------------------------------------------------------------
     # 1. Estima p*
@@ -748,19 +748,52 @@ def fit_linear_feedback_model(
     u = p - p_star
     eta = f - fT
 
-    # Variáveis no tempo t
-    u_t = u[:-1]
-    eta_t = eta[:-1]
-    t_t = t[:-1]
+    # ------------------------------------------------------------
+    # 3. Monta as variáveis alinhadas no tempo
+    # ------------------------------------------------------------
+    if memory_mode is None:
+        # Transições:
+        # t -> t+1
+        u_t = u[:-1]
+        eta_t = eta[:-1]
+        t_t = t[:-1]
 
-    # Variáveis no tempo t+1
-    u_next = u[1:]
-    eta_next = eta[1:]
+        u_next = u[1:]
+        eta_next = eta[1:]
+
+        eta_lag = None
+        delta_eta = None
+
+    else:
+        # Transições:
+        # t -> t+1, mas agora usando eta_{t-1}
+        #
+        # índices:
+        # eta_lag = eta[t-1] = eta[:-2]
+        # eta_t   = eta[t]   = eta[1:-1]
+        # eta_next= eta[t+1] = eta[2:]
+        u_t = u[1:-1]
+        eta_t = eta[1:-1]
+        eta_lag = eta[:-2]
+        delta_eta = eta_t - eta_lag
+        t_t = t[1:-1]
+
+        u_next = u[2:]
+        eta_next = eta[2:]
 
     # ------------------------------------------------------------
-    # 3. Máscara para ajuste local
+    # 4. Máscara para ajuste local
     # ------------------------------------------------------------
     mask = np.ones_like(u_t, dtype=bool)
+
+    mask &= np.isfinite(u_t)
+    mask &= np.isfinite(eta_t)
+    mask &= np.isfinite(u_next)
+    mask &= np.isfinite(eta_next)
+
+    if memory_mode is not None:
+        mask &= np.isfinite(eta_lag)
+        mask &= np.isfinite(delta_eta)
 
     if u_max is not None:
         mask &= np.abs(u_t) <= u_max
@@ -785,37 +818,98 @@ def fit_linear_feedback_model(
     u_next_fit = u_next[mask]
     eta_next_fit = eta_next[mask]
 
-    # ------------------------------------------------------------
-    # 4. Ajusta apenas a e b:
-    #
-    #       eta_{t+1} = a u_t + b eta_t
-    # ------------------------------------------------------------
-    X_ab = np.column_stack([u_fit, eta_fit])
-    y_ab = eta_next_fit
-
-    coef_ab, *_ = np.linalg.lstsq(X_ab, y_ab, rcond=None)
-
-    a_est = coef_ab[0]
-    b_est = coef_ab[1]
+    if memory_mode is not None:
+        eta_lag_fit = eta_lag[mask]
+        delta_eta_fit = delta_eta[mask]
+    else:
+        eta_lag_fit = None
+        delta_eta_fit = None
 
     # ------------------------------------------------------------
-    # 5. Usa c fornecido pelo usuário
+    # 5. Monta matriz de regressão para eta_{t+1}
+    # ------------------------------------------------------------
+    X_cols = []
+    param_names = []
+
+    if include_intercept:
+        X_cols.append(np.ones_like(u_fit))
+        param_names.append("h0")
+
+    X_cols.append(u_fit)
+    param_names.append("a")
+
+    X_cols.append(eta_fit)
+    param_names.append("b")
+
+    if memory_mode == "eta_lag":
+        X_cols.append(eta_lag_fit)
+        param_names.append("d")
+
+    elif memory_mode == "delta_eta":
+        X_cols.append(delta_eta_fit)
+        param_names.append("d")
+
+    X = np.column_stack(X_cols)
+    y = eta_next_fit
+
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+    coef_dict = {
+        name: value for name, value in zip(param_names, coef)
+    }
+
+    h0_est = coef_dict.get("h0", 0.0)
+    a_est = coef_dict["a"]
+    b_est = coef_dict["b"]
+    d_est = coef_dict.get("d", 0.0)
+
+    # ------------------------------------------------------------
+    # 6. Usa c fornecido pelo usuário
     # ------------------------------------------------------------
     c_used = float(c)
 
     # ------------------------------------------------------------
-    # 6. Monta o Jacobiano
+    # 7. Monta matriz dinâmica
     # ------------------------------------------------------------
-    J = np.array([
-        [1.0, -c_used],
-        [a_est, b_est]
-    ])
+    if memory_mode is None:
+        # Estado:
+        # X_t = (u_t, eta_t)
+        #
+        # X_{t+1} = J X_t
+        J = np.array([
+            [1.0, -c_used],
+            [a_est, b_est],
+        ])
+
+    elif memory_mode == "eta_lag":
+        # Estado aumentado:
+        # X_t = (u_t, eta_t, eta_{t-1})
+        #
+        # u_{t+1}     = u_t - c eta_t
+        # eta_{t+1}   = a u_t + b eta_t + d eta_{t-1}
+        # eta_t       = eta_t
+        J = np.array([
+            [1.0, -c_used, 0.0],
+            [a_est, b_est, d_est],
+            [0.0, 1.0, 0.0],
+        ])
+
+    elif memory_mode == "delta_eta":
+        # Modelo ajustado:
+        # eta_{t+1} = a u_t + b eta_t + d(eta_t - eta_{t-1})
+        #
+        # Forma equivalente:
+        # eta_{t+1} = a u_t + (b+d) eta_t - d eta_{t-1}
+        b_eff = b_est + d_est
+        d_eff = -d_est
+
+        J = np.array([
+            [1.0, -c_used, 0.0],
+            [a_est, b_eff, d_eff],
+            [0.0, 1.0, 0.0],
+        ])
 
     lambdas = np.linalg.eigvals(J)
-
-    lambda_1 = lambdas[0]
-    lambda_2 = lambdas[1]
-
     spectral_radius = np.max(np.abs(lambdas))
 
     if 0 < spectral_radius < 1:
@@ -824,34 +918,122 @@ def fit_linear_feedback_model(
         tau = np.nan
 
     # ------------------------------------------------------------
-    # 7. Predições do modelo
+    # 8. Predições do modelo
     # ------------------------------------------------------------
     u_next_pred = u_fit - c_used * eta_fit
-    eta_next_pred = a_est * u_fit + b_est * eta_fit
+    eta_next_pred = X @ coef
 
-    mse_u = np.mean((u_next_fit - u_next_pred)**2)
-    mse_eta = np.mean((eta_next_fit - eta_next_pred)**2)
+    residual_eta = eta_next_fit - eta_next_pred
+    residual_u = u_next_fit - u_next_pred
 
-    return {
+    mse_u = np.mean(residual_u**2)
+    mse_eta = np.mean(residual_eta**2)
+
+    rmse_u = np.sqrt(mse_u)
+    rmse_eta = np.sqrt(mse_eta)
+
+    mae_eta = np.mean(np.abs(residual_eta))
+
+    ss_res = np.sum(residual_eta**2)
+    ss_tot = np.sum((eta_next_fit - np.mean(eta_next_fit))**2)
+
+    if ss_tot > 0:
+        r2_eta = 1.0 - ss_res / ss_tot
+    else:
+        r2_eta = np.nan
+
+    n = len(eta_next_fit)
+    k = X.shape[1]
+    eps = 1e-300
+
+    aic_eta = n * np.log(ss_res / n + eps) + 2 * k
+    bic_eta = n * np.log(ss_res / n + eps) + k * np.log(n)
+
+    # ------------------------------------------------------------
+    # 9. Mede contribuição da memória
+    # ------------------------------------------------------------
+    linear_no_memory_part = a_est * u_fit + b_est * eta_fit
+
+    if memory_mode == "eta_lag":
+        memory_part = d_est * eta_lag_fit
+
+    elif memory_mode == "delta_eta":
+        memory_part = d_est * delta_eta_fit
+
+    else:
+        memory_part = np.zeros_like(eta_fit)
+
+    linear_rms = np.sqrt(np.mean(linear_no_memory_part**2))
+    memory_rms = np.sqrt(np.mean(memory_part**2))
+
+    if linear_rms > 0:
+        R_memory = memory_rms / linear_rms
+    else:
+        R_memory = np.nan
+
+    # ------------------------------------------------------------
+    # 10. Retorno
+    # ------------------------------------------------------------
+    result = {
+        "memory_mode": memory_mode,
+        "include_intercept": include_intercept,
+
         "p_star": p_star,
+        "h0": h0_est,
         "a": a_est,
         "b": b_est,
+        "d": d_est,
         "c": c_used,
+
         "J": J,
-        "lambda_1": lambda_1,
-        "lambda_2": lambda_2,
+        "lambdas": lambdas,
         "spectral_radius": spectral_radius,
         "tau": tau,
+
         "mse_u": mse_u,
         "mse_eta": mse_eta,
+        "rmse_u": rmse_u,
+        "rmse_eta": rmse_eta,
+        "mae_eta": mae_eta,
+        "r2_eta": r2_eta,
+        "aic_eta": aic_eta,
+        "bic_eta": bic_eta,
+        "R_memory": R_memory,
+
         "n_points_fit": n_points_fit,
+        "param_names": param_names,
+        "coef": coef,
+        "coef_dict": coef_dict,
+
         "u_fit": u_fit,
         "eta_fit": eta_fit,
+        "eta_lag_fit": eta_lag_fit,
+        "delta_eta_fit": delta_eta_fit,
+
         "u_next_fit": u_next_fit,
         "eta_next_fit": eta_next_fit,
+
         "u_next_pred": u_next_pred,
         "eta_next_pred": eta_next_pred,
+
+        "residual_u": residual_u,
+        "residual_eta": residual_eta,
     }
+
+    # Mantém compatibilidade parcial com o caso 2D antigo
+    if len(lambdas) >= 1:
+        result["lambda_1"] = lambdas[0]
+    if len(lambdas) >= 2:
+        result["lambda_2"] = lambdas[1]
+    if len(lambdas) >= 3:
+        result["lambda_3"] = lambdas[2]
+
+    # Coeficientes efetivos úteis para interpretar delta_eta
+    if memory_mode == "delta_eta":
+        result["b_eff"] = b_est + d_est
+        result["d_eff"] = -d_est
+
+    return result
 
 def label(i):
     """

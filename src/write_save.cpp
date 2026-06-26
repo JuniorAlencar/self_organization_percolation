@@ -603,6 +603,84 @@ void save_data::save_network_compact_bin(const NetworkCompact& net,
     }
 }
 
+void save_data::save_lateral_observables_csv(
+    const std::string& output_dir,
+    const std::string& sample_id,
+    const LateralObservablesSeries& observables) const
+{
+    const fs::path out_dir(output_dir);
+    if (!out_dir.empty()) {
+        fs::create_directories(out_dir);
+    }
+
+    const fs::path legacy_corr_path = out_dir / "lateral_correlation_time.csv";
+    const fs::path legacy_sus_path = out_dir / "lateral_susceptibility_time.csv";
+    std::error_code ec;
+    fs::remove(legacy_corr_path, ec);
+    fs::remove(legacy_sus_path, ec);
+
+    const fs::path corr_path = out_dir / (sample_id + "_lateral_correlation_time.csv");
+    std::ofstream corr(corr_path);
+    if (!corr) {
+        throw std::runtime_error("save_lateral_observables_csv: falha ao abrir " + corr_path.string());
+    }
+
+    corr << "sample_id,dim,L,t,r,f_t,G,C_raw,C_norm,valid_norm,pair_count,boundary_mode";
+    if (std::isfinite(observables.f_T)) corr << ",f_T";
+    if (std::isfinite(observables.p0)) corr << ",p0";
+    if (std::isfinite(observables.P0)) corr << ",P0";
+    if (std::isfinite(observables.c)) corr << ",c";
+    if (!observables.type_percolation.empty()) corr << ",type_perc";
+    if (observables.seed >= 0) corr << ",seed";
+    if (std::isfinite(observables.t_stat)) corr << ",t_stat";
+    corr << "\n";
+
+    for (const auto& row : observables.correlation_rows) {
+        corr << sample_id << ',' << observables.dim << ',' << observables.L << ',' << row.t << ',' << row.r << ',';
+        corr << std::setprecision(17) << row.f_t << ',' << row.G << ',' << row.C_raw << ',' << row.C_norm << ','
+             << row.valid_norm << ',' << row.pair_count << ',' << observables.boundary_mode;
+        if (std::isfinite(observables.f_T)) corr << ',' << observables.f_T;
+        if (std::isfinite(observables.p0)) corr << ',' << observables.p0;
+        if (std::isfinite(observables.P0)) corr << ',' << observables.P0;
+        if (std::isfinite(observables.c)) corr << ',' << observables.c;
+        if (!observables.type_percolation.empty()) corr << ',' << observables.type_percolation;
+        if (observables.seed >= 0) corr << ',' << observables.seed;
+        if (std::isfinite(observables.t_stat)) corr << ',' << observables.t_stat;
+        corr << '\n';
+    }
+
+    const fs::path sus_path = out_dir / (sample_id + "_lateral_susceptibility_time.csv");
+    std::ofstream sus(sus_path);
+    if (!sus) {
+        throw std::runtime_error("save_lateral_observables_csv: falha ao abrir " + sus_path.string());
+    }
+
+    sus << "sample_id,dim,L,t,f_t,r_max,chi_raw_incl0,chi_raw_excl0,chi_norm_incl0,chi_norm_excl0,n_valid_norm,boundary_mode";
+    if (std::isfinite(observables.f_T)) sus << ",f_T";
+    if (std::isfinite(observables.p0)) sus << ",p0";
+    if (std::isfinite(observables.P0)) sus << ",P0";
+    if (std::isfinite(observables.c)) sus << ",c";
+    if (!observables.type_percolation.empty()) sus << ",type_perc";
+    if (observables.seed >= 0) sus << ",seed";
+    if (std::isfinite(observables.t_stat)) sus << ",t_stat";
+    sus << "\n";
+
+    for (const auto& row : observables.susceptibility_rows) {
+        sus << sample_id << ',' << observables.dim << ',' << observables.L << ',' << row.t << ',';
+        sus << std::setprecision(17) << row.f_t << ',' << row.r_max << ',' << row.chi_raw_incl0 << ','
+            << row.chi_raw_excl0 << ',' << row.chi_norm_incl0 << ',' << row.chi_norm_excl0 << ','
+            << row.n_valid_norm << ',' << observables.boundary_mode;
+        if (std::isfinite(observables.f_T)) sus << ',' << observables.f_T;
+        if (std::isfinite(observables.p0)) sus << ',' << observables.p0;
+        if (std::isfinite(observables.P0)) sus << ',' << observables.P0;
+        if (std::isfinite(observables.c)) sus << ',' << observables.c;
+        if (!observables.type_percolation.empty()) sus << ',' << observables.type_percolation;
+        if (observables.seed >= 0) sus << ',' << observables.seed;
+        if (std::isfinite(observables.t_stat)) sus << ',' << observables.t_stat;
+        sus << '\n';
+    }
+}
+
 void save_data::save_reanalysis_json(const ReanalysisResult& result,
                                      const std::string& filename_json) const
 {

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "rand_utils.hpp"
+#include "LateralCorrelation.hpp"
 #include <fstream>
 #include <random>
 #include <string>
@@ -103,6 +104,7 @@ struct TimeSeries {
     std::vector<std::vector<double>> p_t;   // [cor][t]
     std::vector<std::vector<double>> f_t;   // [cor][t], f_i(t) = N_i(t) / L^(dim-1)
     std::vector<int> t;                     // [t]
+    LateralObservablesSeries lateral_observables;
 };
 
 struct PercolationSeries {
