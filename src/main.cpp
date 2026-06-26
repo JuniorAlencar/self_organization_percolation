@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
         double P0 = 0.1;
         std::string equilibration = "true";
         bool calculate_detailed_properties = false;
-        std::string run_mode = "sop";
+        std::string run_mode = "growth_test";
         std::string initial_layout = "random";
         
         if (argc == 12 || argc == 13 || argc == 14 || argc == 15) {
@@ -198,8 +198,8 @@ int main(int argc, char* argv[]) {
             network_dir,
             data_dir,
             surfaces_dir,
-            network_preteq,
-            network_posteq
+            correlations_dir,
+            network_preteq
         ] = creator.create_structure(
                 dim,
                 type_f_T,
@@ -248,6 +248,20 @@ int main(int argc, char* argv[]) {
         save_data saver;
         
         const std::string sample_base = base_name.str();
+        ts.lateral_observables.sample_id = sample_base;
+        ts.lateral_observables.dim = dim;
+        ts.lateral_observables.L = L;
+        ts.lateral_observables.r_max = std::max(0, L / 2);
+        ts.lateral_observables.boundary_mode = "periodic";
+        ts.lateral_observables.f_T = f_T;
+        ts.lateral_observables.p0 = pp0;
+        ts.lateral_observables.P0 = P0;
+        ts.lateral_observables.c = c;
+        ts.lateral_observables.type_percolation = type_percolation;
+        ts.lateral_observables.seed = seed;
+        ts.lateral_observables.t_stat = std::isfinite(ts.t_eq) ? ts.t_eq : -1.0;
+        saver.save_lateral_observables_csv(correlations_dir, sample_base, ts.lateral_observables);
+
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         
         const bool has_percolation = !ps.color_percolation.empty();
@@ -431,22 +445,24 @@ int main(int argc, char* argv[]) {
                     rebuild_pre_post_csr(pre_c, post_c, base_full);
                 }
 
-                const std::string net_preteq_filename = network_preteq + "/" + sample_base + ".bin";
-                const std::string net_posteq_filename = network_posteq + "/" + sample_base + ".bin";
-                saver.save_network_compact_bin(pre_c, net_preteq_filename);
-                saver.save_network_compact_bin(post_c, net_posteq_filename);
+                if (!network_preteq.empty()) {
+                    const std::string net_preteq_filename = network_preteq + "/" + sample_base + ".bin";
+                    const std::string net_posteq_filename = network_preteq + "/" + sample_base + "_posteq.bin";
+                    saver.save_network_compact_bin(pre_c, net_preteq_filename);
+                    saver.save_network_compact_bin(post_c, net_posteq_filename);
 
-                // Additionally save filtered (reindexed) active-only compact networks.
-                // Build and write them one at a time to avoid doubling the peak RAM.
-                const std::string net_preteq_active = network_preteq + "/" + sample_base + "_active.bin";
-                const std::string net_posteq_active = network_posteq + "/" + sample_base + "_active.bin";
-                {
-                    NetworkCompact pre_filtered = pre_c.filter_active();
-                    saver.save_network_compact_bin(pre_filtered, net_preteq_active);
-                }
-                {
-                    NetworkCompact post_filtered = post_c.filter_active();
-                    saver.save_network_compact_bin(post_filtered, net_posteq_active);
+                    // Additionally save filtered (reindexed) active-only compact networks.
+                    // Build and write them one at a time to avoid doubling the peak RAM.
+                    const std::string net_preteq_active = network_preteq + "/" + sample_base + "_active.bin";
+                    const std::string net_posteq_active = network_preteq + "/" + sample_base + "_posteq_active.bin";
+                    {
+                        NetworkCompact pre_filtered = pre_c.filter_active();
+                        saver.save_network_compact_bin(pre_filtered, net_preteq_active);
+                    }
+                    {
+                        NetworkCompact post_filtered = post_c.filter_active();
+                        saver.save_network_compact_bin(post_filtered, net_posteq_active);
+                    }
                 }
             } catch (const std::exception &e) {
                 std::cerr << "Warning: failed to save pre/post teq compact networks: " << e.what() << '\n';

@@ -1484,7 +1484,7 @@ NetworkPattern network::create_network(
         site_state[static_cast<std::size_t>(idx)] = static_cast<std::int8_t>(value);
     };
 
-    const bool needs_activation_time = calculate_detailed_properties || save_compact;
+    const bool needs_activation_time = true;
 
     // activation times: UINT32_MAX means never activated
     std::vector<uint32_t> activation_time;
@@ -2324,6 +2324,16 @@ NetworkPattern network::create_network(
         frontier.swap(next_frontier);
         p_curr.swap(p_next);
     }
+
+    ts_out.lateral_observables = compute_lateral_observables(
+        dim,
+        lenght_network,
+        grid.SX,
+        grid.SY,
+        grid.SZ,
+        activation_time,
+        t_list,
+        "periodic");
 
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);

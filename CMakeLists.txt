@@ -90,4 +90,17 @@ if(NOT TOOL_SOURCES STREQUAL "")
     set_target_properties(run_create_network_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     )
+
+    add_executable(validate_lateral_correlation ${TOOLS_DIR}/validate_lateral_correlation.cpp)
+    target_include_directories(validate_lateral_correlation PRIVATE
+        ${SRC_DIR}
+        ${TOOLS_DIR}
+        /usr/local/include
+    )
+    target_link_libraries(validate_lateral_correlation PRIVATE
+        sop_core
+    )
+    set_target_properties(validate_lateral_correlation PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
 endif()
