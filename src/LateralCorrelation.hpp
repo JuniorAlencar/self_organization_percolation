@@ -28,6 +28,19 @@ struct LateralSusceptibilityRow {
     int n_valid_norm = 0;
 };
 
+struct LateralCorrelationSummaryRow {
+    int t = 0;
+    double f_t = 0.0;
+    int r_max = 0;
+    int n_rows = 0;
+    double C_norm_mean = 0.0;
+    double C_norm_std = 0.0;
+    double C_norm_absmax = 0.0;
+    int r_at_absmax = 0;
+    double valid_norm_mean = 0.0;
+    double pair_count_mean = 0.0;
+};
+
 struct LateralObservablesSeries {
     std::string sample_id;
     int dim = 0;
@@ -37,6 +50,7 @@ struct LateralObservablesSeries {
     std::vector<int> t;
     std::vector<double> f_t;
     std::vector<LateralCorrelationRow> correlation_rows;
+    std::vector<LateralCorrelationSummaryRow> correlation_summary_rows;
     std::vector<LateralSusceptibilityRow> susceptibility_rows;
 
     double f_T = std::numeric_limits<double>::quiet_NaN();
@@ -56,7 +70,8 @@ LateralObservablesSeries compute_lateral_observables(
     int sz,
     const std::vector<std::uint32_t>& activation_time,
     const std::vector<int>& times,
-    const std::string& boundary_mode = "periodic");
+    const std::string& boundary_mode = "periodic",
+    bool store_correlation_rows = true);
 
 bool validate_lateral_observables(std::string* error_message = nullptr);
 

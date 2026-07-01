@@ -2333,7 +2333,8 @@ NetworkPattern network::create_network(
         grid.SZ,
         activation_time,
         t_list,
-        "periodic");
+        "periodic",
+        false);
 
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
