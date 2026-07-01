@@ -625,7 +625,7 @@ void save_data::save_lateral_observables_csv(
         throw std::runtime_error("save_lateral_observables_csv: falha ao abrir " + corr_path.string());
     }
 
-    corr << "sample_id,dim,L,t,r,f_t,G,C_raw,C_norm,valid_norm,pair_count,boundary_mode";
+    corr << "sample_id,dim,L,t,f_t,r_max,n_rows,C_norm_mean,C_norm_std,C_norm_absmax,r_at_absmax,valid_norm_mean,pair_count_mean,boundary_mode";
     if (std::isfinite(observables.f_T)) corr << ",f_T";
     if (std::isfinite(observables.p0)) corr << ",p0";
     if (std::isfinite(observables.P0)) corr << ",P0";
@@ -635,18 +635,79 @@ void save_data::save_lateral_observables_csv(
     if (std::isfinite(observables.t_stat)) corr << ",t_stat";
     corr << "\n";
 
-    for (const auto& row : observables.correlation_rows) {
-        corr << sample_id << ',' << observables.dim << ',' << observables.L << ',' << row.t << ',' << row.r << ',';
-        corr << std::setprecision(17) << row.f_t << ',' << row.G << ',' << row.C_raw << ',' << row.C_norm << ','
-             << row.valid_norm << ',' << row.pair_count << ',' << observables.boundary_mode;
-        if (std::isfinite(observables.f_T)) corr << ',' << observables.f_T;
-        if (std::isfinite(observables.p0)) corr << ',' << observables.p0;
-        if (std::isfinite(observables.P0)) corr << ',' << observables.P0;
-        if (std::isfinite(observables.c)) corr << ',' << observables.c;
-        if (!observables.type_percolation.empty()) corr << ',' << observables.type_percolation;
-        if (observables.seed >= 0) corr << ',' << observables.seed;
-        if (std::isfinite(observables.t_stat)) corr << ',' << observables.t_stat;
-        corr << '\n';
+    if (!observables.correlation_summary_rows.empty()) {
+        for (const auto& row : observables.correlation_summary_rows) {
+            corr << sample_id << ',' << observables.dim << ',' << observables.L << ',' << row.t << ',';
+            corr << std::setprecision(17) << row.f_t << ',' << row.r_max << ',' << row.n_rows << ','
+                 << row.C_norm_mean << ',' << row.C_norm_std << ',' << row.C_norm_absmax << ','
+                 << row.r_at_absmax << ',' << row.valid_norm_mean << ',' << row.pair_count_mean << ','
+                 << observables.boundary_mode;
+            if (std::isfinite(observables.f_T)) corr << ',' << observables.f_T;
+            if (std::isfinite(observables.p0)) corr << ',' << observables.p0;
+            if (std::isfinite(observables.P0)) corr << ',' << observables.P0;
+            if (std::isfinite(observables.c)) corr << ',' << observables.c;
+            if (!observables.type_percolation.empty()) corr << ',' << observables.type_percolation;
+            if (observables.seed >= 0) corr << ',' << observables.seed;
+            if (std::isfinite(observables.t_stat)) corr << ',' << observables.t_stat;
+            corr << '\n';
+        }
+    } else {
+        int current_t = std::numeric_limits<int>::min();
+        int n_rows = 0;
+        double c_sum = 0.0;
+        double c_sumsq = 0.0;
+        double c_absmax = 0.0;
+        int r_at_absmax = 0;
+        double valid_sum = 0.0;
+        double pair_count_sum = 0.0;
+        double f_t = 0.0;
+
+        auto flush_summary = [&]() {
+            if (n_rows <= 0) return;
+            const double mean = c_sum / static_cast<double>(n_rows);
+            const double variance = (n_rows > 1)
+                ? std::max(0.0, (c_sumsq - static_cast<double>(n_rows) * mean * mean) /
+                                  static_cast<double>(n_rows - 1))
+                : 0.0;
+            corr << sample_id << ',' << observables.dim << ',' << observables.L << ',' << current_t << ',';
+            corr << std::setprecision(17) << f_t << ',' << observables.r_max << ',' << n_rows << ','
+                 << mean << ',' << std::sqrt(variance) << ',' << c_absmax << ','
+                 << r_at_absmax << ',' << (valid_sum / static_cast<double>(n_rows)) << ','
+                 << (pair_count_sum / static_cast<double>(n_rows)) << ',' << observables.boundary_mode;
+            if (std::isfinite(observables.f_T)) corr << ',' << observables.f_T;
+            if (std::isfinite(observables.p0)) corr << ',' << observables.p0;
+            if (std::isfinite(observables.P0)) corr << ',' << observables.P0;
+            if (std::isfinite(observables.c)) corr << ',' << observables.c;
+            if (!observables.type_percolation.empty()) corr << ',' << observables.type_percolation;
+            if (observables.seed >= 0) corr << ',' << observables.seed;
+            if (std::isfinite(observables.t_stat)) corr << ',' << observables.t_stat;
+            corr << '\n';
+        };
+
+        for (const auto& row : observables.correlation_rows) {
+            if (current_t != row.t) {
+                flush_summary();
+                current_t = row.t;
+                n_rows = 0;
+                c_sum = 0.0;
+                c_sumsq = 0.0;
+                c_absmax = 0.0;
+                r_at_absmax = 0;
+                valid_sum = 0.0;
+                pair_count_sum = 0.0;
+                f_t = row.f_t;
+            }
+            c_sum += row.C_norm;
+            c_sumsq += row.C_norm * row.C_norm;
+            if (std::fabs(row.C_norm) > c_absmax) {
+                c_absmax = std::fabs(row.C_norm);
+                r_at_absmax = row.r;
+            }
+            valid_sum += static_cast<double>(row.valid_norm);
+            pair_count_sum += static_cast<double>(row.pair_count);
+            ++n_rows;
+        }
+        flush_summary();
     }
 
     const fs::path sus_path = out_dir / (sample_id + "_lateral_susceptibility_time.csv");

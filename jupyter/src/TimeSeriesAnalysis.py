@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import gzip
 import glob
 import math
 from datetime import datetime
@@ -24,6 +25,90 @@ import random
 # ============================================================
 # Paths / Regex helpers
 # ============================================================
+
+def lateral_bundle_path(out_dir: str | Path) -> Path:
+    return Path(out_dir) / "lateral_correlations_bundle.json.gz"
+
+
+def legacy_lateral_bundle_path(out_dir: str | Path) -> Path:
+    return Path(out_dir) / "lateral_correlations_bundle.json"
+
+
+def existing_lateral_bundle_path(out_dir: str | Path) -> Path | None:
+    out_dir = Path(out_dir)
+    compressed_path = lateral_bundle_path(out_dir)
+    if compressed_path.exists():
+        return compressed_path
+    legacy_path = legacy_lateral_bundle_path(out_dir)
+    if legacy_path.exists():
+        return legacy_path
+    return None
+
+
+def resolve_lateral_bundle_path(path: str | Path) -> Path:
+    """
+    Resolve a lateral correlations bundle path or a published group directory.
+
+    Accepts either:
+      - .../lateral_correlations_bundle.json.gz
+      - .../lateral_correlations_bundle.json
+      - the directory containing one of those files
+    """
+    bundle_path = Path(path)
+    if bundle_path.is_dir():
+        found = existing_lateral_bundle_path(bundle_path)
+        if found is None:
+            raise FileNotFoundError(f"No lateral correlations bundle found in {bundle_path}")
+        return found
+    return bundle_path
+
+
+def load_lateral_correlations_bundle(path: str | Path) -> dict[str, Any]:
+    """Load a lateral correlations bundle, compressed or legacy uncompressed."""
+    bundle_path = resolve_lateral_bundle_path(path)
+    if not bundle_path.exists():
+        raise FileNotFoundError(bundle_path)
+    if bundle_path.suffix == ".gz":
+        with gzip.open(bundle_path, "rt", encoding="utf-8") as handle:
+            data = json.load(handle)
+    else:
+        with bundle_path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid lateral correlations bundle: {bundle_path}")
+    return data
+
+
+def iter_lateral_series_rows(
+    bundle_or_path: dict[str, Any] | str | Path,
+    obs_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Flatten lateral bundle samples into per-time rows.
+
+    Each returned row includes sample metadata plus one entry from the stored
+    time series. Use obs_type="correlation" or "susceptibility" to filter.
+    """
+    bundle = (
+        bundle_or_path
+        if isinstance(bundle_or_path, dict)
+        else load_lateral_correlations_bundle(bundle_or_path)
+    )
+    rows: list[dict[str, Any]] = []
+    for sample in bundle.get("samples", []):
+        if not isinstance(sample, dict):
+            continue
+        sample_obs_type = sample.get("obs_type")
+        if obs_type is not None and sample_obs_type != obs_type:
+            continue
+        meta = {
+            key: sample.get(key)
+            for key in ("filename", "sample_id", "obs_type", "t_stat", "p0", "P0", "c", "f_T", "seed")
+        }
+        for item in sample.get("series", []):
+            if isinstance(item, dict):
+                rows.append({**meta, **item})
+    return rows
 
 def create_folder(folder_path):
     """
