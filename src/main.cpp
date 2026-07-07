@@ -155,6 +155,7 @@ int main(int argc, char* argv[]) {
             stop_config.dynamic_height = true;
             stop_config.stop_at_percolation = false;
             stop_config.stop_at_equilibrium = true;
+            stop_config.save_lateral_observables = true;
             stop_config.equilibrium_consecutive_steps = 10;
             stop_config.dynamics_window_steps =
                 GROWTH_TEST_DYNAMICS_WINDOW_FACTOR *
@@ -248,19 +249,23 @@ int main(int argc, char* argv[]) {
         save_data saver;
         
         const std::string sample_base = base_name.str();
-        ts.lateral_observables.sample_id = sample_base;
-        ts.lateral_observables.dim = dim;
-        ts.lateral_observables.L = L;
-        ts.lateral_observables.r_max = std::max(0, L / 2);
-        ts.lateral_observables.boundary_mode = "periodic";
-        ts.lateral_observables.f_T = f_T;
-        ts.lateral_observables.p0 = pp0;
-        ts.lateral_observables.P0 = P0;
-        ts.lateral_observables.c = c;
-        ts.lateral_observables.type_percolation = type_percolation;
-        ts.lateral_observables.seed = seed;
-        ts.lateral_observables.t_stat = std::isfinite(ts.t_eq) ? ts.t_eq : -1.0;
-        saver.save_lateral_observables_csv(correlations_dir, sample_base, ts.lateral_observables);
+        if (!ts.lateral_observables.t.empty() ||
+            !ts.lateral_observables.correlation_summary_rows.empty() ||
+            !ts.lateral_observables.susceptibility_rows.empty()) {
+            ts.lateral_observables.sample_id = sample_base;
+            ts.lateral_observables.dim = dim;
+            ts.lateral_observables.L = L;
+            ts.lateral_observables.r_max = std::max(0, L / 2);
+            ts.lateral_observables.boundary_mode = "periodic";
+            ts.lateral_observables.f_T = f_T;
+            ts.lateral_observables.p0 = pp0;
+            ts.lateral_observables.P0 = P0;
+            ts.lateral_observables.c = c;
+            ts.lateral_observables.type_percolation = type_percolation;
+            ts.lateral_observables.seed = seed;
+            ts.lateral_observables.t_stat = std::isfinite(ts.t_eq) ? ts.t_eq : -1.0;
+            saver.save_lateral_observables_csv(correlations_dir, sample_base, ts.lateral_observables);
+        }
 
         std::string json_filename = data_dir + "/" + sample_base + ".json";
         

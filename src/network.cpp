@@ -762,17 +762,25 @@ struct SparseFrontCandidates {
 
     std::vector<int> touched_targets;
     std::vector<int> slot_of_target;
+    std::unordered_map<int, int> sparse_slot_of_target;
     std::vector<std::array<std::uint32_t, max_candidates_per_target>> activators;
     std::vector<std::array<std::uint8_t, max_candidates_per_target>> colors;
     std::vector<std::array<std::uint64_t, max_candidates_per_target>> edge_bits;
     std::vector<unsigned char> counts;
+    bool sparse_lookup = false;
 
-    explicit SparseFrontCandidates(const int nsites = 0)
-        : slot_of_target(static_cast<std::size_t>(nsites), -1)
+    explicit SparseFrontCandidates(const int nsites = 0,
+                                   const bool sparse_lookup_ = false)
+        : slot_of_target(sparse_lookup_
+                             ? 0u
+                             : static_cast<std::size_t>(nsites),
+                         -1),
+          sparse_lookup(sparse_lookup_)
     {
     }
 
     void resize_site_count(const int nsites) {
+        if (sparse_lookup) return;
         slot_of_target.resize(static_cast<std::size_t>(nsites), -1);
     }
 
@@ -782,11 +790,18 @@ struct SparseFrontCandidates {
         colors.reserve(expected_targets);
         edge_bits.reserve(expected_targets);
         counts.reserve(expected_targets);
+        if (sparse_lookup) {
+            sparse_slot_of_target.reserve(expected_targets);
+        }
     }
 
     void clear() {
-        for (const int target : touched_targets) {
-            slot_of_target[static_cast<std::size_t>(target)] = -1;
+        if (sparse_lookup) {
+            sparse_slot_of_target.clear();
+        } else {
+            for (const int target : touched_targets) {
+                slot_of_target[static_cast<std::size_t>(target)] = -1;
+            }
         }
         touched_targets.clear();
         activators.clear();
@@ -796,11 +811,23 @@ struct SparseFrontCandidates {
     }
 
     void add(const int target, const FrontCandidate candidate) {
-        int& slot_ref = slot_of_target[static_cast<std::size_t>(target)];
-        int slot = slot_ref;
+        int slot = -1;
+        if (sparse_lookup) {
+            auto it = sparse_slot_of_target.find(target);
+            if (it != sparse_slot_of_target.end()) {
+                slot = it->second;
+            }
+        } else {
+            slot = slot_of_target[static_cast<std::size_t>(target)];
+        }
+
         if (slot < 0) {
             slot = static_cast<int>(counts.size());
-            slot_ref = slot;
+            if (sparse_lookup) {
+                sparse_slot_of_target.emplace(target, slot);
+            } else {
+                slot_of_target[static_cast<std::size_t>(target)] = slot;
+            }
             touched_targets.push_back(target);
             activators.emplace_back();
             colors.emplace_back();
@@ -930,11 +957,46 @@ inline std::vector<double> centered_moving_average(const std::vector<double>& x,
     return out;
 }
 
+inline std::vector<double> centered_moving_average_tail(const std::vector<double>& x,
+                                                       const int window,
+                                                       const std::size_t start_idx)
+{
+    if (start_idx >= x.size()) return {};
+    if (window <= 1) {
+        return std::vector<double>(
+            x.begin() + static_cast<std::ptrdiff_t>(start_idx),
+            x.end());
+    }
+
+    const int n = static_cast<int>(x.size() - start_idx);
+    const int half_left = window / 2;
+    const int half_right = window - half_left - 1;
+
+    std::vector<double> prefix(static_cast<std::size_t>(n + 1), 0.0);
+    for (int i = 0; i < n; ++i) {
+        prefix[static_cast<std::size_t>(i + 1)] =
+            prefix[static_cast<std::size_t>(i)] +
+            x[start_idx + static_cast<std::size_t>(i)];
+    }
+
+    std::vector<double> out(static_cast<std::size_t>(n), 0.0);
+    for (int i = 0; i < n; ++i) {
+        const int a = std::max(0, i - half_left);
+        const int b = std::min(n, i + half_right + 1);
+        out[static_cast<std::size_t>(i)] =
+            (prefix[static_cast<std::size_t>(b)] - prefix[static_cast<std::size_t>(a)]) /
+            static_cast<double>(b - a);
+    }
+
+    return out;
+}
+
 inline void block_mean_regular_time(const std::vector<int>& t,
                                     const std::vector<double>& y,
                                     const int window_block,
                                     std::vector<double>& t_center,
-                                    std::vector<double>& j_w)
+                                    std::vector<double>& j_w,
+                                    const std::size_t t_start_idx = 0)
 {
     t_center.clear();
     j_w.clear();
@@ -943,7 +1005,11 @@ inline void block_mean_regular_time(const std::vector<int>& t,
         throw std::runtime_error("block_mean_regular_time: window_block deve ser >= 1");
     }
 
-    const int n = std::min(static_cast<int>(t.size()), static_cast<int>(y.size()));
+    if (t_start_idx >= t.size()) return;
+
+    const int n = std::min(
+        static_cast<int>(t.size() - t_start_idx),
+        static_cast<int>(y.size()));
     const int n_blocks = n / window_block;
     if (n_blocks <= 0) return;
 
@@ -960,7 +1026,8 @@ inline void block_mean_regular_time(const std::vector<int>& t,
         for (int i = i0; i < i1; ++i) {
             const double yi = y[static_cast<std::size_t>(i)];
             if (!std::isfinite(yi)) continue;
-            st += static_cast<double>(t[static_cast<std::size_t>(i)]);
+            st += static_cast<double>(
+                t[t_start_idx + static_cast<std::size_t>(i)]);
             sy += yi;
             ++count;
         }
@@ -1020,7 +1087,8 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
                                         const double s_prime_threshold = 5.0e-4,
                                         const bool require_target = false,
                                         const double target = 0.0,
-                                        const int validation_window_steps = 0)
+                                        const int validation_window_steps = 0,
+                                        const std::size_t start_idx = 0)
 {
     if (t.empty()) {
         throw std::runtime_error("estimate_t_eq_from_series: t vazio");
@@ -1028,11 +1096,16 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
     if (p.size() != t.size()) {
         throw std::runtime_error("estimate_t_eq_from_series: p.size != t.size");
     }
-    const std::vector<double> p_smoothed = centered_moving_average(p, window_roll);
+    if (start_idx >= t.size()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    const std::vector<double> p_smoothed =
+        centered_moving_average_tail(p, window_roll, start_idx);
 
     std::vector<double> t_j;
     std::vector<double> j_w;
-    block_mean_regular_time(t, p_smoothed, window_block, t_j, j_w);
+    block_mean_regular_time(t, p_smoothed, window_block, t_j, j_w, start_idx);
     if (j_w.size() < 3) {
         return std::numeric_limits<double>::quiet_NaN();
     }
@@ -1083,6 +1156,25 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
                      1.0e-12);
         const double drift_threshold = std::max(abs_tol, rel_tol * drift_scale);
         if (std::abs(last_mean - first_mean) > drift_threshold) {
+            return false;
+        }
+
+        double min_y = std::numeric_limits<double>::infinity();
+        double max_y = -std::numeric_limits<double>::infinity();
+        double max_step_delta = 0.0;
+        for (int k = first_point; k <= last_point; ++k) {
+            const double y = j_w[static_cast<std::size_t>(k)];
+            min_y = std::min(min_y, y);
+            max_y = std::max(max_y, y);
+            if (k > first_point) {
+                const double y_prev = j_w[static_cast<std::size_t>(k - 1)];
+                max_step_delta = std::max(max_step_delta, std::abs(y - y_prev));
+            }
+        }
+        if (max_step_delta > drift_threshold) {
+            return false;
+        }
+        if (max_y - min_y > 2.0 * drift_threshold) {
             return false;
         }
 
@@ -1462,10 +1554,7 @@ NetworkPattern network::create_network(
          !stop_config.stop_at_percolation)
             ? lenght_network
             : -1;
-    const int dynamic_max_stop_height =
-        (dynamic_min_stop_height >= 0)
-            ? static_cast<int>(std::ceil(7.0 * static_cast<double>(lenght_network)))
-            : -1;
+    const int dynamic_max_stop_height = -1;
 
     if (num_colors > 125) {
         throw std::runtime_error(
@@ -1493,10 +1582,13 @@ NetworkPattern network::create_network(
             static_cast<std::size_t>(grid.total_size),
             std::numeric_limits<uint32_t>::max());
     }
+    std::vector<int> activated_indices_for_lateral;
+    activated_indices_for_lateral.reserve(static_cast<std::size_t>(base_size));
     auto set_activation_time = [&](const int idx, const uint32_t t_value)
     {
         if (!needs_activation_time) return;
         activation_time[static_cast<std::size_t>(idx)] = t_value;
+        activated_indices_for_lateral.push_back(idx);
     };
 
     std::vector<std::vector<double>> p_series(num_colors);
@@ -1516,7 +1608,9 @@ NetworkPattern network::create_network(
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
-    SparseFrontCandidates front_candidates(grid.total_size);
+    SparseFrontCandidates front_candidates(
+        stop_config.dynamic_height ? 0 : grid.total_size,
+        stop_config.dynamic_height);
     front_candidates.reserve_frontier(static_cast<std::size_t>(base_size));
 
     auto commit_step = [&](const int t_k,
@@ -1846,6 +1940,8 @@ NetworkPattern network::create_network(
         static_cast<std::size_t>(num_colors), false);
     std::vector<int> z_stat_by_species(
         static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> min_stop_height_reach_time(
+        static_cast<std::size_t>(num_colors), -1);
     std::vector<double> t_eq_online_by_species(
         static_cast<std::size_t>(num_colors),
         std::numeric_limits<double>::quiet_NaN());
@@ -1857,6 +1953,16 @@ NetworkPattern network::create_network(
         static_cast<std::size_t>(num_colors));
     std::vector<double> previous_p_for_dynamics = p_curr;
     double previous_error = std::numeric_limits<double>::quiet_NaN();
+
+    auto record_min_stop_height_reached = [&](const int color_idx, const int h, const int t_value)
+    {
+        if (dynamic_min_stop_height < 0) return;
+        if (h < dynamic_min_stop_height) return;
+        int& reached_time = min_stop_height_reach_time[static_cast<std::size_t>(color_idx)];
+        if (reached_time < 0) {
+            reached_time = t_value;
+        }
+    };
 
     for (int t = 1; t <= hard_max_steps; ++t) {
         if (stop_config.dynamic_height && !frontier.empty()) {
@@ -1925,6 +2031,7 @@ NetworkPattern network::create_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
+                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -2062,6 +2169,7 @@ NetworkPattern network::create_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
+                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -2166,11 +2274,6 @@ NetworkPattern network::create_network(
             all_terminal && any_percolated && any_dead;
 
         bool stop_equilibrated = false;
-        const int current_global_height =
-            *std::max_element(max_heights.begin(), max_heights.end());
-        const bool reached_max_dynamic_height =
-            dynamic_max_stop_height >= 0 &&
-            current_global_height >= dynamic_max_stop_height;
         if (stop_config.stop_at_equilibrium) {
             bool any_running = false;
             bool all_running_equilibrated = true;
@@ -2181,13 +2284,32 @@ NetworkPattern network::create_network(
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
-                if (dynamic_min_stop_height >= 0 &&
-                    max_heights[static_cast<std::size_t>(c)] < dynamic_min_stop_height) {
+                const bool running_reached_min_height =
+                    dynamic_min_stop_height < 0 ||
+                    min_stop_height_reach_time[static_cast<std::size_t>(c)] >= 0;
+                if (!running_reached_min_height) {
                     all_running_reached_min_height = false;
+                    all_running_equilibrated = false;
+                    continue;
                 }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
                     if (t % teq_window_block == 0) {
+                        const int reached_time =
+                            min_stop_height_reach_time[static_cast<std::size_t>(c)];
+                        const int min_post_height_steps =
+                            std::max(
+                                stop_config.dynamics_window_steps,
+                                stop_config.equilibrium_consecutive_steps + 2 * teq_window_block);
+                        if (reached_time >= 0 && (t - reached_time) < min_post_height_steps) {
+                            all_running_equilibrated = false;
+                            continue;
+                        }
+                        const std::size_t start_idx = reached_time >= 0
+                            ? std::min(
+                                static_cast<std::size_t>(reached_time),
+                                t_list.size())
+                            : 0u;
                         const double t_eq_candidate = estimate_t_eq_from_series(
                             t_list,
                             p_series[static_cast<std::size_t>(c)],
@@ -2199,7 +2321,8 @@ NetworkPattern network::create_network(
                             5.0e-4,
                             false,
                             0.0,
-                            stop_config.dynamics_window_steps);
+                            stop_config.dynamics_window_steps,
+                            start_idx);
                         if (std::isfinite(t_eq_candidate)) {
                             species_equilibrated[static_cast<std::size_t>(c)] = true;
                             t_eq_online_by_species[static_cast<std::size_t>(c)] =
@@ -2224,7 +2347,7 @@ NetworkPattern network::create_network(
 
         const bool stop_hard_limit =
             stop_config.stop_at_equilibrium &&
-            (t >= hard_max_steps || reached_max_dynamic_height);
+            (t >= hard_max_steps);
         bool stop_stationary_dynamics = false;
 
         if (stop_all_dead || stop_all_percolated ||
@@ -2242,8 +2365,7 @@ NetworkPattern network::create_network(
             } else if (stop_stationary_dynamics) {
                 growth_test_stop_reason = "stationary_dynamics";
             } else if (stop_hard_limit) {
-                growth_test_stop_reason =
-                    reached_max_dynamic_height ? "dynamic_max_height" : "hard_max_steps";
+                growth_test_stop_reason = "hard_max_steps";
             }
             if (!calculate_detailed_properties) {
                 finalize_time_series_only();
@@ -2334,7 +2456,8 @@ NetworkPattern network::create_network(
         activation_time,
         t_list,
         "periodic",
-        false);
+        false,
+        &activated_indices_for_lateral);
 
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
@@ -2652,10 +2775,7 @@ NetworkPattern network::animate_network(
          !stop_config.stop_at_percolation)
             ? lenght_network
             : -1;
-    const int dynamic_max_stop_height =
-        (dynamic_min_stop_height >= 0)
-            ? static_cast<int>(std::ceil(7.0 * static_cast<double>(lenght_network)))
-            : -1;
+    const int dynamic_max_stop_height = -1;
 
     if (num_colors > 125) {
         throw std::runtime_error(
@@ -2721,7 +2841,9 @@ NetworkPattern network::animate_network(
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
 
-    SparseFrontCandidates front_candidates(grid.total_size);
+    SparseFrontCandidates front_candidates(
+        stop_config.dynamic_height ? 0 : grid.total_size,
+        stop_config.dynamic_height);
     front_candidates.reserve_frontier(static_cast<std::size_t>(base_size));
 
     auto commit_step = [&](const int t_k,
@@ -2821,6 +2943,8 @@ NetworkPattern network::animate_network(
         static_cast<std::size_t>(num_colors), false);
     std::vector<int> z_stat_by_species(
         static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> min_stop_height_reach_time(
+        static_cast<std::size_t>(num_colors), -1);
     std::vector<double> t_eq_online_by_species(
         static_cast<std::size_t>(num_colors),
         std::numeric_limits<double>::quiet_NaN());
@@ -2830,6 +2954,16 @@ NetworkPattern network::animate_network(
         static_cast<std::size_t>(num_colors));
     std::vector<double> previous_p_for_dynamics = p_curr;
     double previous_error = std::numeric_limits<double>::quiet_NaN();
+
+    auto record_min_stop_height_reached = [&](const int color_idx, const int h, const int t_value)
+    {
+        if (dynamic_min_stop_height < 0) return;
+        if (h < dynamic_min_stop_height) return;
+        int& reached_time = min_stop_height_reach_time[static_cast<std::size_t>(color_idx)];
+        if (reached_time < 0) {
+            reached_time = t_value;
+        }
+    };
 
     // cache leve do maior componente global por cor: semente + tamanho.
     std::vector<ComponentSummary> largest_comp_cache(num_colors);
@@ -3227,6 +3361,7 @@ NetworkPattern network::animate_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
+                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -3361,6 +3496,7 @@ NetworkPattern network::animate_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
+                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -3460,11 +3596,6 @@ NetworkPattern network::animate_network(
             all_terminal && any_percolated && any_dead;
 
         bool stop_equilibrated = false;
-        const int current_global_height =
-            *std::max_element(max_heights.begin(), max_heights.end());
-        const bool reached_max_dynamic_height =
-            dynamic_max_stop_height >= 0 &&
-            current_global_height >= dynamic_max_stop_height;
         if (stop_config.stop_at_equilibrium) {
             bool any_running = false;
             bool all_running_equilibrated = true;
@@ -3475,13 +3606,32 @@ NetworkPattern network::animate_network(
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
-                if (dynamic_min_stop_height >= 0 &&
-                    max_heights[static_cast<std::size_t>(c)] < dynamic_min_stop_height) {
+                const bool running_reached_min_height =
+                    dynamic_min_stop_height < 0 ||
+                    min_stop_height_reach_time[static_cast<std::size_t>(c)] >= 0;
+                if (!running_reached_min_height) {
                     all_running_reached_min_height = false;
+                    all_running_equilibrated = false;
+                    continue;
                 }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
                     if (t % teq_window_block == 0) {
+                        const int reached_time =
+                            min_stop_height_reach_time[static_cast<std::size_t>(c)];
+                        const int min_post_height_steps =
+                            std::max(
+                                stop_config.dynamics_window_steps,
+                                stop_config.equilibrium_consecutive_steps + 2 * teq_window_block);
+                        if (reached_time >= 0 && (t - reached_time) < min_post_height_steps) {
+                            all_running_equilibrated = false;
+                            continue;
+                        }
+                        const std::size_t start_idx = reached_time >= 0
+                            ? std::min(
+                                static_cast<std::size_t>(reached_time),
+                                t_list.size())
+                            : 0u;
                         const double t_eq_candidate = estimate_t_eq_from_series(
                             t_list,
                             p_series[static_cast<std::size_t>(c)],
@@ -3493,7 +3643,8 @@ NetworkPattern network::animate_network(
                             5.0e-4,
                             false,
                             0.0,
-                            stop_config.dynamics_window_steps);
+                            stop_config.dynamics_window_steps,
+                            start_idx);
                         if (std::isfinite(t_eq_candidate)) {
                             species_equilibrated[static_cast<std::size_t>(c)] = true;
                             t_eq_online_by_species[static_cast<std::size_t>(c)] =
@@ -3518,7 +3669,7 @@ NetworkPattern network::animate_network(
 
         const bool stop_hard_limit =
             stop_config.stop_at_equilibrium &&
-            (t >= hard_max_steps || reached_max_dynamic_height);
+            (t >= hard_max_steps);
         bool stop_stationary_dynamics = false;
 
         if (stop_all_dead || stop_all_percolated ||

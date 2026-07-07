@@ -24,6 +24,7 @@ struct GrowthStopConfig {
     double derivative_abs_tol = 5.0e-4;
     double control_derivative_abs_tol = 5.0e-4;
     double derivative_sign_change_fraction = 0.35;
+    bool save_lateral_observables = true;
     InitialBaseLayout initial_base_layout = InitialBaseLayout::Random;
 };
 

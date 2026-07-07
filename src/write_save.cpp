@@ -430,7 +430,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 << ps.growth_test_stop_time << ",\n";
         }
         if (ps.equilibrium_consecutive_steps > 0) {
-            ofs << "    \"growth_test_stop_criterion\": \"alive_species_pt_stability_min_z_L_dynamic_max_z_limit\",\n";
+            ofs << "    \"growth_test_stop_criterion\": \"alive_species_pt_stability_checked_after_min_z_L_or_death\",\n";
             ofs << "    \"growth_test_equilibrium_consecutive_steps\": "
                 << ps.equilibrium_consecutive_steps << ",\n";
             if (ps.dynamic_min_stop_height >= 0) {
