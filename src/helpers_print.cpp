@@ -284,6 +284,7 @@ Tips:
   - 'bond' vs 'node' picks percolation type.
   - Larger c reacts faster to deviations from f_T; f_T sets the target growth-front density.
   - growth_test keeps the SOP output separate and grows height dynamically after z = L.
+  - growth_test always writes lateral correlations and susceptibility CSVs.
 )" << std::endl;
 }
 

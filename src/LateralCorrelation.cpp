@@ -14,6 +14,38 @@ int lateral_index_2d(const int x, const int y, const int L) {
     return x + L * y;
 }
 
+void add_periodic_axis_hits(
+    std::vector<int>& values,
+    const int L,
+    const int r_max,
+    std::vector<double>& hits)
+{
+    const int n = static_cast<int>(values.size());
+    if (n == 0) {
+        return;
+    }
+
+    hits[0] += static_cast<double>(n);
+    if (n == 1) {
+        return;
+    }
+
+    std::sort(values.begin(), values.end());
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            const int d = values[static_cast<std::size_t>(j)] -
+                          values[static_cast<std::size_t>(i)];
+            if (d <= r_max) {
+                hits[static_cast<std::size_t>(d)] += 1.0;
+            }
+            const int wrapped_d = L - d;
+            if (wrapped_d <= r_max) {
+                hits[static_cast<std::size_t>(wrapped_d)] += 1.0;
+            }
+        }
+    }
+}
+
 }  // namespace
 
 LateralObservablesSeries compute_lateral_observables(
@@ -25,7 +57,8 @@ LateralObservablesSeries compute_lateral_observables(
     const std::vector<std::uint32_t>& activation_time,
     const std::vector<int>& times,
     const std::string& boundary_mode,
-    const bool store_correlation_rows)
+    const bool store_correlation_rows,
+    const std::vector<int>* activated_indices)
 {
     if (dim != 2 && dim != 3) {
         throw std::invalid_argument("compute_lateral_observables: dim must be 2 or 3");
@@ -46,20 +79,52 @@ LateralObservablesSeries compute_lateral_observables(
     const int max_time = times.empty() ? 0 : *std::max_element(times.begin(), times.end());
     std::vector<std::vector<int>> sites_by_time(static_cast<std::size_t>(max_time + 1));
 
-    for (int idx = 0; idx < static_cast<int>(activation_time.size()); ++idx) {
+    auto add_activated_index = [&](const int idx) {
+        if (idx < 0 || idx >= static_cast<int>(activation_time.size())) {
+            return;
+        }
         const auto activation = activation_time[static_cast<std::size_t>(idx)];
         if (activation == std::numeric_limits<std::uint32_t>::max()) {
-            continue;
+            return;
         }
         const int t = static_cast<int>(activation);
         if (t < 0 || t > max_time) {
-            continue;
+            return;
         }
         sites_by_time[static_cast<std::size_t>(t)].push_back(idx);
+    };
+
+    if (activated_indices != nullptr) {
+        for (const int idx : *activated_indices) {
+            add_activated_index(idx);
+        }
+    } else {
+        for (int idx = 0; idx < static_cast<int>(activation_time.size()); ++idx) {
+            add_activated_index(idx);
+        }
     }
 
     const int lateral_size = (dim == 2) ? L : (L * L);
     const double normalizer = static_cast<double>((dim == 2) ? L : (L * L));
+    const bool periodic = (result.boundary_mode == "periodic");
+    const int r_max = result.r_max;
+
+    std::vector<int> stamp(static_cast<std::size_t>(lateral_size), -1);
+    int stamp_id = 0;
+    std::vector<int> active_lateral;
+    active_lateral.reserve(static_cast<std::size_t>(lateral_size));
+
+    std::vector<double> periodic_hits(static_cast<std::size_t>(r_max + 1), 0.0);
+    std::vector<std::vector<int>> rows(static_cast<std::size_t>(dim == 3 ? L : 0));
+    std::vector<std::vector<int>> cols(static_cast<std::size_t>(dim == 3 ? L : 0));
+    std::vector<int> row_stamp(static_cast<std::size_t>(dim == 3 ? L : 0), -1);
+    std::vector<int> col_stamp(static_cast<std::size_t>(dim == 3 ? L : 0), -1);
+    std::vector<int> touched_rows;
+    std::vector<int> touched_cols;
+
+    auto is_active = [&](const int idx) {
+        return stamp[static_cast<std::size_t>(idx)] == stamp_id;
+    };
 
     for (const int t : times) {
         if (t < 0 || t > max_time) {
@@ -67,22 +132,43 @@ LateralObservablesSeries compute_lateral_observables(
         }
 
         const std::vector<int>& positions = sites_by_time[static_cast<std::size_t>(t)];
-        std::vector<std::uint8_t> field(static_cast<std::size_t>(lateral_size), 0);
+        if (stamp_id == std::numeric_limits<int>::max()) {
+            std::fill(stamp.begin(), stamp.end(), -1);
+            if (dim == 3) {
+                std::fill(row_stamp.begin(), row_stamp.end(), -1);
+                std::fill(col_stamp.begin(), col_stamp.end(), -1);
+            }
+            stamp_id = 0;
+        }
+        ++stamp_id;
+        active_lateral.clear();
+        touched_rows.clear();
+        touched_cols.clear();
+
         for (const int idx : positions) {
             const int x = idx % sx;
             const int y = (dim >= 2) ? ((idx / sx) % sy) : 0;
-            if (dim == 2) {
-                field[static_cast<std::size_t>(x)] = 1;
-            } else {
-                field[static_cast<std::size_t>(lateral_index_2d(x, y, L))] = 1;
+            const int lateral_idx = (dim == 2) ? x : lateral_index_2d(x, y, L);
+            if (stamp[static_cast<std::size_t>(lateral_idx)] == stamp_id) {
+                continue;
             }
-        }
+            stamp[static_cast<std::size_t>(lateral_idx)] = stamp_id;
+            active_lateral.push_back(lateral_idx);
 
-        std::vector<int> active_lateral;
-        active_lateral.reserve(static_cast<std::size_t>(std::min(lateral_size, static_cast<int>(positions.size()))));
-        for (int idx = 0; idx < lateral_size; ++idx) {
-            if (field[static_cast<std::size_t>(idx)] != 0) {
-                active_lateral.push_back(idx);
+            if (dim == 3 && periodic) {
+                if (row_stamp[static_cast<std::size_t>(y)] != stamp_id) {
+                    row_stamp[static_cast<std::size_t>(y)] = stamp_id;
+                    rows[static_cast<std::size_t>(y)].clear();
+                    touched_rows.push_back(y);
+                }
+                rows[static_cast<std::size_t>(y)].push_back(x);
+
+                if (col_stamp[static_cast<std::size_t>(x)] != stamp_id) {
+                    col_stamp[static_cast<std::size_t>(x)] = stamp_id;
+                    cols[static_cast<std::size_t>(x)].clear();
+                    touched_cols.push_back(x);
+                }
+                cols[static_cast<std::size_t>(x)].push_back(y);
             }
         }
 
@@ -103,16 +189,51 @@ LateralObservablesSeries compute_lateral_observables(
         double pair_count_sum = 0.0;
         int n_corr_rows = 0;
 
-        for (int r = 0; r <= result.r_max; ++r) {
+        bool use_sparse_periodic_hits = false;
+        if (dim == 3 && periodic) {
+            long double pair_work = 0.0L;
+            for (const int y : touched_rows) {
+                const auto n = static_cast<long double>(rows[static_cast<std::size_t>(y)].size());
+                pair_work += n * (n - 1.0L) / 2.0L;
+            }
+            for (const int x : touched_cols) {
+                const auto n = static_cast<long double>(cols[static_cast<std::size_t>(x)].size());
+                pair_work += n * (n - 1.0L) / 2.0L;
+            }
+
+            const long double scan_work =
+                static_cast<long double>(active_lateral.size()) *
+                static_cast<long double>(r_max + 1);
+            use_sparse_periodic_hits = (pair_work < scan_work);
+
+            if (use_sparse_periodic_hits) {
+                std::fill(periodic_hits.begin(), periodic_hits.end(), 0.0);
+                for (const int y : touched_rows) {
+                    add_periodic_axis_hits(
+                        rows[static_cast<std::size_t>(y)],
+                        L,
+                        r_max,
+                        periodic_hits);
+                }
+                for (const int x : touched_cols) {
+                    add_periodic_axis_hits(
+                        cols[static_cast<std::size_t>(x)],
+                        L,
+                        r_max,
+                        periodic_hits);
+                }
+            }
+        }
+
+        for (int r = 0; r <= r_max; ++r) {
             double G = 0.0;
             int pair_count = 0;
 
             if (dim == 2) {
-                const bool periodic = (boundary_mode == "periodic");
                 if (periodic) {
                     for (const int x : active_lateral) {
                         const int x2 = (x + r) % L;
-                        G += static_cast<double>(field[static_cast<std::size_t>(x2)]);
+                        G += is_active(x2) ? 1.0 : 0.0;
                     }
                     pair_count = L;
                     G /= static_cast<double>(pair_count);
@@ -122,7 +243,7 @@ LateralObservablesSeries compute_lateral_observables(
                         if (x2 < 0 || x2 >= L) {
                             continue;
                         }
-                        G += static_cast<double>(field[static_cast<std::size_t>(x2)]);
+                        G += is_active(x2) ? 1.0 : 0.0;
                     }
                     pair_count = std::max(0, L - r);
                     if (pair_count > 0) {
@@ -130,17 +251,20 @@ LateralObservablesSeries compute_lateral_observables(
                     }
                 }
             } else {
-                const bool periodic = (boundary_mode == "periodic");
                 if (periodic) {
-                    for (const int idx_xy : active_lateral) {
-                        const int x = idx_xy % L;
-                        const int y = idx_xy / L;
-                        const int x2 = (x + r) % L;
-                        const int y2 = (y + r) % L;
-                        const int idx_xp = lateral_index_2d(x2, y, L);
-                        const int idx_yp = lateral_index_2d(x, y2, L);
-                        G += static_cast<double>(field[static_cast<std::size_t>(idx_xp)]);
-                        G += static_cast<double>(field[static_cast<std::size_t>(idx_yp)]);
+                    if (use_sparse_periodic_hits) {
+                        G = periodic_hits[static_cast<std::size_t>(r)];
+                    } else {
+                        for (const int idx_xy : active_lateral) {
+                            const int x = idx_xy % L;
+                            const int y = idx_xy / L;
+                            const int x2 = (x + r) % L;
+                            const int y2 = (y + r) % L;
+                            const int idx_xp = lateral_index_2d(x2, y, L);
+                            const int idx_yp = lateral_index_2d(x, y2, L);
+                            G += is_active(idx_xp) ? 1.0 : 0.0;
+                            G += is_active(idx_yp) ? 1.0 : 0.0;
+                        }
                     }
                     pair_count = 2 * L * L;
                     G /= static_cast<double>(pair_count);
@@ -150,11 +274,11 @@ LateralObservablesSeries compute_lateral_observables(
                         const int y = idx_xy / L;
                         if (x + r < L) {
                             const int idx_xp = lateral_index_2d(x + r, y, L);
-                            G += static_cast<double>(field[static_cast<std::size_t>(idx_xp)]);
+                            G += is_active(idx_xp) ? 1.0 : 0.0;
                         }
                         if (y + r < L) {
                             const int idx_yp = lateral_index_2d(x, y + r, L);
-                            G += static_cast<double>(field[static_cast<std::size_t>(idx_yp)]);
+                            G += is_active(idx_yp) ? 1.0 : 0.0;
                         }
                     }
                     pair_count = 2 * L * std::max(0, L - r);

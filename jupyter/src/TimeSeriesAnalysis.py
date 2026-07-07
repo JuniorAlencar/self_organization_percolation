@@ -22,6 +22,8 @@ from typing import Dict, List, Any, Tuple, Optional
 import pandas as pd
 import random
 
+SERIES_ENCODING_KEY = "__encoding__"
+
 # ============================================================
 # Paths / Regex helpers
 # ============================================================
@@ -79,6 +81,105 @@ def load_lateral_correlations_bundle(path: str | Path) -> dict[str, Any]:
     return data
 
 
+def _lateral_column_length(values: Any) -> int:
+    if isinstance(values, list):
+        return len(values)
+    if isinstance(values, dict) and values.get(SERIES_ENCODING_KEY) == "range":
+        return int(values.get("n", 0) or 0)
+    return 0
+
+
+def _lateral_column_value(values: Any, idx: int) -> Any:
+    if isinstance(values, list):
+        return values[idx] if idx < len(values) else None
+    if isinstance(values, dict) and values.get(SERIES_ENCODING_KEY) == "range":
+        start = float(values.get("start", 0.0) or 0.0)
+        step = float(values.get("step", 0.0) or 0.0)
+        return start + step * idx
+    return values
+
+
+def expand_lateral_series_columns(series: Any, series_length: int | None = None) -> dict[str, list[Any]]:
+    """
+    Expand a compact lateral time series into aligned property lists.
+
+    Supports:
+      - new compact columns with scalar constants and encoded ranges;
+      - previous columnar lists;
+      - legacy list-of-row dictionaries.
+    """
+    if isinstance(series, list):
+        rows = [item for item in series if isinstance(item, dict)]
+        keys: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            for key in row:
+                if key not in seen:
+                    keys.append(key)
+                    seen.add(key)
+        return {key: [row.get(key) for row in rows] for key in keys}
+    if not isinstance(series, dict):
+        return {}
+
+    keys = list(series)
+    lengths = [_lateral_column_length(values) for values in series.values()]
+    if series_length:
+        lengths.append(int(series_length))
+    n_rows = max(lengths, default=0)
+    return {
+        key: [_lateral_column_value(series.get(key), idx) for idx in range(n_rows)]
+        for key in keys
+    }
+
+
+def _lateral_series_to_rows(series: Any, series_length: int | None = None) -> list[dict[str, Any]]:
+    columns = expand_lateral_series_columns(series, series_length)
+    if not columns:
+        return []
+    n_rows = max((len(values) for values in columns.values()), default=0)
+    return [
+        {key: values[idx] if idx < len(values) else None for key, values in columns.items()}
+        for idx in range(n_rows)
+    ]
+
+
+def iter_lateral_series_blocks(
+    bundle_or_path: dict[str, Any] | str | Path,
+    obs_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Read lateral bundle blocks in the native aggregated format.
+
+    Each block contains metadata, N_samples, and expanded aligned series
+    columns. Use obs_type="correlation" or "susceptibility" to filter.
+    """
+    bundle = (
+        bundle_or_path
+        if isinstance(bundle_or_path, dict)
+        else load_lateral_correlations_bundle(bundle_or_path)
+    )
+    blocks: list[dict[str, Any]] = []
+    for sample in bundle.get("samples", []):
+        if not isinstance(sample, dict):
+            continue
+        sample_obs_type = sample.get("obs_type")
+        if obs_type is not None and sample_obs_type != obs_type:
+            continue
+        meta = {
+            key: sample.get(key)
+            for key in (
+                "filename", "sample_id", "obs_type", "series_kind", "t_stat",
+                "p0", "P0", "c", "f_T", "seed", "N_samples", "n_rows",
+            )
+        }
+        blocks.append({
+            **meta,
+            "series_length": sample.get("series_length"),
+            "series": expand_lateral_series_columns(sample.get("series"), sample.get("series_length")),
+        })
+    return blocks
+
+
 def iter_lateral_series_rows(
     bundle_or_path: dict[str, Any] | str | Path,
     obs_type: str | None = None,
@@ -103,12 +204,25 @@ def iter_lateral_series_rows(
             continue
         meta = {
             key: sample.get(key)
-            for key in ("filename", "sample_id", "obs_type", "t_stat", "p0", "P0", "c", "f_T", "seed")
+            for key in ("filename", "sample_id", "obs_type", "t_stat", "p0", "P0", "c", "f_T", "seed", "N_samples")
         }
-        for item in sample.get("series", []):
-            if isinstance(item, dict):
-                rows.append({**meta, **item})
+        for item in _lateral_series_to_rows(sample.get("series"), sample.get("series_length")):
+            rows.append({**meta, **item})
     return rows
+
+
+def load_lateral_correlations_dataframe(
+    path: str | Path,
+    obs_type: str | None = None,
+) -> pd.DataFrame:
+    """
+    Load a lateral correlations bundle as a tidy DataFrame.
+
+    The new aggregated bundle stores one block per parameter/observable with
+    N_samples and compact columns. This function expands those columns into
+    one row per time point while preserving the aggregation metadata.
+    """
+    return pd.DataFrame(iter_lateral_series_rows(path, obs_type=obs_type))
 
 def create_folder(folder_path):
     """
