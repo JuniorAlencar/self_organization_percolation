@@ -324,7 +324,6 @@ def plot_nc_dynamic_grid(
     L_lst,
     ns_lst,
     c_lst,
-    window=300,
     base=5,
     dim=2,
     order=0,
@@ -401,8 +400,7 @@ def plot_nc_dynamic_grid(
                     (df_dynamic['num_colors'] == ns) &
                     (np.isclose(df_dynamic['p0'], p0)) &
                     (df_dynamic['dim'] == dim) &
-                    (df_dynamic['L'] == L) &
-                    (df_dynamic['stat_window'] == window)
+                    (df_dynamic['L'] == L)
                 ]
 
                 ft_valid = df_d.loc[
@@ -413,7 +411,7 @@ def plot_nc_dynamic_grid(
                 if ft_valid.empty:
                     raise ValueError(
                         f"Nenhum ponto encontrado para calcular ft_min: "
-                        f"ns={ns}, c={c}, L={L}, p0={p0}, dim={dim}, window={window}"
+                        f"ns={ns}, c={c}, L={L}, p0={p0}, dim={dim}"
                     )
 
                 ft_min_per_L.append(ft_valid.min())
@@ -430,7 +428,6 @@ def plot_nc_dynamic_grid(
                     (np.isclose(df_series['p0'], p0)) &
                     (df_series['dim'] == dim) &
                     (df_series['L'] == L) &
-                    (df_series['stat_window'] == window) &
                     (df_series['order'] == order) &
                     (np.isclose(df_series['rho'], rho))
                 ]
@@ -539,8 +536,7 @@ def plot_nc_dynamic_grid(
                     (df_dynamic['num_colors'] == ns) &
                     (np.isclose(df_dynamic['p0'], p0)) &
                     (df_dynamic['dim'] == dim) &
-                    (df_dynamic['L'] == L) &
-                    (df_dynamic['stat_window'] == window)
+                    (df_dynamic['L'] == L)
                 ]
 
                 # Truncamento superior obtido a partir do df_series
@@ -618,7 +614,6 @@ def plot_pmean_series_grid(
     L_lst,
     ns_lst,
     c_lst,
-    window=300,
     base=5,
     dim=2,
     order=0,
@@ -717,8 +712,7 @@ def plot_pmean_series_grid(
                     (df_dynamic['num_colors'] == ns) &
                     (np.isclose(df_dynamic['p0'], p0)) &
                     (df_dynamic['dim'] == dim) &
-                    (df_dynamic['L'] == L) &
-                    (df_dynamic['stat_window'] == window)
+                    (df_dynamic['L'] == L)
                 ]
 
                 ft_valid = df_d.loc[
@@ -729,7 +723,7 @@ def plot_pmean_series_grid(
                 if ft_valid.empty:
                     raise ValueError(
                         f"Nenhum ponto encontrado para calcular ft_min: "
-                        f"ns={ns}, c={c}, L={L}, p0={p0}, dim={dim}, window={window}"
+                        f"ns={ns}, c={c}, L={L}, p0={p0}, dim={dim}"
                     )
 
                 ft_min_per_L.append(ft_valid.min())
@@ -746,7 +740,6 @@ def plot_pmean_series_grid(
                     (np.isclose(df_series['p0'], p0)) &
                     (df_series['dim'] == dim) &
                     (df_series['L'] == L) &
-                    (df_series['stat_window'] == window) &
                     (df_series['order'] == order) &
                     (np.isclose(df_series['rho'], rho))
                 ]
@@ -876,7 +869,6 @@ def plot_pmean_series_grid(
                     (np.isclose(df_series['p0'], p0)) &
                     (df_series['dim'] == dim) &
                     (df_series['L'] == L) &
-                    (df_series['stat_window'] == window) &
                     (df_series['order'] == order) &
                     (np.isclose(df_series['rho'], rho))
                 ]

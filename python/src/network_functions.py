@@ -5,6 +5,8 @@ from mayavi import mlab
 mlab.options.offscreen = True
 import os 
 import subprocess
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib import patches  # coloque no topo do arquivo
@@ -27,6 +29,115 @@ def create_folder(folder_path):
 
 TIME_BASE_3D = 10_000_000
 
+_FRAME_RENDER_CONTEXT = {}
+
+
+def _slice_cumulative_frame(df, t, time_values=None):
+    if time_values is None:
+        time_values = df["time"].to_numpy()
+    end = int(np.searchsorted(time_values, int(t), side="right"))
+    return df.iloc[:end]
+
+
+def _render_dynamic_height_frame_worker(item):
+    ctx = _FRAME_RENDER_CONTEXT
+    df = ctx["df"]
+    t = int(item["time"])
+    df_frame = _slice_cumulative_frame(df, t, ctx["time_values"])
+
+    _plot_points_df_dynamic_height(
+        df=df_frame,
+        shape=ctx["shape"],
+        nc=ctx["nc"],
+        path_out=item["path"],
+        figure_name=f"{ctx['prefix']}_{int(item['frame_idx']):06d}",
+        specific_color=ctx["specific_color"],
+        show_base=ctx["show_base"],
+        visual_profile=ctx["visual_profile"],
+        height_limit=ctx["height_limit"],
+        current_time=t,
+        highlight_growth_front=ctx["highlight_growth_front"],
+    )
+
+    return item
+
+
+def _render_dynamic_height_frame_serial(df, meta, nc, prefix, item,
+                                        time_values,
+                                        specific_color, show_base,
+                                        visual_profile, height_limit,
+                                        highlight_growth_front):
+    t = int(item["time"])
+    df_frame = _slice_cumulative_frame(df, t, time_values)
+
+    _plot_points_df_dynamic_height(
+        df=df_frame,
+        shape=meta["shape"],
+        nc=nc,
+        path_out=item["path"],
+        figure_name=f"{prefix}_{int(item['frame_idx']):06d}",
+        specific_color=specific_color,
+        show_base=show_base,
+        visual_profile=visual_profile,
+        height_limit=height_limit,
+        current_time=t,
+        highlight_growth_front=highlight_growth_front,
+    )
+
+    return item
+
+
+def _slice_front_frame(df, t):
+    return df[df["time"] == int(t)].copy()
+
+
+def _render_dynamic_front_frame_worker(item):
+    ctx = _FRAME_RENDER_CONTEXT
+    df = ctx["df"]
+    t = int(item["time"])
+    df_frame = _slice_front_frame(df, t)
+
+    _plot_points_df_dynamic_height(
+        df=df_frame,
+        shape=ctx["shape"],
+        nc=ctx["nc"],
+        path_out=item["path"],
+        figure_name=f"{ctx['prefix']}_{int(item['frame_idx']):06d}",
+        specific_color=ctx["specific_color"],
+        show_base=ctx["show_base"],
+        visual_profile=ctx["visual_profile"],
+        height_limit=ctx["height_limit"],
+        current_time=None,
+        highlight_growth_front=False,
+    )
+
+    return item
+
+
+def _render_dynamic_front_frame_serial(df, meta, nc, prefix, item,
+                                        time_values,
+                                        specific_color, show_base,
+                                        visual_profile, height_limit):
+    t = int(item["time"])
+    df_frame = _slice_front_frame(df, t)
+
+    _plot_points_df_dynamic_height(
+        df=df_frame,
+        shape=meta["shape"],
+        nc=nc,
+        path_out=item["path"],
+        figure_name=f"{prefix}_{int(item['frame_idx']):06d}",
+        specific_color=specific_color,
+        show_base=show_base,
+        visual_profile=visual_profile,
+        height_limit=height_limit,
+        current_time=None,
+        highlight_growth_front=False,
+    )
+
+    return item
+
+
 def _get_colors_used():
     return [
         (0.90, 0.05, 0.05), # red
@@ -40,6 +151,22 @@ def _get_colors_used():
         (0.60, 0.32, 0.05), # brown
         (0.55, 0.55, 0.55), # gray
     ]
+
+
+def _lighten_rgb(rgb, amount=0.58):
+    return tuple(
+        max(0.0, min(1.0, c + (1.0 - c) * amount))
+        for c in rgb
+    )
+
+
+def _build_front_highlight_color_map(colors_to_plot, color_map):
+    colors_to_plot = sorted(int(c) for c in colors_to_plot)
+    return {
+        color: _lighten_rgb(color_map[color])
+        for color in colors_to_plot
+    }
+
 
 def _build_fixed_color_map(unique_colors, nc):
     """
@@ -80,6 +207,7 @@ def _build_fixed_color_map(unique_colors, nc):
         "Aplicando fallback por ordem crescente."
     )
     return {c: colors_used[i] for i, c in enumerate(unique_colors)}
+
 
 def _strip_percolation_suffix(name):
     if name.lower().endswith("_percolation"):
@@ -128,31 +256,93 @@ def _read_percolation_order_by_color(path_json):
 def _darken_rgb(rgb, factor=0.82):
     return tuple(max(0.0, min(1.0, c * factor)) for c in rgb)
 
-def _apply_full_cube_style(pts, edge_width=1.4):
+def _apply_full_cube_style(pts, edge_width=1.4, opacity=1.0, ambient=0.10):
     prop = pts.actor.property
     prop.edge_visibility = True
     prop.edge_color = (0, 0, 0)
     prop.line_width = edge_width
 
-    prop.opacity = 1.0
-    prop.ambient = 0.10
+    prop.opacity = opacity
+    prop.ambient = ambient
     prop.diffuse = 0.90
     prop.specular = 0.0
 
-def _draw_points3d_cube_cloud(fig, x, y, z, rgb, darken_factor=1.0, edge_width=1.0):
+def _draw_points3d_cube_cloud(
+    fig,
+    x,
+    y,
+    z,
+    rgb,
+    scale_factor=0.82,
+    darken_factor=1.0,
+    edge_width=0.25,
+    opacity=1.0,
+    ambient=0.10,
+):
     rgb_use = _darken_rgb(rgb, darken_factor)
 
     pts = mlab.points3d(
         x, y, z,
         np.ones_like(x),
         color=rgb_use,
-        scale_factor=1.0,
-        opacity=1.0,
+        scale_factor=scale_factor,
+        opacity=opacity,
         mode="cube",
         figure=fig
     )
-    _apply_full_cube_style(pts, edge_width=edge_width)
+    _apply_full_cube_style(
+        pts,
+        edge_width=edge_width,
+        opacity=opacity,
+        ambient=ambient,
+    )
     return pts
+
+
+def _dynamic_height_extent(df, SX, SY, SZ):
+    if int(SZ) > 1:
+        zmax = int(df["z"].max()) + 1
+        z_extent = max(1, zmax)
+        return [0, int(SX), 0, int(SY), 0, z_extent], z_extent
+
+    ymax = int(df["y"].max()) + 1
+    y_extent = max(1, ymax)
+    return [0, int(SX), 0, y_extent, 0, 1], y_extent
+
+
+def _apply_regular_lattice_camera(fig, extent, show_base=False):
+    Lx = float(extent[1] - extent[0])
+    Ly = float(extent[3] - extent[2])
+    Lz = float(extent[5] - extent[4])
+    Lref = max(Lx, Ly, Lz, 1.0)
+    focal = (
+        (extent[0] + extent[1]) / 2,
+        (extent[2] + extent[3]) / 2,
+        (extent[4] + extent[5]) / 2,
+    )
+
+    if show_base:
+        mlab.view(
+            azimuth=0,
+            elevation=-90,
+            distance=3.2 * Lref,
+            focalpoint=(focal[0], focal[1], extent[4]),
+            figure=fig,
+        )
+    else:
+        mlab.view(
+            azimuth=45,
+            elevation=60,
+            distance=3.4 * Lref,
+            focalpoint=focal,
+            figure=fig,
+        )
+
+    fig.scene.camera.parallel_projection = True
+    fig.scene.camera.parallel_scale = 0.82 * Lref
+    fig.scene.reset_zoom()
+    fig.scene.camera.parallel_scale = 0.82 * Lref
+    fig.scene.render()
 
 def _read_positions_table(file_path):
     if not os.path.exists(file_path):
@@ -552,11 +742,13 @@ def _plot_points_df_same_style(
     color_map = _build_fixed_color_map(unique_colors, nc)
 
     if visual_profile == "full":
-        darken_factor = 0.90
-        edge_width = 0.4
+        darken_factor = 1.0
+        edge_width = 0.25
+        marker_scale = 0.82
     elif visual_profile == "cut":
-        darken_factor = 0.90
-        edge_width = 0.5
+        darken_factor = 1.0
+        edge_width = 0.30
+        marker_scale = 0.82
     else:
         raise ValueError("visual_profile deve ser 'full' ou 'cut'.")
 
@@ -584,21 +776,19 @@ def _plot_points_df_same_style(
             y=y,
             z=z,
             rgb=color_map[color],
+            scale_factor=marker_scale,
             darken_factor=darken_factor,
             edge_width=edge_width
         )
 
     if outline_mode == "full":
-        extent = [0, L, 0, L, 0, L]
-        focal = (L / 2, L / 2, L / 2 if not show_base else 0)
-        Lref = L
+        z_extent = max(1, int(df["z"].max()) + 1)
+        extent = [0, L, 0, L, 0, z_extent]
     elif outline_mode == "tight":
         xmin, xmax = df["x"].min(), df["x"].max() + 1
         ymin, ymax = df["y"].min(), df["y"].max() + 1
         zmin, zmax = df["z"].min(), df["z"].max() + 1
         extent = [xmin, xmax, ymin, ymax, zmin, zmax]
-        focal = ((xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2)
-        Lref = max(xmax - xmin, ymax - ymin, zmax - zmin)
     else:
         raise ValueError("outline_mode deve ser 'full' ou 'tight'.")
 
@@ -609,24 +799,8 @@ def _plot_points_df_same_style(
         figure=fig
     )
 
-    if show_base:
-        mlab.view(
-            azimuth=0,
-            elevation=-90,
-            distance=2.8 * Lref,
-            focalpoint=(focal[0], focal[1], extent[4]),
-            figure=fig
-        )
-    else:
-        mlab.view(
-            azimuth=70,
-            elevation=65,
-            distance=3.1 * Lref,
-            focalpoint=focal,
-            figure=fig
-        )
+    _apply_regular_lattice_camera(fig, extent, show_base=show_base)
 
-    fig.scene.render()
     mlab.savefig(path_out, magnification=4, figure=fig)
     print(f"network save in {path_out}")
     mlab.close(fig)
@@ -642,6 +816,8 @@ def _plot_points_df_dynamic_height(
     show_base=False,
     visual_profile="full",
     height_limit=None,
+    current_time=None,
+    highlight_growth_front=True,
 ):
     df = df.copy()
     for col in ("x", "y", "z", "color"):
@@ -652,6 +828,8 @@ def _plot_points_df_dynamic_height(
     df["y"] = df["y"].astype(int)
     df["z"] = df["z"].astype(int)
     df["color"] = df["color"].astype(int)
+    if "time" in df.columns:
+        df["time"] = df["time"].astype(int)
     df = df[df["color"] > 0].copy()
     if df.empty:
         raise ValueError("Nenhum ponto ativo para plotar.")
@@ -677,11 +855,13 @@ def _plot_points_df_dynamic_height(
     color_map = _build_fixed_color_map(unique_colors, nc)
 
     if visual_profile == "full":
-        darken_factor = 0.90
-        edge_width = 0.35
+        darken_factor = 1.0
+        edge_width = 0.25
+        marker_scale = 0.82
     elif visual_profile == "cut":
-        darken_factor = 0.90
-        edge_width = 0.5
+        darken_factor = 1.0
+        edge_width = 0.30
+        marker_scale = 0.82
     else:
         raise ValueError("visual_profile deve ser 'full' ou 'cut'.")
 
@@ -694,8 +874,17 @@ def _plot_points_df_dynamic_height(
             raise ValueError(f"Cor {specific_color} não encontrada no frame.")
         colors_to_plot = [specific_color]
 
+    highlight_enabled = (
+        bool(highlight_growth_front)
+        and current_time is not None
+        and "time" in df.columns
+    )
+    current_time = None if current_time is None else int(current_time)
+
     for color in colors_to_plot:
         df_color = df[df["color"] == color]
+        if highlight_enabled:
+            df_color = df_color[df_color["time"] != current_time]
         if df_color.empty:
             continue
 
@@ -705,12 +894,45 @@ def _plot_points_df_dynamic_height(
             y=df_color["y"].to_numpy(),
             z=df_color["z"].to_numpy(),
             rgb=color_map[color],
+            scale_factor=marker_scale,
             darken_factor=darken_factor,
             edge_width=edge_width,
         )
 
-    z_extent = max(1, SZ)
-    extent = [0, SX, 0, SY, 0, z_extent]
+    if highlight_enabled:
+        front_color_map = _build_front_highlight_color_map(colors_to_plot, color_map)
+
+        for color in colors_to_plot:
+            df_front = df[(df["color"] == color) & (df["time"] == current_time)]
+            if df_front.empty:
+                continue
+
+            _draw_points3d_cube_cloud(
+                fig=fig,
+                x=df_front["x"].to_numpy(),
+                y=df_front["y"].to_numpy(),
+                z=df_front["z"].to_numpy(),
+                rgb=front_color_map[color],
+                scale_factor=1.34,
+                darken_factor=1.0,
+                edge_width=1.45,
+                opacity=0.95,
+                ambient=0.35,
+            )
+            _draw_points3d_cube_cloud(
+                fig=fig,
+                x=df_front["x"].to_numpy(),
+                y=df_front["y"].to_numpy(),
+                z=df_front["z"].to_numpy(),
+                rgb=color_map[color],
+                scale_factor=0.90,
+                darken_factor=1.0,
+                edge_width=0.65,
+                opacity=1.0,
+                ambient=0.25,
+            )
+
+    extent, _ = _dynamic_height_extent(df, SX, SY, SZ)
     mlab.outline(
         extent=extent,
         color=(0, 0, 0),
@@ -718,26 +940,8 @@ def _plot_points_df_dynamic_height(
         figure=fig,
     )
 
-    Lref = max(SX, SY, z_extent)
-    focal = (SX / 2, SY / 2, z_extent / 2)
-    if show_base:
-        mlab.view(
-            azimuth=0,
-            elevation=-90,
-            distance=2.8 * Lref,
-            focalpoint=(focal[0], focal[1], 0),
-            figure=fig,
-        )
-    else:
-        mlab.view(
-            azimuth=70,
-            elevation=65,
-            distance=3.1 * Lref,
-            focalpoint=focal,
-            figure=fig,
-        )
+    _apply_regular_lattice_camera(fig, extent, show_base=show_base)
 
-    fig.scene.render()
     out_dir = os.path.dirname(path_out)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -761,7 +965,9 @@ def save_dynamic_height_cumulative_frames(
     prefix="frame",
     height_limit=None,
     stop_when_front_reaches_height=True,
+    highlight_growth_front=True,
     resume=True,
+    frame_workers=1,
     memory_file=None,
     overwrite_existing=False,
 ):
@@ -785,11 +991,16 @@ def save_dynamic_height_cumulative_frames(
             primeiro instante em que a frente cumulativa alcança height_limit.
 
         resume: se True, pula frames já existentes e continua a geração.
+        frame_workers: número de processos para renderizar frames em paralelo.
+            Use 1 para modo serial. Em Linux, valores 2-4 costumam ser um bom
+            compromisso para Mayavi/VTK.
         memory_file: arquivo JSON opcional para registrar o progresso.
         overwrite_existing: se True, recria os frames mesmo que já existam.
     """
     if frame_stride < 1:
         raise ValueError("frame_stride deve ser >= 1")
+    if frame_workers < 1:
+        raise ValueError("frame_workers deve ser >= 1")
 
     network_dir = os.path.join(path_dir, "network")
     network_filename = _choose_network_file(path_dir, network_filename)
@@ -822,6 +1033,8 @@ def save_dynamic_height_cumulative_frames(
             "max_frames": None if max_frames is None else int(max_frames),
             "height_limit": None if height_limit is None else int(height_limit),
             "stop_when_front_reaches_height": bool(stop_when_front_reaches_height),
+            "highlight_growth_front": bool(highlight_growth_front),
+            "frame_workers": int(frame_workers),
             "specific_color": specific_color,
             "show_base": bool(show_base),
             "visual_profile": visual_profile,
@@ -900,6 +1113,8 @@ def save_dynamic_height_cumulative_frames(
                 t_stop = int(reached["time"].min())
                 df = df[df["time"] <= t_stop].copy()
 
+    df = df.sort_values("time").reset_index(drop=True)
+    time_values = df["time"].to_numpy()
     times = np.array(sorted(df["time"].astype(int).unique()), dtype=int)
     times = times[::frame_stride]
 
@@ -946,9 +1161,9 @@ def save_dynamic_height_cumulative_frames(
 
         _write_memory(done_items, len(expected_frames))
 
+    render_items = []
+
     for item in expected_frames[start_idx:]:
-        frame_idx = item["frame_idx"]
-        t = item["time"]
         path_out = item["path"]
 
         if resume and not overwrite_existing and _valid_frame(path_out):
@@ -956,36 +1171,382 @@ def save_dynamic_height_cumulative_frames(
             done_items.append(item)
 
             print(
-                f"[skip {frame_idx + 1}/{len(expected_frames)}] "
-                f"t={int(t)} já existe -> {path_out}"
+                f"[skip {item['frame_idx'] + 1}/{len(expected_frames)}] "
+                f"t={int(item['time'])} já existe -> {path_out}"
             )
 
             _write_memory(done_items, len(expected_frames))
             continue
 
-        df_frame = df[df["time"] <= int(t)]
+        render_items.append(item)
 
-        _plot_points_df_dynamic_height(
-            df=df_frame,
-            shape=meta["shape"],
-            nc=nc,
-            path_out=path_out,
-            figure_name=f"{prefix}_{frame_idx:06d}",
-            specific_color=specific_color,
-            show_base=show_base,
-            visual_profile=visual_profile,
-            height_limit=height_limit,
+    workers = int(frame_workers)
+    if workers > 1 and "fork" not in mp.get_all_start_methods():
+        print("[WARN] multiprocessing por fork não disponível. Usando frame_workers=1.")
+        workers = 1
+    if render_items:
+        workers = min(workers, len(render_items))
+
+    if workers > 1 and render_items:
+        global _FRAME_RENDER_CONTEXT
+        _FRAME_RENDER_CONTEXT = {
+            "df": df,
+            "time_values": time_values,
+            "shape": meta["shape"],
+            "nc": nc,
+            "prefix": prefix,
+            "specific_color": specific_color,
+            "show_base": show_base,
+            "visual_profile": visual_profile,
+            "height_limit": height_limit,
+            "highlight_growth_front": highlight_growth_front,
+        }
+
+        print(
+            f"[multiprocessing] renderizando {len(render_items)} frames "
+            f"com {workers} processos."
         )
 
-        saved.append(path_out)
-        done_items.append(item)
+        mp_context = mp.get_context("fork")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
+            futures = [
+                executor.submit(_render_dynamic_height_frame_worker, item)
+                for item in render_items
+            ]
+
+            for future in as_completed(futures):
+                item = future.result()
+                saved.append(item["path"])
+                done_items.append(item)
+                done_items_sorted = sorted(done_items, key=lambda done: done["frame_idx"])
+
+                _write_memory(done_items_sorted, len(expected_frames))
+
+                print(
+                    f"[frame {item['frame_idx'] + 1}/{len(expected_frames)}] "
+                    f"t={int(item['time'])} -> {item['path']}"
+                )
+    else:
+        for item in render_items:
+            item = _render_dynamic_height_frame_serial(
+                df=df,
+                meta=meta,
+                nc=nc,
+                prefix=prefix,
+                item=item,
+                time_values=time_values,
+                specific_color=specific_color,
+                show_base=show_base,
+                visual_profile=visual_profile,
+                height_limit=height_limit,
+                highlight_growth_front=highlight_growth_front,
+            )
+
+            saved.append(item["path"])
+            done_items.append(item)
+
+            _write_memory(done_items, len(expected_frames))
+
+            print(
+                f"[frame {item['frame_idx'] + 1}/{len(expected_frames)}] "
+                f"t={int(item['time'])} -> {item['path']}"
+            )
+
+    done_items = sorted(done_items, key=lambda done: done["frame_idx"])
+    saved = [item["path"] for item in done_items]
+
+    return {
+        "frames": saved,
+        "output_dir": output_dir,
+        "positions_file": positions_file,
+        "network_file": os.path.join(network_dir, network_filename),
+        "shape": meta["shape"],
+        "times": times.tolist(),
+        "memory_file": memory_file,
+        "resume": resume,
+        "overwrite_existing": overwrite_existing,
+    }
+
+
+def save_dynamic_height_front_frames(
+    path_dir,
+    network_filename=None,
+    output_dir=None,
+    nc=4,
+    L=None,
+    dim=None,
+    frame_stride=1,
+    max_frames=None,
+    specific_color=None,
+    show_base=False,
+    visual_profile="full",
+    positions_file=None,
+    force_rebuild_positions=False,
+    prefix="frame",
+    height_limit=None,
+    stop_when_front_reaches_height=True,
+    resume=True,
+    frame_workers=1,
+    memory_file=None,
+    overwrite_existing=False,
+):
+    """
+    Salva frames contendo apenas a frente ativa (sítios ativados no tempo t).
+
+    Cada frame é gerado com os pontos cujo `time` corresponde ao instante t.
+    """
+    if frame_stride < 1:
+        raise ValueError("frame_stride deve ser >= 1")
+    if frame_workers < 1:
+        raise ValueError("frame_workers deve ser >= 1")
+
+    network_dir = os.path.join(path_dir, "network")
+    network_filename = _choose_network_file(path_dir, network_filename)
+
+    if output_dir is None:
+        output_dir = os.path.join(path_dir, "dynamic_front_frames")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    if memory_file is None:
+        memory_file = os.path.join(output_dir, f"{prefix}_resume_memory.json")
+
+    if positions_file is None:
+        positions_file = os.path.join(
+            output_dir,
+            f"{os.path.splitext(network_filename)[0]}_dynamic_positions.csv",
+        )
+
+    def _valid_frame(path_out):
+        return os.path.exists(path_out) and os.path.getsize(path_out) > 0
+
+    def _write_memory(done_items, total_frames):
+        payload = {
+            "path_dir": path_dir,
+            "output_dir": output_dir,
+            "network_file": os.path.join(network_dir, network_filename),
+            "positions_file": positions_file,
+            "prefix": prefix,
+            "frame_stride": int(frame_stride),
+            "max_frames": None if max_frames is None else int(max_frames),
+            "height_limit": None if height_limit is None else int(height_limit),
+            "stop_when_front_reaches_height": bool(stop_when_front_reaches_height),
+            "frame_workers": int(frame_workers),
+            "specific_color": specific_color,
+            "show_base": bool(show_base),
+            "visual_profile": visual_profile,
+            "total_frames": int(total_frames),
+            "done_frames": [
+                {
+                    "frame_idx": int(item["frame_idx"]),
+                    "time": int(item["time"]),
+                    "path": item["path"],
+                }
+                for item in done_items
+            ],
+        }
+
+        tmp_file = f"{memory_file}.tmp"
+
+        with open(tmp_file, "w") as f:
+            json.dump(payload, f, indent=2)
+
+        os.replace(tmp_file, memory_file)
+
+    if (not force_rebuild_positions) and os.path.exists(positions_file):
+        df = _read_positions_table(positions_file)
+
+        if L is None:
+            L = _infer_L_from_path(path_dir)
+
+        if dim is None:
+            dim = _infer_dim_from_path(path_dir)
+
+        info = _read_compact_bin(os.path.join(network_dir, network_filename))
+
+        if dim == 3:
+            shape = (int(L), int(L), int(info["N"]) // (int(L) * int(L)))
+        else:
+            shape = (int(L), int(info["N"]) // int(L), 1)
+
+        meta = {
+            "dim": dim,
+            "shape": shape,
+            "N": int(info["N"]),
+            "E": int(info["E"]),
+        }
+    else:
+        df, meta = positions_from_dynamic_height_compact_bin(
+            path_dir=network_dir,
+            filename=network_filename,
+            L=L,
+            dim=dim,
+            output_data=positions_file,
+        )
+
+    if df.empty:
+        raise ValueError("A rede não possui sítios ativos para animar.")
+
+    if height_limit is not None:
+        hlim = int(height_limit)
+        growth_col = "z" if int(meta["dim"]) == 3 else "y"
+
+        df = df[df[growth_col] <= hlim].copy()
+
+        if df.empty:
+            raise ValueError("Nenhum sítio ativo dentro do limite de altura.")
+
+        shape = tuple(int(v) for v in meta["shape"])
+
+        if int(meta["dim"]) == 3:
+            meta["shape"] = (shape[0], shape[1], min(shape[2], hlim + 1))
+        else:
+            meta["shape"] = (shape[0], min(shape[1], hlim + 1), shape[2])
+
+        if stop_when_front_reaches_height:
+            reached = df[df[growth_col] >= hlim]
+
+            if not reached.empty:
+                t_stop = int(reached["time"].min())
+                df = df[df["time"] <= t_stop].copy()
+
+    df = df.sort_values("time").reset_index(drop=True)
+    times = np.array(sorted(df["time"].astype(int).unique()), dtype=int)
+    times = times[::frame_stride]
+
+    if max_frames is not None:
+        times = times[:int(max_frames)]
+
+    expected_frames = []
+
+    for frame_idx, t in enumerate(times):
+        path_out = os.path.join(
+            output_dir,
+            f"{prefix}_{frame_idx:06d}_t{int(t):06d}.png",
+        )
+
+        expected_frames.append(
+            {
+                "frame_idx": int(frame_idx),
+                "time": int(t),
+                "path": path_out,
+            }
+        )
+
+    saved = []
+    done_items = []
+
+    start_idx = 0
+
+    if resume and not overwrite_existing:
+        while start_idx < len(expected_frames):
+            item = expected_frames[start_idx]
+
+            if not _valid_frame(item["path"]):
+                break
+
+            saved.append(item["path"])
+            done_items.append(item)
+            start_idx += 1
+
+        if start_idx > 0:
+            print(
+                f"[resume] {start_idx}/{len(expected_frames)} frames já existem. "
+                f"Continuando a partir do frame {start_idx}."
+            )
 
         _write_memory(done_items, len(expected_frames))
 
+    render_items = []
+
+    for item in expected_frames[start_idx:]:
+        path_out = item["path"]
+
+        if resume and not overwrite_existing and _valid_frame(path_out):
+            saved.append(path_out)
+            done_items.append(item)
+
+            print(
+                f"[skip {item['frame_idx'] + 1}/{len(expected_frames)}] "
+                f"t={int(item['time'])} já existe -> {path_out}"
+            )
+
+            _write_memory(done_items, len(expected_frames))
+            continue
+
+        render_items.append(item)
+
+    workers = int(frame_workers)
+    if workers > 1 and "fork" not in mp.get_all_start_methods():
+        print("[WARN] multiprocessing por fork não disponível. Usando frame_workers=1.")
+        workers = 1
+    if render_items:
+        workers = min(workers, len(render_items))
+
+    if workers > 1 and render_items:
+        global _FRAME_RENDER_CONTEXT
+        _FRAME_RENDER_CONTEXT = {
+            "df": df,
+            "shape": meta["shape"],
+            "nc": nc,
+            "prefix": prefix,
+            "specific_color": specific_color,
+            "show_base": show_base,
+            "visual_profile": visual_profile,
+            "height_limit": height_limit,
+        }
+
         print(
-            f"[frame {frame_idx + 1}/{len(expected_frames)}] "
-            f"t={int(t)} -> {path_out}"
+            f"[multiprocessing] renderizando {len(render_items)} frames "
+            f"com {workers} processos."
         )
+
+        mp_context = mp.get_context("fork")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
+            futures = [
+                executor.submit(_render_dynamic_front_frame_worker, item)
+                for item in render_items
+            ]
+
+            for future in as_completed(futures):
+                item = future.result()
+                saved.append(item["path"])
+                done_items.append(item)
+                done_items_sorted = sorted(done_items, key=lambda done: done["frame_idx"])
+
+                _write_memory(done_items_sorted, len(expected_frames))
+
+                print(
+                    f"[frame {item['frame_idx'] + 1}/{len(expected_frames)}] "
+                    f"t={int(item['time'])} -> {item['path']}"
+                )
+    else:
+        for item in render_items:
+            item = _render_dynamic_front_frame_serial(
+                df=df,
+                meta=meta,
+                nc=nc,
+                prefix=prefix,
+                item=item,
+                time_values=None,
+                specific_color=specific_color,
+                show_base=show_base,
+                visual_profile=visual_profile,
+                height_limit=height_limit,
+            )
+
+            saved.append(item["path"])
+            done_items.append(item)
+
+            _write_memory(done_items, len(expected_frames))
+
+            print(
+                f"[frame {item['frame_idx'] + 1}/{len(expected_frames)}] "
+                f"t={int(item['time'])} -> {item['path']}"
+            )
+
+    done_items = sorted(done_items, key=lambda done: done["frame_idx"])
+    saved = [item["path"] for item in done_items]
 
     return {
         "frames": saved,
@@ -1007,6 +1568,7 @@ def write_gimp_crop_frames_script(
     frame_prefix="frame_",
     background_rgb=(255, 255, 255),
     threshold=8,
+    crop_padding=32,
     gimp_executable="gimp",
     run=False,
 ):
@@ -1019,7 +1581,8 @@ def write_gimp_crop_frames_script(
       3. seleciona o fundo branco por cor;
       4. deleta o fundo;
       5. recorta ao conteúdo;
-      6. salva em `cropped_dir`.
+      6. adiciona uma margem transparente;
+      7. salva em `cropped_dir`.
 
     Retorna um dicionário com o caminho do script, comando sugerido e arquivos.
     """
@@ -1048,7 +1611,7 @@ def write_gimp_crop_frames_script(
     r, g, b = (int(background_rgb[0]), int(background_rgb[1]), int(background_rgb[2]))
 
     lines = [
-        "(define (sop-crop-frame input-path output-path threshold)",
+        "(define (sop-crop-frame input-path output-path threshold padding)",
         "  (let* (",
         "      (image (car (gimp-file-load RUN-NONINTERACTIVE input-path input-path)))",
         "      (layer (car (gimp-image-get-active-layer image))))",
@@ -1057,6 +1620,10 @@ def write_gimp_crop_frames_script(
         "    (gimp-edit-clear layer)",
         "    (gimp-selection-none image)",
         "    (plug-in-autocrop RUN-NONINTERACTIVE image layer)",
+        "    (let* (",
+        "        (width (car (gimp-image-width image)))",
+        "        (height (car (gimp-image-height image))))",
+        "      (gimp-image-resize image (+ width (* 2 padding)) (+ height (* 2 padding)) padding padding))",
         "    (set! layer (car (gimp-image-get-active-layer image)))",
         "    (gimp-file-save RUN-NONINTERACTIVE image layer output-path output-path)",
         "    (gimp-image-delete image)))",
@@ -1067,7 +1634,8 @@ def write_gimp_crop_frames_script(
         in_path = os.path.join(output_dir, frame)
         out_path = os.path.join(cropped_dir, frame)
         lines.append(
-            f"(sop-crop-frame {scm_string(in_path)} {scm_string(out_path)} {int(threshold)})"
+            f"(sop-crop-frame {scm_string(in_path)} {scm_string(out_path)} "
+            f"{int(threshold)} {int(crop_padding)})"
         )
 
     lines.append("(gimp-quit 0)")
@@ -1089,6 +1657,7 @@ def write_gimp_crop_frames_script(
     return {
         "script_path": script_path,
         "cropped_dir": cropped_dir,
+        "crop_padding": int(crop_padding),
         "frames": [os.path.join(output_dir, f) for f in frames],
         "command": command,
     }
@@ -2780,3 +3349,278 @@ def plot_3D_full_codec_by_species(path_dir, filename, path_out_dir, figure_name,
         print(f"  color={color}: {path}")
 
     return saved_paths
+
+
+def assemble_animation_from_frames(
+    frames_dir,
+    output_video_path=None,
+    fps=10,
+    frame_pattern="frame_*.png",
+    codec="libx264",
+    crf=18,
+    preset="slow",
+    scale=None,
+    verbose=False,
+):
+    """
+    Monta uma animação a partir de frames PNG usando FFmpeg.
+
+    Características:
+    - Processa frames em stream (eficiente de memória)
+    - Suporta diferentes codecs (libx264, libx265, libvpx-vp9)
+    - CRF ajustável (0-51: 0=lossless, 18=visualmente lossless, 51=pior)
+    - Preset de velocidade/qualidade (ultrafast...veryslow)
+    - Escalamento opcional
+    - Sem limite de RAM independentemente da quantidade de frames
+
+    Args:
+        frames_dir: diretório contendo os frames PNG
+        output_video_path: caminho do vídeo de saída (default: frames_dir/output.mp4)
+        fps: frames por segundo (default: 10)
+        frame_pattern: glob pattern para encontrar frames (default: frame_*.png)
+        codec: 'libx264' (H.264, default), 'libx265' (H.265), 'libvpx-vp9' (VP9)
+        crf: 0-51 para H.264/H.265 (18=visualmente lossless, default)
+               0-63 para VP9 (15=visualmente lossless)
+        preset: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+        scale: tuple (width, height) ou None para manter resolução original
+        verbose: True para mostrar saída do FFmpeg
+
+    Returns:
+        dict com informações sobre o vídeo criado
+    """
+    import glob
+
+    frames_dir = os.path.abspath(frames_dir)
+    if not os.path.isdir(frames_dir):
+        raise FileNotFoundError(f"Diretório de frames não existe: {frames_dir}")
+
+    # Encontrar frames
+    pattern = os.path.join(frames_dir, frame_pattern)
+    frames = sorted(glob.glob(pattern))
+
+    if not frames:
+        raise FileNotFoundError(f"Nenhum frame encontrado com padrão: {pattern}")
+
+    print(f"[assemble_animation] Encontrados {len(frames)} frames em {frames_dir}")
+
+    if output_video_path is None:
+        base_name = f"output_{codec}_{crf}_{preset}"
+        ext = ".webm" if codec == "libvpx-vp9" else ".mp4"
+        output_video_path = os.path.join(frames_dir, f"{base_name}{ext}")
+
+    output_video_path = os.path.abspath(output_video_path)
+    out_dir = os.path.dirname(output_video_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    # Validar codec
+    valid_codecs = {"libx264", "libx265", "libvpx-vp9"}
+    if codec not in valid_codecs:
+        raise ValueError(f"Codec inválido: {codec}. Deve ser um de: {valid_codecs}")
+
+    # Validar CRF
+    if codec == "libvpx-vp9":
+        crf_max = 63
+    else:
+        crf_max = 51
+    crf = int(crf)
+    if crf < 0 or crf > crf_max:
+        raise ValueError(f"CRF deve estar entre 0 e {crf_max}, recebido: {crf}")
+
+    # Construir comando FFmpeg
+    # Usar stdin para passar a lista de frames (mais robusto que glob)
+    first_frame = frames[0]
+    frame_dir_abs = os.path.dirname(first_frame)
+    frame_base = os.path.basename(first_frame)
+
+    # Extrair padrão do nome do frame (ex: "frame_000000_t000000.png")
+    # Assumir formato "frame_XXXXXX_tYYYYYY.png" e usar glob no FFmpeg
+    frame_spec = os.path.join(frame_dir_abs, frame_pattern)
+
+    cmd = [
+        "ffmpeg",
+        "-framerate", str(int(fps)),
+        "-pattern_type", "glob",
+        "-i", frame_spec,
+        "-vf", "format=rgb8",
+        "-c:v", codec,
+    ]
+
+    # Adicionar opções específicas do codec
+    if codec == "libx264":
+        cmd.extend(["-crf", str(crf), "-preset", preset])
+    elif codec == "libx265":
+        cmd.extend(["-crf", str(crf), "-preset", preset])
+    elif codec == "libvpx-vp9":
+        cmd.extend(["-crf", str(crf), "-b:v", "0", "-deadline", "good"])
+
+    # Adicionar escala se especificada
+    if scale is not None:
+        w, h = int(scale[0]), int(scale[1])
+        cmd.extend(["-vf", f"scale={w}:{h}:flags=lanczos"])
+
+    # Opções gerais
+    cmd.extend([
+        "-y",  # sobrescrever sem perguntar
+        output_video_path,
+    ])
+
+    if verbose:
+        print(f"[ffmpeg] Comando: {' '.join(cmd)}")
+    else:
+        progress_insert_idx = cmd.index(output_video_path)
+        cmd_with_progress = (
+            cmd[:progress_insert_idx]
+            + ["-nostats", "-progress", "pipe:1", "-loglevel", "error"]
+            + cmd[progress_insert_idx:]
+        )
+        cmd_without_progress = (
+            cmd[:progress_insert_idx]
+            + ["-loglevel", "error"]
+            + cmd[progress_insert_idx:]
+        )
+        cmd = cmd_with_progress
+
+    print(f"[assemble_animation] Codificando {len(frames)} frames com {codec} (CRF={crf})...")
+    print(f"[assemble_animation] Progresso: 0/{len(frames)} frames processados (0.0%) - faltam {len(frames)}")
+
+    try:
+        if verbose:
+            subprocess.run(cmd, check=True)
+        else:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            last_reported = 0
+            try:
+                for line in process.stdout:
+                    if not line:
+                        continue
+                    if line.startswith("frame="):
+                        try:
+                            frame_num = int(line.split("=", 1)[1].split()[0])
+                        except ValueError:
+                            continue
+
+                        processed = min(frame_num, len(frames))
+                        remaining = max(len(frames) - processed, 0)
+                        percent = (processed / len(frames) * 100.0) if len(frames) else 100.0
+
+                        if processed != last_reported:
+                            print(
+                                f"[assemble_animation] Progresso: {processed}/{len(frames)} frames processados "
+                                f"({percent:.1f}%) - faltam {remaining}",
+                                flush=True,
+                            )
+                            last_reported = processed
+            finally:
+                return_code = process.wait()
+
+            if return_code != 0:
+                raise subprocess.CalledProcessError(return_code, cmd)
+    except subprocess.CalledProcessError as e:
+        if not verbose:
+            print("[assemble_animation] O monitoramento de progresso causou falha no FFmpeg; tentando novamente sem a saída de progresso.")
+            subprocess.run(cmd_without_progress, check=True, capture_output=True)
+        else:
+            raise RuntimeError(f"Falha ao executar FFmpeg: {e}")
+    except FileNotFoundError:
+        raise RuntimeError(
+            "FFmpeg não encontrado. Instale com: sudo apt-get install ffmpeg"
+        )
+
+    file_size_mb = os.path.getsize(output_video_path) / (1024 * 1024)
+
+    result = {
+        "video_path": output_video_path,
+        "frames_count": len(frames),
+        "fps": int(fps),
+        "codec": codec,
+        "crf": int(crf),
+        "preset": preset,
+        "file_size_mb": round(file_size_mb, 2),
+        "duration_seconds": round(len(frames) / int(fps), 2),
+    }
+
+    print(f"[assemble_animation] Vídeo criado: {output_video_path}")
+    print(f"  - Tamanho: {result['file_size_mb']} MB")
+    print(f"  - Duração: {result['duration_seconds']} s")
+    print(f"  - Frames: {len(frames)} @ {fps} FPS")
+
+    return result
+
+
+def create_multiple_quality_videos(
+    frames_dir,
+    output_base_dir=None,
+    fps=10,
+    frame_pattern="frame_*.png",
+    quality_presets=None,
+):
+    """
+    Cria múltiplas versões da animação com diferentes qualidades.
+
+    Útil para ter uma versão de alta qualidade (arquivo grande) e versões
+    comprimidas para compartilhamento rápido.
+
+    Args:
+        frames_dir: diretório contendo os frames PNG
+        output_base_dir: diretório base para os vídeos (default: frames_dir)
+        fps: frames por segundo
+        frame_pattern: glob pattern para encontrar frames
+        quality_presets: lista de dicts com configurações
+            Default:
+            [
+                {"name": "hq", "codec": "libx265", "crf": 15, "preset": "slow"},
+                {"name": "mq", "codec": "libx264", "crf": 23, "preset": "medium"},
+                {"name": "lq", "codec": "libx264", "crf": 28, "preset": "fast"},
+            ]
+
+    Returns:
+        dict com caminhos dos vídeos criados por qualidade
+    """
+    if quality_presets is None:
+        quality_presets = [
+            {"name": "hq", "codec": "libx265", "crf": 15, "preset": "slow"},
+            {"name": "mq", "codec": "libx264", "crf": 23, "preset": "medium"},
+            {"name": "lq", "codec": "libx264", "crf": 28, "preset": "fast"},
+        ]
+
+    if output_base_dir is None:
+        output_base_dir = frames_dir
+
+    videos = {}
+
+    for preset_cfg in quality_presets:
+        name = preset_cfg.get("name", "video")
+        codec = preset_cfg.get("codec", "libx264")
+        crf = preset_cfg.get("crf", 23)
+        preset = preset_cfg.get("preset", "medium")
+
+        ext = ".webm" if codec == "libvpx-vp9" else ".mp4"
+        output_path = os.path.join(output_base_dir, f"{name}{ext}")
+
+        print(f"\n[quality_preset] Criando versão '{name}'...")
+        result = assemble_animation_from_frames(
+            frames_dir=frames_dir,
+            output_video_path=output_path,
+            fps=fps,
+            frame_pattern=frame_pattern,
+            codec=codec,
+            crf=crf,
+            preset=preset,
+            verbose=False,
+        )
+
+        videos[name] = result
+
+    print(f"\n[quality_presets] Resumo de vídeos criados:")
+    for name, info in videos.items():
+        print(f"  {name:8s}: {info['file_size_mb']:8.2f} MB - {info['video_path']}")
+
+    return videos

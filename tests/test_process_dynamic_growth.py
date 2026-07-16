@@ -52,6 +52,12 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                         "t_eq_by_species": [5.0],
                         "z_max": [1.0],
                         "z_stat": [1.0],
+                        "growth_test_stop_criterion": "alive_species_pt_derivative_stability_or_death",
+                        "growth_test_t_eq_validation": "discrete_derivative_of_blocked_pt_variation",
+                        "growth_test_t_eq_s_prime_threshold": 1.0e-5,
+                        "growth_test_equilibrium_effective_rel_tol": 2.5e-3,
+                        "growth_test_post_equilibrium_extra_steps": 100,
+                        "growth_test_equilibrium_rel_tol_scaling": "fixed_base_tol_times_0p10",
                     },
                     "results": {
                         "order_percolation 1": {
@@ -69,6 +75,16 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             encoding="utf-8",
         )
         return sample_path
+
+    def test_new_dynamic_layout_uses_zero_stat_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, _, _, data_dir = self._make_data_dir(root)
+
+            meta = PROCESS_DYNAMIC_GROWTH.parse_data_dir(data_dir)
+
+            self.assertIsNotNone(meta)
+            self.assertEqual(meta["stat_window"], 0)
 
     def test_rebuilds_published_bundle_when_new_samples_arrive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -114,6 +130,20 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
 
             self.assertEqual(bundle["p0_groups"][0]["num_samples_total"], 2)
             self.assertEqual(bundle["p0_groups"][0]["orders"][0]["N_samples"], 2)
+            self.assertEqual(
+                bundle["meta"]["stop_criterion"],
+                "alive_species_pt_derivative_stability_or_death",
+            )
+            self.assertEqual(
+                bundle["meta"]["t_eq_validation"],
+                "discrete_derivative_of_blocked_pt_variation",
+            )
+            self.assertAlmostEqual(bundle["meta"]["t_eq_s_prime_threshold"], 1.0e-5)
+            self.assertAlmostEqual(bundle["meta"]["equilibrium_effective_rel_tol"], 2.5e-3)
+            self.assertEqual(bundle["meta"]["post_equilibrium_extra_steps"], 100)
+            self.assertEqual(all_rows[0]["stat_window"], 0)
+            self.assertAlmostEqual(all_rows[0]["t_eq_s_prime_threshold"], 1.0e-5)
+            self.assertEqual(all_rows[0]["post_equilibrium_extra_steps"], 100)
 
     def test_updates_time_series_from_published_when_raw_is_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -23,6 +23,53 @@
 
 namespace rh = reanalysis_helpers;
 
+namespace {
+
+constexpr int SPECIES_FACTOR = 10000000;
+
+NetworkCompact convert_encoded_to_compact(const NetworkPattern& np)
+{
+    NetworkCompact nc;
+    const std::size_t total = np.data.size();
+    nc.N = static_cast<NetworkCompact::index_t>(total);
+    nc.pos_flat.resize(nc.N);
+    for (NetworkCompact::index_t i = 0; i < nc.N; ++i) nc.pos_flat[i] = i;
+
+    nc.species.resize(nc.N);
+    nc.activation_time.resize(nc.N);
+
+    for (NetworkCompact::index_t i = 0; i < nc.N; ++i) {
+        const long long code =
+            static_cast<long long>(np.data[static_cast<std::size_t>(i)]);
+        if (code <= 0) {
+            nc.species[i] = 0;
+            nc.activation_time[i] = 0u;
+        } else {
+            const int color_1b = static_cast<int>(code / SPECIES_FACTOR);
+            const int time = static_cast<int>(code % SPECIES_FACTOR);
+            int color_idx = 0;
+            if (np.num_colors == 1) {
+                color_idx = 0;
+            } else {
+                color_idx = std::max(0, std::min(np.num_colors - 1, color_1b - 1));
+            }
+            nc.species[i] = static_cast<uint8_t>(color_idx + 1);
+            nc.activation_time[i] = static_cast<uint32_t>(time);
+        }
+    }
+
+    if (!np.edge_pairs.empty()) {
+        nc.build_csr_from_edge_pairs(np.edge_pairs);
+    } else {
+        nc.edge_offsets.assign(nc.N + 1, 0);
+        nc.edges.clear();
+    }
+
+    return nc;
+}
+
+} // namespace
+
 int main(int argc, char* argv[]) {
     if (argc >= 2) {
         if (helpers::is_help_token(argv[1])) {
@@ -106,7 +153,7 @@ int main(int argc, char* argv[]) {
         const InitialBaseLayout initial_base_layout =
             parse_initial_layout(initial_layout);
 
-        const bool animation = helpers::parse_bool(equilibration);
+        const bool return_encoded_network = helpers::parse_bool(equilibration);
 
         if (dim != 2 && dim != 3) {
             std::cerr << "[ERROR] dim must be 2 or 3.\n";
@@ -157,26 +204,15 @@ int main(int argc, char* argv[]) {
             stop_config.stop_at_equilibrium = true;
             stop_config.save_lateral_observables = true;
             stop_config.equilibrium_consecutive_steps = 10;
-            stop_config.dynamics_window_steps =
-                GROWTH_TEST_DYNAMICS_WINDOW_FACTOR *
-                stop_config.equilibrium_consecutive_steps;
-            if (const char* env_window =
-                    std::getenv("GROWTH_TEST_DYNAMICS_WINDOW_STEPS")) {
-                stop_config.dynamics_window_steps = std::stoi(env_window);
-                if (stop_config.dynamics_window_steps <= 1) {
-                    throw std::runtime_error(
-                        "GROWTH_TEST_DYNAMICS_WINDOW_STEPS must be > 1");
-                }
-            }
+            stop_config.dynamics_window_steps = -1;
         }
-        const int SPECIES_FACTOR = 10000000;
         int type_f_T = 0;
         double a = 0.0, alpha = 0.0;
         //double alpha = 0.0;
         
         network net_generator(N_samples, num_colors);
 
-        const bool build_full_network = animation && calculate_detailed_properties;
+        const bool build_full_network = return_encoded_network;
 
         NetworkPattern net = build_full_network
             ? net_generator.animate_network(
@@ -272,6 +308,8 @@ int main(int argc, char* argv[]) {
         const bool has_percolation = !ps.color_percolation.empty();
         const bool dynamic_growth_artifacts =
             teste && stop_config.dynamic_height;
+        const bool write_encoded_network_artifact =
+            build_full_network && !net.data.empty();
         const bool write_large_artifacts =
             calculate_detailed_properties &&
             build_full_network &&
@@ -302,64 +340,30 @@ int main(int argc, char* argv[]) {
                 std::cout << "[INFO] No percolating species found; skipping surface file."
                           << std::endl;
             }
-        } else if (animation && !calculate_detailed_properties) {
-            std::cout << "[INFO] Time-series-only mode: skipping network/surface artifacts."
+        } else if (return_encoded_network && !calculate_detailed_properties) {
+            std::cout << "[INFO] Encoded-network mode: skipping detailed surface artifacts."
                       << std::endl;
         }
 
-        if (write_large_artifacts) {
-            // Helper: convert NetworkPattern -> NetworkCompact (decode encoded values)
-            auto convert_to_compact = [&](const NetworkPattern& np) {
-                NetworkCompact nc;
-                const std::size_t total = np.data.size();
-                nc.N = static_cast<NetworkCompact::index_t>(total);
-                nc.pos_flat.resize(nc.N);
-                for (NetworkCompact::index_t i = 0; i < nc.N; ++i) nc.pos_flat[i] = i;
+        const std::string net_compact_filename =
+            network_dir + "/" + sample_base + ".bin";
 
-                nc.species.resize(nc.N);
-                nc.activation_time.resize(nc.N);
-
-                for (NetworkCompact::index_t i = 0; i < nc.N; ++i) {
-                    const long long code = static_cast<long long>(np.data[static_cast<std::size_t>(i)]);
-                    if (code <= 0) {
-                        nc.species[i] = 0;
-                        nc.activation_time[i] = 0u;
-                    } else {
-                        const int color_1b = static_cast<int>(code / SPECIES_FACTOR);
-                        const int time = static_cast<int>(code % SPECIES_FACTOR);
-                        int color_idx = 0;
-                        if (np.num_colors == 1) color_idx = 0;
-                        else color_idx = std::max(0, std::min(np.num_colors - 1, color_1b - 1));
-                        // store species as 1-based color id to match previous convention
-                        nc.species[i] = static_cast<uint8_t>(color_idx + 1);
-                        nc.activation_time[i] = static_cast<uint32_t>(time);
-                    }
-                }
-
-                if (!np.edge_pairs.empty()) {
-                    nc.build_csr_from_edge_pairs(np.edge_pairs);
-                } else {
-                    nc.edge_offsets.assign(nc.N + 1, 0);
-                    nc.edges.clear();
-                }
-
-                return nc;
-            };
-
-            // full network (stored as compact)
-            const std::string net_compact_filename = network_dir + "/" + sample_base + ".bin";
+        if (write_encoded_network_artifact) {
             try {
-                NetworkCompact fullc = convert_to_compact(net);
+                NetworkCompact fullc = convert_encoded_to_compact(net);
                 saver.save_network_compact_bin(fullc, net_compact_filename);
             } catch (const std::exception &e) {
-                std::cerr << "Warning: failed to save full compact network: " << e.what() << '\n';
+                std::cerr << "Warning: failed to save encoded compact network: "
+                          << e.what() << '\n';
             }
+        }
 
+        if (write_large_artifacts) {
             if (write_classic_large_artifacts) {
                 // percolating clusters (compact)
                 try {
                     NetworkPattern net_perc_clusters = net_generator.filter_percolating_clusters_from_encoded(net);
-                    NetworkCompact percc = convert_to_compact(net_perc_clusters);
+                    NetworkCompact percc = convert_encoded_to_compact(net_perc_clusters);
                     const std::string net_PERCOLATION_filename = network_dir + "/" + sample_base + "_PERCOLATION" + ".bin";
                     saver.save_network_compact_bin(percc, net_PERCOLATION_filename);
                 } catch (const std::exception &e) {
@@ -377,8 +381,8 @@ int main(int argc, char* argv[]) {
                 }
 
                 // Convert cuts to compact form (species + activation_time)
-                NetworkCompact pre_c = convert_to_compact(cuts->pre_teq);
-                NetworkCompact post_c = convert_to_compact(cuts->post_teq);
+                NetworkCompact pre_c = convert_encoded_to_compact(cuts->pre_teq);
+                NetworkCompact post_c = convert_encoded_to_compact(cuts->post_teq);
 
                 auto rebuild_pre_post_csr = [](NetworkCompact& pre,
                                                NetworkCompact& post,

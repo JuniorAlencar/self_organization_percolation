@@ -430,9 +430,13 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 << ps.growth_test_stop_time << ",\n";
         }
         if (ps.equilibrium_consecutive_steps > 0) {
-            ofs << "    \"growth_test_stop_criterion\": \"alive_species_pt_stability_checked_after_min_z_L_or_death\",\n";
+            ofs << "    \"growth_test_stop_criterion\": \"alive_species_pt_derivative_stability_or_death\",\n";
             ofs << "    \"growth_test_equilibrium_consecutive_steps\": "
                 << ps.equilibrium_consecutive_steps << ",\n";
+            if (ps.post_equilibrium_extra_steps >= 0) {
+                ofs << "    \"growth_test_post_equilibrium_extra_steps\": "
+                    << ps.post_equilibrium_extra_steps << ",\n";
+            }
             if (ps.dynamic_min_stop_height >= 0) {
                 ofs << "    \"growth_test_dynamic_min_stop_height\": "
                     << ps.dynamic_min_stop_height << ",\n";
@@ -445,11 +449,9 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             ofs << "    \"growth_test_t_eq_window_block\": 10,\n";
             ofs << "    \"growth_test_t_eq_min_stable_steps\": "
                 << ps.equilibrium_consecutive_steps << ",\n";
-            if (ps.dynamics_window_steps > 0) {
-                ofs << "    \"growth_test_t_eq_validation_window_steps\": "
-                    << ps.dynamics_window_steps << ",\n";
-                ofs << "    \"growth_test_t_eq_validation\": \"stationary_window_plus_candidate_to_tail_stability\",\n";
-            }
+            ofs << "    \"growth_test_t_eq_validation_window_steps\": 0,\n";
+            ofs << "    \"growth_test_t_eq_validation\": \"discrete_derivative_of_blocked_pt_variation\",\n";
+            ofs << "    \"growth_test_t_eq_s_prime_threshold\": 0.00001,\n";
             ofs << "    \"growth_test_t_eq_series\": \"pt\",\n";
             ofs << "    \"growth_test_t_eq_requires_target\": false,\n";
         }
@@ -457,11 +459,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             ofs << "    \"growth_test_equilibrium_rel_tol\": "
                 << ps.equilibrium_rel_tol << ",\n";
             const double effective_rel_tol =
-                ps.equilibrium_rel_tol * 0.25;
+                ps.equilibrium_rel_tol * 0.10;
             ofs << "    \"growth_test_equilibrium_effective_rel_tol\": "
                 << effective_rel_tol << ",\n";
             ofs << "    \"growth_test_equilibrium_rel_tol_scaling\": "
-                << "\"fixed_base_tol_times_0p25\",\n";
+                << "\"fixed_base_tol_times_0p10\",\n";
         }
         if (std::isfinite(ps.equilibrium_abs_tol)) {
             ofs << "    \"growth_test_equilibrium_abs_tol\": "

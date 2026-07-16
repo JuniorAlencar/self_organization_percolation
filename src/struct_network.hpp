@@ -135,6 +135,7 @@ struct PercolationSeries {
     int growth_test_stop_time = -1;
     int equilibrium_consecutive_steps = -1;
     int dynamics_window_steps = -1;
+    int post_equilibrium_extra_steps = -1;
     int dynamic_min_stop_height = -1;
     int dynamic_max_stop_height = -1;
     double equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();
