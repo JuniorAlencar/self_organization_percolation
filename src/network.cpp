@@ -1084,7 +1084,7 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
                                         const int min_stable_steps = 15,
                                         const double rel_tol = 2.5e-2,
                                         const double abs_tol = 1.0e-6,
-                                        const double s_prime_threshold = 5.0e-4,
+                                        const double s_prime_threshold = 1.0e-5,
                                         const bool require_target = false,
                                         const double target = 0.0,
                                         const int validation_window_steps = 0,
@@ -1156,25 +1156,6 @@ inline double estimate_t_eq_from_series(const std::vector<int>& t,
                      1.0e-12);
         const double drift_threshold = std::max(abs_tol, rel_tol * drift_scale);
         if (std::abs(last_mean - first_mean) > drift_threshold) {
-            return false;
-        }
-
-        double min_y = std::numeric_limits<double>::infinity();
-        double max_y = -std::numeric_limits<double>::infinity();
-        double max_step_delta = 0.0;
-        for (int k = first_point; k <= last_point; ++k) {
-            const double y = j_w[static_cast<std::size_t>(k)];
-            min_y = std::min(min_y, y);
-            max_y = std::max(max_y, y);
-            if (k > first_point) {
-                const double y_prev = j_w[static_cast<std::size_t>(k - 1)];
-                max_step_delta = std::max(max_step_delta, std::abs(y - y_prev));
-            }
-        }
-        if (max_step_delta > drift_threshold) {
-            return false;
-        }
-        if (max_y - min_y > 2.0 * drift_threshold) {
             return false;
         }
 
@@ -1346,7 +1327,7 @@ inline double growth_test_effective_rel_tol(const double base_rel_tol,
                                             const int num_colors)
 {
     (void) num_colors;
-    return base_rel_tol * 0.25;
+    return base_rel_tol * 0.10;
 }
 
 inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
@@ -1355,7 +1336,7 @@ inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
                                             const int min_stable_steps = 15,
                                             const double rel_tol = 2.5e-2,
                                             const double abs_tol = 1.0e-6,
-                                            const double s_prime_threshold = 5.0e-4)
+                                            const double s_prime_threshold = 1.0e-5)
 {
     if (ts.t.empty()) {
         throw std::runtime_error("estimate_t_eq_from_timeseries: ts.t vazio");
@@ -1380,7 +1361,7 @@ inline std::vector<double> estimate_t_eq_by_species_from_timeseries(
     const int min_stable_steps = 15,
     const double rel_tol = 2.5e-2,
     const double abs_tol = 1.0e-6,
-    const double s_prime_threshold = 5.0e-4,
+    const double s_prime_threshold = 1.0e-5,
     const bool use_front_fraction = false,
     const bool require_target = false,
     const double target = 0.0,
@@ -1548,12 +1529,7 @@ NetworkPattern network::create_network(
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
         : (num_of_samples - 1);
-    const int dynamic_min_stop_height =
-        (stop_config.dynamic_height &&
-         stop_config.stop_at_equilibrium &&
-         !stop_config.stop_at_percolation)
-            ? lenght_network
-            : -1;
+    const int dynamic_min_stop_height = -1;
     const int dynamic_max_stop_height = -1;
 
     if (num_colors > 125) {
@@ -1940,8 +1916,6 @@ NetworkPattern network::create_network(
         static_cast<std::size_t>(num_colors), false);
     std::vector<int> z_stat_by_species(
         static_cast<std::size_t>(num_colors), -1);
-    std::vector<int> min_stop_height_reach_time(
-        static_cast<std::size_t>(num_colors), -1);
     std::vector<double> t_eq_online_by_species(
         static_cast<std::size_t>(num_colors),
         std::numeric_limits<double>::quiet_NaN());
@@ -1953,16 +1927,6 @@ NetworkPattern network::create_network(
         static_cast<std::size_t>(num_colors));
     std::vector<double> previous_p_for_dynamics = p_curr;
     double previous_error = std::numeric_limits<double>::quiet_NaN();
-
-    auto record_min_stop_height_reached = [&](const int color_idx, const int h, const int t_value)
-    {
-        if (dynamic_min_stop_height < 0) return;
-        if (h < dynamic_min_stop_height) return;
-        int& reached_time = min_stop_height_reach_time[static_cast<std::size_t>(color_idx)];
-        if (reached_time < 0) {
-            reached_time = t_value;
-        }
-    };
 
     for (int t = 1; t <= hard_max_steps; ++t) {
         if (stop_config.dynamic_height && !frontier.empty()) {
@@ -2031,7 +1995,6 @@ NetworkPattern network::create_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
-                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -2169,7 +2132,6 @@ NetworkPattern network::create_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
-                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -2277,39 +2239,15 @@ NetworkPattern network::create_network(
         if (stop_config.stop_at_equilibrium) {
             bool any_running = false;
             bool all_running_equilibrated = true;
-            bool all_running_reached_min_height = true;
             constexpr int teq_window_block = 10;
             const double teq_rel_tol = growth_test_effective_rel_tol(
                 stop_config.equilibrium_rel_tol, num_colors);
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
-                const bool running_reached_min_height =
-                    dynamic_min_stop_height < 0 ||
-                    min_stop_height_reach_time[static_cast<std::size_t>(c)] >= 0;
-                if (!running_reached_min_height) {
-                    all_running_reached_min_height = false;
-                    all_running_equilibrated = false;
-                    continue;
-                }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
                     if (t % teq_window_block == 0) {
-                        const int reached_time =
-                            min_stop_height_reach_time[static_cast<std::size_t>(c)];
-                        const int min_post_height_steps =
-                            std::max(
-                                stop_config.dynamics_window_steps,
-                                stop_config.equilibrium_consecutive_steps + 2 * teq_window_block);
-                        if (reached_time >= 0 && (t - reached_time) < min_post_height_steps) {
-                            all_running_equilibrated = false;
-                            continue;
-                        }
-                        const std::size_t start_idx = reached_time >= 0
-                            ? std::min(
-                                static_cast<std::size_t>(reached_time),
-                                t_list.size())
-                            : 0u;
                         const double t_eq_candidate = estimate_t_eq_from_series(
                             t_list,
                             p_series[static_cast<std::size_t>(c)],
@@ -2318,11 +2256,11 @@ NetworkPattern network::create_network(
                             stop_config.equilibrium_consecutive_steps,
                             teq_rel_tol,
                             stop_config.equilibrium_abs_tol,
-                            5.0e-4,
+                            1.0e-5,
                             false,
                             0.0,
-                            stop_config.dynamics_window_steps,
-                            start_idx);
+                            0,
+                            0u);
                         if (std::isfinite(t_eq_candidate)) {
                             species_equilibrated[static_cast<std::size_t>(c)] = true;
                             t_eq_online_by_species[static_cast<std::size_t>(c)] =
@@ -2338,10 +2276,18 @@ NetworkPattern network::create_network(
                 }
             }
             if (any_running && all_running_equilibrated) {
+                double latest_t_eq = -std::numeric_limits<double>::infinity();
+                bool any_t_eq = false;
+                for (const double value : t_eq_online_by_species) {
+                    if (!std::isfinite(value)) continue;
+                    latest_t_eq = std::max(latest_t_eq, value);
+                    any_t_eq = true;
+                }
+                const int extra_steps =
+                    std::max(0, stop_config.post_equilibrium_extra_steps);
                 stop_equilibrated =
-                    dynamic_min_stop_height >= 0
-                        ? all_running_reached_min_height
-                        : true;
+                    any_t_eq &&
+                    t >= static_cast<int>(std::ceil(latest_t_eq)) + extra_steps;
             }
         }
 
@@ -2493,6 +2439,8 @@ NetworkPattern network::create_network(
         ps_out.equilibrium_consecutive_steps =
             stop_config.equilibrium_consecutive_steps;
         ps_out.dynamics_window_steps = stop_config.dynamics_window_steps;
+        ps_out.post_equilibrium_extra_steps =
+            stop_config.post_equilibrium_extra_steps;
         ps_out.dynamic_min_stop_height = dynamic_min_stop_height;
         ps_out.dynamic_max_stop_height = dynamic_max_stop_height;
         ps_out.equilibrium_rel_tol = stop_config.equilibrium_rel_tol;
@@ -2506,6 +2454,7 @@ NetworkPattern network::create_network(
         ps_out.growth_test_stop_time = -1;
         ps_out.equilibrium_consecutive_steps = -1;
         ps_out.dynamics_window_steps = -1;
+        ps_out.post_equilibrium_extra_steps = -1;
         ps_out.dynamic_min_stop_height = -1;
         ps_out.dynamic_max_stop_height = -1;
         ps_out.equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();
@@ -2534,7 +2483,7 @@ NetworkPattern network::create_network(
             15,      // min stable steps
             2.5e-2,  // relative block-change tolerance
             1.0e-6,  // absolute block-change tolerance
-            5.0e-4   // |s_prime| threshold
+            1.0e-5   // |s_prime| threshold
         );
     }
     ps_out.t_eq = ts_out.t_eq;
@@ -2769,12 +2718,7 @@ NetworkPattern network::animate_network(
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
         : (num_of_samples - 1);
-    const int dynamic_min_stop_height =
-        (stop_config.dynamic_height &&
-         stop_config.stop_at_equilibrium &&
-         !stop_config.stop_at_percolation)
-            ? lenght_network
-            : -1;
+    const int dynamic_min_stop_height = -1;
     const int dynamic_max_stop_height = -1;
 
     if (num_colors > 125) {
@@ -2943,8 +2887,6 @@ NetworkPattern network::animate_network(
         static_cast<std::size_t>(num_colors), false);
     std::vector<int> z_stat_by_species(
         static_cast<std::size_t>(num_colors), -1);
-    std::vector<int> min_stop_height_reach_time(
-        static_cast<std::size_t>(num_colors), -1);
     std::vector<double> t_eq_online_by_species(
         static_cast<std::size_t>(num_colors),
         std::numeric_limits<double>::quiet_NaN());
@@ -2954,16 +2896,6 @@ NetworkPattern network::animate_network(
         static_cast<std::size_t>(num_colors));
     std::vector<double> previous_p_for_dynamics = p_curr;
     double previous_error = std::numeric_limits<double>::quiet_NaN();
-
-    auto record_min_stop_height_reached = [&](const int color_idx, const int h, const int t_value)
-    {
-        if (dynamic_min_stop_height < 0) return;
-        if (h < dynamic_min_stop_height) return;
-        int& reached_time = min_stop_height_reach_time[static_cast<std::size_t>(color_idx)];
-        if (reached_time < 0) {
-            reached_time = t_value;
-        }
-    };
 
     // cache leve do maior componente global por cor: semente + tamanho.
     std::vector<ComponentSummary> largest_comp_cache(num_colors);
@@ -3361,7 +3293,6 @@ NetworkPattern network::animate_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
-                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -3496,7 +3427,6 @@ NetworkPattern network::animate_network(
                 if (h > max_heights[cor_idx]) {
                     max_heights[cor_idx] = h;
                 }
-                record_min_stop_height_reached(cor_idx, h, t);
 
                 if (stop_config.stop_at_percolation &&
                     !percolated[cor_idx] && h >= percolation_height) {
@@ -3599,39 +3529,15 @@ NetworkPattern network::animate_network(
         if (stop_config.stop_at_equilibrium) {
             bool any_running = false;
             bool all_running_equilibrated = true;
-            bool all_running_reached_min_height = true;
             constexpr int teq_window_block = 10;
             const double teq_rel_tol = growth_test_effective_rel_tol(
                 stop_config.equilibrium_rel_tol, num_colors);
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
-                const bool running_reached_min_height =
-                    dynamic_min_stop_height < 0 ||
-                    min_stop_height_reach_time[static_cast<std::size_t>(c)] >= 0;
-                if (!running_reached_min_height) {
-                    all_running_reached_min_height = false;
-                    all_running_equilibrated = false;
-                    continue;
-                }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
                     if (t % teq_window_block == 0) {
-                        const int reached_time =
-                            min_stop_height_reach_time[static_cast<std::size_t>(c)];
-                        const int min_post_height_steps =
-                            std::max(
-                                stop_config.dynamics_window_steps,
-                                stop_config.equilibrium_consecutive_steps + 2 * teq_window_block);
-                        if (reached_time >= 0 && (t - reached_time) < min_post_height_steps) {
-                            all_running_equilibrated = false;
-                            continue;
-                        }
-                        const std::size_t start_idx = reached_time >= 0
-                            ? std::min(
-                                static_cast<std::size_t>(reached_time),
-                                t_list.size())
-                            : 0u;
                         const double t_eq_candidate = estimate_t_eq_from_series(
                             t_list,
                             p_series[static_cast<std::size_t>(c)],
@@ -3640,11 +3546,11 @@ NetworkPattern network::animate_network(
                             stop_config.equilibrium_consecutive_steps,
                             teq_rel_tol,
                             stop_config.equilibrium_abs_tol,
-                            5.0e-4,
+                            1.0e-5,
                             false,
                             0.0,
-                            stop_config.dynamics_window_steps,
-                            start_idx);
+                            0,
+                            0u);
                         if (std::isfinite(t_eq_candidate)) {
                             species_equilibrated[static_cast<std::size_t>(c)] = true;
                             t_eq_online_by_species[static_cast<std::size_t>(c)] =
@@ -3660,10 +3566,18 @@ NetworkPattern network::animate_network(
                 }
             }
             if (any_running && all_running_equilibrated) {
+                double latest_t_eq = -std::numeric_limits<double>::infinity();
+                bool any_t_eq = false;
+                for (const double value : t_eq_online_by_species) {
+                    if (!std::isfinite(value)) continue;
+                    latest_t_eq = std::max(latest_t_eq, value);
+                    any_t_eq = true;
+                }
+                const int extra_steps =
+                    std::max(0, stop_config.post_equilibrium_extra_steps);
                 stop_equilibrated =
-                    dynamic_min_stop_height >= 0
-                        ? all_running_reached_min_height
-                        : true;
+                    any_t_eq &&
+                    t >= static_cast<int>(std::ceil(latest_t_eq)) + extra_steps;
             }
         }
 
@@ -3729,7 +3643,7 @@ NetworkPattern network::animate_network(
             15,      // min stable steps
             2.5e-2,  // relative block-change tolerance
             1.0e-6,  // absolute block-change tolerance
-            5.0e-4   // |s_prime| threshold
+            1.0e-5   // |s_prime| threshold
         );
     }
     ps_out.t_eq = ts_out.t_eq;
@@ -3859,6 +3773,8 @@ NetworkPattern network::animate_network(
         ps_out.equilibrium_consecutive_steps =
             stop_config.equilibrium_consecutive_steps;
         ps_out.dynamics_window_steps = stop_config.dynamics_window_steps;
+        ps_out.post_equilibrium_extra_steps =
+            stop_config.post_equilibrium_extra_steps;
         ps_out.dynamic_min_stop_height = dynamic_min_stop_height;
         ps_out.dynamic_max_stop_height = dynamic_max_stop_height;
         ps_out.equilibrium_rel_tol = stop_config.equilibrium_rel_tol;
@@ -3870,6 +3786,7 @@ NetworkPattern network::animate_network(
         ps_out.species_final_status.clear();
         ps_out.equilibrium_consecutive_steps = -1;
         ps_out.dynamics_window_steps = -1;
+        ps_out.post_equilibrium_extra_steps = -1;
         ps_out.dynamic_min_stop_height = -1;
         ps_out.dynamic_max_stop_height = -1;
         ps_out.equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();

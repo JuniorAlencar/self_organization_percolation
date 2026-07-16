@@ -19,15 +19,14 @@ struct GrowthStopConfig {
     double equilibrium_rel_tol = 2.5e-2;
     double equilibrium_abs_tol = 1.0e-6;
     int hard_max_steps = -1;
-    int dynamics_window_steps = 300;
+    int dynamics_window_steps = -1;
+    int post_equilibrium_extra_steps = 100;
     double min_rel_error_improvement = 5.0e-2;
-    double derivative_abs_tol = 5.0e-4;
-    double control_derivative_abs_tol = 5.0e-4;
+    double derivative_abs_tol = 1.0e-5;
+    double control_derivative_abs_tol = 1.0e-5;
     double derivative_sign_change_fraction = 0.35;
     bool save_lateral_observables = true;
     InitialBaseLayout initial_base_layout = InitialBaseLayout::Random;
 };
-
-constexpr int GROWTH_TEST_DYNAMICS_WINDOW_FACTOR = 30;
 
 #endif // HEIGHT_STOP_CONFIG_HPP

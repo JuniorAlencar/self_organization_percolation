@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 
-DYNAMIC_PROCESSING_VERSION = 9
+DYNAMIC_PROCESSING_VERSION = 11
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 
@@ -49,11 +49,15 @@ ALL_DATA_COLUMNS = [
     "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_max_mean", "z_max_err",
     "z_stat_mean", "z_stat_err", "stat_window",
+    "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
+    "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
 
 ALL_COLORS_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
     "N_samples", "rho", "nc", "nc_err", "nc_std", "stat_window",
+    "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
+    "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
 
 
@@ -155,7 +159,7 @@ def parse_data_dir(path: Path) -> dict[str, Any] | None:
         "c": float(g["c"]),
         "nc": int(g["nc"]),
         "rho": float(g["rho"]),
-        "stat_window": int(g["stat_window"]) if g.get("stat_window") else -1,
+        "stat_window": int(g["stat_window"]) if g.get("stat_window") else 0,
     }
 
 
@@ -200,6 +204,8 @@ def mean_sem_std(values: list[float]) -> tuple[float, float, float, int]:
 
 
 def dat_value(value: Any) -> str:
+    if value is None:
+        return "nan"
     if isinstance(value, float):
         if not math.isfinite(value):
             return "nan"
@@ -212,6 +218,44 @@ def parse_order_key(key: str) -> int | None:
     if not m:
         return None
     return int(m.group(1))
+
+
+def dynamic_criterion_metadata_from_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stop_criterion": meta.get("growth_test_stop_criterion"),
+        "t_eq_validation": meta.get("growth_test_t_eq_validation"),
+        "t_eq_s_prime_threshold": finite_float(meta.get("growth_test_t_eq_s_prime_threshold")),
+        "equilibrium_effective_rel_tol": finite_float(meta.get("growth_test_equilibrium_effective_rel_tol")),
+        "post_equilibrium_extra_steps": meta.get("growth_test_post_equilibrium_extra_steps"),
+        "equilibrium_rel_tol_scaling": meta.get("growth_test_equilibrium_rel_tol_scaling"),
+    }
+
+
+def common_dynamic_criterion_metadata(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    keys = [
+        "stop_criterion",
+        "t_eq_validation",
+        "t_eq_s_prime_threshold",
+        "equilibrium_effective_rel_tol",
+        "post_equilibrium_extra_steps",
+        "equilibrium_rel_tol_scaling",
+    ]
+    out: dict[str, Any] = {}
+    for key in keys:
+        values: list[Any] = []
+        for row in rows:
+            value = row.get(key)
+            if value is None:
+                continue
+            if isinstance(value, float) and not math.isfinite(value):
+                continue
+            if value not in values:
+                values.append(value)
+        if len(values) == 1:
+            out[key] = values[0]
+        elif len(values) > 1:
+            out[key] = values
+    return out
 
 
 def tail_mean_after_t_eq(time: Any, values: Any, t_eq: float) -> float | None:
@@ -458,6 +502,7 @@ def load_dynamic_sample(path: Path) -> list[dict[str, Any]] | None:
     meta_t_eq_for_fallback = meta.get("t_eq_by_species", [])
     if not isinstance(meta_t_eq_for_fallback, list):
         meta_t_eq_for_fallback = []
+    criterion_meta = dynamic_criterion_metadata_from_meta(meta)
 
     candidate_blocks: list[tuple[int, dict[str, Any]]] = []
     for key, block in results.items():
@@ -536,6 +581,7 @@ def load_dynamic_sample(path: Path) -> list[dict[str, Any]] | None:
             "f_sample_mean": f_mean,
             "z_max": z_max,
             "z_stat": z_stat,
+            **criterion_meta,
         })
 
     return out
@@ -560,6 +606,12 @@ def process_one_sample_file(sample_path: Path) -> tuple[list[dict[str, Any]], fl
             "f_sample_mean": item.get("f_sample_mean"),
             "z_max": item.get("z_max"),
             "z_stat": item.get("z_stat"),
+            "stop_criterion": item.get("stop_criterion"),
+            "t_eq_validation": item.get("t_eq_validation"),
+            "t_eq_s_prime_threshold": item.get("t_eq_s_prime_threshold"),
+            "equilibrium_effective_rel_tol": item.get("equilibrium_effective_rel_tol"),
+            "post_equilibrium_extra_steps": item.get("post_equilibrium_extra_steps"),
+            "equilibrium_rel_tol_scaling": item.get("equilibrium_rel_tol_scaling"),
         })
     return rows, float(len(sample_orders))
 
@@ -569,7 +621,7 @@ def process_sample_files(sample_paths: list[Path], jobs: int = 1) -> tuple[list[
     rows: list[dict[str, Any]] = []
     stabilized_counts: list[float] = []
 
-    if jobs <= 1 or len(sample_paths) <= 1:
+    if jobs <= 1 or len(sample_paths) < 8:
         results = map(process_one_sample_file, sample_paths)
         for sample_rows, stabilized_count in results:
             if stabilized_count is None:
@@ -577,8 +629,9 @@ def process_sample_files(sample_paths: list[Path], jobs: int = 1) -> tuple[list[
             stabilized_counts.append(stabilized_count)
             rows.extend(sample_rows)
     else:
-        chunksize = max(1, min(32, len(sample_paths) // (jobs * 4) or 1))
-        with ProcessPoolExecutor(max_workers=jobs) as executor:
+        workers = min(jobs, len(sample_paths))
+        chunksize = max(1, min(32, len(sample_paths) // max(1, workers * 4)))
+        with ProcessPoolExecutor(max_workers=workers) as executor:
             results = executor.map(process_one_sample_file, sample_paths, chunksize=chunksize)
             for sample_rows, stabilized_count in results:
                 if stabilized_count is None:
@@ -1101,6 +1154,11 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
         "nc": meta.get("nc"),
         "rho": meta.get("rho"),
         "stat_window": meta.get("stat_window", -1),
+        "stop_criterion": meta.get("stop_criterion"),
+        "t_eq_validation": meta.get("t_eq_validation"),
+        "t_eq_s_prime_threshold": meta.get("t_eq_s_prime_threshold"),
+        "equilibrium_effective_rel_tol": meta.get("equilibrium_effective_rel_tol"),
+        "post_equilibrium_extra_steps": meta.get("post_equilibrium_extra_steps"),
     }
 
     all_rows: list[dict[str, Any]] = []
@@ -1554,6 +1612,7 @@ def build_bundle_for_files(
     for (P0, p0), group_files in sorted(groups.items(), key=lambda x: (x[0][0], x[0][1])):
         by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
         sample_rows, stabilized_counts = process_sample_files(group_files, jobs=jobs)
+        bundle["meta"].update(common_dynamic_criterion_metadata(sample_rows))
         processed = len(stabilized_counts)
         for row in sample_rows:
             by_order[int(row["order"])].append(row)
@@ -1637,6 +1696,11 @@ def build_bundle_for_files(
                         "f_sample_mean": x["f_sample_mean"],
                         "z_max": x["z_max"],
                         "z_stat": x["z_stat"],
+                        "stop_criterion": x.get("stop_criterion"),
+                        "t_eq_validation": x.get("t_eq_validation"),
+                        "t_eq_s_prime_threshold": x.get("t_eq_s_prime_threshold"),
+                        "equilibrium_effective_rel_tol": x.get("equilibrium_effective_rel_tol"),
+                        "post_equilibrium_extra_steps": x.get("post_equilibrium_extra_steps"),
                     }
                     for x in items
                 ],
@@ -1896,6 +1960,19 @@ def process_group(
         merged_bundle = {
             "meta": {
                 **params,
+                **{
+                    key: batch_bundle.get("meta", {}).get(key)
+                    for key in (
+                        "stop_criterion",
+                        "t_eq_validation",
+                        "t_eq_s_prime_threshold",
+                        "equilibrium_effective_rel_tol",
+                        "post_equilibrium_extra_steps",
+                        "equilibrium_rel_tol_scaling",
+                    )
+                    if isinstance(batch_bundle.get("meta", {}), dict) and
+                    batch_bundle.get("meta", {}).get(key) is not None
+                },
                 "raw_group": rel_group.as_posix(),
                 "num_json_files": len(json_files),
                 "num_parseable_json_files": len(current_json_files),
@@ -2024,7 +2101,7 @@ def main() -> int:
         "-j",
         "--jobs",
         type=int,
-        default=max(1, (os.cpu_count() or 2) - 1),
+        default=max(1, min(8, (os.cpu_count() or 2) - 1)),
         help="Number of worker processes used to parse new JSON samples. Use 1 to disable multiprocessing.",
     )
     parser.add_argument(
@@ -2067,8 +2144,9 @@ def main() -> int:
 
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
+    # First, ensure all raw data groups are processed and published bundles are up-to-date.
     for data_dir in data_dirs:
-        out_path, rows, color_rows = process_group(
+        out_path, _, _ = process_group(
             data_dir,
             raw_root,
             published_root,
@@ -2079,9 +2157,21 @@ def main() -> int:
             fingerprint_mode=args.fingerprint_mode,
             detect_replaced_files=args.detect_replaced_files,
         )
-        all_rows.extend(rows)
-        all_color_rows.extend(color_rows)
-        print(f"[rows] {out_path} ({len(rows)} rows)")
+        print(f"[published] ensured {out_path}")
+
+    # Regardless of raw presence, build the final all_data and all_colors from published bundles.
+    bundle_paths = sorted(published_root.rglob("properties_dynamic_bundle.json"))
+    print(f"[dynamic] building all-data from {len(bundle_paths)} published bundles")
+    for bundle_path in bundle_paths:
+        try:
+            rows, color_rows = rows_from_existing_bundle(bundle_path)
+            if rows:
+                all_rows.extend(rows)
+                print(f"[import] {bundle_path} ({len(rows)} rows)")
+            if color_rows:
+                all_color_rows.extend(color_rows)
+        except Exception as exc:
+            print(f"[warn] failed to import {bundle_path}: {exc}")
 
     all_data_path = sop_root / args.all_data_name
     write_all_data(all_rows, all_data_path)
