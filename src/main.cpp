@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
         int num_colors = 1;
         double rho_val = 1.0;
         double P0 = 0.1;
-        std::string equilibration = "true";
+        std::string equilibration = "false";
         bool calculate_detailed_properties = false;
         std::string run_mode = "growth_test";
         std::string initial_layout = "random";
