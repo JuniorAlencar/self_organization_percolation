@@ -47,7 +47,7 @@ make
 This will generate the <b>SOP</b> executable. Run the code outside the build folder
 
 ```bash
-./build/SOP <L> <$\boldsymbol{p_0}$> <seed> <type_percolation> <c> <$\boldsymbol{f_T}$> <dim> <num_colors> <$\boldsymbol{\rho}$> <P0> <Equilibration>
+./build/SOP <L> <$\boldsymbol{p_0}$> <seed> <type_percolation> <c> <$\boldsymbol{f_T}$> <dim> <num_colors> <$\boldsymbol{\rho}$> <P0> <Equilibration> <calculate_detailed_properties> <run_mode> <initial_layout>
 ```
 where  
 <b> L </b>: Side of network;  
@@ -61,6 +61,9 @@ $\boldsymbol{f_T}$: target active-front fraction;
 $\boldsymbol{\rho}$: Density of network for each color;  
 <b> P0 </b>: Fraction of initially active nodes on the base;  
 <b> Equilibration </b>: `true` returns the encoded activation-time network, `false` returns the final state network;  
+<b> calculate_detailed_properties </b>: `true` calculates the network's structural properties: shortest path within the spanning cluster and the size of the largest connected component; `false` is the default.  
+<b> run_mode </b>: Determines the stopping conditions at the top of the network. To have the network always stop at $z=L$, use `sop`; for a free network that stops upon stabilizing, use `growth_test`. In the case of `growth_test`, the network will grow until it dies out (f(t)=0) or stabilizes, with stabilization determined by the magnitude of the derivative of the series p(t). `growth_test` is <b>default</b>.  
+<b> initial_layout </b>: Determines the form of the initial distribution at the base of the network. If `random`, the sites are arranged randomly at the base; if `blocks`, in quadrants; and if `alternating`, by alternating each species. `random` is the <b>default</b>.  
 
 <b> VERY IMPORTANT!</b>  
 The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1, the gap will be filled with uncolored sites. If num_colors*$\rho$ = 1, all sites in the network will be uniformly and equally colored.
@@ -74,7 +77,7 @@ The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1
 ```bash
 SELF_ORGANIZATION_PERCOLATION/
 ├── build/
-├── Data/              # simulation results
+├── SOP_data/            # simulation results
 ├── docs/
 ├── jupyter/
 ├── src/
@@ -87,11 +90,12 @@ SELF_ORGANIZATION_PERCOLATION/
 
 This algorithm is quite sensitive to the parameters $N_T$ and $k$, which vary greatly depending on the dimension. A rescaling to $d$-dimensions was used, where the parameters $k$ and $N_T$ are obtained through the relations:
 
-$k = \gamma/cL^{d-1}$,
-$N_T = cL^{d-1}$,
+$c = kL^{d-1}$,
+$f_T = N_T/L^{d-1}$,
+$f(t) = N(t)/L^{d-1}$,
 with the update rule with these changes given by  
 
-$p(t+1) = p(t) + \gamma[1-N(t)/cL^{d-1}]$.
+$p(t+1) = p(t) + c[f(t)-f_T]$.
 
 For more information, see discussion_SOP.pdf in /docs.
 
