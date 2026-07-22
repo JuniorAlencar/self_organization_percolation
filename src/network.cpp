@@ -1327,7 +1327,75 @@ inline double growth_test_effective_rel_tol(const double base_rel_tol,
                                             const int num_colors)
 {
     (void) num_colors;
-    return base_rel_tol * 0.10;
+    return base_rel_tol * 0.01;
+}
+
+inline int growth_test_global_min_stable_steps(const int configured_steps,
+                                               const int window_block)
+{
+    return std::max(configured_steps, 10 * std::max(1, window_block));
+}
+
+inline int growth_test_global_validation_window_steps(const int extra_steps,
+                                                      const int window_block)
+{
+    return std::max(std::max(0, extra_steps), 20 * std::max(1, window_block));
+}
+
+std::vector<std::vector<double>> compute_final_layer_species_fractions(
+    const GridRegular& grid,
+    const int num_colors,
+    const std::vector<std::int8_t>& site_state,
+    const std::vector<bool>& include_species)
+{
+    const int allocated_height = grid.grow_height();
+    if (allocated_height <= 0 || num_colors <= 0) return {};
+
+    std::vector<std::vector<std::uint32_t>> counts(
+        static_cast<std::size_t>(num_colors),
+        std::vector<std::uint32_t>(static_cast<std::size_t>(allocated_height), 0u));
+    std::vector<int> max_occupied_z(static_cast<std::size_t>(num_colors), -1);
+
+    const int n_sites = std::min(
+        grid.total_size,
+        static_cast<int>(site_state.size()));
+    for (int idx = 0; idx < n_sites; ++idx) {
+        const int v = static_cast<int>(site_state[static_cast<std::size_t>(idx)]);
+        if (v <= 0) continue;
+
+        const int color_idx = value_to_color_index(num_colors, v);
+        if (color_idx < 0 || color_idx >= num_colors) continue;
+        if (color_idx >= static_cast<int>(include_species.size()) ||
+            !include_species[static_cast<std::size_t>(color_idx)]) {
+            continue;
+        }
+
+        const int z = grid.grow_coord(idx);
+        if (z < 0 || z >= allocated_height) continue;
+        ++counts[static_cast<std::size_t>(color_idx)][static_cast<std::size_t>(z)];
+        max_occupied_z[static_cast<std::size_t>(color_idx)] =
+            std::max(max_occupied_z[static_cast<std::size_t>(color_idx)], z);
+    }
+
+    const double layer_area = (grid.dim == 2)
+        ? static_cast<double>(grid.SX)
+        : static_cast<double>(grid.SX) * static_cast<double>(grid.SY);
+    const double inv_layer_area = layer_area > 0.0 ? 1.0 / layer_area : 0.0;
+
+    std::vector<std::vector<double>> out(static_cast<std::size_t>(num_colors));
+    for (int c = 0; c < num_colors; ++c) {
+        const int occupied_height = max_occupied_z[static_cast<std::size_t>(c)] + 1;
+        if (occupied_height <= 0) continue;
+        out[static_cast<std::size_t>(c)].assign(
+            static_cast<std::size_t>(occupied_height), 0.0);
+        for (int z = 0; z < occupied_height; ++z) {
+            out[static_cast<std::size_t>(c)][static_cast<std::size_t>(z)] =
+                static_cast<double>(
+                    counts[static_cast<std::size_t>(c)][static_cast<std::size_t>(z)]) *
+                inv_layer_area;
+        }
+    }
+    return out;
 }
 
 inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
@@ -1558,13 +1626,18 @@ NetworkPattern network::create_network(
             static_cast<std::size_t>(grid.total_size),
             std::numeric_limits<uint32_t>::max());
     }
+    const bool save_lateral_observables = stop_config.save_lateral_observables;
     std::vector<int> activated_indices_for_lateral;
-    activated_indices_for_lateral.reserve(static_cast<std::size_t>(base_size));
+    if (save_lateral_observables) {
+        activated_indices_for_lateral.reserve(static_cast<std::size_t>(base_size));
+    }
     auto set_activation_time = [&](const int idx, const uint32_t t_value)
     {
         if (!needs_activation_time) return;
         activation_time[static_cast<std::size_t>(idx)] = t_value;
-        activated_indices_for_lateral.push_back(idx);
+        if (save_lateral_observables) {
+            activated_indices_for_lateral.push_back(idx);
+        }
     };
 
     std::vector<std::vector<double>> p_series(num_colors);
@@ -2242,32 +2315,48 @@ NetworkPattern network::create_network(
             constexpr int teq_window_block = 10;
             const double teq_rel_tol = growth_test_effective_rel_tol(
                 stop_config.equilibrium_rel_tol, num_colors);
+            const int teq_min_stable_steps =
+                growth_test_global_min_stable_steps(
+                    stop_config.equilibrium_consecutive_steps,
+                    teq_window_block);
+            const int teq_validation_window_steps =
+                growth_test_global_validation_window_steps(
+                    stop_config.post_equilibrium_extra_steps,
+                    teq_window_block);
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
 
-                if (!species_equilibrated[static_cast<std::size_t>(c)]) {
-                    if (t % teq_window_block == 0) {
-                        const double t_eq_candidate = estimate_t_eq_from_series(
+                if (t % teq_window_block == 0) {
+                    const bool reached_global_height =
+                        !stop_config.dynamic_height ||
+                        max_heights[static_cast<std::size_t>(c)] >= lenght_network;
+                    const double t_eq_candidate = reached_global_height
+                        ? estimate_t_eq_from_series(
                             t_list,
                             p_series[static_cast<std::size_t>(c)],
                             15,
                             teq_window_block,
-                            stop_config.equilibrium_consecutive_steps,
+                            teq_min_stable_steps,
                             teq_rel_tol,
                             stop_config.equilibrium_abs_tol,
                             1.0e-5,
                             false,
                             0.0,
-                            0,
-                            0u);
-                        if (std::isfinite(t_eq_candidate)) {
-                            species_equilibrated[static_cast<std::size_t>(c)] = true;
-                            t_eq_online_by_species[static_cast<std::size_t>(c)] =
-                                t_eq_candidate;
-                            z_stat_by_species[static_cast<std::size_t>(c)] =
-                                max_heights[static_cast<std::size_t>(c)];
-                        }
+                            teq_validation_window_steps,
+                            0u)
+                        : std::numeric_limits<double>::quiet_NaN();
+                    if (std::isfinite(t_eq_candidate)) {
+                        species_equilibrated[static_cast<std::size_t>(c)] = true;
+                        t_eq_online_by_species[static_cast<std::size_t>(c)] =
+                            t_eq_candidate;
+                        z_stat_by_species[static_cast<std::size_t>(c)] =
+                            max_heights[static_cast<std::size_t>(c)];
+                    } else {
+                        species_equilibrated[static_cast<std::size_t>(c)] = false;
+                        t_eq_online_by_species[static_cast<std::size_t>(c)] =
+                            std::numeric_limits<double>::quiet_NaN();
+                        z_stat_by_species[static_cast<std::size_t>(c)] = -1;
                     }
                 }
 
@@ -2287,6 +2376,7 @@ NetworkPattern network::create_network(
                     std::max(0, stop_config.post_equilibrium_extra_steps);
                 stop_equilibrated =
                     any_t_eq &&
+                    t % teq_window_block == 0 &&
                     t >= static_cast<int>(std::ceil(latest_t_eq)) + extra_steps;
             }
         }
@@ -2393,17 +2483,19 @@ NetworkPattern network::create_network(
         p_curr.swap(p_next);
     }
 
-    ts_out.lateral_observables = compute_lateral_observables(
-        dim,
-        lenght_network,
-        grid.SX,
-        grid.SY,
-        grid.SZ,
-        activation_time,
-        t_list,
-        "periodic",
-        false,
-        &activated_indices_for_lateral);
+    if (save_lateral_observables) {
+        ts_out.lateral_observables = compute_lateral_observables(
+            dim,
+            lenght_network,
+            grid.SX,
+            grid.SY,
+            grid.SZ,
+            activation_time,
+            t_list,
+            "periodic",
+            false,
+            &activated_indices_for_lateral);
+    }
 
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
@@ -2490,6 +2582,31 @@ NetworkPattern network::create_network(
 
     if (stop_config.stop_at_equilibrium && !stop_config.stop_at_percolation) {
         set_species_order_from_t_eq(ps_out, ps_out.t_eq_by_species);
+    }
+
+    std::vector<bool> fL_z_include_species(static_cast<std::size_t>(num_colors), false);
+    bool any_fL_z_species = false;
+    for (int c = 0; c < num_colors; ++c) {
+        const bool include =
+            species_equilibrated[static_cast<std::size_t>(c)] &&
+            c < static_cast<int>(ps_out.t_eq_by_species.size()) &&
+            std::isfinite(ps_out.t_eq_by_species[static_cast<std::size_t>(c)]);
+        fL_z_include_species[static_cast<std::size_t>(c)] = include;
+        any_fL_z_species = any_fL_z_species || include;
+    }
+
+    if (stop_config.stop_at_equilibrium &&
+        !stop_config.stop_at_percolation &&
+        growth_test_stop_reason == "all_running_equilibrated" &&
+        any_fL_z_species) {
+        ps_out.fL_z_by_species =
+            compute_final_layer_species_fractions(
+                grid,
+                num_colors,
+                site_state,
+                fL_z_include_species);
+    } else {
+        ps_out.fL_z_by_species.clear();
     }
 
     if (calculate_detailed_properties) {
@@ -3532,32 +3649,48 @@ NetworkPattern network::animate_network(
             constexpr int teq_window_block = 10;
             const double teq_rel_tol = growth_test_effective_rel_tol(
                 stop_config.equilibrium_rel_tol, num_colors);
+            const int teq_min_stable_steps =
+                growth_test_global_min_stable_steps(
+                    stop_config.equilibrium_consecutive_steps,
+                    teq_window_block);
+            const int teq_validation_window_steps =
+                growth_test_global_validation_window_steps(
+                    stop_config.post_equilibrium_extra_steps,
+                    teq_window_block);
             for (int c = 0; c < num_colors; ++c) {
                 if (finished[c]) continue;
                 any_running = true;
 
-                if (!species_equilibrated[static_cast<std::size_t>(c)]) {
-                    if (t % teq_window_block == 0) {
-                        const double t_eq_candidate = estimate_t_eq_from_series(
+                if (t % teq_window_block == 0) {
+                    const bool reached_global_height =
+                        !stop_config.dynamic_height ||
+                        max_heights[static_cast<std::size_t>(c)] >= lenght_network;
+                    const double t_eq_candidate = reached_global_height
+                        ? estimate_t_eq_from_series(
                             t_list,
                             p_series[static_cast<std::size_t>(c)],
                             15,
                             teq_window_block,
-                            stop_config.equilibrium_consecutive_steps,
+                            teq_min_stable_steps,
                             teq_rel_tol,
                             stop_config.equilibrium_abs_tol,
                             1.0e-5,
                             false,
                             0.0,
-                            0,
-                            0u);
-                        if (std::isfinite(t_eq_candidate)) {
-                            species_equilibrated[static_cast<std::size_t>(c)] = true;
-                            t_eq_online_by_species[static_cast<std::size_t>(c)] =
-                                t_eq_candidate;
-                            z_stat_by_species[static_cast<std::size_t>(c)] =
-                                max_heights[static_cast<std::size_t>(c)];
-                        }
+                            teq_validation_window_steps,
+                            0u)
+                        : std::numeric_limits<double>::quiet_NaN();
+                    if (std::isfinite(t_eq_candidate)) {
+                        species_equilibrated[static_cast<std::size_t>(c)] = true;
+                        t_eq_online_by_species[static_cast<std::size_t>(c)] =
+                            t_eq_candidate;
+                        z_stat_by_species[static_cast<std::size_t>(c)] =
+                            max_heights[static_cast<std::size_t>(c)];
+                    } else {
+                        species_equilibrated[static_cast<std::size_t>(c)] = false;
+                        t_eq_online_by_species[static_cast<std::size_t>(c)] =
+                            std::numeric_limits<double>::quiet_NaN();
+                        z_stat_by_species[static_cast<std::size_t>(c)] = -1;
                     }
                 }
 
@@ -3577,6 +3710,7 @@ NetworkPattern network::animate_network(
                     std::max(0, stop_config.post_equilibrium_extra_steps);
                 stop_equilibrated =
                     any_t_eq &&
+                    t % teq_window_block == 0 &&
                     t >= static_cast<int>(std::ceil(latest_t_eq)) + extra_steps;
             }
         }
@@ -3650,6 +3784,30 @@ NetworkPattern network::animate_network(
 
     if (stop_config.stop_at_equilibrium && !stop_config.stop_at_percolation) {
         set_species_order_from_t_eq(ps_out, ps_out.t_eq_by_species);
+    }
+
+    std::vector<bool> fL_z_include_species(static_cast<std::size_t>(num_colors), false);
+    bool any_fL_z_species = false;
+    for (int c = 0; c < num_colors; ++c) {
+        const bool include =
+            species_equilibrated[static_cast<std::size_t>(c)] &&
+            c < static_cast<int>(ps_out.t_eq_by_species.size()) &&
+            std::isfinite(ps_out.t_eq_by_species[static_cast<std::size_t>(c)]);
+        fL_z_include_species[static_cast<std::size_t>(c)] = include;
+        any_fL_z_species = any_fL_z_species || include;
+    }
+
+    if (stop_config.stop_at_equilibrium &&
+        !stop_config.stop_at_percolation &&
+        any_fL_z_species) {
+        ps_out.fL_z_by_species =
+            compute_final_layer_species_fractions(
+                grid,
+                num_colors,
+                site_state,
+                fL_z_include_species);
+    } else {
+        ps_out.fL_z_by_species.clear();
     }
 
     if (calculate_detailed_properties) {

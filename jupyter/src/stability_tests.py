@@ -1,12 +1,37 @@
 import json
+import gzip
+import lzma
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-def load_properties_bundle(fn):
-    with open(fn, "r") as f:
+def _resolve_json_bundle_path(fn):
+    path = Path(fn)
+    if path.exists():
+        return path
+    if path.name.endswith(".json"):
+        for suffix in (".xz", ".gz"):
+            candidate = Path(str(path) + suffix)
+            if candidate.exists():
+                return candidate
+    return path
+
+
+def _load_json_bundle(fn):
+    path = _resolve_json_bundle_path(fn)
+    if path.suffix == ".xz":
+        with lzma.open(path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_properties_bundle(fn):
+    return _load_json_bundle(fn)
 
 
 def get_group_by_p0_P0(bundle, p0_target, P0_target, tol=1e-12):
@@ -338,13 +363,14 @@ def plot_s_all_orders(results, include_p_all=True, figsize=(10, 7), fs=14):
 
 
 def read_dynamic_bundle(bundle_path):
-    bundle_path = Path(bundle_path)
-
-    with bundle_path.open("r", encoding="utf-8") as f:
-        bundle = json.load(f)
+    bundle = _load_json_bundle(bundle_path)
 
     meta = bundle.get("meta", {})
     rows = []
+
+    def data_value(data, key, default=None):
+        value = data.get(key, default)
+        return default if value is None else value
 
     for p0_group in bundle.get("p0_groups", []):
         P0 = p0_group.get("P0_value")
@@ -371,6 +397,7 @@ def read_dynamic_bundle(bundle_path):
                 "nc": meta.get("nc"),
                 "rho": meta.get("rho"),
                 "stat_window": meta.get("stat_window"),
+                "series_mode": meta.get("series_mode", "full"),
 
                 "P0": P0,
                 "p0": p0,
@@ -397,21 +424,84 @@ def read_dynamic_bundle(bundle_path):
 
                 "p_tail_mean": data.get("p_tail_mean"),
                 "p_tail_err": data.get("p_tail_err"),
+                "p_tail_sample_values": data_value(data, "p_tail_sample_values", []),
+                "p_tail_estimator": data.get("p_tail_estimator"),
                 "f_tail_mean": data.get("f_tail_mean"),
                 "f_tail_err": data.get("f_tail_err"),
+                "f_tail_sample_values": data_value(data, "f_tail_sample_values", []),
+                "f_tail_estimator": data.get("f_tail_estimator"),
 
                 "z_max_mean": z_stats.get("mean"),
                 "z_max_err": z_stats.get("err"),
+                "z_max_std": z_stats.get("std"),
+                "z_max_values": data_value(data, "z_max_values", z_stats.get("values", [])),
                 "z_stat_mean": z_stat_stats.get("mean"),
                 "z_stat_err": z_stat_stats.get("err"),
+                "z_stat_std": z_stat_stats.get("std"),
 
-                "time": data.get("time"),
-                "pt_mean": data.get("pt_mean"),
-                "pt_std": data.get("pt_std"),
-                "pt_sem": data.get("pt_sem"),
-                "ft_mean": data.get("ft_mean"),
-                "ft_std": data.get("ft_std"),
-                "ft_sem": data.get("ft_sem"),
+                "time": data_value(data, "time", []),
+                "pt_mean": data_value(data, "pt_mean", []),
+                "pt_std": data_value(data, "pt_std", []),
+                "pt_sem": data_value(data, "pt_sem", []),
+                "pt_N_per_t": data_value(data, "pt_N_per_t", []),
+                "n_seeds_pt": data.get("n_seeds_pt"),
+                "pt_common_time": data_value(data, "pt_common_time", []),
+                "pt_common_mean": data_value(data, "pt_common_mean", []),
+                "pt_common_std": data_value(data, "pt_common_std", []),
+                "pt_common_sem": data_value(data, "pt_common_sem", []),
+                "pt_common_N_per_t": data_value(data, "pt_common_N_per_t", []),
+                "pt_supported_time": data_value(data, "pt_supported_time", []),
+                "pt_supported_mean": data_value(data, "pt_supported_mean", []),
+                "pt_supported_std": data_value(data, "pt_supported_std", []),
+                "pt_supported_sem": data_value(data, "pt_supported_sem", []),
+                "pt_supported_N_per_t": data_value(data, "pt_supported_N_per_t", []),
+                "pt_min_support_count": data.get("pt_min_support_count"),
+                "pt_support_policy": data.get("pt_support_policy"),
+                "pt_common_support_policy": data.get("pt_common_support_policy"),
+                "pt_supported_support_policy": data.get("pt_supported_support_policy"),
+
+                "ft_time": data_value(data, "ft_time", data_value(data, "time", [])),
+                "ft_mean": data_value(data, "ft_mean", []),
+                "ft_std": data_value(data, "ft_std", []),
+                "ft_sem": data_value(data, "ft_sem", []),
+                "ft_N_per_t": data_value(data, "ft_N_per_t", []),
+                "n_seeds_ft": data.get("n_seeds_ft"),
+                "ft_common_time": data_value(data, "ft_common_time", []),
+                "ft_common_mean": data_value(data, "ft_common_mean", []),
+                "ft_common_std": data_value(data, "ft_common_std", []),
+                "ft_common_sem": data_value(data, "ft_common_sem", []),
+                "ft_common_N_per_t": data_value(data, "ft_common_N_per_t", []),
+                "ft_supported_time": data_value(data, "ft_supported_time", []),
+                "ft_supported_mean": data_value(data, "ft_supported_mean", []),
+                "ft_supported_std": data_value(data, "ft_supported_std", []),
+                "ft_supported_sem": data_value(data, "ft_supported_sem", []),
+                "ft_supported_N_per_t": data_value(data, "ft_supported_N_per_t", []),
+                "ft_min_support_count": data.get("ft_min_support_count"),
+                "ft_support_policy": data.get("ft_support_policy"),
+                "ft_common_support_policy": data.get("ft_common_support_policy"),
+                "ft_supported_support_policy": data.get("ft_supported_support_policy"),
+
+                "fL_z_z": data_value(data, "fL_z_z", []),
+                "fL_z_mean": data_value(data, "fL_z_mean", []),
+                "fL_z_std": data_value(data, "fL_z_std", []),
+                "fL_z_sem": data_value(data, "fL_z_sem", []),
+                "fL_z_N_per_z": data_value(data, "fL_z_N_per_z", []),
+                "n_seeds_fL_z": data.get("n_seeds_fL_z"),
+                "fL_z_common_z": data_value(data, "fL_z_common_z", []),
+                "fL_z_common_mean": data_value(data, "fL_z_common_mean", []),
+                "fL_z_common_std": data_value(data, "fL_z_common_std", []),
+                "fL_z_common_sem": data_value(data, "fL_z_common_sem", []),
+                "fL_z_common_N_per_z": data_value(data, "fL_z_common_N_per_z", []),
+                "fL_z_supported_z": data_value(data, "fL_z_supported_z", []),
+                "fL_z_supported_mean": data_value(data, "fL_z_supported_mean", []),
+                "fL_z_supported_std": data_value(data, "fL_z_supported_std", []),
+                "fL_z_supported_sem": data_value(data, "fL_z_supported_sem", []),
+                "fL_z_supported_N_per_z": data_value(data, "fL_z_supported_N_per_z", []),
+                "fL_z_min_support_count": data.get("fL_z_min_support_count"),
+                "fL_z_support_policy": data.get("fL_z_support_policy"),
+                "fL_z_common_support_policy": data.get("fL_z_common_support_policy"),
+                "fL_z_supported_support_policy": data.get("fL_z_supported_support_policy"),
+                "min_support_fraction": data.get("min_support_fraction"),
             })
 
     return pd.DataFrame(rows)

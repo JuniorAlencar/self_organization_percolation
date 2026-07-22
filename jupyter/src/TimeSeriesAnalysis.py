@@ -11,6 +11,7 @@ import os
 import re
 import json
 import gzip
+import lzma
 import glob
 import math
 from datetime import datetime
@@ -29,6 +30,10 @@ SERIES_ENCODING_KEY = "__encoding__"
 # ============================================================
 
 def lateral_bundle_path(out_dir: str | Path) -> Path:
+    return Path(out_dir) / "lateral_correlations_bundle.json.xz"
+
+
+def gzip_lateral_bundle_path(out_dir: str | Path) -> Path:
     return Path(out_dir) / "lateral_correlations_bundle.json.gz"
 
 
@@ -41,6 +46,9 @@ def existing_lateral_bundle_path(out_dir: str | Path) -> Path | None:
     compressed_path = lateral_bundle_path(out_dir)
     if compressed_path.exists():
         return compressed_path
+    gzip_path = gzip_lateral_bundle_path(out_dir)
+    if gzip_path.exists():
+        return gzip_path
     legacy_path = legacy_lateral_bundle_path(out_dir)
     if legacy_path.exists():
         return legacy_path
@@ -70,7 +78,10 @@ def load_lateral_correlations_bundle(path: str | Path) -> dict[str, Any]:
     bundle_path = resolve_lateral_bundle_path(path)
     if not bundle_path.exists():
         raise FileNotFoundError(bundle_path)
-    if bundle_path.suffix == ".gz":
+    if bundle_path.suffix == ".xz":
+        with lzma.open(bundle_path, "rt", encoding="utf-8") as handle:
+            data = json.load(handle)
+    elif bundle_path.suffix == ".gz":
         with gzip.open(bundle_path, "rt", encoding="utf-8") as handle:
             data = json.load(handle)
     else:
@@ -1933,6 +1944,29 @@ def to_serializable(a):
 # ------------------ Parâmetros do caminho ------------------
 base_root = "../Data/bond_percolation"
 
+def resolve_json_bundle_path(filepath):
+    path = Path(filepath)
+    if path.exists():
+        return path
+    if path.name.endswith(".json"):
+        for suffix in (".xz", ".gz"):
+            candidate = Path(str(path) + suffix)
+            if candidate.exists():
+                return candidate
+    return path
+
+
+def load_json_bundle_auto(filepath):
+    path = resolve_json_bundle_path(filepath)
+    if path.suffix == ".xz":
+        with lzma.open(path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
 def load_properties_bundle(filepath):
     """
     Lê properties_mean_bundle.json no formato atual do pipeline.
@@ -1949,8 +1983,7 @@ def load_properties_bundle(filepath):
             }
         }
     """
-    with open(filepath, "r", encoding="utf-8") as f:
-        js = json.load(f)
+    js = load_json_bundle_auto(filepath)
 
     result = {}
 

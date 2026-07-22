@@ -448,22 +448,25 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             ofs << "    \"growth_test_t_eq_smoothing_window\": 15,\n";
             ofs << "    \"growth_test_t_eq_window_block\": 10,\n";
             ofs << "    \"growth_test_t_eq_min_stable_steps\": "
-                << ps.equilibrium_consecutive_steps << ",\n";
-            ofs << "    \"growth_test_t_eq_validation_window_steps\": 0,\n";
-            ofs << "    \"growth_test_t_eq_validation\": \"discrete_derivative_of_blocked_pt_variation\",\n";
+                << std::max(ps.equilibrium_consecutive_steps, 100) << ",\n";
+            ofs << "    \"growth_test_t_eq_validation_window_steps\": "
+                << std::max(std::max(0, ps.post_equilibrium_extra_steps), 200)
+                << ",\n";
+            ofs << "    \"growth_test_t_eq_validation\": \"global_tail_drift_validation_of_blocked_pt_variation\",\n";
             ofs << "    \"growth_test_t_eq_s_prime_threshold\": 0.00001,\n";
             ofs << "    \"growth_test_t_eq_series\": \"pt\",\n";
             ofs << "    \"growth_test_t_eq_requires_target\": false,\n";
+            ofs << "    \"growth_test_t_eq_requires_global_height\": true,\n";
         }
         if (std::isfinite(ps.equilibrium_rel_tol)) {
             ofs << "    \"growth_test_equilibrium_rel_tol\": "
                 << ps.equilibrium_rel_tol << ",\n";
             const double effective_rel_tol =
-                ps.equilibrium_rel_tol * 0.10;
+                ps.equilibrium_rel_tol * 0.01;
             ofs << "    \"growth_test_equilibrium_effective_rel_tol\": "
                 << effective_rel_tol << ",\n";
             ofs << "    \"growth_test_equilibrium_rel_tol_scaling\": "
-                << "\"fixed_base_tol_times_0p10\",\n";
+                << "\"fixed_base_tol_times_0p01\",\n";
         }
         if (std::isfinite(ps.equilibrium_abs_tol)) {
             ofs << "    \"growth_test_equilibrium_abs_tol\": "
@@ -480,6 +483,9 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     }
     if (!ps.initial_base_layout.empty()) {
         ofs << "    \"initial_base_layout\": \"" << ps.initial_base_layout << "\",\n";
+    }
+    if (!ps.fL_z_by_species.empty()) {
+        ofs << "    \"fL_z_convention\": \"final_species_layer_fraction_N_i_z_over_lateral_layer_size\",\n";
     }
     ofs << "    \"pt_convention\": \"p_used_to_generate_same_time_step\",\n";
     ofs << "    \"nt_convention\": \"new_active_front_fraction_same_time_step\"\n";
@@ -525,6 +531,14 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 ? ps.t_eq_by_species[static_cast<std::size_t>(crow)]
                 : std::numeric_limits<double>::quiet_NaN();
 
+        const std::vector<double>* fL_z_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.fL_z_by_species.size())) {
+            const auto& row = ps.fL_z_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                fL_z_ptr = &row;
+            }
+        }
+
         const std::vector<int>* sp_path_lin_ptr = nullptr;
         if (crow < static_cast<int>(ps.sp_path_lin.size())) {
             sp_path_lin_ptr = &ps.sp_path_lin[crow];
@@ -552,6 +566,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"nt\": ";
         write_json_row(ofs, ts.f_t, crow);
         ofs << ",\n";
+        if (fL_z_ptr != nullptr) {
+            ofs << "        \"fL_z\": ";
+            write_json_array(ofs, *fL_z_ptr);
+            ofs << ",\n";
+        }
         if (!ps.t_eq_by_species.empty()) {
             ofs << "        \"t_eq_species\": ";
             write_json_nullable_double(ofs, t_eq_species);

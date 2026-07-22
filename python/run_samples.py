@@ -63,12 +63,13 @@ type_perc = 'bond'
 # L_lst = [1024, 2048, 4096, 8192]
 # num_runs = [400, 200, 100, 50]
 # nc = 4
-#L_lst = [256, 512, 1024]
-#num_runs = [150, 50, 5]
-L_lst = [128]
-num_runs = [300]
-nc = 3
-c_lst = [0.01, 0.02, 0.03, 0.04, 0.05, 0.1, 0.15, 0.2]
+#L_lst = [128, 256, 512, 1024]
+#num_runs = [300, 150, 50, 5]
+
+L_lst = [512]
+num_runs = [50]
+nc = 1
+c_lst = [0.01, 0.05, 0.1, 0.15, 0.2]
 
 multi=True
 Equilibration = 'false'
@@ -77,7 +78,7 @@ Mode = 'growth_test'  # use 'sop' for the original fixed-height SOP run
 InitialLayout = 'random'  # 'random', 'blocks', or 'alternating'
 p0 = 0.6
 P0 = 0.2
-ft_lst = np.linspace(0.001, 0.4, 30)
+ft_lst = np.linspace(0.001, 0.4, 20)
 #P0_lst = [round(i,1) for i in np.arange(start=0.1,stop=1.1,step=0.1)]
 
 for idx, L in enumerate(L_lst):
