@@ -68,8 +68,8 @@ $\boldsymbol{\rho}$: Density of network for each color;
 <b> VERY IMPORTANT!</b>  
 The value of rho must be such that num_colors*rho <= 1. If num_colors*$\rho$ < 1, the gap will be filled with uncolored sites. If num_colors*$\rho$ = 1, all sites in the network will be uniformly and equally colored.
 
-<b> Example </b>: $\boldsymbol{\rho}$ = 0.5 for 2 colors, this gives us num_colors*$\boldsymbol{\rho}$ = 1.0, meaning that half of the network will be composed of inactive sites of each color.  
-<b> Example </b>: $\boldsymbol{\rho}$ = 0.4 for 2 colors, this gives us num_colors*$\boldsymbol{\rho}$ = 0.8, meaning that 40% of the network sites will have color 2, 40% will have color 3, and 20% will have no color.  
+<b> Example </b>: $\boldsymbol{\rho}$ = 0.5 for 2 colors, this gives us num_colors * $\boldsymbol{\rho}$ = 1.0, meaning that half of the network will be composed of inactive sites of each color.  
+<b> Example </b>: $\boldsymbol{\rho}$ = 0.4 for 2 colors, this gives us num_colors * $\boldsymbol{\rho}$ = 0.8, meaning that 40% of the network sites will have color 2, 40% will have color 3, and 20% will have no color.  
 
 
 ## Running this way will generate a folder structure
