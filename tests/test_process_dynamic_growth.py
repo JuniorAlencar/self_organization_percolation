@@ -22,6 +22,13 @@ assert TIME_SERIES_SPEC.loader is not None
 sys.modules[TIME_SERIES_SPEC.name] = TIME_SERIES_ANALYSIS
 TIME_SERIES_SPEC.loader.exec_module(TIME_SERIES_ANALYSIS)
 
+STABILITY_TESTS_PATH = REPO_ROOT / "jupyter" / "src" / "stability_tests.py"
+STABILITY_TESTS_SPEC = spec_from_file_location("stability_tests", STABILITY_TESTS_PATH)
+STABILITY_TESTS = module_from_spec(STABILITY_TESTS_SPEC)
+assert STABILITY_TESTS_SPEC.loader is not None
+sys.modules[STABILITY_TESTS_SPEC.name] = STABILITY_TESTS
+STABILITY_TESTS_SPEC.loader.exec_module(STABILITY_TESTS)
+
 
 class ProcessDynamicGrowthTest(unittest.TestCase):
     def _make_data_dir(self, root: Path) -> tuple[Path, Path, Path, Path]:
@@ -43,15 +50,31 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
         data_dir.mkdir(parents=True, exist_ok=True)
         return raw_root, published_root, manifests_root, data_dir
 
-    def _write_sample(self, data_dir: Path, name: str, pt: list[float]) -> Path:
+    def _write_sample(
+        self,
+        data_dir: Path,
+        name: str,
+        pt: list[float],
+        fL_z: list[float] | None = None,
+        z_max: float = 1.0,
+    ) -> Path:
+        data = {
+            "color": 1,
+            "t_eq_species": 5.0,
+            "time": [6.0, 7.0, 8.0],
+            "pt": pt,
+            "nt": [0.1, 0.2, 0.3],
+        }
+        if fL_z is not None:
+            data["fL_z"] = fL_z
         sample_path = data_dir / name
         sample_path.write_text(
             json.dumps(
                 {
                     "meta": {
                         "t_eq_by_species": [5.0],
-                        "z_max": [1.0],
-                        "z_stat": [1.0],
+                        "z_max": [z_max],
+                        "z_stat": [z_max],
                         "growth_test_stop_criterion": "alive_species_pt_derivative_stability_or_death",
                         "growth_test_t_eq_validation": "discrete_derivative_of_blocked_pt_variation",
                         "growth_test_t_eq_s_prime_threshold": 1.0e-5,
@@ -61,13 +84,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                     },
                     "results": {
                         "order_percolation 1": {
-                            "data": {
-                                "color": 1,
-                                "t_eq_species": 5.0,
-                                "time": [6.0, 7.0, 8.0],
-                                "pt": pt,
-                                "nt": [0.1, 0.2, 0.3],
-                            }
+                            "data": data
                         }
                     },
                 }
@@ -125,8 +142,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(all_color_rows[0]["N_samples"], 2)
 
             bundle_path = out_path
-            with bundle_path.open("r", encoding="utf-8") as handle:
-                bundle = json.load(handle)
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(bundle_path)
 
             self.assertEqual(bundle["p0_groups"][0]["num_samples_total"], 2)
             self.assertEqual(bundle["p0_groups"][0]["orders"][0]["N_samples"], 2)
@@ -168,11 +184,11 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                 published_root,
                 manifests_root,
                 jobs=2,
+                detect_replaced_files=True,
             )
 
             self.assertEqual(all_rows[0]["N_samples"], 2)
-            with out_path.open("r", encoding="utf-8") as handle:
-                bundle = json.load(handle)
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
             order_data = bundle["p0_groups"][0]["orders"][0]["data"]
             self.assertEqual(order_data["n_seeds_pt"], 2)
             self.assertEqual(order_data["pt_mean"], [0.4, 0.6000000000000001, 0.8])
@@ -248,7 +264,236 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
         self.assertEqual(stats["time"], [1.0, 2.0, 3.0, 4.0, 5.0])
         self.assertEqual(stats["pt_N_per_t"], [2, 2, 2, 1, 1])
         self.assertEqual(stats["pt_mean"], [0.30000000000000004, 0.5, 0.7, 1.0, 1.2])
+        self.assertEqual(stats["pt_common_time"], [1.0, 2.0, 3.0])
+        self.assertEqual(stats["pt_common_mean"], [0.30000000000000004, 0.5, 0.7])
+        self.assertEqual(stats["pt_supported_time"], [1.0, 2.0, 3.0])
+        self.assertEqual(stats["pt_supported_mean"], [0.30000000000000004, 0.5, 0.7])
+        self.assertEqual(stats["pt_min_support_count"], 2)
         self.assertEqual(stats["ft_N_per_t"], [2, 2, 2, 1, 1])
+
+    def test_average_dynamic_time_series_adds_flz_height_mean(self) -> None:
+        stats = PROCESS_DYNAMIC_GROWTH.average_dynamic_time_series([
+            {
+                "t_eq_species": 1.0,
+                "time": [1.0, 2.0, 3.0],
+                "pt": [0.2, 0.4, 0.6],
+                "ft": [0.1, 0.2, 0.3],
+                "fL_z": [0.25, 0.5, 0.0],
+            },
+            {
+                "t_eq_species": 1.0,
+                "time": [1.0, 2.0, 3.0],
+                "pt": [0.4, 0.6, 0.8],
+                "ft": [0.2, 0.3, 0.4],
+                "fL_z": [0.5, 0.25],
+            },
+        ])
+
+        self.assertEqual(stats["fL_z_z"], [0, 1, 2])
+        self.assertEqual(stats["fL_z_N_per_z"], [2, 2, 1])
+        self.assertEqual(stats["fL_z_mean"], [0.375, 0.375, 0.0])
+        self.assertEqual(stats["fL_z_common_z"], [0, 1])
+        self.assertEqual(stats["fL_z_common_mean"], [0.375, 0.375])
+        self.assertEqual(stats["fL_z_supported_z"], [0, 1])
+        self.assertEqual(stats["fL_z_supported_mean"], [0.375, 0.375])
+
+    def test_process_group_writes_flz_height_mean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6], [0.25, 0.5, 0.0])
+            self._write_sample(data_dir, "sample_b_P0_0.7_p0_0.2.json", [0.6, 0.8, 1.0], [0.5, 0.25])
+
+            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            order_data = bundle["p0_groups"][0]["orders"][0]["data"]
+            self.assertEqual(order_data["fL_z_z"], [0, 1, 2])
+            self.assertEqual(order_data["fL_z_N_per_z"], [2, 2, 1])
+            self.assertEqual(order_data["fL_z_mean"], [0.375, 0.375, 0.0])
+            self.assertEqual(order_data["fL_z_supported_z"], [0, 1])
+            self.assertEqual(order_data["fL_z_supported_mean"], [0.375, 0.375])
+
+    def test_process_group_writes_zmax_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6], z_max=3.0)
+            self._write_sample(data_dir, "sample_b_P0_0.7_p0_0.2.json", [0.6, 0.8, 1.0], z_max=5.0)
+
+            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            order = bundle["p0_groups"][0]["orders"][0]
+            self.assertEqual(order["z_max"]["values"], [3.0, 5.0])
+            self.assertEqual(order["data"]["z_max_values"], [3.0, 5.0])
+            self.assertAlmostEqual(order["data"]["z_max_mean"], 4.0)
+
+    def test_process_group_writes_per_sample_p_tail_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            self._write_sample(data_dir, "sample_b_P0_0.7_p0_0.2.json", [0.6, 0.8, 1.0])
+
+            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            data = bundle["p0_groups"][0]["orders"][0]["data"]
+            self.assertEqual(len(data["p_tail_sample_values"]), 2)
+            self.assertAlmostEqual(data["p_tail_sample_values"][0], 0.4)
+            self.assertAlmostEqual(data["p_tail_sample_values"][1], 0.8)
+            self.assertEqual(
+                data["p_tail_estimator"],
+                "mean_of_per_sample_tail_means_after_each_sample_t_eq",
+            )
+            self.assertAlmostEqual(data["p_tail_mean"], 0.6)
+
+    def test_process_group_profiles_mode_skips_time_series_but_keeps_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6], [0.25, 0.5])
+
+            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+                series_mode="profiles",
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            data = bundle["p0_groups"][0]["orders"][0]["data"]
+            self.assertEqual(bundle["meta"]["series_mode"], "profiles")
+            self.assertEqual(data["pt_mean"], [])
+            self.assertEqual(data["fL_z_mean"], [0.25, 0.5])
+            self.assertAlmostEqual(data["p_tail_mean"], 0.4)
+
+    def test_read_dynamic_bundle_exposes_series_profiles_and_heights(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_path = Path(tmpdir) / "properties_dynamic_bundle.json"
+            bundle_path.write_text(
+                json.dumps(
+                    {
+                        "meta": {
+                            "type_perc": "S1",
+                            "dim": 2,
+                            "L": 8,
+                            "f_T": 0.3,
+                            "c": 0.2,
+                            "nc": 2,
+                            "rho": 0.2,
+                            "stat_window": 0,
+                            "series_mode": "full",
+                        },
+                        "p0_groups": [
+                            {
+                                "P0_value": 0.7,
+                                "p0_value": 0.2,
+                                "num_samples_total": 2,
+                                "colors": {"nc": 1.5, "nc_err": 0.1, "nc_std": 0.2},
+                                "orders": [
+                                    {
+                                        "order": 1,
+                                        "N_samples_perc": 2,
+                                        "data": {
+                                            "time": [1.0, 2.0, 3.0],
+                                            "pt_mean": [0.2, 0.4, 0.6],
+                                            "pt_N_per_t": [2, 2, 1],
+                                            "ft_time": [1.0, 2.0],
+                                            "ft_mean": [0.1, 0.2],
+                                            "ft_N_per_t": [2, 1],
+                                            "fL_z_z": [0, 1, 2],
+                                            "fL_z_mean": [0.25, 0.5, 0.0],
+                                            "fL_z_N_per_z": [2, 2, 1],
+                                            "fL_z_supported_z": [0, 1],
+                                            "fL_z_supported_mean": [0.25, 0.5],
+                                            "z_max_values": [3.0, 5.0],
+                                            "p_tail_sample_values": [0.4, 0.8],
+                                        },
+                                        "p": {"mean": 0.6, "err": 0.2},
+                                        "f": {"mean": 0.15, "err": 0.05},
+                                        "t_eq_species": {"mean": 5.0, "err": 0.0},
+                                        "z_max": {"mean": 4.0, "err": 1.0, "std": 1.0},
+                                        "z_stat": {"mean": 4.0, "err": 1.0, "std": 1.0},
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            frame = STABILITY_TESTS.read_dynamic_bundle(bundle_path)
+            row = frame.iloc[0]
+
+            self.assertEqual(row["series_mode"], "full")
+            self.assertEqual(row["pt_N_per_t"], [2, 2, 1])
+            self.assertEqual(row["ft_time"], [1.0, 2.0])
+            self.assertEqual(row["fL_z_z"], [0, 1, 2])
+            self.assertEqual(row["fL_z_mean"], [0.25, 0.5, 0.0])
+            self.assertEqual(row["fL_z_supported_z"], [0, 1])
+            self.assertEqual(row["z_max_values"], [3.0, 5.0])
+            self.assertEqual(row["p_tail_sample_values"], [0.4, 0.8])
+
+    def test_compress_published_only_migrates_without_raw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            published_root = root / "SOP_data" / "published_dynamic"
+            group_dir = published_root / "S1_percolation" / "num_colors_2"
+            group_dir.mkdir(parents=True)
+            legacy_dynamic = group_dir / "properties_dynamic_bundle.json"
+            legacy_dynamic.write_text(
+                json.dumps({
+                    "meta": {"type_perc": "S1", "dim": 2, "L": 8, "f_T": 0.3, "c": 0.2, "nc": 2, "rho": 0.2},
+                    "p0_groups": [],
+                }),
+                encoding="utf-8",
+            )
+            legacy_lateral = group_dir / "lateral_correlations_bundle.json"
+            legacy_lateral.write_text(
+                json.dumps({"meta": {"format": "compact_summary_columnar"}, "samples": []}),
+                encoding="utf-8",
+            )
+
+            dynamic_n, lateral_n, _ = PROCESS_DYNAMIC_GROWTH.compress_published_only(
+                published_root,
+                root / "SOP_data",
+                "all_data_dynamic.dat",
+                "all_colors_dynamic.dat",
+                compresslevel=1,
+                threads=1,
+            )
+
+            self.assertEqual(dynamic_n, 1)
+            self.assertEqual(lateral_n, 1)
+            self.assertFalse(legacy_dynamic.exists())
+            self.assertFalse(legacy_lateral.exists())
+            self.assertTrue((group_dir / "properties_dynamic_bundle.json.xz").exists())
+            self.assertTrue((group_dir / "lateral_correlations_bundle.json.xz").exists())
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(group_dir / "properties_dynamic_bundle.json.xz")
+            self.assertEqual(bundle["meta"]["L"], 8)
 
     def test_process_sample_files_uses_multiple_workers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -314,10 +559,9 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             out_dir.mkdir()
             out_path = PROCESS_DYNAMIC_GROWTH.process_lateral_correlations(data_dir, out_dir)
 
-            self.assertEqual(out_path.name, "lateral_correlations_bundle.json.gz")
+            self.assertEqual(out_path.name, "lateral_correlations_bundle.json.xz")
             self.assertTrue(out_path.exists())
-            with gzip.open(out_path, "rt", encoding="utf-8") as handle:
-                bundle = json.load(handle)
+            bundle = PROCESS_DYNAMIC_GROWTH.load_lateral_bundle_file(out_path)
             self.assertEqual(bundle["meta"]["format"], "compact_summary_columnar")
             self.assertIsInstance(bundle["samples"][0]["series"], dict)
 
@@ -365,8 +609,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                 existing_bundle=existing_bundle,
             )
 
-            with gzip.open(out_path, "rt", encoding="utf-8") as handle:
-                bundle = json.load(handle)
+            bundle = PROCESS_DYNAMIC_GROWTH.load_lateral_bundle_file(out_path)
 
             self.assertEqual(bundle["meta"]["aggregation"], "mean_by_parameter")
             self.assertEqual(len(bundle["samples"]), 1)

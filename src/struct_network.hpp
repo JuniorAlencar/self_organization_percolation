@@ -129,6 +129,8 @@ struct PercolationSeries {
     std::vector<int> z_max_at_perc;
     std::vector<int> z_max_final;
     std::vector<int> z_stat_by_species;
+    // growth_test: final layer fraction by species, [cor][z].
+    std::vector<std::vector<double>> fL_z_by_species;
     // growth_test: 1 = estabilizou, -1 = morreu, 0 = nao estabilizou ate a parada.
     std::vector<int> species_final_status;
     std::string growth_test_stop_reason;

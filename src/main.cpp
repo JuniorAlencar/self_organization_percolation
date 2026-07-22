@@ -202,7 +202,7 @@ int main(int argc, char* argv[]) {
             stop_config.dynamic_height = true;
             stop_config.stop_at_percolation = false;
             stop_config.stop_at_equilibrium = true;
-            stop_config.save_lateral_observables = true;
+            stop_config.save_lateral_observables = false;
             stop_config.equilibrium_consecutive_steps = 10;
             stop_config.dynamics_window_steps = -1;
         }

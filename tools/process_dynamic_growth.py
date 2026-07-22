@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
+import lzma
 import math
 import os
 import re
 import shutil
+import subprocess
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -18,10 +20,13 @@ from typing import Any
 
 import numpy as np
 
+XZ_BIN = shutil.which("xz")
 
-DYNAMIC_PROCESSING_VERSION = 11
+
+DYNAMIC_PROCESSING_VERSION = 12
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
+DEFAULT_MIN_SUPPORT_FRACTION = 0.8
 
 FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
@@ -87,6 +92,31 @@ def load_manifest(manifests_root: Path, rel_group: Path) -> dict[str, Any]:
     }
 
 
+def rows_from_manifest_cache(
+    manifest: dict[str, Any],
+    series_mode: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
+    if int(manifest.get("dynamic_processing_version", 0) or 0) != DYNAMIC_PROCESSING_VERSION:
+        return None
+    if str(manifest.get("series_mode", "full") or "full") != series_mode:
+        return None
+    rows = manifest.get("all_rows_cache")
+    color_rows = manifest.get("all_color_rows_cache")
+    if not isinstance(rows, list) or not isinstance(color_rows, list):
+        return None
+    return list(rows), list(color_rows)
+
+
+def manifest_rows_cache_payload(
+    all_rows: list[dict[str, Any]],
+    all_color_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "all_rows_cache": json_safe(all_rows),
+        "all_color_rows_cache": json_safe(all_color_rows),
+    }
+
+
 def save_manifest(manifests_root: Path,
                   rel_group: Path,
                   manifest: dict[str, Any]) -> Path:
@@ -96,6 +126,79 @@ def save_manifest(manifests_root: Path,
         json.dump(json_safe(manifest), f, ensure_ascii=False, indent=2, allow_nan=False)
         f.write("\n")
     return path
+
+
+def open_text_auto(path: Path, mode: str, compresslevel: int = 6):
+    if path.suffix == ".gz":
+        if any(flag in mode for flag in ("w", "a", "x")):
+            return gzip.open(path, mode, encoding="utf-8", compresslevel=compresslevel)
+        return gzip.open(path, mode, encoding="utf-8")
+    if path.suffix == ".xz":
+        if any(flag in mode for flag in ("w", "a", "x")):
+            return lzma.open(path, mode, encoding="utf-8", preset=compresslevel)
+        return lzma.open(path, mode, encoding="utf-8")
+    return path.open(mode, encoding="utf-8")
+
+
+def open_binary_auto(path: Path, mode: str, compresslevel: int = 6):
+    if path.suffix == ".gz":
+        if any(flag in mode for flag in ("w", "a", "x")):
+            return gzip.open(path, mode, compresslevel=compresslevel)
+        return gzip.open(path, mode)
+    if path.suffix == ".xz":
+        if any(flag in mode for flag in ("w", "a", "x")):
+            return lzma.open(path, mode, preset=compresslevel)
+        return lzma.open(path, mode)
+    return path.open(mode)
+
+
+def load_json_bundle(path: Path) -> dict[str, Any]:
+    with open_text_auto(path, "rt") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid JSON bundle: {path}")
+    return data
+
+
+def write_json_bundle(path: Path, data: dict[str, Any], pretty: bool = False, compresslevel: int = 6) -> None:
+    with open_text_auto(path, "wt", compresslevel=compresslevel) as f:
+        if pretty:
+            json.dump(json_safe(data), f, ensure_ascii=False, indent=2)
+        else:
+            json.dump(json_safe(data), f, ensure_ascii=False, separators=(",", ":"))
+        f.write("\n")
+
+
+def compress_json_to_xz(
+    source_path: Path,
+    target_path: Path,
+    *,
+    compresslevel: int = 1,
+    threads: int = 0,
+) -> None:
+    tmp_path = target_path.with_name(target_path.name + ".tmp")
+    if XZ_BIN:
+        with open_binary_auto(source_path, "rb") as source, tmp_path.open("wb") as target:
+            proc = subprocess.Popen(
+                [XZ_BIN, f"-{int(compresslevel)}", f"-T{int(threads)}", "-c"],
+                stdin=subprocess.PIPE,
+                stdout=target,
+            )
+            assert proc.stdin is not None
+            try:
+                shutil.copyfileobj(source, proc.stdin, length=1024 * 1024)
+                proc.stdin.close()
+                rc = proc.wait()
+            except Exception:
+                proc.kill()
+                proc.wait()
+                raise
+            if rc != 0:
+                raise RuntimeError(f"xz failed with exit code {rc}: {source_path}")
+    else:
+        with open_binary_auto(source_path, "rb") as source, open_binary_auto(tmp_path, "wb", compresslevel=compresslevel) as target:
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+    tmp_path.replace(target_path)
 
 
 def finite_float(value: Any) -> float | None:
@@ -277,6 +380,112 @@ def tail_mean_after_t_eq(time: Any, values: Any, t_eq: float) -> float | None:
     return float(np.mean(y[mask]))
 
 
+def min_support_count(n_seeds: int, fraction: float = DEFAULT_MIN_SUPPORT_FRACTION) -> int:
+    if n_seeds <= 0:
+        return 0
+    return max(1, int(math.ceil(float(fraction) * n_seeds)))
+
+
+def support_indices(counts: list[int], n_seeds: int,
+                    fraction: float = DEFAULT_MIN_SUPPORT_FRACTION) -> list[int]:
+    threshold = min_support_count(n_seeds, fraction)
+    return [idx for idx, n in enumerate(counts) if n >= threshold]
+
+
+def regular_time_signature(t: np.ndarray) -> tuple[float, float] | None:
+    if t.size == 0:
+        return None
+    start = float(t[0])
+    if t.size == 1:
+        return start, 1.0
+    step = float(t[1] - t[0])
+    if not math.isfinite(step) or step <= 0.0:
+        return None
+    expected = start + step * np.arange(t.size, dtype=float)
+    if not np.allclose(t, expected, rtol=0.0, atol=1e-10):
+        return None
+    return start, step
+
+
+def mean_regular_prefix_series(cleaned: list[tuple[np.ndarray, np.ndarray]]) -> dict[str, Any] | None:
+    if not cleaned:
+        return None
+    first_sig = regular_time_signature(cleaned[0][0])
+    if first_sig is None:
+        return None
+    start, step = first_sig
+    max_len = max(int(t.size) for t, _ in cleaned)
+    sums = np.zeros(max_len, dtype=float)
+    sums_sq = np.zeros(max_len, dtype=float)
+    counts = np.zeros(max_len, dtype=np.int64)
+
+    for t, y in cleaned:
+        sig = regular_time_signature(t)
+        if sig is None:
+            return None
+        t_start, t_step = sig
+        if not math.isclose(t_start, start, rel_tol=0.0, abs_tol=1e-10):
+            return None
+        if not math.isclose(t_step, step, rel_tol=1e-12, abs_tol=1e-10):
+            return None
+        n = int(min(t.size, y.size))
+        if n <= 0:
+            continue
+        vals = y[:n]
+        mask = np.isfinite(vals)
+        if not np.any(mask):
+            continue
+        idx = np.flatnonzero(mask)
+        finite_vals = vals[idx]
+        sums[idx] += finite_vals
+        sums_sq[idx] += finite_vals * finite_vals
+        counts[idx] += 1
+
+    valid = counts > 0
+    if not np.any(valid):
+        return None
+    last = int(np.flatnonzero(valid)[-1]) + 1
+    counts = counts[:last]
+    sums = sums[:last]
+    sums_sq = sums_sq[:last]
+    mean = np.divide(sums, counts, out=np.zeros_like(sums), where=counts > 0)
+    variance = np.zeros_like(sums)
+    multi = counts > 1
+    variance[multi] = np.maximum(
+        (sums_sq[multi] - sums[multi] * sums[multi] / counts[multi]) / (counts[multi] - 1),
+        0.0,
+    )
+    std = np.sqrt(variance)
+    sem = np.divide(std, np.sqrt(counts), out=np.zeros_like(std), where=counts > 1)
+    n_per_t = counts.astype(int).tolist()
+    n_seeds = int(len(cleaned))
+    common_idx = [idx for idx, n in enumerate(n_per_t) if n == n_seeds]
+    supported_idx = support_indices(n_per_t, n_seeds)
+    support_count = min_support_count(n_seeds)
+    t_grid = start + step * np.arange(last, dtype=float)
+
+    return {
+        "time": t_grid.tolist(),
+        "mean": mean.tolist(),
+        "std": std.tolist(),
+        "sem": sem.tolist(),
+        "N_per_t": n_per_t,
+        "n_seeds": n_seeds,
+        "common_time": t_grid[common_idx].tolist(),
+        "common_mean": mean[common_idx].tolist(),
+        "common_std": std[common_idx].tolist(),
+        "common_sem": sem[common_idx].tolist(),
+        "common_N_per_t": [n_per_t[idx] for idx in common_idx],
+        "supported_time": t_grid[supported_idx].tolist(),
+        "supported_mean": mean[supported_idx].tolist(),
+        "supported_std": std[supported_idx].tolist(),
+        "supported_sem": sem[supported_idx].tolist(),
+        "supported_N_per_t": [n_per_t[idx] for idx in supported_idx],
+        "min_support_fraction": DEFAULT_MIN_SUPPORT_FRACTION,
+        "min_support_count": support_count,
+    }
+
+
 def mean_series_on_union_grid(series: list[tuple[np.ndarray, np.ndarray]]) -> dict[str, Any]:
     if not series:
         return {
@@ -286,6 +495,18 @@ def mean_series_on_union_grid(series: list[tuple[np.ndarray, np.ndarray]]) -> di
             "sem": [],
             "N_per_t": [],
             "n_seeds": 0,
+            "common_time": [],
+            "common_mean": [],
+            "common_std": [],
+            "common_sem": [],
+            "common_N_per_t": [],
+            "supported_time": [],
+            "supported_mean": [],
+            "supported_std": [],
+            "supported_sem": [],
+            "supported_N_per_t": [],
+            "min_support_fraction": DEFAULT_MIN_SUPPORT_FRACTION,
+            "min_support_count": 0,
         }
 
     cleaned: list[tuple[np.ndarray, np.ndarray]] = []
@@ -311,53 +532,214 @@ def mean_series_on_union_grid(series: list[tuple[np.ndarray, np.ndarray]]) -> di
             "sem": [],
             "N_per_t": [],
             "n_seeds": 0,
+            "common_time": [],
+            "common_mean": [],
+            "common_std": [],
+            "common_sem": [],
+            "common_N_per_t": [],
+            "supported_time": [],
+            "supported_mean": [],
+            "supported_std": [],
+            "supported_sem": [],
+            "supported_N_per_t": [],
+            "min_support_fraction": DEFAULT_MIN_SUPPORT_FRACTION,
+            "min_support_count": 0,
         }
 
-    t_grid = np.unique(np.concatenate([t for t, _ in cleaned]))
-    values_by_t: dict[float, list[float]] = {float(t): [] for t in t_grid}
+    regular_stats = mean_regular_prefix_series(cleaned)
+    if regular_stats is not None:
+        return regular_stats
+
+    accum: dict[float, list[float]] = {}
     for t, y in cleaned:
         per_series: dict[float, float] = {}
         for tt, yy in zip(t, y):
             per_series[float(tt)] = float(yy)
         for tt, yy in per_series.items():
-            values_by_t[tt].append(yy)
+            stats = accum.setdefault(tt, [0.0, 0.0, 0.0])
+            stats[0] += 1.0
+            stats[1] += yy
+            stats[2] += yy * yy
 
+    t_grid = sorted(accum)
     mean: list[float] = []
     std: list[float] = []
     sem: list[float] = []
     n_per_t: list[int] = []
     for tt in t_grid:
-        vals = np.asarray(values_by_t[float(tt)], dtype=float)
-        n = int(vals.size)
+        n = int(accum[tt][0])
+        total = accum[tt][1]
+        sumsq = accum[tt][2]
         n_per_t.append(n)
-        mean.append(float(vals.mean()))
+        m = total / n
+        mean.append(float(m))
         if n > 1:
-            s = float(vals.std(ddof=1))
+            variance = max((sumsq - total * total / n) / (n - 1), 0.0)
+            s = math.sqrt(variance)
             std.append(s)
             sem.append(float(s / math.sqrt(n)))
         else:
             std.append(0.0)
             sem.append(0.0)
 
+    n_seeds = int(len(cleaned))
+    common_idx = [idx for idx, n in enumerate(n_per_t) if n == n_seeds]
+    supported_idx = support_indices(n_per_t, n_seeds)
+    support_count = min_support_count(n_seeds)
+
     return {
-        "time": t_grid.tolist(),
+        "time": [float(t) for t in t_grid],
         "mean": mean,
         "std": std,
         "sem": sem,
         "N_per_t": n_per_t,
-        "n_seeds": int(len(cleaned)),
+        "n_seeds": n_seeds,
+        "common_time": [float(t_grid[idx]) for idx in common_idx],
+        "common_mean": [mean[idx] for idx in common_idx],
+        "common_std": [std[idx] for idx in common_idx],
+        "common_sem": [sem[idx] for idx in common_idx],
+        "common_N_per_t": [n_per_t[idx] for idx in common_idx],
+        "supported_time": [float(t_grid[idx]) for idx in supported_idx],
+        "supported_mean": [mean[idx] for idx in supported_idx],
+        "supported_std": [std[idx] for idx in supported_idx],
+        "supported_sem": [sem[idx] for idx in supported_idx],
+        "supported_N_per_t": [n_per_t[idx] for idx in supported_idx],
+        "min_support_fraction": DEFAULT_MIN_SUPPORT_FRACTION,
+        "min_support_count": support_count,
+    }
+
+
+def clean_numeric_vector(values: Any) -> np.ndarray:
+    try:
+        arr = np.asarray(values, dtype=float)
+    except Exception:
+        return np.asarray([], dtype=float)
+    if arr.ndim != 1 or arr.size == 0:
+        return np.asarray([], dtype=float)
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return np.asarray([], dtype=float)
+    return arr
+
+
+def mean_indexed_series(series: list[np.ndarray]) -> dict[str, Any]:
+    cleaned = [clean_numeric_vector(values) for values in series]
+    cleaned = [values for values in cleaned if values.size > 0]
+    if not cleaned:
+        return {
+            "z": [],
+            "mean": [],
+            "std": [],
+            "sem": [],
+            "N_per_z": [],
+            "n_seeds": 0,
+            "common_z": [],
+            "common_mean": [],
+            "common_std": [],
+            "common_sem": [],
+            "common_N_per_z": [],
+            "supported_z": [],
+            "supported_mean": [],
+            "supported_std": [],
+            "supported_sem": [],
+            "supported_N_per_z": [],
+            "min_support_fraction": DEFAULT_MIN_SUPPORT_FRACTION,
+            "min_support_count": 0,
+        }
+
+    max_len = max(int(values.size) for values in cleaned)
+    sums = np.zeros(max_len, dtype=float)
+    sums_sq = np.zeros(max_len, dtype=float)
+    counts = np.zeros(max_len, dtype=np.int64)
+
+    for values in cleaned:
+        mask = np.isfinite(values)
+        if not np.any(mask):
+            continue
+        idx = np.flatnonzero(mask)
+        vals = values[idx]
+        sums[idx] += vals
+        sums_sq[idx] += vals * vals
+        counts[idx] += 1
+
+    valid = counts > 0
+    if not np.any(valid):
+        return {
+            "z": [],
+            "mean": [],
+            "std": [],
+            "sem": [],
+            "N_per_z": [],
+            "n_seeds": 0,
+            "common_z": [],
+            "common_mean": [],
+            "common_std": [],
+            "common_sem": [],
+            "common_N_per_z": [],
+            "supported_z": [],
+            "supported_mean": [],
+            "supported_std": [],
+            "supported_sem": [],
+            "supported_N_per_z": [],
+            "min_support_fraction": DEFAULT_MIN_SUPPORT_FRACTION,
+            "min_support_count": 0,
+        }
+
+    last = int(np.flatnonzero(valid)[-1]) + 1
+    sums = sums[:last]
+    sums_sq = sums_sq[:last]
+    counts = counts[:last]
+    mean = np.divide(sums, counts, out=np.zeros_like(sums), where=counts > 0)
+    variance = np.zeros_like(sums)
+    multi = counts > 1
+    variance[multi] = np.maximum(
+        (sums_sq[multi] - sums[multi] * sums[multi] / counts[multi]) / (counts[multi] - 1),
+        0.0,
+    )
+    std = np.sqrt(variance)
+    sem = np.divide(std, np.sqrt(counts), out=np.zeros_like(std), where=counts > 1)
+    n_seeds = int(len(cleaned))
+    common = counts == n_seeds
+    support_count = min_support_count(n_seeds)
+    supported = counts >= support_count
+    z = np.arange(last, dtype=np.int64)
+
+    return {
+        "z": z.tolist(),
+        "mean": mean.tolist(),
+        "std": std.tolist(),
+        "sem": sem.tolist(),
+        "N_per_z": counts.astype(int).tolist(),
+        "n_seeds": n_seeds,
+        "common_z": z[common].tolist(),
+        "common_mean": mean[common].tolist(),
+        "common_std": std[common].tolist(),
+        "common_sem": sem[common].tolist(),
+        "common_N_per_z": counts[common].astype(int).tolist(),
+        "supported_z": z[supported].tolist(),
+        "supported_mean": mean[supported].tolist(),
+        "supported_std": std[supported].tolist(),
+        "supported_sem": sem[supported].tolist(),
+        "supported_N_per_z": counts[supported].astype(int).tolist(),
+        "min_support_fraction": DEFAULT_MIN_SUPPORT_FRACTION,
+        "min_support_count": support_count,
     }
 
 
 def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
     series_pt: list[tuple[np.ndarray, np.ndarray]] = []
     series_ft: list[tuple[np.ndarray, np.ndarray]] = []
+    series_flz: list[np.ndarray] = []
     t_eq_vals: list[float] = []
 
     for item in items:
         t_eq = finite_float(item.get("t_eq_species"))
         if t_eq is not None:
             t_eq_vals.append(t_eq)
+
+        flz = clean_numeric_vector(item.get("fL_z"))
+        if flz.size > 0:
+            series_flz.append(flz)
 
         time = item.get("time")
         pt = item.get("pt")
@@ -398,29 +780,47 @@ def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
         out["t_eq_max"] = math.nan
         out["n_t_eq"] = 0
 
-    if not series_pt:
-        out.update({
-            "time": [],
-            "pt_mean": [],
-            "pt_std": [],
-            "pt_sem": [],
-            "pt_N_per_t": [],
-            "ft_mean": [],
-            "ft_std": [],
-            "ft_sem": [],
-            "ft_N_per_t": [],
-            "n_seeds_pt": 0,
-            "n_seeds_ft": 0,
-        })
-        return out
-
-    pt_stats = mean_series_on_union_grid(series_pt)
-    out["time"] = pt_stats["time"]
-    out["pt_mean"] = pt_stats["mean"]
-    out["pt_std"] = pt_stats["std"]
-    out["pt_sem"] = pt_stats["sem"]
-    out["pt_N_per_t"] = pt_stats["N_per_t"]
-    out["n_seeds_pt"] = pt_stats["n_seeds"]
+    if series_pt:
+        pt_stats = mean_series_on_union_grid(series_pt)
+        out["time"] = pt_stats["time"]
+        out["pt_mean"] = pt_stats["mean"]
+        out["pt_std"] = pt_stats["std"]
+        out["pt_sem"] = pt_stats["sem"]
+        out["pt_N_per_t"] = pt_stats["N_per_t"]
+        out["n_seeds_pt"] = pt_stats["n_seeds"]
+        out["pt_common_time"] = pt_stats["common_time"]
+        out["pt_common_mean"] = pt_stats["common_mean"]
+        out["pt_common_std"] = pt_stats["common_std"]
+        out["pt_common_sem"] = pt_stats["common_sem"]
+        out["pt_common_N_per_t"] = pt_stats["common_N_per_t"]
+        out["pt_supported_time"] = pt_stats["supported_time"]
+        out["pt_supported_mean"] = pt_stats["supported_mean"]
+        out["pt_supported_std"] = pt_stats["supported_std"]
+        out["pt_supported_sem"] = pt_stats["supported_sem"]
+        out["pt_supported_N_per_t"] = pt_stats["supported_N_per_t"]
+        out["pt_support_policy"] = "union_observed_times"
+        out["pt_common_support_policy"] = "all_samples_present"
+        out["pt_supported_support_policy"] = "min_fraction_of_samples_present"
+        out["pt_min_support_count"] = pt_stats["min_support_count"]
+    else:
+        out["time"] = []
+        out["pt_mean"] = []
+        out["pt_std"] = []
+        out["pt_sem"] = []
+        out["pt_N_per_t"] = []
+        out["n_seeds_pt"] = 0
+        out["pt_common_time"] = []
+        out["pt_common_mean"] = []
+        out["pt_common_std"] = []
+        out["pt_common_sem"] = []
+        out["pt_common_N_per_t"] = []
+        out["pt_supported_time"] = []
+        out["pt_supported_mean"] = []
+        out["pt_supported_std"] = []
+        out["pt_supported_sem"] = []
+        out["pt_supported_N_per_t"] = []
+        out["pt_min_support_count"] = 0
+    out["min_support_fraction"] = DEFAULT_MIN_SUPPORT_FRACTION
 
     if series_ft:
         ft_stats = mean_series_on_union_grid(series_ft)
@@ -430,12 +830,54 @@ def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
         out["ft_sem"] = ft_stats["sem"]
         out["ft_N_per_t"] = ft_stats["N_per_t"]
         out["n_seeds_ft"] = ft_stats["n_seeds"]
+        out["ft_common_time"] = ft_stats["common_time"]
+        out["ft_common_mean"] = ft_stats["common_mean"]
+        out["ft_common_std"] = ft_stats["common_std"]
+        out["ft_common_sem"] = ft_stats["common_sem"]
+        out["ft_common_N_per_t"] = ft_stats["common_N_per_t"]
+        out["ft_supported_time"] = ft_stats["supported_time"]
+        out["ft_supported_mean"] = ft_stats["supported_mean"]
+        out["ft_supported_std"] = ft_stats["supported_std"]
+        out["ft_supported_sem"] = ft_stats["supported_sem"]
+        out["ft_supported_N_per_t"] = ft_stats["supported_N_per_t"]
+        out["ft_support_policy"] = "union_observed_times"
+        out["ft_common_support_policy"] = "all_samples_present"
+        out["ft_supported_support_policy"] = "min_fraction_of_samples_present"
+        out["ft_min_support_count"] = ft_stats["min_support_count"]
     else:
         out["ft_mean"] = []
         out["ft_std"] = []
         out["ft_sem"] = []
         out["ft_N_per_t"] = []
         out["n_seeds_ft"] = 0
+        out["ft_supported_time"] = []
+        out["ft_supported_mean"] = []
+        out["ft_supported_std"] = []
+        out["ft_supported_sem"] = []
+        out["ft_supported_N_per_t"] = []
+        out["ft_min_support_count"] = 0
+
+    flz_stats = mean_indexed_series(series_flz)
+    out["fL_z_z"] = flz_stats["z"]
+    out["fL_z_mean"] = flz_stats["mean"]
+    out["fL_z_std"] = flz_stats["std"]
+    out["fL_z_sem"] = flz_stats["sem"]
+    out["fL_z_N_per_z"] = flz_stats["N_per_z"]
+    out["n_seeds_fL_z"] = flz_stats["n_seeds"]
+    out["fL_z_common_z"] = flz_stats["common_z"]
+    out["fL_z_common_mean"] = flz_stats["common_mean"]
+    out["fL_z_common_std"] = flz_stats["common_std"]
+    out["fL_z_common_sem"] = flz_stats["common_sem"]
+    out["fL_z_common_N_per_z"] = flz_stats["common_N_per_z"]
+    out["fL_z_supported_z"] = flz_stats["supported_z"]
+    out["fL_z_supported_mean"] = flz_stats["supported_mean"]
+    out["fL_z_supported_std"] = flz_stats["supported_std"]
+    out["fL_z_supported_sem"] = flz_stats["supported_sem"]
+    out["fL_z_supported_N_per_z"] = flz_stats["supported_N_per_z"]
+    out["fL_z_support_policy"] = "union_observed_heights"
+    out["fL_z_common_support_policy"] = "all_samples_present"
+    out["fL_z_supported_support_policy"] = "min_fraction_of_samples_present"
+    out["fL_z_min_support_count"] = flz_stats["min_support_count"]
 
     return out
 
@@ -487,7 +929,12 @@ def zmax_for_order(
     return None
 
 
-def load_dynamic_sample(path: Path) -> list[dict[str, Any]] | None:
+def load_dynamic_sample(
+    path: Path,
+    *,
+    include_time_series: bool = True,
+    include_flz: bool = True,
+) -> list[dict[str, Any]] | None:
     try:
         with path.open("r", encoding="utf-8") as f:
             js = json.load(f)
@@ -570,25 +1017,37 @@ def load_dynamic_sample(path: Path) -> list[dict[str, Any]] | None:
             meta_zmax=meta_zstat,
         )
 
-        out.append({
+        row = {
             "order": order_pos,
             "color": color_1b,
             "t_eq_species": t_eq,
-            "time": data.get("time"),
-            "pt": data.get("pt"),
-            "ft": data.get("nt"),
             "p_sample_mean": p_mean,
             "f_sample_mean": f_mean,
             "z_max": z_max,
             "z_stat": z_stat,
             **criterion_meta,
-        })
+        }
+        if include_time_series:
+            row["time"] = data.get("time")
+            row["pt"] = data.get("pt")
+            row["ft"] = data.get("nt")
+        if include_flz:
+            row["fL_z"] = data.get("fL_z")
+        out.append(row)
 
     return out
 
 
-def process_one_sample_file(sample_path: Path) -> tuple[list[dict[str, Any]], float | None]:
-    sample_orders = load_dynamic_sample(sample_path)
+def process_one_sample_file(
+    sample_path: Path,
+    include_time_series: bool = True,
+    include_flz: bool = True,
+) -> tuple[list[dict[str, Any]], float | None]:
+    sample_orders = load_dynamic_sample(
+        sample_path,
+        include_time_series=include_time_series,
+        include_flz=include_flz,
+    )
     if sample_orders is None:
         return [], None
 
@@ -602,6 +1061,7 @@ def process_one_sample_file(sample_path: Path) -> tuple[list[dict[str, Any]], fl
             "time": item.get("time"),
             "pt": item.get("pt"),
             "ft": item.get("ft"),
+            "fL_z": item.get("fL_z"),
             "p_sample_mean": item.get("p_sample_mean"),
             "f_sample_mean": item.get("f_sample_mean"),
             "z_max": item.get("z_max"),
@@ -616,13 +1076,99 @@ def process_one_sample_file(sample_path: Path) -> tuple[list[dict[str, Any]], fl
     return rows, float(len(sample_orders))
 
 
-def process_sample_files(sample_paths: list[Path], jobs: int = 1) -> tuple[list[dict[str, Any]], list[float]]:
+def process_one_sample_file_for_pool(args: tuple[Path, bool, bool]) -> tuple[list[dict[str, Any]], float | None]:
+    sample_path, include_time_series, include_flz = args
+    return process_one_sample_file(
+        sample_path,
+        include_time_series=include_time_series,
+        include_flz=include_flz,
+    )
+
+
+def sample_cache_path(cache_dir: Path, sample_path: Path) -> Path:
+    digest = hashlib.sha1(sample_path.name.encode("utf-8")).hexdigest()
+    return cache_dir / f"{sample_path.stem}_{digest[:12]}.summary.json"
+
+
+def process_one_sample_file_cached(
+    args: tuple[Path, bool, bool, str, str | None],
+) -> tuple[list[dict[str, Any]], float | None]:
+    sample_path, include_time_series, include_flz, fingerprint_mode, cache_dir_raw = args
+    if include_time_series or cache_dir_raw is None:
+        return process_one_sample_file(
+            sample_path,
+            include_time_series=include_time_series,
+            include_flz=include_flz,
+        )
+
+    cache_dir = Path(cache_dir_raw)
+    fingerprint = file_fingerprint_for_mode(sample_path, fingerprint_mode)
+    cache_path = sample_cache_path(cache_dir, sample_path)
+    try:
+        with cache_path.open("r", encoding="utf-8") as handle:
+            cached = json.load(handle)
+        if (
+            isinstance(cached, dict)
+            and cached.get("fingerprint") == fingerprint
+            and cached.get("fingerprint_mode") == fingerprint_mode
+            and bool(cached.get("include_flz")) == include_flz
+            and cached.get("format_version") == DYNAMIC_PROCESSING_VERSION
+        ):
+            rows = cached.get("rows", [])
+            stabilized_count = cached.get("stabilized_count")
+            if isinstance(rows, list):
+                return rows, finite_float(stabilized_count)
+    except Exception:
+        pass
+
+    rows, stabilized_count = process_one_sample_file(
+        sample_path,
+        include_time_series=False,
+        include_flz=include_flz,
+    )
+    try:
+        ensure_dir(cache_dir)
+        payload = {
+            "format_version": DYNAMIC_PROCESSING_VERSION,
+            "fingerprint": fingerprint,
+            "fingerprint_mode": fingerprint_mode,
+            "include_flz": include_flz,
+            "stabilized_count": stabilized_count,
+            "rows": rows,
+        }
+        with cache_path.open("w", encoding="utf-8") as handle:
+            json.dump(json_safe(payload), handle, ensure_ascii=False, separators=(",", ":"))
+            handle.write("\n")
+    except Exception:
+        pass
+    return rows, stabilized_count
+
+
+def process_sample_files(
+    sample_paths: list[Path],
+    jobs: int = 1,
+    include_time_series: bool = True,
+    include_flz: bool = True,
+    cache_dir: Path | None = None,
+    fingerprint_mode: str = "stat",
+) -> tuple[list[dict[str, Any]], list[float]]:
     """Process a list of dynamic sample JSON files and return parsed rows plus per-file stabilization counts."""
     rows: list[dict[str, Any]] = []
     stabilized_counts: list[float] = []
 
     if jobs <= 1 or len(sample_paths) < 8:
-        results = map(process_one_sample_file, sample_paths)
+        results = (
+            process_one_sample_file_cached(
+                (
+                    path,
+                    include_time_series,
+                    include_flz,
+                    fingerprint_mode,
+                    cache_dir.as_posix() if cache_dir is not None else None,
+                )
+            )
+            for path in sample_paths
+        )
         for sample_rows, stabilized_count in results:
             if stabilized_count is None:
                 continue
@@ -632,7 +1178,20 @@ def process_sample_files(sample_paths: list[Path], jobs: int = 1) -> tuple[list[
         workers = min(jobs, len(sample_paths))
         chunksize = max(1, min(32, len(sample_paths) // max(1, workers * 4)))
         with ProcessPoolExecutor(max_workers=workers) as executor:
-            results = executor.map(process_one_sample_file, sample_paths, chunksize=chunksize)
+            results = executor.map(
+                process_one_sample_file_cached,
+                [
+                    (
+                        path,
+                        include_time_series,
+                        include_flz,
+                        fingerprint_mode,
+                        cache_dir.as_posix() if cache_dir is not None else None,
+                    )
+                    for path in sample_paths
+                ],
+                chunksize=chunksize,
+            )
             for sample_rows, stabilized_count in results:
                 if stabilized_count is None:
                     continue
@@ -1010,35 +1569,9 @@ def process_lateral_correlations(
     sample_paths: list[Path] | None = None,
     existing_bundle: dict[str, Any] | None = None,
 ) -> Path | None:
-    """Process lateral correlation/susceptibility CSVs in a sibling correlations/ directory when present."""
-    correlations_dir = lateral_correlations_dir(data_dir)
-    csv_files = sample_paths if sample_paths is not None else collect_lateral_correlation_files(data_dir)
-    if not csv_files:
-        return None
-
-    rows, counts = process_correlation_files(csv_files)
-    samples = merge_lateral_bundles(existing_bundle, rows) if existing_bundle is not None else aggregate_lateral_samples(rows)
-    bundle = {
-        "meta": {
-            "data_dir": data_dir.as_posix(),
-            "correlations_dir": correlations_dir.as_posix(),
-            "n_files": len(csv_files),
-            "n_rows": len(samples),
-            "row_counts": counts,
-            "format": "compact_summary_columnar",
-            "aggregation": "mean_by_parameter",
-            "lateral_processing_version": LATERAL_PROCESSING_VERSION,
-        },
-        "samples": samples,
-    }
-    lateral_out_path = lateral_bundle_path(out_dir)
-    with gzip.open(lateral_out_path, "wt", encoding="utf-8", compresslevel=6) as handle:
-        json.dump(json_safe(bundle), handle, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        handle.write("\n")
-    legacy_path = legacy_lateral_bundle_path(out_dir)
-    if legacy_path.exists():
-        legacy_path.unlink()
-    return lateral_out_path
+    """Disabled: lateral correlation/susceptibility processing is no longer used."""
+    del data_dir, out_dir, sample_paths, existing_bundle
+    return None
 
 
 def lateral_correlations_dir(data_dir: Path) -> Path:
@@ -1046,6 +1579,10 @@ def lateral_correlations_dir(data_dir: Path) -> Path:
 
 
 def lateral_bundle_path(out_dir: Path) -> Path:
+    return out_dir / "lateral_correlations_bundle.json.xz"
+
+
+def gzip_lateral_bundle_path(out_dir: Path) -> Path:
     return out_dir / "lateral_correlations_bundle.json.gz"
 
 
@@ -1057,33 +1594,43 @@ def existing_lateral_bundle_path(out_dir: Path) -> Path | None:
     compressed_path = lateral_bundle_path(out_dir)
     if compressed_path.exists():
         return compressed_path
+    gzip_path = gzip_lateral_bundle_path(out_dir)
+    if gzip_path.exists():
+        return gzip_path
     legacy_path = legacy_lateral_bundle_path(out_dir)
     if legacy_path.exists():
         return legacy_path
     return None
 
 
-def ensure_lateral_bundle_compressed(out_dir: Path) -> Path | None:
+def remove_legacy_lateral_bundles(out_dir: Path, keep: Path) -> None:
+    for path in (gzip_lateral_bundle_path(out_dir), legacy_lateral_bundle_path(out_dir)):
+        if path != keep and path.exists():
+            path.unlink()
+
+
+def ensure_lateral_bundle_compressed(
+    out_dir: Path,
+    *,
+    compresslevel: int = 6,
+    threads: int = 1,
+) -> Path | None:
     compressed_path = lateral_bundle_path(out_dir)
     if compressed_path.exists():
         return compressed_path
-    legacy_path = legacy_lateral_bundle_path(out_dir)
-    if not legacy_path.exists():
+    source_path = gzip_lateral_bundle_path(out_dir)
+    if not source_path.exists():
+        source_path = legacy_lateral_bundle_path(out_dir)
+    if not source_path.exists():
         return None
-    with legacy_path.open("rb") as source, gzip.open(compressed_path, "wb", compresslevel=6) as target:
-        shutil.copyfileobj(source, target, length=1024 * 1024)
-    legacy_path.unlink()
+    compress_json_to_xz(source_path, compressed_path, compresslevel=compresslevel, threads=threads)
+    remove_legacy_lateral_bundles(out_dir, keep=compressed_path)
     return compressed_path
 
 
 def load_lateral_bundle_file(path: Path) -> dict[str, Any] | None:
     try:
-        if path.suffix == ".gz":
-            with gzip.open(path, "rt", encoding="utf-8") as handle:
-                data = json.load(handle)
-        else:
-            with path.open("r", encoding="utf-8") as handle:
-                data = json.load(handle)
+        data = load_json_bundle(path)
     except Exception as exc:
         print(f"[warn] não consegui ler bundle lateral {path}: {exc}")
         return None
@@ -1092,12 +1639,10 @@ def load_lateral_bundle_file(path: Path) -> dict[str, Any] | None:
 
 def write_lateral_bundle_file(bundle: dict[str, Any], out_dir: Path) -> Path:
     compressed_path = lateral_bundle_path(out_dir)
-    with gzip.open(compressed_path, "wt", encoding="utf-8", compresslevel=6) as handle:
+    with open_text_auto(compressed_path, "wt", compresslevel=6) as handle:
         json.dump(json_safe(bundle), handle, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         handle.write("\n")
-    legacy_path = legacy_lateral_bundle_path(out_dir)
-    if legacy_path.exists():
-        legacy_path.unlink()
+    remove_legacy_lateral_bundles(out_dir, keep=compressed_path)
     return compressed_path
 
 
@@ -1221,12 +1766,62 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
 
 
 def rows_from_existing_bundle(bundle_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    with bundle_path.open("r", encoding="utf-8") as f:
-        bundle = json.load(f)
+    bundle = load_json_bundle(bundle_path)
     return rows_from_bundle(bundle)
 
 
+def dynamic_bundle_path(out_dir: Path) -> Path:
+    return out_dir / "properties_dynamic_bundle.json.xz"
+
+
+def gzip_dynamic_bundle_path(out_dir: Path) -> Path:
+    return out_dir / "properties_dynamic_bundle.json.gz"
+
+
+def legacy_dynamic_bundle_path(out_dir: Path) -> Path:
+    return out_dir / "properties_dynamic_bundle.json"
+
+
+def existing_dynamic_bundle_path(out_dir: Path) -> Path | None:
+    for path in (
+        dynamic_bundle_path(out_dir),
+        gzip_dynamic_bundle_path(out_dir),
+        legacy_dynamic_bundle_path(out_dir),
+    ):
+        if path.exists():
+            return path
+    return None
+
+
+def remove_legacy_dynamic_bundles(out_dir: Path, keep: Path) -> None:
+    for path in (gzip_dynamic_bundle_path(out_dir), legacy_dynamic_bundle_path(out_dir)):
+        if path != keep and path.exists():
+            path.unlink()
+
+
+def ensure_dynamic_bundle_compressed(
+    out_dir: Path,
+    *,
+    compresslevel: int = 6,
+    threads: int = 1,
+) -> Path | None:
+    compressed_path = dynamic_bundle_path(out_dir)
+    if compressed_path.exists():
+        return compressed_path
+    source_path = gzip_dynamic_bundle_path(out_dir)
+    if not source_path.exists():
+        source_path = legacy_dynamic_bundle_path(out_dir)
+    if not source_path.exists():
+        return None
+    compress_json_to_xz(source_path, compressed_path, compresslevel=compresslevel, threads=threads)
+    remove_legacy_dynamic_bundles(out_dir, keep=compressed_path)
+    return compressed_path
+
+
 def bundle_has_missing_dynamic_series(bundle: dict[str, Any]) -> bool:
+    meta = bundle.get("meta", {}) if isinstance(bundle.get("meta", {}), dict) else {}
+    if meta.get("series_mode") not in (None, "full"):
+        return False
     p0_groups = bundle.get("p0_groups", [])
     if not isinstance(p0_groups, list):
         return False
@@ -1253,10 +1848,22 @@ def bundle_has_missing_dynamic_series(bundle: dict[str, Any]) -> bool:
 def summary_from_values(values: list[float]) -> dict[str, Any]:
     clean = [float(v) for v in values if finite_float(v) is not None]
     mean, err, std, n = mean_sem_std(clean)
+    arr = np.asarray(clean, dtype=float)
+    if n > 0:
+        q25, median, q75 = np.percentile(arr, [25.0, 50.0, 75.0])
+        v_min = float(np.min(arr))
+        v_max = float(np.max(arr))
+    else:
+        q25 = median = q75 = v_min = v_max = math.nan
     return {
         "mean": mean,
         "err": err,
         "std": std,
+        "median": float(median),
+        "q25": float(q25),
+        "q75": float(q75),
+        "min": v_min,
+        "max": v_max,
         "n": n,
         "sum": float(sum(clean)) if clean else 0.0,
         "sumsq": float(sum(v * v for v in clean)) if clean else 0.0,
@@ -1296,7 +1903,7 @@ def summary_sumsq(summary: dict[str, Any]) -> float:
 
 def finalize_summary(n: int, total: float, sumsq: float) -> dict[str, Any]:
     if n <= 0:
-        return {"mean": None, "err": None, "n": 0, "sum": 0.0, "sumsq": 0.0}
+        return {"mean": None, "err": None, "std": None, "n": 0, "sum": 0.0, "sumsq": 0.0}
     mean = total / n
     if n <= 1:
         std = 0.0
@@ -1318,11 +1925,21 @@ def finalize_summary(n: int, total: float, sumsq: float) -> dict[str, Any]:
 def combine_summary_dicts(old_summary: dict[str, Any], new_summary: dict[str, Any]) -> dict[str, Any]:
     old_n = int(old_summary.get("n", 0) or 0)
     new_n = int(new_summary.get("n", 0) or 0)
-    return finalize_summary(
+    combined = finalize_summary(
         old_n + new_n,
         summary_sum(old_summary) + summary_sum(new_summary),
         summary_sumsq(old_summary) + summary_sumsq(new_summary),
     )
+    old_values = old_summary.get("values", [])
+    new_values = new_summary.get("values", [])
+    values: list[Any] = []
+    if isinstance(old_values, list):
+        values.extend(old_values)
+    if isinstance(new_values, list):
+        values.extend(new_values)
+    if values:
+        combined["values"] = values
+    return combined
 
 
 def colors_as_summary(colors: dict[str, Any]) -> dict[str, Any]:
@@ -1375,76 +1992,127 @@ def combine_scalar_summary(
     return combined["mean"], combined["err"], int(combined["n"])
 
 
+def series_counts(counts: Any, fallback_n: int, length: int) -> list[int]:
+    if isinstance(counts, list) and counts:
+        out: list[int] = []
+        for value in counts[:length]:
+            try:
+                n = int(value)
+            except Exception:
+                n = 0
+            out.append(max(n, 0))
+        if len(out) < length:
+            out.extend([0] * (length - len(out)))
+        return out
+    return [max(int(fallback_n), 0)] * length
+
+
 def combine_series_arrays(
     old_mean: list[float] | None,
     old_std: list[float] | None,
+    old_counts: list[int] | None,
     old_n: int,
     new_mean: list[float] | None,
     new_std: list[float] | None,
+    new_counts: list[int] | None,
     new_n: int,
-) -> tuple[list[float], list[float], list[float], int]:
+) -> tuple[list[float], list[float], list[float], list[int]]:
     old_mean = list(old_mean or [])
     old_std = list(old_std or [])
     new_mean = list(new_mean or [])
     new_std = list(new_std or [])
-    if not old_mean and not new_mean:
-        return [], [], [], 0
-    if not old_mean or old_n <= 0:
-        sem = [
-            (float(std) / math.sqrt(new_n) if new_n > 1 and finite_float(std) is not None else 0.0)
-            for std in new_std[:len(new_mean)]
-        ]
-        if len(sem) < len(new_mean):
-            sem.extend([0.0] * (len(new_mean) - len(sem)))
-        return list(new_mean), list(new_std), sem, new_n
-    if not new_mean or new_n <= 0:
-        sem = [
-            (float(std) / math.sqrt(old_n) if old_n > 1 and finite_float(std) is not None else 0.0)
-            for std in old_std[:len(old_mean)]
-        ]
-        if len(sem) < len(old_mean):
-            sem.extend([0.0] * (len(old_mean) - len(sem)))
-        return list(old_mean), list(old_std), sem, old_n
+    length = max(len(old_mean), len(new_mean))
+    if length == 0:
+        return [], [], [], []
 
-    length = min(len(old_mean), len(new_mean))
+    old_counts_clean = series_counts(old_counts, old_n, len(old_mean))
+    new_counts_clean = series_counts(new_counts, new_n, len(new_mean))
     combined_mean: list[float] = []
     combined_std: list[float] = []
     combined_sem: list[float] = []
-    total_n = old_n + new_n
-    for idx in range(length):
-        old_val = old_mean[idx] if idx < len(old_mean) else None
-        new_val = new_mean[idx] if idx < len(new_mean) else None
-        old_std_val = old_std[idx] if old_std is not None and idx < len(old_std) else None
-        new_std_val = new_std[idx] if new_std is not None and idx < len(new_std) else None
+    combined_counts: list[int] = []
 
-        if old_val is None and new_val is None:
+    for idx in range(length):
+        total = 0.0
+        sumsq = 0.0
+        count = 0
+        for means, stds, counts in (
+            (old_mean, old_std, old_counts_clean),
+            (new_mean, new_std, new_counts_clean),
+        ):
+            if idx >= len(means) or idx >= len(counts):
+                continue
+            n = int(counts[idx])
+            value = finite_float(means[idx])
+            if n <= 0 or value is None:
+                continue
+            std_value = finite_float(stds[idx]) if idx < len(stds) else 0.0
+            std_value = 0.0 if std_value is None else std_value
+            total += n * value
+            sumsq += n * value * value
+            if n > 1:
+                sumsq += (n - 1) * std_value * std_value
+            count += n
+
+        combined_counts.append(count)
+        if count <= 0:
             combined_mean.append(math.nan)
             combined_std.append(math.nan)
             combined_sem.append(math.nan)
             continue
-        if old_val is None:
-            combined_mean.append(float(new_val))
-            combined_std.append(float(new_std_val) if new_std_val is not None else 0.0)
-            combined_sem.append(float(new_std_val) / math.sqrt(new_n) if new_n > 1 and new_std_val is not None else 0.0)
-            continue
-        if new_val is None:
-            combined_mean.append(float(old_val))
-            combined_std.append(float(old_std_val) if old_std_val is not None else 0.0)
-            combined_sem.append(float(old_std_val) / math.sqrt(old_n) if old_n > 1 and old_std_val is not None else 0.0)
-            continue
-
-        mean = (old_n * float(old_val) + new_n * float(new_val)) / total_n
-        m2_old = 0.0 if old_n <= 1 else (old_n - 1) * (float(old_std_val) ** 2 if old_std_val is not None else 0.0)
-        m2_new = 0.0 if new_n <= 1 else (new_n - 1) * (float(new_std_val) ** 2 if new_std_val is not None else 0.0)
-        delta = float(old_val) - float(new_val)
-        m2 = m2_old + m2_new + (delta * delta * old_n * new_n / total_n)
-        std = 0.0 if total_n <= 1 else math.sqrt(m2 / (total_n - 1))
-        sem = 0.0 if total_n <= 1 else std / math.sqrt(total_n)
+        mean = total / count
+        if count <= 1:
+            std = 0.0
+            sem = 0.0
+        else:
+            variance = max((sumsq - total * total / count) / (count - 1), 0.0)
+            std = math.sqrt(variance)
+            sem = std / math.sqrt(count)
         combined_mean.append(float(mean))
         combined_std.append(float(std))
         combined_sem.append(float(sem))
 
-    return combined_mean, combined_std, combined_sem, total_n
+    return combined_mean, combined_std, combined_sem, combined_counts
+
+
+def choose_axis(old_axis: Any, new_axis: Any, length: int) -> list[Any]:
+    old_list = list(old_axis or [])
+    new_list = list(new_axis or [])
+    axis = new_list if len(new_list) > len(old_list) else old_list
+    if len(axis) >= length:
+        return axis[:length]
+    if axis and all(finite_float(v) is not None for v in axis):
+        step = float(axis[-1]) - float(axis[-2]) if len(axis) > 1 else 1.0
+        while len(axis) < length:
+            axis.append(float(axis[-1]) + step)
+        return axis
+    return list(range(length))
+
+
+def series_common_fields(axis: list[Any], mean: list[float], std: list[float], sem: list[float],
+                         counts: list[int], total_n: int) -> tuple[list[Any], list[float], list[float], list[float], list[int]]:
+    idx = [i for i, n in enumerate(counts) if n == total_n and i < len(axis)]
+    return (
+        [axis[i] for i in idx],
+        [mean[i] for i in idx],
+        [std[i] for i in idx],
+        [sem[i] for i in idx],
+        [counts[i] for i in idx],
+    )
+
+
+def series_supported_fields(axis: list[Any], mean: list[float], std: list[float], sem: list[float],
+                            counts: list[int], total_n: int) -> tuple[list[Any], list[float], list[float], list[float], list[int], int]:
+    threshold = min_support_count(total_n)
+    idx = [i for i, n in enumerate(counts) if n >= threshold and i < len(axis)]
+    return (
+        [axis[i] for i in idx],
+        [mean[i] for i in idx],
+        [std[i] for i in idx],
+        [sem[i] for i in idx],
+        [counts[i] for i in idx],
+        threshold,
+    )
 
 
 def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any]) -> dict[str, Any]:
@@ -1455,47 +2123,131 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     existing_data = existing_order.get("data", {}) if isinstance(existing_order.get("data", {}), dict) else {}
     new_data = new_order.get("data", {}) if isinstance(new_order.get("data", {}), dict) else {}
     merged_data = dict(existing_data)
-    merged_data["time"] = existing_data.get("time") or new_data.get("time") or []
 
     old_n_pt = int(existing_data.get("n_seeds_pt", 0) or 0)
     new_n_pt = int(new_data.get("n_seeds_pt", 0) or 0)
-    pt_mean, pt_std, pt_sem, _ = combine_series_arrays(
+    pt_mean, pt_std, pt_sem, pt_counts = combine_series_arrays(
         existing_data.get("pt_mean"),
         existing_data.get("pt_std"),
+        existing_data.get("pt_N_per_t"),
         old_n_pt,
         new_data.get("pt_mean"),
         new_data.get("pt_std"),
+        new_data.get("pt_N_per_t"),
         new_n_pt,
     )
+    time = choose_axis(existing_data.get("time"), new_data.get("time"), len(pt_mean))
     merged_data["pt_mean"] = pt_mean
     merged_data["pt_std"] = pt_std
     merged_data["pt_sem"] = pt_sem
+    merged_data["pt_N_per_t"] = pt_counts
     merged_data["n_seeds_pt"] = old_n_pt + new_n_pt
-    merged_data["time"] = list(merged_data.get("time") or [])[:len(pt_mean)]
+    merged_data["time"] = time
+    common_time, common_mean, common_std, common_sem, common_counts = series_common_fields(
+        time, pt_mean, pt_std, pt_sem, pt_counts, old_n_pt + new_n_pt
+    )
+    supported_time, supported_mean, supported_std, supported_sem, supported_counts, supported_threshold = series_supported_fields(
+        time, pt_mean, pt_std, pt_sem, pt_counts, old_n_pt + new_n_pt
+    )
+    merged_data["pt_common_time"] = common_time
+    merged_data["pt_common_mean"] = common_mean
+    merged_data["pt_common_std"] = common_std
+    merged_data["pt_common_sem"] = common_sem
+    merged_data["pt_common_N_per_t"] = common_counts
+    merged_data["pt_supported_time"] = supported_time
+    merged_data["pt_supported_mean"] = supported_mean
+    merged_data["pt_supported_std"] = supported_std
+    merged_data["pt_supported_sem"] = supported_sem
+    merged_data["pt_supported_N_per_t"] = supported_counts
+    merged_data["pt_support_policy"] = "union_observed_times"
+    merged_data["pt_common_support_policy"] = "all_samples_present"
+    merged_data["pt_supported_support_policy"] = "min_fraction_of_samples_present"
+    merged_data["pt_min_support_count"] = supported_threshold
+    merged_data["min_support_fraction"] = DEFAULT_MIN_SUPPORT_FRACTION
 
     old_n_ft = int(existing_data.get("n_seeds_ft", 0) or 0)
     new_n_ft = int(new_data.get("n_seeds_ft", 0) or 0)
     if old_n_ft > 0 or new_n_ft > 0:
-        ft_mean, ft_std, ft_sem, _ = combine_series_arrays(
+        ft_mean, ft_std, ft_sem, ft_counts = combine_series_arrays(
             existing_data.get("ft_mean"),
             existing_data.get("ft_std"),
+            existing_data.get("ft_N_per_t"),
             old_n_ft,
             new_data.get("ft_mean"),
             new_data.get("ft_std"),
+            new_data.get("ft_N_per_t"),
             new_n_ft,
         )
+        ft_time = choose_axis(existing_data.get("ft_time") or existing_data.get("time"),
+                              new_data.get("ft_time") or new_data.get("time"),
+                              len(ft_mean))
+        common_time, common_mean, common_std, common_sem, common_counts = series_common_fields(
+            ft_time, ft_mean, ft_std, ft_sem, ft_counts, old_n_ft + new_n_ft
+        )
+        supported_time, supported_mean, supported_std, supported_sem, supported_counts, supported_threshold = series_supported_fields(
+            ft_time, ft_mean, ft_std, ft_sem, ft_counts, old_n_ft + new_n_ft
+        )
+        merged_data["ft_time"] = ft_time
         merged_data["ft_mean"] = ft_mean
         merged_data["ft_std"] = ft_std
         merged_data["ft_sem"] = ft_sem
+        merged_data["ft_N_per_t"] = ft_counts
         merged_data["n_seeds_ft"] = old_n_ft + new_n_ft
-        common_len = min(len(merged_data.get("time") or []), len(ft_mean), len(pt_mean))
-        merged_data["time"] = list(merged_data.get("time") or [])[:common_len]
-        merged_data["pt_mean"] = merged_data["pt_mean"][:common_len]
-        merged_data["pt_std"] = merged_data["pt_std"][:common_len]
-        merged_data["pt_sem"] = merged_data["pt_sem"][:common_len]
-        merged_data["ft_mean"] = merged_data["ft_mean"][:common_len]
-        merged_data["ft_std"] = merged_data["ft_std"][:common_len]
-        merged_data["ft_sem"] = merged_data["ft_sem"][:common_len]
+        merged_data["ft_common_time"] = common_time
+        merged_data["ft_common_mean"] = common_mean
+        merged_data["ft_common_std"] = common_std
+        merged_data["ft_common_sem"] = common_sem
+        merged_data["ft_common_N_per_t"] = common_counts
+        merged_data["ft_supported_time"] = supported_time
+        merged_data["ft_supported_mean"] = supported_mean
+        merged_data["ft_supported_std"] = supported_std
+        merged_data["ft_supported_sem"] = supported_sem
+        merged_data["ft_supported_N_per_t"] = supported_counts
+        merged_data["ft_support_policy"] = "union_observed_times"
+        merged_data["ft_common_support_policy"] = "all_samples_present"
+        merged_data["ft_supported_support_policy"] = "min_fraction_of_samples_present"
+        merged_data["ft_min_support_count"] = supported_threshold
+
+    old_n_flz = int(existing_data.get("n_seeds_fL_z", 0) or 0)
+    new_n_flz = int(new_data.get("n_seeds_fL_z", 0) or 0)
+    if old_n_flz > 0 or new_n_flz > 0:
+        flz_mean, flz_std, flz_sem, flz_counts = combine_series_arrays(
+            existing_data.get("fL_z_mean"),
+            existing_data.get("fL_z_std"),
+            existing_data.get("fL_z_N_per_z"),
+            old_n_flz,
+            new_data.get("fL_z_mean"),
+            new_data.get("fL_z_std"),
+            new_data.get("fL_z_N_per_z"),
+            new_n_flz,
+        )
+        z_axis = choose_axis(existing_data.get("fL_z_z"), new_data.get("fL_z_z"), len(flz_mean))
+        common_z, common_mean, common_std, common_sem, common_counts = series_common_fields(
+            z_axis, flz_mean, flz_std, flz_sem, flz_counts, old_n_flz + new_n_flz
+        )
+        supported_z, supported_mean, supported_std, supported_sem, supported_counts, supported_threshold = series_supported_fields(
+            z_axis, flz_mean, flz_std, flz_sem, flz_counts, old_n_flz + new_n_flz
+        )
+        merged_data["fL_z_z"] = z_axis
+        merged_data["fL_z_mean"] = flz_mean
+        merged_data["fL_z_std"] = flz_std
+        merged_data["fL_z_sem"] = flz_sem
+        merged_data["fL_z_N_per_z"] = flz_counts
+        merged_data["n_seeds_fL_z"] = old_n_flz + new_n_flz
+        merged_data["fL_z_common_z"] = common_z
+        merged_data["fL_z_common_mean"] = common_mean
+        merged_data["fL_z_common_std"] = common_std
+        merged_data["fL_z_common_sem"] = common_sem
+        merged_data["fL_z_common_N_per_z"] = common_counts
+        merged_data["fL_z_supported_z"] = supported_z
+        merged_data["fL_z_supported_mean"] = supported_mean
+        merged_data["fL_z_supported_std"] = supported_std
+        merged_data["fL_z_supported_sem"] = supported_sem
+        merged_data["fL_z_supported_N_per_z"] = supported_counts
+        merged_data["fL_z_support_policy"] = "union_observed_heights"
+        merged_data["fL_z_common_support_policy"] = "all_samples_present"
+        merged_data["fL_z_supported_support_policy"] = "min_fraction_of_samples_present"
+        merged_data["fL_z_min_support_count"] = supported_threshold
 
     p_old = existing_order.get("p", {}) if isinstance(existing_order.get("p", {}), dict) else {}
     p_new = new_order.get("p", {}) if isinstance(new_order.get("p", {}), dict) else {}
@@ -1504,6 +2256,8 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     p_err = merged["p"]["err"]
     merged_data["p_tail_mean"] = p_mean
     merged_data["p_tail_err"] = p_err
+    merged_data["p_tail_sample_values"] = merged["p"].get("values", [])
+    merged_data["p_tail_estimator"] = "mean_of_per_sample_tail_means_after_each_sample_t_eq"
 
     f_old = existing_order.get("f", {}) if isinstance(existing_order.get("f", {}), dict) else {}
     f_new = new_order.get("f", {}) if isinstance(new_order.get("f", {}), dict) else {}
@@ -1512,6 +2266,8 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     f_err = merged["f"]["err"]
     merged_data["f_tail_mean"] = f_mean
     merged_data["f_tail_err"] = f_err
+    merged_data["f_tail_sample_values"] = merged["f"].get("values", [])
+    merged_data["f_tail_estimator"] = "mean_of_per_sample_tail_means_after_each_sample_t_eq"
 
     teq_old = existing_order.get("t_eq_species", {}) if isinstance(existing_order.get("t_eq_species", {}), dict) else {}
     teq_new = new_order.get("t_eq_species", {}) if isinstance(new_order.get("t_eq_species", {}), dict) else {}
@@ -1537,6 +2293,8 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     z_err = merged["z_max"]["err"]
     merged_data["z_max_mean"] = z_mean
     merged_data["z_max_err"] = z_err
+    merged_data["z_max_std"] = merged["z_max"].get("std")
+    merged_data["z_max_values"] = merged["z_max"].get("values", [])
 
     z_stat_old = existing_order.get("z_stat", {}) if isinstance(existing_order.get("z_stat", {}), dict) else {}
     z_stat_new = new_order.get("z_stat", {}) if isinstance(new_order.get("z_stat", {}), dict) else {}
@@ -1587,7 +2345,12 @@ def build_bundle_for_files(
     rel_group: Path,
     files: list[Path],
     jobs: int = 1,
+    series_mode: str = "full",
+    sample_cache_dir: Path | None = None,
+    fingerprint_mode: str = "stat",
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    include_time_series = series_mode == "full"
+    include_flz = series_mode in ("full", "profiles")
     groups: dict[tuple[float, float], list[Path]] = defaultdict(list)
     for fp in files:
         parsed_name = parse_sample_name(fp)
@@ -1602,6 +2365,7 @@ def build_bundle_for_files(
             "num_json_files": len(files),
             "num_parseable_json_files": len({fp.name for files_group in groups.values() for fp in files_group}),
             "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+            "series_mode": series_mode,
         },
         "p0_groups": [],
     }
@@ -1611,7 +2375,14 @@ def build_bundle_for_files(
 
     for (P0, p0), group_files in sorted(groups.items(), key=lambda x: (x[0][0], x[0][1])):
         by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
-        sample_rows, stabilized_counts = process_sample_files(group_files, jobs=jobs)
+        sample_rows, stabilized_counts = process_sample_files(
+            group_files,
+            jobs=jobs,
+            include_time_series=include_time_series,
+            include_flz=include_flz,
+            cache_dir=sample_cache_dir,
+            fingerprint_mode=fingerprint_mode,
+        )
         bundle["meta"].update(common_dynamic_criterion_metadata(sample_rows))
         processed = len(stabilized_counts)
         for row in sample_rows:
@@ -1649,9 +2420,9 @@ def build_bundle_for_files(
             z_stat_vals = [x["z_stat"] for x in items if x["z_stat"] is not None]
             teq_vals = [x["t_eq_species"] for x in items if x["t_eq_species"] is not None]
 
-            p_summary = summary_from_values(p_vals)
-            f_summary = summary_from_values(f_vals)
-            z_summary = summary_from_values(z_vals)
+            p_summary = summary_with_values(p_vals)
+            f_summary = summary_with_values(f_vals)
+            z_summary = summary_with_values(z_vals)
             z_stat_summary = summary_from_values(z_stat_vals)
             teq_summary = summary_from_values(teq_vals)
             p_mean = p_summary["mean"]
@@ -1673,10 +2444,16 @@ def build_bundle_for_files(
                     **series_data,
                     "p_tail_mean": p_mean,
                     "p_tail_err": p_err,
+                    "p_tail_sample_values": p_summary.get("values", []),
+                    "p_tail_estimator": "mean_of_per_sample_tail_means_after_each_sample_t_eq",
                     "f_tail_mean": f_mean,
                     "f_tail_err": f_err,
+                    "f_tail_sample_values": f_summary.get("values", []),
+                    "f_tail_estimator": "mean_of_per_sample_tail_means_after_each_sample_t_eq",
                     "z_max_mean": z_mean,
                     "z_max_err": z_err,
+                    "z_max_std": z_summary["std"],
+                    "z_max_values": z_summary.get("values", []),
                     "z_stat_mean": z_stat_mean,
                     "z_stat_err": z_stat_err,
                     "n_samples_perc": N_samples_perc,
@@ -1696,6 +2473,7 @@ def build_bundle_for_files(
                         "f_sample_mean": x["f_sample_mean"],
                         "z_max": x["z_max"],
                         "z_stat": x["z_stat"],
+                        "fL_z_len": len(x.get("fL_z") or []),
                         "stop_criterion": x.get("stop_criterion"),
                         "t_eq_validation": x.get("t_eq_validation"),
                         "t_eq_s_prime_threshold": x.get("t_eq_s_prime_threshold"),
@@ -1735,19 +2513,26 @@ def process_group(
     published_root: Path,
     manifests_root: Path,
     clear: bool = False,
-    include_laterals: bool = True,
+    include_laterals: bool = False,
     jobs: int = 1,
     fingerprint_mode: str = "stat",
-    detect_replaced_files: bool = True,
+    detect_replaced_files: bool = False,
+    pretty_json: bool = False,
+    series_mode: str = "full",
+    collect_rows: bool = True,
+    migrate_published: bool = True,
 ) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]]:
+    if series_mode not in ("full", "profiles", "scalars"):
+        raise ValueError(f"Unknown series_mode: {series_mode}")
     params = parse_data_dir(data_dir)
     if params is None:
         raise ValueError(f"Could not parse dynamic data dir: {data_dir}")
 
     rel_group = data_dir.parent.relative_to(raw_root)
     out_dir = published_root / rel_group
+    sample_cache_dir = manifests_root / rel_group / "sample_cache" / series_mode
     ensure_dir(out_dir)
-    out_path = out_dir / "properties_dynamic_bundle.json"
+    out_path = existing_dynamic_bundle_path(out_dir) or dynamic_bundle_path(out_dir)
 
     json_files = collect_group_json_files(data_dir)
     current_json_files = sorted({fp.name for fp in json_files})
@@ -1762,47 +2547,8 @@ def process_group(
         else {}
     )
     manifest_version = int(manifest.get("dynamic_processing_version", 0) or 0)
-    manifest_lateral_fingerprints_raw = manifest.get("lateral_csv_fingerprints", {})
-    manifest_lateral_fingerprints = (
-        {str(k): str(v) for k, v in manifest_lateral_fingerprints_raw.items()}
-        if isinstance(manifest_lateral_fingerprints_raw, dict)
-        else {}
-    )
-    current_lateral_fingerprints = lateral_csv_fingerprints(data_dir) if include_laterals else {}
-    current_lateral_files = {
-        path.relative_to(lateral_correlations_dir(data_dir)).as_posix(): path
-        for path in collect_lateral_correlation_files(data_dir)
-    } if include_laterals else {}
-    lateral_names_new_to_manifest = sorted(set(current_lateral_fingerprints) - set(manifest_lateral_fingerprints))
-    lateral_names_changed = sorted(
-        name for name, fingerprint in current_lateral_fingerprints.items()
-        if name in manifest_lateral_fingerprints and manifest_lateral_fingerprints.get(name) != fingerprint
-    )
-    lateral_names_to_process = sorted(set(lateral_names_new_to_manifest) | set(lateral_names_changed))
-    lateral_out_path: Path | None = (
-        existing_lateral_bundle_path(out_dir) or lateral_bundle_path(out_dir)
-        if current_lateral_fingerprints
-        else None
-    )
-    lateral_bundle_exists = lateral_out_path is not None and lateral_out_path.exists()
-    lateral_should_process = (
-        include_laterals
-        and bool(current_lateral_fingerprints)
-        and (
-            clear
-            or lateral_out_path is None
-            or not lateral_bundle_exists
-            or not manifest_lateral_fingerprints
-            or bool(lateral_names_to_process)
-        )
-    )
-    lateral_should_migrate = (
-        include_laterals
-        and bool(current_lateral_fingerprints)
-        and lateral_bundle_exists
-        and not lateral_should_process
-        and int(manifest.get("lateral_processing_version", 0) or 0) != LATERAL_PROCESSING_VERSION
-    )
+    manifest_series_mode = str(manifest.get("series_mode", "full") or "full")
+    include_laterals = False
     names_new_to_manifest = sorted(set(current_json_files) - manifest_files)
     current_file_fingerprints: dict[str, str] = {}
     if manifest_fingerprints:
@@ -1839,10 +2585,14 @@ def process_group(
         }
     existing_bundle_for_validation: dict[str, Any] | None = None
     should_repair_missing_series = False
-    if out_path.exists() and not clear:
+    should_validate_existing_bundle = (
+        out_path.exists()
+        and not clear
+        and manifest_version != DYNAMIC_PROCESSING_VERSION
+    )
+    if should_validate_existing_bundle:
         try:
-            with out_path.open("r", encoding="utf-8") as handle:
-                maybe_bundle = json.load(handle)
+            maybe_bundle = load_json_bundle(out_path)
             if isinstance(maybe_bundle, dict):
                 existing_bundle_for_validation = maybe_bundle
                 should_repair_missing_series = bundle_has_missing_dynamic_series(maybe_bundle)
@@ -1854,41 +2604,30 @@ def process_group(
         clear
         or not out_path.exists()
         or (should_repair_missing_series and bool(current_json_files))
+        or (manifest_version != DYNAMIC_PROCESSING_VERSION and bool(current_json_files))
+        or (manifest_series_mode != series_mode and bool(current_json_files))
     )
     if not should_rebuild and not new_sample_files:
-        all_rows, all_color_rows = rows_from_existing_bundle(out_path)
-        if lateral_should_process:
-            lateral_paths = (
-                list(current_lateral_files.values())
-                if clear or not lateral_bundle_exists or not manifest_lateral_fingerprints
-                else [current_lateral_files[name] for name in lateral_names_to_process if name in current_lateral_files]
-            )
-            existing_lateral_bundle = (
-                load_lateral_bundle_file(lateral_out_path)
-                if lateral_bundle_exists and lateral_out_path is not None and not clear
-                else None
-            )
-            lateral_out_path = process_lateral_correlations(
-                data_dir,
-                out_dir,
-                sample_paths=lateral_paths,
-                existing_bundle=existing_lateral_bundle,
-            )
-            print(f"[write] {lateral_out_path}")
-        elif lateral_should_migrate:
-            lateral_out_path, migrated = ensure_lateral_bundle_columnar(out_dir)
-            action = "[migrate]" if migrated else "[skip]"
-            print(f"{action} {lateral_out_path}")
-        elif include_laterals and current_lateral_fingerprints:
-            lateral_out_path = ensure_lateral_bundle_compressed(out_dir) or lateral_out_path
-            print(f"[skip] {lateral_out_path}")
+        if migrate_published:
+            migrated_out_path = ensure_dynamic_bundle_compressed(out_dir)
+            if migrated_out_path is not None:
+                out_path = migrated_out_path
+                existing_bundle_for_validation = None
+        cached_rows = rows_from_manifest_cache(manifest, series_mode) if collect_rows else None
+        rows_cache_missing = collect_rows and cached_rows is None
+        if not collect_rows:
+            all_rows, all_color_rows = [], []
+        elif cached_rows is not None:
+            all_rows, all_color_rows = cached_rows
+        elif existing_bundle_for_validation is not None:
+            all_rows, all_color_rows = rows_from_bundle(existing_bundle_for_validation)
+        else:
+            all_rows, all_color_rows = rows_from_existing_bundle(out_path)
         if (
             not manifest_fingerprints
             or manifest_version != DYNAMIC_PROCESSING_VERSION
             or manifest.get("fingerprint_mode") != fingerprint_mode
-            or lateral_should_process
-            or lateral_should_migrate
-            or bool(lateral_names_to_process)
+            or rows_cache_missing
         ):
             if detect_replaced_files or not manifest_fingerprints:
                 for name in current_json_files:
@@ -1896,12 +2635,6 @@ def process_group(
                         current_file_fingerprints[name] = file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
             fingerprints_out = dict(manifest_fingerprints)
             fingerprints_out.update(current_file_fingerprints)
-            lateral_fingerprints_out = (
-                dict(current_lateral_fingerprints)
-                if clear
-                else dict(manifest_lateral_fingerprints)
-            )
-            lateral_fingerprints_out.update(current_lateral_fingerprints)
             manifest.update({
                 "group_relpath": rel_group.as_posix(),
                 "data_dir": data_dir.as_posix(),
@@ -1910,12 +2643,12 @@ def process_group(
                 "processed_json_file_fingerprints": dict(sorted(fingerprints_out.items())),
                 "fingerprint_mode": fingerprint_mode,
                 "summary_file": out_path.as_posix(),
-                "lateral_summary_file": lateral_out_path.as_posix() if lateral_out_path is not None else manifest.get("lateral_summary_file"),
-                "lateral_csv_fingerprints": dict(sorted(lateral_fingerprints_out.items())),
-                "lateral_processing_version": LATERAL_PROCESSING_VERSION if current_lateral_fingerprints else manifest.get("lateral_processing_version"),
                 "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+                "series_mode": series_mode,
                 "last_update": datetime.now(timezone.utc).isoformat(),
             })
+            if collect_rows:
+                manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
             save_manifest(manifests_root, rel_group, manifest)
         print(f"[skip] {out_path} ({len(all_rows)} rows)")
         return out_path, all_rows, all_color_rows
@@ -1929,8 +2662,7 @@ def process_group(
     if out_path.exists() and not clear:
         if existing_bundle is None:
             try:
-                with out_path.open("r", encoding="utf-8") as handle:
-                    existing_bundle = json.load(handle)
+                existing_bundle = load_json_bundle(out_path)
             except Exception:
                 existing_bundle = None
 
@@ -1940,6 +2672,9 @@ def process_group(
             rel_group,
             [path for path in json_files if path.name in set(new_sample_files)],
             jobs=jobs,
+            series_mode=series_mode,
+            sample_cache_dir=sample_cache_dir,
+            fingerprint_mode=fingerprint_mode,
         )
         merged_p0_groups: dict[tuple[float, float], dict[str, Any]] = {}
         for p0_group in existing_bundle.get("p0_groups", []) if isinstance(existing_bundle.get("p0_groups", []), list) else []:
@@ -1977,44 +2712,27 @@ def process_group(
                 "num_json_files": len(json_files),
                 "num_parseable_json_files": len(current_json_files),
                 "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+                "series_mode": series_mode,
             },
             "p0_groups": [merged_p0_groups[key] for key in sorted(merged_p0_groups)],
         }
         bundle = merged_bundle
     else:
-        bundle, _, _ = build_bundle_for_files(params, rel_group, json_files, jobs=jobs)
-
-    all_rows, all_color_rows = rows_from_bundle(bundle)
-
-    with out_path.open("w", encoding="utf-8") as f:
-        json.dump(json_safe(bundle), f, ensure_ascii=False, indent=2)
-        f.write("\n")
-
-    if lateral_should_process:
-        lateral_paths = (
-            list(current_lateral_files.values())
-            if clear or not lateral_bundle_exists or not manifest_lateral_fingerprints
-            else [current_lateral_files[name] for name in lateral_names_to_process if name in current_lateral_files]
+        bundle, _, _ = build_bundle_for_files(
+            params,
+            rel_group,
+            json_files,
+            jobs=jobs,
+            series_mode=series_mode,
+            sample_cache_dir=sample_cache_dir,
+            fingerprint_mode=fingerprint_mode,
         )
-        existing_lateral_bundle = (
-            load_lateral_bundle_file(lateral_out_path)
-            if lateral_bundle_exists and lateral_out_path is not None and not clear
-            else None
-        )
-        lateral_out_path = process_lateral_correlations(
-            data_dir,
-            out_dir,
-            sample_paths=lateral_paths,
-            existing_bundle=existing_lateral_bundle,
-        )
-        print(f"[write] {lateral_out_path}")
-    elif lateral_should_migrate:
-        lateral_out_path, migrated = ensure_lateral_bundle_columnar(out_dir)
-        action = "[migrate]" if migrated else "[skip]"
-        print(f"{action} {lateral_out_path}")
-    elif include_laterals and current_lateral_fingerprints:
-        lateral_out_path = ensure_lateral_bundle_compressed(out_dir) or lateral_out_path
-        print(f"[skip] {lateral_out_path}")
+
+    all_rows, all_color_rows = rows_from_bundle(bundle) if collect_rows else ([], [])
+
+    out_path = dynamic_bundle_path(out_dir)
+    write_json_bundle(out_path, bundle, pretty=pretty_json)
+    remove_legacy_dynamic_bundles(out_dir, keep=out_path)
 
     if clear:
         processed_files_out = set(current_json_files)
@@ -2030,13 +2748,6 @@ def process_group(
             current_file_fingerprints[name] = file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
         fingerprints_out.update(current_file_fingerprints)
 
-    lateral_fingerprints_out = (
-        dict(current_lateral_fingerprints)
-        if clear
-        else dict(manifest_lateral_fingerprints)
-    )
-    lateral_fingerprints_out.update(current_lateral_fingerprints)
-
     manifest.update({
         "group_relpath": rel_group.as_posix(),
         "data_dir": data_dir.as_posix(),
@@ -2045,12 +2756,12 @@ def process_group(
         "processed_json_file_fingerprints": dict(sorted(fingerprints_out.items())),
         "fingerprint_mode": fingerprint_mode,
         "summary_file": out_path.as_posix(),
-        "lateral_summary_file": lateral_out_path.as_posix() if lateral_out_path is not None else None,
-        "lateral_csv_fingerprints": dict(sorted(lateral_fingerprints_out.items())),
-        "lateral_processing_version": LATERAL_PROCESSING_VERSION if current_lateral_fingerprints else None,
         "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+        "series_mode": series_mode,
         "last_update": datetime.now(timezone.utc).isoformat(),
     })
+    if collect_rows:
+        manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
     save_manifest(manifests_root, rel_group, manifest)
 
     return out_path, all_rows, all_color_rows
@@ -2086,6 +2797,66 @@ def write_all_colors(rows: list[dict[str, Any]], output_path: Path) -> None:
             f.write(" ".join(dat_value(r.get(col)) for col in ALL_COLORS_COLUMNS) + "\n")
 
 
+def compress_published_only(
+    published_root: Path,
+    sop_root: Path,
+    all_data_name: str,
+    all_colors_name: str,
+    *,
+    compresslevel: int = 1,
+    threads: int = 0,
+    rebuild_all_data: bool = False,
+) -> tuple[int, int, int]:
+    ensure_dir(published_root)
+    dynamic_converted = 0
+    skipped = 0
+
+    candidate_dirs: set[Path] = set()
+    for pattern in (
+        "properties_dynamic_bundle.json",
+        "properties_dynamic_bundle.json.gz",
+        "properties_dynamic_bundle.json.xz",
+    ):
+        candidate_dirs.update(path.parent for path in published_root.rglob(pattern))
+
+    for out_dir in sorted(candidate_dirs):
+        before_dynamic = existing_dynamic_bundle_path(out_dir)
+        after_dynamic = ensure_dynamic_bundle_compressed(
+            out_dir,
+            compresslevel=compresslevel,
+            threads=threads,
+        )
+        if after_dynamic is not None:
+            if before_dynamic is not None and before_dynamic != after_dynamic:
+                dynamic_converted += 1
+                print(f"[compress] {before_dynamic} -> {after_dynamic}")
+            else:
+                skipped += 1
+
+    if rebuild_all_data:
+        all_rows: list[dict[str, Any]] = []
+        all_color_rows: list[dict[str, Any]] = []
+        bundle_paths = sorted(published_root.rglob("properties_dynamic_bundle.json.xz"))
+        for bundle_path in bundle_paths:
+            try:
+                rows, color_rows = rows_from_existing_bundle(bundle_path)
+                all_rows.extend(rows)
+                all_color_rows.extend(color_rows)
+            except Exception as exc:
+                print(f"[warn] failed to import {bundle_path}: {exc}")
+
+        if all_rows:
+            all_data_path = sop_root / all_data_name
+            write_all_data(all_rows, all_data_path)
+            print(f"[write] {all_data_path} ({len(all_rows)} rows)")
+        if all_color_rows:
+            all_colors_path = sop_root / all_colors_name
+            write_all_colors(all_color_rows, all_colors_path)
+            print(f"[write] {all_colors_path} ({len(all_color_rows)} rows)")
+
+    return dynamic_converted, 0, skipped
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Process raw_growth_test_dynamic into published_dynamic and all_data_dynamic.dat."
@@ -2096,6 +2867,42 @@ def main() -> int:
     parser.add_argument("--manifests-dir", default="manifests_dynamic")
     parser.add_argument("--all-data-name", default="all_data_dynamic.dat")
     parser.add_argument("--all-colors-name", default="all_colors_dynamic.dat")
+    parser.add_argument(
+        "--compress-published-only",
+        "-compress-published-only",
+        action="store_true",
+        help="Only convert existing published dynamic/lateral bundles to .json.xz; does not require raw files.",
+    )
+    parser.add_argument(
+        "--compress-level",
+        type=int,
+        default=1,
+        help="XZ compression level for --compress-published-only. 1 is fastest; 6 is smaller but much slower.",
+    )
+    parser.add_argument(
+        "--compress-threads",
+        type=int,
+        default=0,
+        help="Threads passed to xz for --compress-published-only. 0 means all cores when the xz binary is available.",
+    )
+    parser.add_argument(
+        "--rebuild-all-data",
+        action="store_true",
+        help="With --compress-published-only, also rebuild all_data/all_colors from compressed properties bundles.",
+    )
+    parser.add_argument(
+        "--write-all-data",
+        dest="write_all_data_outputs",
+        action="store_true",
+        default=True,
+        help="Write all_data_dynamic.dat and all_colors_dynamic.dat after processing.",
+    )
+    parser.add_argument(
+        "--skip-all-data",
+        dest="write_all_data_outputs",
+        action="store_false",
+        help="Skip rebuilding all_data_dynamic.dat/all_colors_dynamic.dat. Faster for incremental updates.",
+    )
     parser.add_argument("--clear", action="store_true", help="Ignore manifest cache and rebuild dynamic bundles.")
     parser.add_argument(
         "-j",
@@ -2113,21 +2920,49 @@ def main() -> int:
     parser.add_argument(
         "--detect-replaced-files",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Also fingerprint already-known filenames to detect files recreated with the same name. Slower on large datasets.",
+    )
+    parser.add_argument(
+        "--pretty-json",
+        action="store_true",
+        help="Write published dynamic bundles with indentation. Slower and larger; compact JSON is the default.",
+    )
+    parser.add_argument(
+        "--migrate-published",
+        dest="migrate_published",
+        action="store_true",
+        default=True,
+        help="Migrate legacy published bundles to .json.xz during normal processing.",
+    )
+    parser.add_argument(
+        "--no-migrate-published",
+        dest="migrate_published",
+        action="store_false",
+        help="Do not compress/migrate legacy published bundles during normal processing. Faster for incremental updates.",
+    )
+    parser.add_argument(
+        "--series-mode",
+        choices=("full", "profiles", "scalars"),
+        default="profiles",
+        help=(
+            "full stores aggregated pt/ft time series and fL_z profiles; "
+            "profiles skips pt/ft time-series aggregation but keeps fL_z; "
+            "scalars stores only scalar summaries. profiles is much faster for large datasets."
+        ),
     )
     parser.add_argument(
         "--include-laterals",
         dest="include_laterals",
         action="store_true",
-        default=True,
-        help="Process lateral correlation/susceptibility CSVs when present.",
+        default=False,
+        help="Deprecated; lateral correlation/susceptibility processing is disabled.",
     )
     parser.add_argument(
         "--no-laterals",
         dest="include_laterals",
         action="store_false",
-        help="Skip lateral correlation/susceptibility CSV processing.",
+        help="Deprecated; lateral correlation/susceptibility processing is always skipped.",
     )
     args = parser.parse_args()
 
@@ -2139,14 +2974,31 @@ def main() -> int:
     ensure_dir(published_root)
     ensure_dir(manifests_root)
 
+    if args.compress_published_only:
+        dynamic_n, lateral_n, skipped_n = compress_published_only(
+            published_root,
+            sop_root,
+            args.all_data_name,
+            args.all_colors_name,
+            compresslevel=max(0, min(9, int(args.compress_level))),
+            threads=max(0, int(args.compress_threads)),
+            rebuild_all_data=args.rebuild_all_data,
+        )
+        print(
+            f"[compress] done: dynamic={dynamic_n}, lateral={lateral_n}, "
+            f"already_xz_or_missing={skipped_n}"
+        )
+        return 0
+
     data_dirs = discover_data_dirs(raw_root)
     print(f"[dynamic] data dirs found: {len(data_dirs)}")
 
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
+    processed_bundle_paths: set[Path] = set()
     # First, ensure all raw data groups are processed and published bundles are up-to-date.
     for data_dir in data_dirs:
-        out_path, _, _ = process_group(
+        out_path, rows, color_rows = process_group(
             data_dir,
             raw_root,
             published_root,
@@ -2156,30 +3008,51 @@ def main() -> int:
             jobs=jobs,
             fingerprint_mode=args.fingerprint_mode,
             detect_replaced_files=args.detect_replaced_files,
+            pretty_json=args.pretty_json,
+            series_mode=args.series_mode,
+            collect_rows=args.write_all_data_outputs,
+            migrate_published=args.migrate_published,
         )
+        processed_bundle_paths.add(out_path.resolve())
+        all_rows.extend(rows)
+        all_color_rows.extend(color_rows)
         print(f"[published] ensured {out_path}")
 
-    # Regardless of raw presence, build the final all_data and all_colors from published bundles.
-    bundle_paths = sorted(published_root.rglob("properties_dynamic_bundle.json"))
-    print(f"[dynamic] building all-data from {len(bundle_paths)} published bundles")
-    for bundle_path in bundle_paths:
-        try:
-            rows, color_rows = rows_from_existing_bundle(bundle_path)
-            if rows:
-                all_rows.extend(rows)
-                print(f"[import] {bundle_path} ({len(rows)} rows)")
-            if color_rows:
-                all_color_rows.extend(color_rows)
-        except Exception as exc:
-            print(f"[warn] failed to import {bundle_path}: {exc}")
+    if args.write_all_data_outputs:
+        # Regardless of raw presence, build the final all_data and all_colors from published bundles.
+        bundle_paths = sorted(
+            set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+            | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+            | set(published_root.rglob("properties_dynamic_bundle.json"))
+        )
+        remaining_bundle_paths = [
+            path for path in bundle_paths
+            if path.resolve() not in processed_bundle_paths
+        ]
+        print(
+            f"[dynamic] building all-data from {len(bundle_paths)} published bundles "
+            f"({len(remaining_bundle_paths)} imported from disk)"
+        )
+        for bundle_path in remaining_bundle_paths:
+            try:
+                rows, color_rows = rows_from_existing_bundle(bundle_path)
+                if rows:
+                    all_rows.extend(rows)
+                    print(f"[import] {bundle_path} ({len(rows)} rows)")
+                if color_rows:
+                    all_color_rows.extend(color_rows)
+            except Exception as exc:
+                print(f"[warn] failed to import {bundle_path}: {exc}")
 
-    all_data_path = sop_root / args.all_data_name
-    write_all_data(all_rows, all_data_path)
-    print(f"[write] {all_data_path} ({len(all_rows)} rows)")
+        all_data_path = sop_root / args.all_data_name
+        write_all_data(all_rows, all_data_path)
+        print(f"[write] {all_data_path} ({len(all_rows)} rows)")
 
-    all_colors_path = sop_root / args.all_colors_name
-    write_all_colors(all_color_rows, all_colors_path)
-    print(f"[write] {all_colors_path} ({len(all_color_rows)} rows)")
+        all_colors_path = sop_root / args.all_colors_name
+        write_all_colors(all_color_rows, all_colors_path)
+        print(f"[write] {all_colors_path} ({len(all_color_rows)} rows)")
+    else:
+        print("[dynamic] skipped all_data/all_colors rebuild")
     return 0
 
 
