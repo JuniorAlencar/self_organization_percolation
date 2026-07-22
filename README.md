@@ -90,9 +90,9 @@ SELF_ORGANIZATION_PERCOLATION/
 
 This algorithm is quite sensitive to the parameters $N_T$ and $k$, which vary greatly depending on the dimension. A rescaling to $d$-dimensions was used, where the parameters $k$ and $N_T$ are obtained through the relations:
 
-$c = kL^{d-1}$,
-$f_T = N_T/L^{d-1}$,
-$f(t) = N(t)/L^{d-1}$,
+$c = kL^{d-1}$,  
+$f_T = N_T/L^{d-1}$,  
+$f(t) = N(t)/L^{d-1}$,  
 with the update rule with these changes given by  
 
 $p(t+1) = p(t) + c[f(t)-f_T]$.
