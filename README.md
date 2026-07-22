@@ -92,10 +92,10 @@ This algorithm is quite sensitive to the parameters $N_T$ and $k$, which vary gr
 
 $c = kL^{d-1}$,  
 $f_T = N_T/L^{d-1}$,  
-$f(t) = N(t)/L^{d-1}$,  
+$f^i(t) = N^i(t)/L^{d-1}$,  
 with the update rule with these changes given by  
 
-$p(t+1) = p(t) + c[f(t)-f_T]$.
+$p^i(t+1) = p^i(t) + c[f^i(t)-f_T]$.
 
 For more information, see discussion_SOP.pdf in /docs.
 
