@@ -23,7 +23,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 12
+DYNAMIC_PROCESSING_VERSION = 13
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
@@ -53,9 +53,8 @@ ALL_DATA_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
     "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_max_mean", "z_max_err",
-    "z_stat_mean", "z_stat_err", "stat_window",
-    "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
-    "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
+    "z_max_median", "z_max_q75", "z_max_q90",
+    "t_eq_validation", "t_eq_s_prime_threshold",
 ]
 
 ALL_COLORS_COLUMNS = [
@@ -167,6 +166,16 @@ def write_json_bundle(path: Path, data: dict[str, Any], pretty: bool = False, co
         else:
             json.dump(json_safe(data), f, ensure_ascii=False, separators=(",", ":"))
         f.write("\n")
+
+
+def write_json_bundle_atomic(path: Path, data: dict[str, Any], pretty: bool = False, compresslevel: int = 6) -> None:
+    tmp_path = path.with_name(f"{path.stem}.tmp{path.suffix}")
+    try:
+        write_json_bundle(tmp_path, data, pretty=pretty, compresslevel=compresslevel)
+        tmp_path.replace(path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def compress_json_to_xz(
@@ -1758,8 +1767,9 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
                 "f_err": f_stats.get("err"),
                 "z_max_mean": z_stats.get("mean"),
                 "z_max_err": z_stats.get("err"),
-                "z_stat_mean": z_stat_stats.get("mean"),
-                "z_stat_err": z_stat_stats.get("err"),
+                "z_max_median": summary_field(z_stats, "median"),
+                "z_max_q75": summary_field(z_stats, "q75"),
+                "z_max_q90": summary_field(z_stats, "q90"),
             })
 
     return all_rows, all_color_rows
@@ -1818,6 +1828,76 @@ def ensure_dynamic_bundle_compressed(
     return compressed_path
 
 
+def values_differ(left: Any, right: Any, tol: float = 1.0e-12) -> bool:
+    left_float = finite_float(left)
+    right_float = finite_float(right)
+    if left_float is None or right_float is None:
+        return left != right
+    return abs(left_float - right_float) > tol
+
+
+def update_dynamic_bundle_zmax_quantiles(bundle: dict[str, Any]) -> bool:
+    changed = False
+    p0_groups = bundle.get("p0_groups", [])
+    if not isinstance(p0_groups, list):
+        return False
+
+    for p0_group in p0_groups:
+        if not isinstance(p0_group, dict):
+            continue
+        orders = p0_group.get("orders", [])
+        if not isinstance(orders, list):
+            continue
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            data = order.get("data", {})
+            if not isinstance(data, dict):
+                data = {}
+                order["data"] = data
+                changed = True
+            z_stats = order.get("z_max", {})
+            if not isinstance(z_stats, dict):
+                z_stats = {}
+                order["z_max"] = z_stats
+                changed = True
+
+            values = data.get("z_max_values")
+            if not isinstance(values, list) or not values:
+                values = z_stats.get("values")
+            if not isinstance(values, list) or not values:
+                continue
+
+            summary = summary_from_values(values)
+            for key in ("median", "q25", "q75", "q90", "min", "max"):
+                new_value = summary.get(key)
+                if finite_float(new_value) is None:
+                    continue
+                if values_differ(z_stats.get(key), new_value):
+                    z_stats[key] = new_value
+                    changed = True
+
+            data_quantile_keys = {
+                "z_max_median": "median",
+                "z_max_q25": "q25",
+                "z_max_q75": "q75",
+                "z_max_q90": "q90",
+            }
+            for data_key, summary_key in data_quantile_keys.items():
+                new_value = summary.get(summary_key)
+                if finite_float(new_value) is None:
+                    continue
+                if values_differ(data.get(data_key), new_value):
+                    data[data_key] = new_value
+                    changed = True
+
+    if changed:
+        meta = bundle.setdefault("meta", {})
+        if isinstance(meta, dict):
+            meta["dynamic_processing_version"] = DYNAMIC_PROCESSING_VERSION
+    return changed
+
+
 def bundle_has_missing_dynamic_series(bundle: dict[str, Any]) -> bool:
     meta = bundle.get("meta", {}) if isinstance(bundle.get("meta", {}), dict) else {}
     if meta.get("series_mode") not in (None, "full"):
@@ -1850,11 +1930,11 @@ def summary_from_values(values: list[float]) -> dict[str, Any]:
     mean, err, std, n = mean_sem_std(clean)
     arr = np.asarray(clean, dtype=float)
     if n > 0:
-        q25, median, q75 = np.percentile(arr, [25.0, 50.0, 75.0])
+        q25, median, q75, q90 = np.percentile(arr, [25.0, 50.0, 75.0, 90.0])
         v_min = float(np.min(arr))
         v_max = float(np.max(arr))
     else:
-        q25 = median = q75 = v_min = v_max = math.nan
+        q25 = median = q75 = q90 = v_min = v_max = math.nan
     return {
         "mean": mean,
         "err": err,
@@ -1862,6 +1942,7 @@ def summary_from_values(values: list[float]) -> dict[str, Any]:
         "median": float(median),
         "q25": float(q25),
         "q75": float(q75),
+        "q90": float(q90),
         "min": v_min,
         "max": v_max,
         "n": n,
@@ -1874,6 +1955,16 @@ def summary_with_values(values: list[float]) -> dict[str, Any]:
     summary = summary_from_values(values)
     summary["values"] = list(values)
     return summary
+
+
+def summary_field(summary: dict[str, Any], key: str) -> Any:
+    value = summary.get(key)
+    if value is not None:
+        return value
+    values = summary.get("values", [])
+    if isinstance(values, list) and values:
+        return summary_from_values(values).get(key)
+    return None
 
 
 def summary_sum(summary: dict[str, Any]) -> float:
@@ -1938,6 +2029,9 @@ def combine_summary_dicts(old_summary: dict[str, Any], new_summary: dict[str, An
     if isinstance(new_values, list):
         values.extend(new_values)
     if values:
+        quantiles = summary_from_values(values)
+        for key in ("median", "q25", "q75", "q90", "min", "max"):
+            combined[key] = quantiles.get(key)
         combined["values"] = values
     return combined
 
@@ -2294,6 +2388,10 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     merged_data["z_max_mean"] = z_mean
     merged_data["z_max_err"] = z_err
     merged_data["z_max_std"] = merged["z_max"].get("std")
+    merged_data["z_max_median"] = merged["z_max"].get("median")
+    merged_data["z_max_q25"] = merged["z_max"].get("q25")
+    merged_data["z_max_q75"] = merged["z_max"].get("q75")
+    merged_data["z_max_q90"] = merged["z_max"].get("q90")
     merged_data["z_max_values"] = merged["z_max"].get("values", [])
 
     z_stat_old = existing_order.get("z_stat", {}) if isinstance(existing_order.get("z_stat", {}), dict) else {}
@@ -2431,6 +2529,9 @@ def build_bundle_for_files(
             f_err = f_summary["err"]
             z_mean = z_summary["mean"]
             z_err = z_summary["err"]
+            z_median = z_summary["median"]
+            z_q75 = z_summary["q75"]
+            z_q90 = z_summary["q90"]
             z_stat_mean = z_stat_summary["mean"]
             z_stat_err = z_stat_summary["err"]
             series_data = average_dynamic_time_series(items)
@@ -2453,6 +2554,10 @@ def build_bundle_for_files(
                     "z_max_mean": z_mean,
                     "z_max_err": z_err,
                     "z_max_std": z_summary["std"],
+                    "z_max_median": z_median,
+                    "z_max_q25": z_summary["q25"],
+                    "z_max_q75": z_q75,
+                    "z_max_q90": z_q90,
                     "z_max_values": z_summary.get("values", []),
                     "z_stat_mean": z_stat_mean,
                     "z_stat_err": z_stat_err,
@@ -2498,8 +2603,9 @@ def build_bundle_for_files(
                 "f_err": f_err,
                 "z_max_mean": z_mean,
                 "z_max_err": z_err,
-                "z_stat_mean": z_stat_mean,
-                "z_stat_err": z_stat_err,
+                "z_max_median": z_median,
+                "z_max_q75": z_q75,
+                "z_max_q90": z_q90,
             })
 
         bundle["p0_groups"].append(p0_group)
@@ -2827,9 +2933,21 @@ def compress_published_only(
             threads=threads,
         )
         if after_dynamic is not None:
-            if before_dynamic is not None and before_dynamic != after_dynamic:
+            converted = before_dynamic is not None and before_dynamic != after_dynamic
+            schema_updated = False
+            try:
+                bundle = load_json_bundle(after_dynamic)
+                schema_updated = update_dynamic_bundle_zmax_quantiles(bundle)
+                if schema_updated:
+                    write_json_bundle_atomic(after_dynamic, bundle, compresslevel=compresslevel)
+                    print(f"[update] z_max q90 -> {after_dynamic}")
+            except Exception as exc:
+                print(f"[warn] failed to update z_max q90 in {after_dynamic}: {exc}")
+            if converted:
                 dynamic_converted += 1
                 print(f"[compress] {before_dynamic} -> {after_dynamic}")
+            elif schema_updated:
+                dynamic_converted += 1
             else:
                 skipped += 1
 
