@@ -168,7 +168,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             sample_name = "sample_P0_0.7_p0_0.2.json"
 
             self._write_sample(data_dir, sample_name, [0.2, 0.4, 0.6])
-            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+            out_path, all_rows, _ = PROCESS_DYNAMIC_GROWTH.process_group(
                 data_dir,
                 raw_root,
                 published_root,
@@ -304,7 +304,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6], [0.25, 0.5, 0.0])
             self._write_sample(data_dir, "sample_b_P0_0.7_p0_0.2.json", [0.6, 0.8, 1.0], [0.5, 0.25])
 
-            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+            out_path, all_rows, _ = PROCESS_DYNAMIC_GROWTH.process_group(
                 data_dir,
                 raw_root,
                 published_root,
@@ -327,7 +327,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6], z_max=3.0)
             self._write_sample(data_dir, "sample_b_P0_0.7_p0_0.2.json", [0.6, 0.8, 1.0], z_max=5.0)
 
-            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+            out_path, all_rows, _ = PROCESS_DYNAMIC_GROWTH.process_group(
                 data_dir,
                 raw_root,
                 published_root,
@@ -338,8 +338,73 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
             order = bundle["p0_groups"][0]["orders"][0]
             self.assertEqual(order["z_max"]["values"], [3.0, 5.0])
+            self.assertEqual(order["z_max"]["median"], 4.0)
+            self.assertEqual(order["z_max"]["q75"], 4.5)
+            self.assertEqual(order["z_max"]["q90"], 4.8)
             self.assertEqual(order["data"]["z_max_values"], [3.0, 5.0])
+            self.assertEqual(order["data"]["z_max_median"], 4.0)
+            self.assertEqual(order["data"]["z_max_q75"], 4.5)
+            self.assertEqual(order["data"]["z_max_q90"], 4.8)
             self.assertAlmostEqual(order["data"]["z_max_mean"], 4.0)
+            self.assertEqual(all_rows[0]["z_max_median"], 4.0)
+            self.assertEqual(all_rows[0]["z_max_q75"], 4.5)
+            self.assertEqual(all_rows[0]["z_max_q90"], 4.8)
+
+    def test_all_data_header_uses_zmax_quantiles_without_removed_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "all_data_dynamic.dat"
+            rows = [
+                {
+                    "type_perc": "S1",
+                    "dim": 2,
+                    "L": 8,
+                    "f_T": 0.3,
+                    "c": 0.2,
+                    "nc": 2,
+                    "rho": 0.2,
+                    "p0": 0.2,
+                    "P0": 0.7,
+                    "order": 1,
+                    "N_samples": 2,
+                    "N_samples_perc": 2,
+                    "p_mean": 0.6,
+                    "p_err": 0.2,
+                    "f_mean": 0.15,
+                    "f_err": 0.05,
+                    "z_max_mean": 4.0,
+                    "z_max_err": 1.0,
+                    "z_max_median": 4.0,
+                    "z_max_q75": 4.5,
+                    "z_max_q90": 4.8,
+                    "stat_window": 0,
+                    "stop_criterion": "old_header_field",
+                    "equilibrium_effective_rel_tol": 2.5e-3,
+                    "post_equilibrium_extra_steps": 100,
+                    "t_eq_validation": "validation",
+                    "t_eq_s_prime_threshold": 1.0e-5,
+                    "z_stat_mean": 4.0,
+                    "z_stat_err": 1.0,
+                }
+            ]
+
+            PROCESS_DYNAMIC_GROWTH.write_all_data(rows, output_path)
+
+            lines = output_path.read_text(encoding="utf-8").splitlines()
+            header = lines[0].split()
+            data = lines[1].split()
+
+            self.assertIn("z_max_median", header)
+            self.assertIn("z_max_q75", header)
+            self.assertIn("z_max_q90", header)
+            self.assertNotIn("z_stat_mean", header)
+            self.assertNotIn("z_stat_err", header)
+            self.assertNotIn("stat_window", header)
+            self.assertNotIn("stop_criterion", header)
+            self.assertNotIn("equilibrium_effective_rel_tol", header)
+            self.assertNotIn("post_equilibrium_extra_steps", header)
+            self.assertEqual(data[header.index("z_max_median")], "4")
+            self.assertEqual(data[header.index("z_max_q75")], "4.5")
+            self.assertEqual(data[header.index("z_max_q90")], "4.8")
 
     def test_process_group_writes_per_sample_p_tail_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -428,6 +493,9 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                                             "fL_z_N_per_z": [2, 2, 1],
                                             "fL_z_supported_z": [0, 1],
                                             "fL_z_supported_mean": [0.25, 0.5],
+                                            "z_max_median": 4.0,
+                                            "z_max_q75": 4.5,
+                                            "z_max_q90": 4.8,
                                             "z_max_values": [3.0, 5.0],
                                             "p_tail_sample_values": [0.4, 0.8],
                                         },
@@ -454,6 +522,9 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(row["fL_z_z"], [0, 1, 2])
             self.assertEqual(row["fL_z_mean"], [0.25, 0.5, 0.0])
             self.assertEqual(row["fL_z_supported_z"], [0, 1])
+            self.assertEqual(row["z_max_median"], 4.0)
+            self.assertEqual(row["z_max_q75"], 4.5)
+            self.assertEqual(row["z_max_q90"], 4.8)
             self.assertEqual(row["z_max_values"], [3.0, 5.0])
             self.assertEqual(row["p_tail_sample_values"], [0.4, 0.8])
 
@@ -494,6 +565,71 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertTrue((group_dir / "lateral_correlations_bundle.json.xz").exists())
             bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(group_dir / "properties_dynamic_bundle.json.xz")
             self.assertEqual(bundle["meta"]["L"], 8)
+
+    def test_compress_published_only_updates_zmax_q90_from_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            published_root = root / "SOP_data" / "published_dynamic"
+            group_dir = published_root / "S1_percolation" / "num_colors_2"
+            group_dir.mkdir(parents=True)
+            legacy_dynamic = group_dir / "properties_dynamic_bundle.json"
+            legacy_dynamic.write_text(
+                json.dumps(
+                    {
+                        "meta": {
+                            "type_perc": "S1",
+                            "dim": 2,
+                            "L": 8,
+                            "f_T": 0.3,
+                            "c": 0.2,
+                            "nc": 2,
+                            "rho": 0.2,
+                        },
+                        "p0_groups": [
+                            {
+                                "P0_value": 0.7,
+                                "p0_value": 0.2,
+                                "num_samples_total": 4,
+                                "orders": [
+                                    {
+                                        "order": 1,
+                                        "N_samples": 4,
+                                        "N_samples_perc": 4,
+                                        "data": {"z_max_values": [1.0, 3.0, 5.0, 9.0]},
+                                        "z_max": {"values": [1.0, 3.0, 5.0, 9.0]},
+                                        "p": {},
+                                        "f": {},
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            dynamic_n, _, _ = PROCESS_DYNAMIC_GROWTH.compress_published_only(
+                published_root,
+                root / "SOP_data",
+                "all_data_dynamic.dat",
+                "all_colors_dynamic.dat",
+                compresslevel=1,
+                threads=1,
+                rebuild_all_data=True,
+            )
+
+            self.assertEqual(dynamic_n, 1)
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(group_dir / "properties_dynamic_bundle.json.xz")
+            order = bundle["p0_groups"][0]["orders"][0]
+            self.assertAlmostEqual(order["z_max"]["q90"], 7.8)
+            self.assertAlmostEqual(order["data"]["z_max_q90"], 7.8)
+
+            all_data = root / "SOP_data" / "all_data_dynamic.dat"
+            lines = all_data.read_text(encoding="utf-8").splitlines()
+            header = lines[0].split()
+            data = lines[1].split()
+            self.assertIn("z_max_q90", header)
+            self.assertEqual(data[header.index("z_max_q90")], "7.8")
 
     def test_process_sample_files_uses_multiple_workers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

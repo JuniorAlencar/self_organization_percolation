@@ -66,11 +66,11 @@ type_perc = 'bond'
 #L_lst = [128, 256, 512, 1024]
 #num_runs = [300, 150, 50, 5]
 
-L_lst = [512]
-num_runs = [50]
+L_lst = [256]
+num_runs = [150]
 nc = 1
-c_lst = [0.01, 0.05, 0.1, 0.15, 0.2]
-
+#c_lst = [0.01, 0.05, 0.1, 0.15, 0.2]
+c_lst = [0.05, 0.1, 0.15, 0.2]
 multi=True
 Equilibration = 'false'
 Properties = 'false'
