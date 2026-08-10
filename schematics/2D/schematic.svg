@@ -1,0 +1,1931 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="428.10455mm"
+   height="179.79497mm"
+   viewBox="-5 -5 428.10455 179.79497"
+   version="1.1"
+   id="svg1848"
+   xml:space="preserve"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   sodipodi:docname="schematic.svg"
+   inkscape:export-filename="schematic.pdf"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+   id="namedview1850"
+   pagecolor="#ffffff"
+   bordercolor="#000000"
+   borderopacity="0.25"
+   inkscape:showpageshadow="2"
+   inkscape:pageopacity="0.0"
+   inkscape:pagecheckerboard="0"
+   inkscape:deskcolor="#d1d1d1"
+   inkscape:document-units="mm"
+   showgrid="false"
+   inkscape:zoom="0.77326038"
+   inkscape:cx="853.52879"
+   inkscape:cy="457.1552"
+   inkscape:window-width="1854"
+   inkscape:window-height="1011"
+   inkscape:window-x="66"
+   inkscape:window-y="32"
+   inkscape:window-maximized="1"
+   inkscape:current-layer="layer1" />
+  <defs
+   id="defs1845">
+    <rect
+   x="399.81299"
+   y="72.544624"
+   width="208.07512"
+   height="265.4119"
+   id="rect5768" />
+    <rect
+   x="309.76065"
+   y="9.7511482"
+   width="466.50977"
+   height="223.10023"
+   id="rect4963" />
+    <rect
+   x="371.2644"
+   y="36.431915"
+   width="386.37549"
+   height="141.58179"
+   id="rect4955" />
+    <g
+   id="gray-element">
+      <circle
+   cx="50"
+   cy="50"
+   r="40"
+   fill="#b9b9b9"
+   stroke="#5f6368"
+   stroke-width="4"
+   id="circle867" />
+    </g>
+    <g
+   id="specie-1-active-element">
+      <rect
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round"
+   id="rect870" />
+      <rect
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round"
+   id="rect872" />
+    </g>
+    <g
+   id="gray-element-3">
+      <circle
+   cx="50"
+   cy="50"
+   r="40"
+   fill="#b9b9b9"
+   stroke="#5f6368"
+   stroke-width="4"
+   id="circle867-6" />
+    </g>
+    <g
+   id="specie-1-active-element-7">
+      <rect
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round"
+   id="rect870-5" />
+      <rect
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round"
+   id="rect872-3" />
+    </g>
+    <g
+   id="gray-element-37">
+      <circle
+   cx="50"
+   cy="50"
+   r="40"
+   fill="#b9b9b9"
+   stroke="#5f6368"
+   stroke-width="4"
+   id="circle867-4" />
+    </g>
+    <g
+   id="specie-1-active-element-5">
+      <rect
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round"
+   id="rect870-2" />
+      <rect
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round"
+   id="rect872-5" />
+    </g>
+    <g
+   id="gray-element-8">
+      <circle
+   cx="50"
+   cy="50"
+   r="40"
+   fill="#b9b9b9"
+   stroke="#5f6368"
+   stroke-width="4"
+   id="circle867-1" />
+    </g>
+    <g
+   id="specie-1-active-element-2">
+      <rect
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round"
+   id="rect870-9" />
+      <rect
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round"
+   id="rect872-39" />
+    </g>
+    <rect
+   x="399.81299"
+   y="72.544624"
+   width="221.08353"
+   height="118.21801"
+   id="rect6180" />
+    <rect
+   x="399.81299"
+   y="72.544624"
+   width="221.08353"
+   height="118.21801"
+   id="rect7354" />
+  </defs>
+  <g
+   id="panel-borders"
+   inkscape:label="Panel borders">
+    <rect
+   id="panel-border-a"
+   x="-3"
+   y="-3"
+   width="197"
+   height="84"
+   rx="2.5"
+   ry="2.5"
+   style="fill:none;stroke:#303030;stroke-width:0.55;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
+    <rect
+   id="panel-border-b"
+   x="198.5"
+   y="-3"
+   width="222.6"
+   height="84"
+   rx="2.5"
+   ry="2.5"
+   style="fill:none;stroke:#303030;stroke-width:0.55;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
+    <rect
+   id="panel-border-c"
+   x="107.5"
+   y="87.5"
+   width="203.2"
+   height="85.3"
+   rx="2.5"
+   ry="2.5"
+   style="fill:none;stroke:#303030;stroke-width:0.55;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
+  </g>
+  <g
+   inkscape:label="Layer 1"
+   inkscape:groupmode="layer"
+   id="layer1"
+   transform="translate(55.521986,-1.648053)">
+    <g
+   id="g7604"
+   inkscape:label="Superior">
+      <g
+   id="g3579"
+   transform="matrix(0.17405413,0,0,0.17405413,-64.746855,1.648053)"
+   inkscape:label="(A)">
+        <g
+   id="nearest-neighbor-connections"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="round"
+   style="display:none">
+          <!-- Horizontais -->
+          <g
+   id="g1140"
+   inkscape:label="horizontal_3"
+   style="display:none">
+            <line
+   x1="95"
+   y1="115"
+   x2="240"
+   y2="115"
+   id="line877" />
+            <line
+   x1="240"
+   y1="115"
+   x2="385"
+   y2="115"
+   id="line879" />
+            <line
+   x1="385"
+   y1="115"
+   x2="530"
+   y2="115"
+   id="line881" />
+            <line
+   x1="530"
+   y1="115"
+   x2="675"
+   y2="115"
+   id="line883" />
+            <line
+   x1="675"
+   y1="115"
+   x2="820"
+   y2="115"
+   id="line885" />
+          </g>
+          <g
+   id="g1133"
+   inkscape:label="horizontal_2"
+   style="display:none">
+            <line
+   x1="95"
+   y1="260"
+   x2="240"
+   y2="260"
+   id="line887" />
+            <line
+   x1="240"
+   y1="260"
+   x2="385"
+   y2="260"
+   id="line889" />
+            <line
+   x1="385"
+   y1="260"
+   x2="530"
+   y2="260"
+   id="line891" />
+            <line
+   x1="530"
+   y1="260"
+   x2="675"
+   y2="260"
+   id="line893" />
+            <line
+   x1="675"
+   y1="260"
+   x2="820"
+   y2="260"
+   id="line895" />
+          </g>
+          <g
+   id="g1126"
+   inkscape:label="horizontal_1">
+            <line
+   x1="95"
+   y1="405"
+   x2="240"
+   y2="405"
+   id="line897"
+   style="display:inline" />
+            <line
+   x1="240"
+   y1="405"
+   x2="385"
+   y2="405"
+   id="line899"
+   style="display:inline" />
+            <line
+   x1="385"
+   y1="405"
+   x2="530"
+   y2="405"
+   id="line901"
+   style="display:none" />
+            <line
+   x1="530"
+   y1="405"
+   x2="675"
+   y2="405"
+   id="line903"
+   style="display:inline" />
+            <line
+   x1="675"
+   y1="405"
+   x2="820"
+   y2="405"
+   id="line905"
+   style="display:inline" />
+          </g>
+          <!-- Verticais -->
+          <g
+   id="g1119"
+   inkscape:label="vertical_2"
+   style="display:none">
+            <line
+   x1="95"
+   y1="115"
+   x2="95"
+   y2="260"
+   id="line907" />
+            <line
+   x1="240"
+   y1="115"
+   x2="240"
+   y2="260"
+   id="line909" />
+            <line
+   x1="385"
+   y1="115"
+   x2="385"
+   y2="260"
+   id="line911" />
+            <line
+   x1="530"
+   y1="115"
+   x2="530"
+   y2="260"
+   id="line913" />
+            <line
+   x1="675"
+   y1="115"
+   x2="675"
+   y2="260"
+   id="line915" />
+            <line
+   x1="820"
+   y1="115"
+   x2="820"
+   y2="260"
+   id="line917"
+   style="display:inline" />
+          </g>
+          <g
+   id="g1109"
+   inkscape:label="vertical_1">
+            <line
+   x1="385"
+   y1="260"
+   x2="385"
+   y2="405"
+   id="line923"
+   style="display:none" />
+            <line
+   x1="530"
+   y1="260"
+   x2="530"
+   y2="405"
+   id="line925"
+   style="display:none" />
+            <line
+   x1="675"
+   y1="260"
+   x2="675"
+   y2="405"
+   id="line927"
+   style="display:inline" />
+            <line
+   x1="820"
+   y1="260"
+   x2="820"
+   y2="405"
+   id="line929"
+   style="display:inline" />
+            <line
+   x1="240"
+   y1="260"
+   x2="240"
+   y2="405"
+   id="line921"
+   style="display:inline" />
+            <line
+   x1="95"
+   y1="260"
+   x2="95"
+   y2="405"
+   id="line919"
+   style="display:none" />
+          </g>
+        </g>
+        <g
+   id="lateral-periodic-boundary-stubs"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="butt"
+   style="display:none">
+          <g
+   id="g1230"
+   inkscape:label="row_3"
+   style="display:none">
+            <line
+   x1="0"
+   y1="115"
+   x2="95"
+   y2="115"
+   id="line932" />
+            <line
+   x1="820"
+   y1="115"
+   x2="915"
+   y2="115"
+   id="line934" />
+          </g>
+          <g
+   id="g1226"
+   inkscape:label="row_2"
+   style="display:none">
+            <line
+   x1="0"
+   y1="260"
+   x2="95"
+   y2="260"
+   id="line936" />
+            <line
+   x1="820"
+   y1="260"
+   x2="915"
+   y2="260"
+   id="line938" />
+          </g>
+          <g
+   id="g1222"
+   inkscape:label="row_1">
+            <line
+   x1="0"
+   y1="405"
+   x2="95"
+   y2="405"
+   id="line940" />
+            <line
+   x1="820"
+   y1="405"
+   x2="915"
+   y2="405"
+   id="line942" />
+          </g>
+        </g>
+        <g
+   id="height-continuation"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="butt"
+   stroke-dasharray="18, 12"
+   style="display:inline">
+          <line
+   x1="95"
+   y1="0"
+   x2="95"
+   y2="115"
+   id="line945" />
+          <line
+   x1="240"
+   y1="0"
+   x2="240"
+   y2="115"
+   id="line947" />
+          <line
+   x1="385"
+   y1="0"
+   x2="385"
+   y2="115"
+   id="line949" />
+          <line
+   x1="530"
+   y1="0"
+   x2="530"
+   y2="115"
+   id="line951" />
+          <line
+   x1="675"
+   y1="0"
+   x2="675"
+   y2="115"
+   id="line953" />
+          <line
+   x1="820"
+   y1="0"
+   x2="820"
+   y2="115"
+   id="line955" />
+        </g>
+        <g
+   id="row-3"
+   transform="translate(45,65)">
+          <use
+   xlink:href="#gray-element"
+   x="0"
+   id="use958" />
+          <use
+   xlink:href="#gray-element"
+   x="145"
+   id="use960" />
+          <use
+   xlink:href="#gray-element"
+   x="290"
+   id="use962" />
+          <use
+   xlink:href="#gray-element"
+   x="435"
+   id="use964" />
+          <use
+   xlink:href="#gray-element"
+   x="580"
+   id="use966" />
+          <use
+   xlink:href="#gray-element"
+   x="725"
+   id="use968" />
+        </g>
+        <g
+   id="row-2"
+   transform="translate(45,210)">
+          <use
+   xlink:href="#gray-element"
+   x="0"
+   id="use971" />
+          <use
+   xlink:href="#gray-element"
+   x="145"
+   id="use973" />
+          <use
+   xlink:href="#gray-element"
+   x="290"
+   id="use975" />
+          <use
+   xlink:href="#gray-element"
+   x="435"
+   id="use977" />
+          <use
+   xlink:href="#gray-element"
+   x="580"
+   id="use979" />
+          <use
+   xlink:href="#gray-element"
+   x="725"
+   id="use981" />
+        </g>
+        <g
+   id="row-1"
+   transform="translate(45,355)">
+          <use
+   xlink:href="#gray-element"
+   x="0"
+   id="use984" />
+          <use
+   xlink:href="#specie-1-active-element"
+   x="145"
+   id="use986" />
+          <use
+   xlink:href="#gray-element"
+   x="290"
+   id="use988" />
+          <use
+   xlink:href="#gray-element"
+   x="435"
+   id="use990" />
+          <use
+   xlink:href="#specie-1-active-element"
+   x="580"
+   id="use992" />
+          <use
+   xlink:href="#specie-1-active-element"
+   x="725"
+   id="use994" />
+        </g>
+      </g>
+      <text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:10.5833px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;paint-order:markers fill stroke"
+   x="85.980728"
+   y="77.952141"
+   id="text4969"
+   inkscape:label="label_a">
+        <tspan
+   sodipodi:role="line"
+   id="tspan5714"
+   x="85.980728"
+   y="77.952141">(a)</tspan>
+      </text>
+      <g
+   id="g4539"
+   transform="matrix(0.17520656,0,0,0.17393373,146.02886,1.6750226)"
+   inkscape:label="(B)">
+        <g
+   id="nearest-neighbor-connections-5"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="round"
+   style="display:inline">
+          <!-- Horizontais -->
+          <g
+   id="g1140-6"
+   inkscape:label="horizontal_3"
+   style="display:none">
+            <line
+   x1="95"
+   y1="115"
+   x2="240"
+   y2="115"
+   id="line877-2" />
+            <line
+   x1="240"
+   y1="115"
+   x2="385"
+   y2="115"
+   id="line879-9" />
+            <line
+   x1="385"
+   y1="115"
+   x2="530"
+   y2="115"
+   id="line881-1" />
+            <line
+   x1="530"
+   y1="115"
+   x2="675"
+   y2="115"
+   id="line883-2" />
+            <line
+   x1="675"
+   y1="115"
+   x2="820"
+   y2="115"
+   id="line885-7" />
+          </g>
+          <g
+   id="g1133-0"
+   inkscape:label="horizontal_2"
+   style="display:none">
+            <line
+   x1="95"
+   y1="260"
+   x2="240"
+   y2="260"
+   id="line887-9" />
+            <line
+   x1="240"
+   y1="260"
+   x2="385"
+   y2="260"
+   id="line889-3" />
+            <line
+   x1="385"
+   y1="260"
+   x2="530"
+   y2="260"
+   id="line891-6" />
+            <line
+   x1="530"
+   y1="260"
+   x2="675"
+   y2="260"
+   id="line893-0" />
+            <line
+   x1="675"
+   y1="260"
+   x2="820"
+   y2="260"
+   id="line895-6" />
+          </g>
+          <g
+   id="g1126-2"
+   inkscape:label="horizontal_1">
+            <line
+   x1="95"
+   y1="405"
+   x2="240"
+   y2="405"
+   id="line897-6"
+   style="display:none;stroke:#e10000;stroke-opacity:1" />
+            <line
+   x1="240"
+   y1="405"
+   x2="385"
+   y2="405"
+   id="line899-1"
+   style="display:inline" />
+            <line
+   x1="385"
+   y1="405"
+   x2="530"
+   y2="405"
+   id="line901-8"
+   style="display:none" />
+            <line
+   x1="530"
+   y1="405"
+   x2="675"
+   y2="405"
+   id="line903-7"
+   style="display:inline" />
+            <line
+   x1="675"
+   y1="405"
+   x2="820"
+   y2="405"
+   id="line905-9"
+   style="display:none" />
+          </g>
+          <!-- Verticais -->
+          <g
+   id="g1119-2"
+   inkscape:label="vertical_2"
+   style="display:none">
+            <line
+   x1="95"
+   y1="115"
+   x2="95"
+   y2="260"
+   id="line907-0" />
+            <line
+   x1="240"
+   y1="115"
+   x2="240"
+   y2="260"
+   id="line909-2" />
+            <line
+   x1="385"
+   y1="115"
+   x2="385"
+   y2="260"
+   id="line911-3" />
+            <line
+   x1="530"
+   y1="115"
+   x2="530"
+   y2="260"
+   id="line913-7" />
+            <line
+   x1="675"
+   y1="115"
+   x2="675"
+   y2="260"
+   id="line915-5" />
+            <line
+   x1="820"
+   y1="115"
+   x2="820"
+   y2="260"
+   id="line917-9"
+   style="display:inline" />
+          </g>
+          <g
+   id="g1109-2"
+   inkscape:label="vertical_1">
+            <line
+   x1="385"
+   y1="260"
+   x2="385"
+   y2="405"
+   id="line923-2"
+   style="display:none" />
+            <line
+   x1="530"
+   y1="260"
+   x2="530"
+   y2="405"
+   id="line925-8"
+   style="display:none" />
+            <line
+   x1="675"
+   y1="260"
+   x2="675"
+   y2="405"
+   id="line927-9"
+   style="display:inline" />
+            <line
+   x1="820"
+   y1="260"
+   x2="820"
+   y2="405"
+   id="line929-7"
+   style="display:none;stroke:#e10000;stroke-opacity:1" />
+            <line
+   x1="240"
+   y1="260"
+   x2="240"
+   y2="405"
+   id="line921-3"
+   style="display:inline" />
+            <line
+   x1="95"
+   y1="260"
+   x2="95"
+   y2="405"
+   id="line919-6"
+   style="display:none;fill:#f10000;fill-opacity:1;stroke:#e10000;stroke-opacity:1" />
+          </g>
+        </g>
+        <g
+   id="lateral-periodic-boundary-stubs-1"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="butt"
+   style="display:inline">
+          <g
+   id="g1230-2"
+   inkscape:label="row_3"
+   style="display:none">
+            <line
+   x1="0"
+   y1="115"
+   x2="95"
+   y2="115"
+   id="line932-9" />
+            <line
+   x1="820"
+   y1="115"
+   x2="915"
+   y2="115"
+   id="line934-3" />
+          </g>
+          <g
+   id="g1226-1"
+   inkscape:label="row_2"
+   style="display:none">
+            <line
+   x1="0"
+   y1="260"
+   x2="95"
+   y2="260"
+   id="line936-9" />
+            <line
+   x1="820"
+   y1="260"
+   x2="915"
+   y2="260"
+   id="line938-4" />
+          </g>
+          <g
+   id="g1222-7"
+   inkscape:label="row_1"
+   style="display:inline">
+            <line
+   x1="0"
+   y1="405"
+   x2="95"
+   y2="405"
+   id="line940-8" />
+            <line
+   x1="820"
+   y1="405"
+   x2="915"
+   y2="405"
+   id="line942-4" />
+          </g>
+        </g>
+        <g
+   id="height-continuation-5"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="butt"
+   stroke-dasharray="18, 12"
+   style="display:inline">
+          <line
+   x1="95"
+   y1="0"
+   x2="95"
+   y2="115"
+   id="line945-0" />
+          <line
+   x1="240"
+   y1="0"
+   x2="240"
+   y2="115"
+   id="line947-3" />
+          <line
+   x1="385"
+   y1="0"
+   x2="385"
+   y2="115"
+   id="line949-6" />
+          <line
+   x1="530"
+   y1="0"
+   x2="530"
+   y2="115"
+   id="line951-1" />
+          <line
+   x1="675"
+   y1="0"
+   x2="675"
+   y2="115"
+   id="line953-0" />
+          <line
+   x1="820"
+   y1="0"
+   x2="820"
+   y2="115"
+   id="line955-6" />
+        </g>
+        <g
+   id="row-3-3"
+   transform="translate(45,65)">
+          <use
+   xlink:href="#gray-element-3"
+   x="0"
+   id="use958-2" />
+          <use
+   xlink:href="#gray-element-3"
+   x="145"
+   id="use960-0" />
+          <use
+   xlink:href="#gray-element-3"
+   x="290"
+   id="use962-6" />
+          <use
+   xlink:href="#gray-element-3"
+   x="435"
+   id="use964-1" />
+          <use
+   xlink:href="#gray-element-3"
+   x="580"
+   id="use966-5" />
+          <use
+   xlink:href="#gray-element-3"
+   x="725"
+   id="use968-5" />
+        </g>
+        <g
+   id="row-2-4"
+   transform="translate(45,210)">
+          <use
+   xlink:href="#gray-element-3"
+   x="0"
+   id="use971-7" />
+          <use
+   xlink:href="#gray-element-3"
+   x="290"
+   id="use975-6" />
+          <use
+   xlink:href="#gray-element-3"
+   x="435"
+   id="use977-5" />
+          <use
+   xlink:href="#gray-element-3"
+   x="725"
+   id="use981-6" />
+          <g
+   id="g2233"
+   transform="translate(580)"
+   style="display:inline"
+   inkscape:label="active_4">
+            <rect
+   id="rect2229"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2231"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+          <g
+   id="g2242"
+   transform="translate(145)"
+   style="display:inline"
+   inkscape:label="active_5">
+            <rect
+   id="rect2238"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2240"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+        </g>
+        <g
+   id="row-1-9"
+   transform="translate(45,355)"
+   style="display:inline">
+          <rect
+   id="specie-1-filled-2d"
+   x="784"
+   y="369"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_1"
+   style="display:inline"
+   transform="translate(-45,-355)" />
+          <rect
+   id="rect1848"
+   x="639"
+   y="369"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_2"
+   transform="translate(-45,-355)" />
+          <rect
+   id="rect1850"
+   x="204"
+   y="369"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_3"
+   transform="translate(-45,-355)" />
+          <g
+   id="g2121"
+   transform="translate(290)"
+   style="display:inline"
+   inkscape:label="active_2">
+            <rect
+   id="active-highlight-2d"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="active-inner-border-2d"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+          <g
+   id="g2133"
+   transform="translate(435)"
+   style="display:inline"
+   inkscape:label="active_1">
+            <rect
+   id="rect2129"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2131"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+          <g
+   id="g2139"
+   style="display:inline"
+   inkscape:label="active_3">
+            <rect
+   id="rect2135"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2137"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+        </g>
+      </g>
+      <text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:10.5833px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;paint-order:markers fill stroke"
+   x="306.97787"
+   y="77.952141"
+   id="text6178"
+   inkscape:label="label_b">
+        <tspan
+   sodipodi:role="line"
+   id="tspan6176"
+   x="306.97787"
+   y="77.952141">(b)</tspan>
+      </text>
+    </g>
+    <g
+   id="g7692"
+   inkscape:label="Inferior"
+   transform="translate(12.041929)">
+      <g
+   id="g4899"
+   transform="matrix(0.15408087,0,0,0.17534988,43.432136,92.867912)"
+   inkscape:label="(C)">
+        <g
+   id="nearest-neighbor-connections-0"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="round"
+   style="display:inline">
+          <!-- Horizontais -->
+          <g
+   id="g1140-8"
+   inkscape:label="horizontal_3"
+   style="display:none">
+            <line
+   x1="95"
+   y1="115"
+   x2="240"
+   y2="115"
+   id="line877-8" />
+            <line
+   x1="240"
+   y1="115"
+   x2="385"
+   y2="115"
+   id="line879-5" />
+            <line
+   x1="385"
+   y1="115"
+   x2="530"
+   y2="115"
+   id="line881-0" />
+            <line
+   x1="530"
+   y1="115"
+   x2="675"
+   y2="115"
+   id="line883-9" />
+            <line
+   x1="675"
+   y1="115"
+   x2="820"
+   y2="115"
+   id="line885-6" />
+          </g>
+          <g
+   id="g1133-3"
+   inkscape:label="horizontal_2"
+   style="display:inline">
+            <line
+   x1="95"
+   y1="260"
+   x2="240"
+   y2="260"
+   id="line887-85"
+   style="display:inline;fill:none;fill-opacity:1;stroke:#000000;stroke-opacity:0" />
+            <line
+   x1="240"
+   y1="260"
+   x2="385"
+   y2="260"
+   id="line889-6"
+   style="display:inline" />
+            <line
+   x1="385"
+   y1="260"
+   x2="530"
+   y2="260"
+   id="line891-1"
+   style="display:none" />
+            <line
+   x1="530"
+   y1="260"
+   x2="675"
+   y2="260"
+   id="line893-1"
+   style="display:inline" />
+            <line
+   x1="675"
+   y1="260"
+   x2="820"
+   y2="260"
+   id="line895-5"
+   style="display:inline" />
+          <line
+   x1="99.192009"
+   y1="260"
+   x2="244.19144"
+   y2="260"
+   id="line1958"
+   style="display:inline" /></g>
+          <g
+   id="g1126-9"
+   inkscape:label="horizontal_1">
+            <line
+   x1="95"
+   y1="405"
+   x2="240"
+   y2="405"
+   id="line897-8"
+   style="display:none;stroke:#e10000;stroke-opacity:1" />
+            <line
+   x1="240"
+   y1="405"
+   x2="385"
+   y2="405"
+   id="line899-4"
+   style="display:inline" />
+            <line
+   x1="385"
+   y1="405"
+   x2="530"
+   y2="405"
+   id="line901-81"
+   style="display:inline" />
+            <line
+   x1="530"
+   y1="405"
+   x2="675"
+   y2="405"
+   id="line903-0"
+   style="display:inline" />
+            <line
+   x1="675"
+   y1="405"
+   x2="820"
+   y2="405"
+   id="line905-3"
+   style="display:inline" />
+          </g>
+          <!-- Verticais -->
+          <g
+   id="g1119-0"
+   inkscape:label="vertical_2"
+   style="display:inline">
+            <line
+   x1="95"
+   y1="115"
+   x2="95"
+   y2="260"
+   id="line907-4"
+   style="display:none" />
+            <line
+   x1="240"
+   y1="115"
+   x2="240"
+   y2="260"
+   id="line909-4" />
+            <line
+   x1="385"
+   y1="115"
+   x2="385"
+   y2="260"
+   id="line911-4"
+   style="display:none" />
+            <line
+   x1="530"
+   y1="115"
+   x2="530"
+   y2="260"
+   id="line913-47"
+   style="display:none" />
+            <line
+   x1="675"
+   y1="115"
+   x2="675"
+   y2="260"
+   id="line915-6"
+   style="display:none" />
+            <line
+   x1="820"
+   y1="115"
+   x2="820"
+   y2="260"
+   id="line917-3"
+   style="display:none" />
+          </g>
+          <g
+   id="g1109-1"
+   inkscape:label="vertical_1">
+            <line
+   x1="385"
+   y1="260"
+   x2="385"
+   y2="405"
+   id="line923-7"
+   style="display:none;stroke:#e10000;stroke-opacity:1" />
+            <line
+   x1="530"
+   y1="260"
+   x2="530"
+   y2="405"
+   id="line925-5"
+   style="display:inline" />
+            <line
+   x1="675"
+   y1="260"
+   x2="675"
+   y2="405"
+   id="line927-96"
+   style="display:inline" />
+            <line
+   x1="820"
+   y1="260"
+   x2="820"
+   y2="405"
+   id="line929-2"
+   style="display:none;stroke:#e10000;stroke-opacity:1" />
+            <line
+   x1="240"
+   y1="260"
+   x2="240"
+   y2="405"
+   id="line921-1"
+   style="display:inline" />
+            <line
+   x1="95"
+   y1="260"
+   x2="95"
+   y2="405"
+   id="line919-7"
+   style="display:inline;fill:#f10000;fill-opacity:1;stroke:#000000;stroke-opacity:1" />
+          </g>
+        </g>
+        <g
+   id="lateral-periodic-boundary-stubs-8"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="butt"
+   style="display:inline">
+          <g
+   id="g1230-5"
+   inkscape:label="row_3"
+   style="display:none">
+            <line
+   x1="0"
+   y1="115"
+   x2="95"
+   y2="115"
+   id="line932-7" />
+            <line
+   x1="820"
+   y1="115"
+   x2="915"
+   y2="115"
+   id="line934-4" />
+          </g>
+          <g
+   id="g1226-18"
+   inkscape:label="row_2"
+   style="display:none">
+            <line
+   x1="0"
+   y1="260"
+   x2="95"
+   y2="260"
+   id="line936-5" />
+            <line
+   x1="820"
+   y1="260"
+   x2="915"
+   y2="260"
+   id="line938-9" />
+          </g>
+          <g
+   id="g1222-75"
+   inkscape:label="row_1"
+   style="display:inline">
+            <line
+   x1="0"
+   y1="405"
+   x2="95"
+   y2="405"
+   id="line940-3" />
+            <line
+   x1="820"
+   y1="405"
+   x2="915"
+   y2="405"
+   id="line942-8" />
+          </g>
+        </g>
+        <g
+   id="height-continuation-8"
+   fill="none"
+   stroke="#000000"
+   stroke-width="6"
+   stroke-linecap="butt"
+   stroke-dasharray="18, 12"
+   style="display:inline">
+          <line
+   x1="95"
+   y1="0"
+   x2="95"
+   y2="115"
+   id="line945-3" />
+          <line
+   x1="240"
+   y1="0"
+   x2="240"
+   y2="115"
+   id="line947-18" />
+          <line
+   x1="385"
+   y1="0"
+   x2="385"
+   y2="115"
+   id="line949-9" />
+          <line
+   x1="530"
+   y1="0"
+   x2="530"
+   y2="115"
+   id="line951-6" />
+          <line
+   x1="675"
+   y1="0"
+   x2="675"
+   y2="115"
+   id="line953-4" />
+          <line
+   x1="820"
+   y1="0"
+   x2="820"
+   y2="115"
+   id="line955-3" />
+        </g>
+        <g
+   id="row-3-33"
+   transform="translate(45,65)">
+          <use
+   xlink:href="#gray-element-8"
+   x="0"
+   id="use958-8" />
+          <use
+   xlink:href="#gray-element-8"
+   x="290"
+   id="use962-60" />
+          <use
+   xlink:href="#gray-element-8"
+   x="435"
+   id="use964-4" />
+          <use
+   xlink:href="#gray-element-8"
+   x="580"
+   id="use966-8" />
+          <use
+   xlink:href="#gray-element-8"
+   x="725"
+   id="use968-8" />
+          <g
+   id="g2633-8"
+   inkscape:label="active_5"
+   transform="translate(145)">
+            <rect
+   id="rect2629-9"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2631-7"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+        </g>
+        <g
+   id="row-2-7"
+   transform="translate(45,210)">
+          <rect
+   id="rect2584-6"
+   x="159"
+   y="-131"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_7"
+   style="display:inline"
+   transform="translate(0,145)" />
+          <rect
+   id="rect2586-4"
+   x="594"
+   y="-131"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_8"
+   style="display:inline"
+   transform="translate(0,145)" />
+          <g
+   id="g2603-3"
+   transform="translate(725)"
+   inkscape:label="active_1">
+            <rect
+   id="active-highlight-2d-0"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="active-inner-border-2d-3"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+          <g
+   id="g2615-0"
+   transform="translate(435)"
+   inkscape:label="active_2">
+            <rect
+   id="rect2611-9"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2613-2"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+          <g
+   id="g2621-5"
+   transform="translate(290)"
+   inkscape:label="active_3">
+            <rect
+   id="rect2617-4"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2619-0"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+          <g
+   id="g2627-5"
+   inkscape:label="active_4">
+            <rect
+   id="rect2623-9"
+   x="12"
+   y="12"
+   width="76"
+   height="76"
+   rx="3"
+   ry="3"
+   fill="#d92d29"
+   stroke="#15ff24"
+   stroke-width="10"
+   stroke-linejoin="round" />
+            <rect
+   id="rect2625-4"
+   x="17"
+   y="17"
+   width="66"
+   height="66"
+   rx="1"
+   ry="1"
+   fill="none"
+   stroke="#4f0d0b"
+   stroke-width="3"
+   stroke-linejoin="round" />
+          </g>
+        </g>
+        <g
+   id="row-1-69"
+   transform="translate(45,355)"
+   style="display:inline">
+          <rect
+   id="specie-1-filled-2d-2"
+   x="784"
+   y="369"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_1"
+   style="display:inline"
+   transform="translate(-45,-355)" />
+          <rect
+   id="rect1848-2"
+   x="639"
+   y="369"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_2"
+   transform="translate(-45,-355)" />
+          <rect
+   id="rect1850-47"
+   x="204"
+   y="369"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_3"
+   transform="translate(-45,-355)" />
+          <rect
+   id="rect2471-7"
+   x="14"
+   y="14"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_4" />
+          <rect
+   id="rect2473-5"
+   x="304"
+   y="14"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_5" />
+          <rect
+   id="rect2582-4"
+   x="449"
+   y="14"
+   width="72"
+   height="72"
+   rx="2"
+   ry="2"
+   fill="#d92d29"
+   stroke="#4f0d0b"
+   stroke-width="6"
+   stroke-linejoin="round"
+   inkscape:label="actived_6" />
+        </g>
+      </g>
+      <text
+   xml:space="preserve"
+   style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:10.5833px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;paint-order:markers fill stroke"
+   x="183.99231"
+   y="169.77086"
+   id="text7352"
+   inkscape:label="label_c">
+        <tspan
+   sodipodi:role="line"
+   id="tspan7350"
+   x="183.99231"
+   y="169.77086">(c)</tspan>
+      </text>
+    </g>
+  </g>
+  <g
+   id="math-parameter-labels"
+   inkscape:label="Mathematical parameter labels"><text
+     id="math-a-L"
+     x="142.3"
+     y="7.6"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝐿 = 6</text><text
+     id="math-a-c"
+     x="142.3"
+     y="18.7"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝑐 = 0.4</text><text
+     id="math-a-fT"
+     x="142.3"
+     y="29.799999"
+     style="font-style:normal;font-weight:normal;font-size:8.8px;font-family:'STIX Math', STIXGeneral, 'DejaVu Serif', serif;text-anchor:start;fill:#000000;stroke:none">𝑓<tspan
+   style="font-size:65%;baseline-shift:sub"
+   id="tspan2132">T</tspan> = 0.4</text><text
+     id="math-a-f0"
+     x="142.3"
+     y="40.9"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝑓(𝑡 = 0) = 3/6</text><text
+     id="math-a-p0"
+     x="142.3"
+     y="52.0"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝑝(𝑡 = 0) = 0.8</text><text
+     id="math-b-f1"
+     x="362.3"
+     y="7.6"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝑓(𝑡 = 1) = 5/6</text><text
+     id="math-b-p1"
+     x="362.3"
+     y="19.0"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝑝(𝑡 = 1) = 0.76</text><text
+     id="math-c-f2"
+     x="252.0"
+     y="98.3"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝑓(𝑡 = 2) = 5/6</text><text
+     id="math-c-p2"
+     x="252.0"
+     y="109.7"
+     style="font-family:'STIX Math','STIXGeneral','DejaVu Serif',serif;font-size:8.8px;font-weight:normal;font-style:normal;fill:#000000;stroke:none;text-anchor:start">𝑝(𝑡 = 2) = 0.59</text></g></svg>
