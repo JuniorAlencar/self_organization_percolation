@@ -24,12 +24,13 @@ def shell_data(
     properties=False,
     mode: str = "sop",
     initial_layout: str = "random",
+    surface_observables=False,
 ):
     """
     Generate a shell script to run SOP multiple times.
 
     New SOP executable signature:
-        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout]
+        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables]
 
     The old inputs k and N_T were removed. The update rule is now:
         p_i(t+1) = p_i(t) + c * (f_T - f_i(t))
@@ -79,6 +80,13 @@ def shell_data(
     if properties not in ("true", "false"):
         raise ValueError("properties must be true/false")
 
+    if isinstance(surface_observables, bool):
+        surface_observables = "true" if surface_observables else "false"
+    else:
+        surface_observables = str(surface_observables).strip().lower()
+    if surface_observables not in ("true", "false"):
+        raise ValueError("surface_observables must be true/false")
+
     initial_layout = str(initial_layout).strip()
     valid_layouts = {"random", "blocks", "quadrants", "quadrantes", "alternating", "alternado"}
     if initial_layout not in valid_layouts:
@@ -113,9 +121,12 @@ Equilibration={equlibration}
 Properties={properties}
 Mode="{mode}"
 InitialLayout="{initial_layout}"
+SurfaceObservables={surface_observables}
 
 extra_args=()
-if [[ "$InitialLayout" != "random" ]]; then
+if [[ "$SurfaceObservables" != "false" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
+elif [[ "$InitialLayout" != "random" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")
 elif [[ "$Mode" != "sop" ]]; then
   extra_args=("$Properties" "$Mode")
@@ -140,7 +151,7 @@ if ! command -v /usr/bin/time >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout
+export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout SurfaceObservables
 
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 if [[ "$TOTAL" -le 0 ]]; then
@@ -260,7 +271,9 @@ parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
   RUN={{2}}
   extra_args=()
-  if [[ "$InitialLayout" != "random" ]]; then
+  if [[ "$SurfaceObservables" != "false" ]]; then
+    extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
+  elif [[ "$InitialLayout" != "random" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout")
   elif [[ "$Mode" != "sop" ]]; then
     extra_args=("$Properties" "$Mode")
@@ -296,9 +309,12 @@ P0={P0}
 Properties={properties}
 Mode="{mode}"
 InitialLayout="{initial_layout}"
+SurfaceObservables={surface_observables}
 
 extra_args=()
-if [[ "$InitialLayout" != "random" ]]; then
+if [[ "$SurfaceObservables" != "false" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
+elif [[ "$InitialLayout" != "random" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")
 elif [[ "$Mode" != "sop" ]]; then
   extra_args=("$Properties" "$Mode")

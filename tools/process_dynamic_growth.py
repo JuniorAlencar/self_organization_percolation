@@ -23,7 +23,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 13
+DYNAMIC_PROCESSING_VERSION = 14
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
@@ -738,17 +738,12 @@ def mean_indexed_series(series: list[np.ndarray]) -> dict[str, Any]:
 def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
     series_pt: list[tuple[np.ndarray, np.ndarray]] = []
     series_ft: list[tuple[np.ndarray, np.ndarray]] = []
-    series_flz: list[np.ndarray] = []
     t_eq_vals: list[float] = []
 
     for item in items:
         t_eq = finite_float(item.get("t_eq_species"))
         if t_eq is not None:
             t_eq_vals.append(t_eq)
-
-        flz = clean_numeric_vector(item.get("fL_z"))
-        if flz.size > 0:
-            series_flz.append(flz)
 
         time = item.get("time")
         pt = item.get("pt")
@@ -866,28 +861,6 @@ def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
         out["ft_supported_N_per_t"] = []
         out["ft_min_support_count"] = 0
 
-    flz_stats = mean_indexed_series(series_flz)
-    out["fL_z_z"] = flz_stats["z"]
-    out["fL_z_mean"] = flz_stats["mean"]
-    out["fL_z_std"] = flz_stats["std"]
-    out["fL_z_sem"] = flz_stats["sem"]
-    out["fL_z_N_per_z"] = flz_stats["N_per_z"]
-    out["n_seeds_fL_z"] = flz_stats["n_seeds"]
-    out["fL_z_common_z"] = flz_stats["common_z"]
-    out["fL_z_common_mean"] = flz_stats["common_mean"]
-    out["fL_z_common_std"] = flz_stats["common_std"]
-    out["fL_z_common_sem"] = flz_stats["common_sem"]
-    out["fL_z_common_N_per_z"] = flz_stats["common_N_per_z"]
-    out["fL_z_supported_z"] = flz_stats["supported_z"]
-    out["fL_z_supported_mean"] = flz_stats["supported_mean"]
-    out["fL_z_supported_std"] = flz_stats["supported_std"]
-    out["fL_z_supported_sem"] = flz_stats["supported_sem"]
-    out["fL_z_supported_N_per_z"] = flz_stats["supported_N_per_z"]
-    out["fL_z_support_policy"] = "union_observed_heights"
-    out["fL_z_common_support_policy"] = "all_samples_present"
-    out["fL_z_supported_support_policy"] = "min_fraction_of_samples_present"
-    out["fL_z_min_support_count"] = flz_stats["min_support_count"]
-
     return out
 
 
@@ -942,7 +915,6 @@ def load_dynamic_sample(
     path: Path,
     *,
     include_time_series: bool = True,
-    include_flz: bool = True,
 ) -> list[dict[str, Any]] | None:
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -1040,8 +1012,6 @@ def load_dynamic_sample(
             row["time"] = data.get("time")
             row["pt"] = data.get("pt")
             row["ft"] = data.get("nt")
-        if include_flz:
-            row["fL_z"] = data.get("fL_z")
         out.append(row)
 
     return out
@@ -1050,12 +1020,10 @@ def load_dynamic_sample(
 def process_one_sample_file(
     sample_path: Path,
     include_time_series: bool = True,
-    include_flz: bool = True,
 ) -> tuple[list[dict[str, Any]], float | None]:
     sample_orders = load_dynamic_sample(
         sample_path,
         include_time_series=include_time_series,
-        include_flz=include_flz,
     )
     if sample_orders is None:
         return [], None
@@ -1070,7 +1038,6 @@ def process_one_sample_file(
             "time": item.get("time"),
             "pt": item.get("pt"),
             "ft": item.get("ft"),
-            "fL_z": item.get("fL_z"),
             "p_sample_mean": item.get("p_sample_mean"),
             "f_sample_mean": item.get("f_sample_mean"),
             "z_max": item.get("z_max"),
@@ -1085,12 +1052,11 @@ def process_one_sample_file(
     return rows, float(len(sample_orders))
 
 
-def process_one_sample_file_for_pool(args: tuple[Path, bool, bool]) -> tuple[list[dict[str, Any]], float | None]:
-    sample_path, include_time_series, include_flz = args
+def process_one_sample_file_for_pool(args: tuple[Path, bool]) -> tuple[list[dict[str, Any]], float | None]:
+    sample_path, include_time_series = args
     return process_one_sample_file(
         sample_path,
         include_time_series=include_time_series,
-        include_flz=include_flz,
     )
 
 
@@ -1100,14 +1066,13 @@ def sample_cache_path(cache_dir: Path, sample_path: Path) -> Path:
 
 
 def process_one_sample_file_cached(
-    args: tuple[Path, bool, bool, str, str | None],
+    args: tuple[Path, bool, str, str | None],
 ) -> tuple[list[dict[str, Any]], float | None]:
-    sample_path, include_time_series, include_flz, fingerprint_mode, cache_dir_raw = args
+    sample_path, include_time_series, fingerprint_mode, cache_dir_raw = args
     if include_time_series or cache_dir_raw is None:
         return process_one_sample_file(
             sample_path,
             include_time_series=include_time_series,
-            include_flz=include_flz,
         )
 
     cache_dir = Path(cache_dir_raw)
@@ -1120,7 +1085,6 @@ def process_one_sample_file_cached(
             isinstance(cached, dict)
             and cached.get("fingerprint") == fingerprint
             and cached.get("fingerprint_mode") == fingerprint_mode
-            and bool(cached.get("include_flz")) == include_flz
             and cached.get("format_version") == DYNAMIC_PROCESSING_VERSION
         ):
             rows = cached.get("rows", [])
@@ -1133,7 +1097,6 @@ def process_one_sample_file_cached(
     rows, stabilized_count = process_one_sample_file(
         sample_path,
         include_time_series=False,
-        include_flz=include_flz,
     )
     try:
         ensure_dir(cache_dir)
@@ -1141,7 +1104,6 @@ def process_one_sample_file_cached(
             "format_version": DYNAMIC_PROCESSING_VERSION,
             "fingerprint": fingerprint,
             "fingerprint_mode": fingerprint_mode,
-            "include_flz": include_flz,
             "stabilized_count": stabilized_count,
             "rows": rows,
         }
@@ -1157,7 +1119,6 @@ def process_sample_files(
     sample_paths: list[Path],
     jobs: int = 1,
     include_time_series: bool = True,
-    include_flz: bool = True,
     cache_dir: Path | None = None,
     fingerprint_mode: str = "stat",
 ) -> tuple[list[dict[str, Any]], list[float]]:
@@ -1171,7 +1132,6 @@ def process_sample_files(
                 (
                     path,
                     include_time_series,
-                    include_flz,
                     fingerprint_mode,
                     cache_dir.as_posix() if cache_dir is not None else None,
                 )
@@ -1193,7 +1153,6 @@ def process_sample_files(
                     (
                         path,
                         include_time_series,
-                        include_flz,
                         fingerprint_mode,
                         cache_dir.as_posix() if cache_dir is not None else None,
                     )
@@ -1784,6 +1743,10 @@ def dynamic_bundle_path(out_dir: Path) -> Path:
     return out_dir / "properties_dynamic_bundle.json.xz"
 
 
+def surface_bundle_path(out_dir: Path) -> Path:
+    return out_dir / "surface_dynamic_bundle.json.xz"
+
+
 def gzip_dynamic_bundle_path(out_dir: Path) -> Path:
     return out_dir / "properties_dynamic_bundle.json.gz"
 
@@ -2302,47 +2265,6 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
         merged_data["ft_supported_support_policy"] = "min_fraction_of_samples_present"
         merged_data["ft_min_support_count"] = supported_threshold
 
-    old_n_flz = int(existing_data.get("n_seeds_fL_z", 0) or 0)
-    new_n_flz = int(new_data.get("n_seeds_fL_z", 0) or 0)
-    if old_n_flz > 0 or new_n_flz > 0:
-        flz_mean, flz_std, flz_sem, flz_counts = combine_series_arrays(
-            existing_data.get("fL_z_mean"),
-            existing_data.get("fL_z_std"),
-            existing_data.get("fL_z_N_per_z"),
-            old_n_flz,
-            new_data.get("fL_z_mean"),
-            new_data.get("fL_z_std"),
-            new_data.get("fL_z_N_per_z"),
-            new_n_flz,
-        )
-        z_axis = choose_axis(existing_data.get("fL_z_z"), new_data.get("fL_z_z"), len(flz_mean))
-        common_z, common_mean, common_std, common_sem, common_counts = series_common_fields(
-            z_axis, flz_mean, flz_std, flz_sem, flz_counts, old_n_flz + new_n_flz
-        )
-        supported_z, supported_mean, supported_std, supported_sem, supported_counts, supported_threshold = series_supported_fields(
-            z_axis, flz_mean, flz_std, flz_sem, flz_counts, old_n_flz + new_n_flz
-        )
-        merged_data["fL_z_z"] = z_axis
-        merged_data["fL_z_mean"] = flz_mean
-        merged_data["fL_z_std"] = flz_std
-        merged_data["fL_z_sem"] = flz_sem
-        merged_data["fL_z_N_per_z"] = flz_counts
-        merged_data["n_seeds_fL_z"] = old_n_flz + new_n_flz
-        merged_data["fL_z_common_z"] = common_z
-        merged_data["fL_z_common_mean"] = common_mean
-        merged_data["fL_z_common_std"] = common_std
-        merged_data["fL_z_common_sem"] = common_sem
-        merged_data["fL_z_common_N_per_z"] = common_counts
-        merged_data["fL_z_supported_z"] = supported_z
-        merged_data["fL_z_supported_mean"] = supported_mean
-        merged_data["fL_z_supported_std"] = supported_std
-        merged_data["fL_z_supported_sem"] = supported_sem
-        merged_data["fL_z_supported_N_per_z"] = supported_counts
-        merged_data["fL_z_support_policy"] = "union_observed_heights"
-        merged_data["fL_z_common_support_policy"] = "all_samples_present"
-        merged_data["fL_z_supported_support_policy"] = "min_fraction_of_samples_present"
-        merged_data["fL_z_min_support_count"] = supported_threshold
-
     p_old = existing_order.get("p", {}) if isinstance(existing_order.get("p", {}), dict) else {}
     p_new = new_order.get("p", {}) if isinstance(new_order.get("p", {}), dict) else {}
     merged["p"] = combine_summary_dicts(p_old, p_new)
@@ -2417,6 +2339,7 @@ def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) ->
     merged = dict(existing_group)
     existing_orders = {int(order.get("order")): order for order in existing_group.get("orders", []) if isinstance(order, dict) and order.get("order") is not None}
     new_orders = {int(order.get("order")): order for order in new_group.get("orders", []) if isinstance(order, dict) and order.get("order") is not None}
+    total_samples = int(existing_group.get("num_samples_total", 0) or 0) + int(new_group.get("num_samples_total", 0) or 0)
     merged_orders: list[dict[str, Any]] = []
     for order in sorted(set(existing_orders) | set(new_orders)):
         if order in existing_orders and order in new_orders:
@@ -2426,8 +2349,14 @@ def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) ->
         else:
             merged_orders.append(dict(new_orders[order]))
 
+    for order_block in merged_orders:
+        order_block["N_samples"] = total_samples
+        data = order_block.get("data")
+        if isinstance(data, dict):
+            data["n_samples_total"] = total_samples
+
     merged["orders"] = merged_orders
-    merged["num_samples_total"] = int(existing_group.get("num_samples_total", 0) or 0) + int(new_group.get("num_samples_total", 0) or 0)
+    merged["num_samples_total"] = total_samples
 
     old_colors = existing_group.get("colors", {}) if isinstance(existing_group.get("colors", {}), dict) else {}
     new_colors = new_group.get("colors", {}) if isinstance(new_group.get("colors", {}), dict) else {}
@@ -2448,7 +2377,6 @@ def build_bundle_for_files(
     fingerprint_mode: str = "stat",
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     include_time_series = series_mode == "full"
-    include_flz = series_mode in ("full", "profiles")
     groups: dict[tuple[float, float], list[Path]] = defaultdict(list)
     for fp in files:
         parsed_name = parse_sample_name(fp)
@@ -2477,7 +2405,6 @@ def build_bundle_for_files(
             group_files,
             jobs=jobs,
             include_time_series=include_time_series,
-            include_flz=include_flz,
             cache_dir=sample_cache_dir,
             fingerprint_mode=fingerprint_mode,
         )
@@ -2578,7 +2505,6 @@ def build_bundle_for_files(
                         "f_sample_mean": x["f_sample_mean"],
                         "z_max": x["z_max"],
                         "z_stat": x["z_stat"],
-                        "fL_z_len": len(x.get("fL_z") or []),
                         "stop_criterion": x.get("stop_criterion"),
                         "t_eq_validation": x.get("t_eq_validation"),
                         "t_eq_s_prime_threshold": x.get("t_eq_s_prime_threshold"),
@@ -2613,6 +2539,353 @@ def build_bundle_for_files(
     return bundle, all_rows, all_color_rows
 
 
+def load_surface_observable_sample(path: Path) -> list[dict[str, Any]]:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            js = json.load(f)
+    except Exception as exc:
+        print(f"[warn] ignorando JSON inválido para superfície {path}: {exc}")
+        return []
+
+    meta = js.get("meta", {}) if isinstance(js.get("meta", {}), dict) else {}
+    delta_t = finite_float(meta.get("growth_test_surface_deltaT"))
+    if delta_t is None:
+        return []
+
+    results = js.get("results", {}) if isinstance(js.get("results", {}), dict) else {}
+    rows: list[dict[str, Any]] = []
+    for key, block in results.items():
+        raw_order = parse_order_key(str(key))
+        if raw_order is None:
+            continue
+        data = (block or {}).get("data", {})
+        if not isinstance(data, dict):
+            continue
+
+        t_sur = clean_numeric_vector(data.get("t_sur"))
+        f_sur = clean_numeric_vector(data.get("f_sur"))
+        w_sur = clean_numeric_vector(data.get("w_sur"))
+        grad_sur = clean_numeric_vector(data.get("grad_sur"))
+        S_sur = clean_numeric_vector(data.get("S_sur"))
+        M_L = finite_float(data.get("M_L"))
+        if M_L is None:
+            M_L = finite_float(data.get("S_L"))
+        M_cluster_sizes = clean_numeric_vector(data.get("M_cluster_sizes"))
+        t_vol = clean_numeric_vector(data.get("t_vol"))
+        f_vol = clean_numeric_vector(data.get("f_vol"))
+        h_sur_raw = data.get("h_sur")
+        h_sur = h_sur_raw if isinstance(h_sur_raw, list) else []
+        if (
+            t_sur.size == 0 and f_sur.size == 0 and w_sur.size == 0 and
+            grad_sur.size == 0 and S_sur.size == 0 and M_L is None and
+            M_cluster_sizes.size == 0 and
+            t_vol.size == 0 and f_vol.size == 0 and not h_sur
+        ):
+            continue
+
+        try:
+            color_1b = int(data.get("color"))
+        except Exception:
+            color_1b = None
+
+        rows.append({
+            "filename": path.name,
+            "order": raw_order - 1,
+            "color": color_1b,
+            "deltaT_sur": int(delta_t) if float(delta_t).is_integer() else float(delta_t),
+            "t_sur": t_sur.tolist(),
+            "f_sur": f_sur.tolist(),
+            "h_sur": h_sur,
+            "w_sur": w_sur.tolist(),
+            "grad_sur": grad_sur.tolist(),
+            "S_sur": S_sur.tolist(),
+            "M_L": M_L,
+            "M_cluster_sizes": [
+                int(x) if float(x).is_integer() else float(x)
+                for x in M_cluster_sizes.tolist()
+            ],
+            "t_vol": t_vol.tolist(),
+            "f_vol": f_vol.tolist(),
+        })
+    return rows
+
+
+def average_surface_observable_series(items: list[dict[str, Any]]) -> dict[str, Any]:
+    f_sur_series: list[tuple[np.ndarray, np.ndarray]] = []
+    w_sur_series: list[tuple[np.ndarray, np.ndarray]] = []
+    grad_sur_series: list[tuple[np.ndarray, np.ndarray]] = []
+    S_sur_series: list[tuple[np.ndarray, np.ndarray]] = []
+    M_L_values: list[float] = []
+    M_cluster_sizes_values: list[list[float]] = []
+    f_vol_series: list[tuple[np.ndarray, np.ndarray]] = []
+    for item in items:
+        t_sur = clean_numeric_vector(item.get("t_sur"))
+        f_sur = clean_numeric_vector(item.get("f_sur"))
+        n_sur = min(t_sur.size, f_sur.size)
+        if n_sur > 0:
+            f_sur_series.append((t_sur[:n_sur], f_sur[:n_sur]))
+
+        w_sur = clean_numeric_vector(item.get("w_sur"))
+        n_w = min(t_sur.size, w_sur.size)
+        if n_w > 0:
+            w_sur_series.append((t_sur[:n_w], w_sur[:n_w]))
+
+        grad_sur = clean_numeric_vector(item.get("grad_sur"))
+        n_grad = min(t_sur.size, grad_sur.size)
+        if n_grad > 0:
+            grad_sur_series.append((t_sur[:n_grad], grad_sur[:n_grad]))
+
+        S_sur = clean_numeric_vector(item.get("S_sur"))
+        n_S = min(t_sur.size, S_sur.size)
+        if n_S > 0:
+            S_sur_series.append((t_sur[:n_S], S_sur[:n_S]))
+
+        M_L = finite_float(item.get("M_L"))
+        if M_L is not None:
+            M_L_values.append(M_L)
+
+        M_cluster_sizes = clean_numeric_vector(item.get("M_cluster_sizes"))
+        if M_cluster_sizes.size > 0:
+            M_cluster_sizes_values.append(M_cluster_sizes.tolist())
+
+        t_vol = clean_numeric_vector(item.get("t_vol"))
+        f_vol = clean_numeric_vector(item.get("f_vol"))
+        n_vol = min(t_vol.size, f_vol.size)
+        if n_vol > 0:
+            f_vol_series.append((t_vol[:n_vol], f_vol[:n_vol]))
+
+    out: dict[str, Any] = {}
+    if f_sur_series:
+        stats = mean_series_on_union_grid(f_sur_series)
+        out["t_sur"] = stats["time"]
+        out["f_sur_mean"] = stats["mean"]
+        out["f_sur_std"] = stats["std"]
+        out["f_sur_sem"] = stats["sem"]
+        out["f_sur_N_per_t"] = stats["N_per_t"]
+        out["n_seeds_f_sur"] = stats["n_seeds"]
+        out["f_sur_supported_t"] = stats["supported_time"]
+        out["f_sur_supported_mean"] = stats["supported_mean"]
+        out["f_sur_supported_std"] = stats["supported_std"]
+        out["f_sur_supported_sem"] = stats["supported_sem"]
+        out["f_sur_supported_N_per_t"] = stats["supported_N_per_t"]
+    else:
+        out.update({
+            "t_sur": [],
+            "f_sur_mean": [],
+            "f_sur_std": [],
+            "f_sur_sem": [],
+            "f_sur_N_per_t": [],
+            "n_seeds_f_sur": 0,
+            "f_sur_supported_t": [],
+            "f_sur_supported_mean": [],
+            "f_sur_supported_std": [],
+            "f_sur_supported_sem": [],
+            "f_sur_supported_N_per_t": [],
+        })
+
+    if f_vol_series:
+        stats = mean_series_on_union_grid(f_vol_series)
+        out["t_vol"] = stats["time"]
+        out["f_vol_mean"] = stats["mean"]
+        out["f_vol_std"] = stats["std"]
+        out["f_vol_sem"] = stats["sem"]
+        out["f_vol_N_per_t"] = stats["N_per_t"]
+        out["n_seeds_f_vol"] = stats["n_seeds"]
+        out["f_vol_supported_t"] = stats["supported_time"]
+        out["f_vol_supported_mean"] = stats["supported_mean"]
+        out["f_vol_supported_std"] = stats["supported_std"]
+        out["f_vol_supported_sem"] = stats["supported_sem"]
+        out["f_vol_supported_N_per_t"] = stats["supported_N_per_t"]
+    else:
+        out.update({
+            "t_vol": [],
+            "f_vol_mean": [],
+            "f_vol_std": [],
+            "f_vol_sem": [],
+            "f_vol_N_per_t": [],
+            "n_seeds_f_vol": 0,
+            "f_vol_supported_t": [],
+            "f_vol_supported_mean": [],
+            "f_vol_supported_std": [],
+            "f_vol_supported_sem": [],
+            "f_vol_supported_N_per_t": [],
+        })
+
+    out["support_policy"] = "union_observed_sample_indices"
+    if w_sur_series:
+        stats = mean_series_on_union_grid(w_sur_series)
+        out["w_sur_t"] = stats["time"]
+        out["w_sur_mean"] = stats["mean"]
+        out["w_sur_std"] = stats["std"]
+        out["w_sur_sem"] = stats["sem"]
+        out["w_sur_N_per_t"] = stats["N_per_t"]
+        out["n_seeds_w_sur"] = stats["n_seeds"]
+        out["w_sur_supported_t"] = stats["supported_time"]
+        out["w_sur_supported_mean"] = stats["supported_mean"]
+        out["w_sur_supported_std"] = stats["supported_std"]
+        out["w_sur_supported_sem"] = stats["supported_sem"]
+        out["w_sur_supported_N_per_t"] = stats["supported_N_per_t"]
+    else:
+        out.update({
+            "w_sur_t": [],
+            "w_sur_mean": [],
+            "w_sur_std": [],
+            "w_sur_sem": [],
+            "w_sur_N_per_t": [],
+            "n_seeds_w_sur": 0,
+            "w_sur_supported_t": [],
+            "w_sur_supported_mean": [],
+            "w_sur_supported_std": [],
+            "w_sur_supported_sem": [],
+            "w_sur_supported_N_per_t": [],
+        })
+    if grad_sur_series:
+        stats = mean_series_on_union_grid(grad_sur_series)
+        out["grad_sur_t"] = stats["time"]
+        out["grad_sur_mean"] = stats["mean"]
+        out["grad_sur_std"] = stats["std"]
+        out["grad_sur_sem"] = stats["sem"]
+        out["grad_sur_N_per_t"] = stats["N_per_t"]
+        out["n_seeds_grad_sur"] = stats["n_seeds"]
+        out["grad_sur_supported_t"] = stats["supported_time"]
+        out["grad_sur_supported_mean"] = stats["supported_mean"]
+        out["grad_sur_supported_std"] = stats["supported_std"]
+        out["grad_sur_supported_sem"] = stats["supported_sem"]
+        out["grad_sur_supported_N_per_t"] = stats["supported_N_per_t"]
+    else:
+        out.update({
+            "grad_sur_t": [],
+            "grad_sur_mean": [],
+            "grad_sur_std": [],
+            "grad_sur_sem": [],
+            "grad_sur_N_per_t": [],
+            "n_seeds_grad_sur": 0,
+            "grad_sur_supported_t": [],
+            "grad_sur_supported_mean": [],
+            "grad_sur_supported_std": [],
+            "grad_sur_supported_sem": [],
+            "grad_sur_supported_N_per_t": [],
+        })
+    if S_sur_series:
+        stats = mean_series_on_union_grid(S_sur_series)
+        out["S_sur_t"] = stats["time"]
+        out["S_sur_mean"] = stats["mean"]
+        out["S_sur_std"] = stats["std"]
+        out["S_sur_sem"] = stats["sem"]
+        out["S_sur_N_per_t"] = stats["N_per_t"]
+        out["n_seeds_S_sur"] = stats["n_seeds"]
+        out["S_sur_supported_t"] = stats["supported_time"]
+        out["S_sur_supported_mean"] = stats["supported_mean"]
+        out["S_sur_supported_std"] = stats["supported_std"]
+        out["S_sur_supported_sem"] = stats["supported_sem"]
+        out["S_sur_supported_N_per_t"] = stats["supported_N_per_t"]
+    else:
+        out.update({
+            "S_sur_t": [],
+            "S_sur_mean": [],
+            "S_sur_std": [],
+            "S_sur_sem": [],
+            "S_sur_N_per_t": [],
+            "n_seeds_S_sur": 0,
+            "S_sur_supported_t": [],
+            "S_sur_supported_mean": [],
+            "S_sur_supported_std": [],
+            "S_sur_supported_sem": [],
+            "S_sur_supported_N_per_t": [],
+        })
+
+    M_summary = summary_from_values(M_L_values)
+    M_summary["values"] = list(M_L_values)
+    out["M"] = M_summary
+    out["M_values"] = list(M_L_values)
+    out["M_cluster_sizes"] = M_cluster_sizes_values
+    out["M_cluster_sizes_flat"] = [
+        value
+        for values in M_cluster_sizes_values
+        for value in values
+    ]
+    out["supported_support_policy"] = "min_fraction_of_samples_present"
+    out["min_support_fraction"] = DEFAULT_MIN_SUPPORT_FRACTION
+    return out
+
+
+def process_surface_observables_bundle(
+    params: dict[str, Any],
+    rel_group: Path,
+    files: list[Path],
+    out_dir: Path,
+    pretty_json: bool = False,
+) -> Path | None:
+    grouped: dict[tuple[float, float, Any], list[dict[str, Any]]] = defaultdict(list)
+    for fp in files:
+        parsed_name = parse_sample_name(fp)
+        if parsed_name is None:
+            continue
+        P0, p0 = parsed_name
+        for row in load_surface_observable_sample(fp):
+            grouped[(P0, p0, row["deltaT_sur"])].append(row)
+
+    if not grouped:
+        old_path = surface_bundle_path(out_dir)
+        if old_path.exists():
+            old_path.unlink()
+        return None
+
+    bundle: dict[str, Any] = {
+        "meta": {
+            **params,
+            "raw_group": rel_group.as_posix(),
+            "num_json_files": len(files),
+            "num_surface_observable_samples": len({r["filename"] for rows in grouped.values() for r in rows}),
+            "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+            "surface_observables_only": True,
+        },
+        "p0_deltaT_groups": [],
+    }
+
+    for (P0, p0, delta_t), rows in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1], x[0][2])):
+        by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            by_order[int(row["order"])].append(row)
+
+        group_block = {
+            "P0_value": P0,
+            "p0_value": p0,
+            "deltaT_sur": delta_t,
+            "num_samples_total": len({r["filename"] for r in rows}),
+            "orders": [],
+        }
+        for order in sorted(by_order):
+            items = by_order[order]
+            group_block["orders"].append({
+                "order": order,
+                "N_samples": len({r["filename"] for r in items}),
+                "data": average_surface_observable_series(items),
+                "samples": [
+                    {
+                        "filename": x["filename"],
+                        "color": x.get("color"),
+                        "t_sur_len": len(x.get("t_sur") or []),
+                        "f_sur_len": len(x.get("f_sur") or []),
+                        "h_sur_len": len(x.get("h_sur") or []),
+                        "w_sur_len": len(x.get("w_sur") or []),
+                        "grad_sur_len": len(x.get("grad_sur") or []),
+                        "S_sur_len": len(x.get("S_sur") or []),
+                        "M_L": x.get("M_L"),
+                        "M_cluster_sizes_len": len(x.get("M_cluster_sizes") or []),
+                        "t_vol_len": len(x.get("t_vol") or []),
+                        "f_vol_len": len(x.get("f_vol") or []),
+                    }
+                    for x in items
+                ],
+            })
+        bundle["p0_deltaT_groups"].append(group_block)
+
+    out_path = surface_bundle_path(out_dir)
+    write_json_bundle(out_path, bundle, pretty=pretty_json)
+    return out_path
+
+
 def process_group(
     data_dir: Path,
     raw_root: Path,
@@ -2643,6 +2916,15 @@ def process_group(
     json_files = collect_group_json_files(data_dir)
     current_json_files = sorted({fp.name for fp in json_files})
     files_by_name = {fp.name: fp for fp in json_files}
+    surface_out_path = process_surface_observables_bundle(
+        params,
+        rel_group,
+        json_files,
+        out_dir,
+        pretty_json=pretty_json,
+    )
+    if surface_out_path is not None:
+        print(f"[surface] ensured {surface_out_path}")
 
     manifest = load_manifest(manifests_root, rel_group)
     manifest_files = set(map(str, manifest.get("processed_json_files", [])))
@@ -3064,8 +3346,8 @@ def main() -> int:
         choices=("full", "profiles", "scalars"),
         default="profiles",
         help=(
-            "full stores aggregated pt/ft time series and fL_z profiles; "
-            "profiles skips pt/ft time-series aggregation but keeps fL_z; "
+            "full stores aggregated pt/ft time series in the main dynamic bundle; "
+            "profiles skips pt/ft time-series aggregation; "
             "scalars stores only scalar summaries. profiles is much faster for large datasets."
         ),
     )

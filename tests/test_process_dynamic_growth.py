@@ -93,6 +93,26 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
         )
         return sample_path
 
+    def _write_empty_sample(self, data_dir: Path, name: str) -> Path:
+        sample_path = data_dir / name
+        sample_path.write_text(
+            json.dumps(
+                {
+                    "meta": {
+                        "t_eq_by_species": [None],
+                        "growth_test_stop_criterion": "alive_species_pt_derivative_stability_or_death",
+                        "growth_test_t_eq_validation": "discrete_derivative_of_blocked_pt_variation",
+                        "growth_test_t_eq_s_prime_threshold": 1.0e-5,
+                        "growth_test_equilibrium_effective_rel_tol": 2.5e-3,
+                        "growth_test_post_equilibrium_extra_steps": 100,
+                    },
+                    "results": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return sample_path
+
     def test_new_dynamic_layout_uses_zero_stat_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -160,6 +180,111 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(all_rows[0]["stat_window"], 0)
             self.assertAlmostEqual(all_rows[0]["t_eq_s_prime_threshold"], 1.0e-5)
             self.assertEqual(all_rows[0]["post_equilibrium_extra_steps"], 100)
+
+    def test_incremental_merge_updates_total_samples_for_orders_not_in_new_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+
+            first_path = self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            first_data = json.loads(first_path.read_text(encoding="utf-8"))
+            first_data["results"]["order_percolation 2"] = json.loads(
+                json.dumps(first_data["results"]["order_percolation 1"])
+            )
+            first_data["results"]["order_percolation 2"]["data"]["pt"] = [0.6, 0.8, 1.0]
+            first_path.write_text(json.dumps(first_data), encoding="utf-8")
+
+            PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            self._write_sample(data_dir, "sample_c_P0_0.7_p0_0.2.json", [0.8, 1.0, 1.2])
+            out_path, all_rows, all_color_rows = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            group = bundle["p0_groups"][0]
+            orders = {order["order"]: order for order in group["orders"]}
+
+            self.assertEqual(group["num_samples_total"], 2)
+            self.assertEqual(orders[0]["N_samples"], 2)
+            self.assertEqual(orders[0]["N_samples_perc"], 2)
+            self.assertEqual(orders[1]["N_samples"], 2)
+            self.assertEqual(orders[1]["N_samples_perc"], 1)
+            self.assertEqual(orders[0]["data"]["n_samples_total"], 2)
+            self.assertEqual(orders[1]["data"]["n_samples_total"], 2)
+            self.assertEqual({row["order"]: row["N_samples"] for row in all_rows}, {0: 2, 1: 2})
+            self.assertEqual({row["order"]: row["N_samples_perc"] for row in all_rows}, {0: 2, 1: 1})
+            self.assertEqual(all_color_rows[0]["N_samples"], 2)
+
+    def test_incremental_merge_counts_empty_new_samples_only_in_total_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+
+            self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            self._write_empty_sample(data_dir, "sample_empty_P0_0.7_p0_0.2.json")
+            out_path, all_rows, all_color_rows = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            group = bundle["p0_groups"][0]
+            order = group["orders"][0]
+
+            self.assertEqual(group["num_samples_total"], 2)
+            self.assertEqual(order["N_samples"], 2)
+            self.assertEqual(order["N_samples_perc"], 1)
+            self.assertEqual(order["data"]["n_samples_total"], 2)
+            self.assertEqual(order["data"]["n_samples_perc"], 1)
+            self.assertEqual(all_rows[0]["N_samples"], 2)
+            self.assertEqual(all_rows[0]["N_samples_perc"], 1)
+            self.assertEqual(all_color_rows[0]["N_samples"], 2)
+            self.assertAlmostEqual(all_color_rows[0]["nc"], 0.5)
+
+    def test_new_group_with_only_empty_samples_updates_color_counts_but_has_no_order_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+
+            self._write_empty_sample(data_dir, "sample_empty_P0_0.7_p0_0.2.json")
+            out_path, all_rows, all_color_rows = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            group = bundle["p0_groups"][0]
+
+            self.assertEqual(group["num_samples_total"], 1)
+            self.assertEqual(group["orders"], [])
+            self.assertEqual(all_rows, [])
+            self.assertEqual(all_color_rows[0]["N_samples"], 1)
+            self.assertEqual(all_color_rows[0]["nc"], 0.0)
 
     def test_updates_time_series_from_published_when_raw_is_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

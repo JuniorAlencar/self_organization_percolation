@@ -1342,60 +1342,320 @@ inline int growth_test_global_validation_window_steps(const int extra_steps,
     return std::max(std::max(0, extra_steps), 20 * std::max(1, window_block));
 }
 
-std::vector<std::vector<double>> compute_final_layer_species_fractions(
+double compute_upper_surface_fraction(
     const GridRegular& grid,
     const int num_colors,
+    const int color_idx,
     const std::vector<std::int8_t>& site_state,
-    const std::vector<bool>& include_species)
+    const int upper_height,
+    const int lower_height)
 {
-    const int allocated_height = grid.grow_height();
-    if (allocated_height <= 0 || num_colors <= 0) return {};
+    if (num_colors <= 0 || color_idx < 0 || color_idx >= num_colors ||
+        upper_height < 0) {
+        return 0.0;
+    }
 
-    std::vector<std::vector<std::uint32_t>> counts(
-        static_cast<std::size_t>(num_colors),
-        std::vector<std::uint32_t>(static_cast<std::size_t>(allocated_height), 0u));
-    std::vector<int> max_occupied_z(static_cast<std::size_t>(num_colors), -1);
-
+    const int active_val = color_to_active_value(num_colors, color_idx);
+    const int top = std::min(upper_height, grid.grow_top_coord());
+    const int bottom = std::max(0, std::min(lower_height, top));
     const int n_sites = std::min(
         grid.total_size,
         static_cast<int>(site_state.size()));
-    for (int idx = 0; idx < n_sites; ++idx) {
-        const int v = static_cast<int>(site_state[static_cast<std::size_t>(idx)]);
-        if (v <= 0) continue;
 
-        const int color_idx = value_to_color_index(num_colors, v);
-        if (color_idx < 0 || color_idx >= num_colors) continue;
-        if (color_idx >= static_cast<int>(include_species.size()) ||
-            !include_species[static_cast<std::size_t>(color_idx)]) {
+    std::vector<char> exterior_air(static_cast<std::size_t>(grid.total_size), 0);
+    std::deque<int> queue;
+
+    for (int idx = 0; idx < n_sites; ++idx) {
+        if (grid.grow_coord(idx) != top) continue;
+        if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) > 0) {
             continue;
         }
+        exterior_air[static_cast<std::size_t>(idx)] = 1;
+        queue.push_back(idx);
+    }
 
-        const int z = grid.grow_coord(idx);
-        if (z < 0 || z >= allocated_height) continue;
-        ++counts[static_cast<std::size_t>(color_idx)][static_cast<std::size_t>(z)];
-        max_occupied_z[static_cast<std::size_t>(color_idx)] =
-            std::max(max_occupied_z[static_cast<std::size_t>(color_idx)], z);
+    int neigh[6];
+    while (!queue.empty()) {
+        const int u = queue.front();
+        queue.pop_front();
+
+        const int nneigh = collect_neighbors(grid, u, neigh);
+        for (int ni = 0; ni < nneigh; ++ni) {
+            const int v = neigh[ni];
+            if (v < 0 || v >= n_sites) continue;
+            const int hv = grid.grow_coord(v);
+            if (hv > top || hv < bottom) continue;
+            if (exterior_air[static_cast<std::size_t>(v)]) continue;
+            if (static_cast<int>(site_state[static_cast<std::size_t>(v)]) > 0) {
+                continue;
+            }
+            exterior_air[static_cast<std::size_t>(v)] = 1;
+            queue.push_back(v);
+        }
+    }
+
+    std::uint32_t count = 0u;
+    for (int idx = 0; idx < n_sites; ++idx) {
+        const int h = grid.grow_coord(idx);
+        if (h < bottom || h > top) continue;
+        if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) == active_val) {
+            bool exposed_to_upper_air = (h == top);
+            const int nneigh = collect_neighbors(grid, idx, neigh);
+            for (int ni = 0; ni < nneigh && !exposed_to_upper_air; ++ni) {
+                const int v = neigh[ni];
+                if (v < 0 || v >= n_sites) continue;
+                if (grid.grow_coord(v) > top ||
+                    exterior_air[static_cast<std::size_t>(v)]) {
+                    exposed_to_upper_air = true;
+                }
+            }
+            if (exposed_to_upper_air) ++count;
+        }
     }
 
     const double layer_area = (grid.dim == 2)
         ? static_cast<double>(grid.SX)
         : static_cast<double>(grid.SX) * static_cast<double>(grid.SY);
-    const double inv_layer_area = layer_area > 0.0 ? 1.0 / layer_area : 0.0;
+    return layer_area > 0.0 ? static_cast<double>(count) / layer_area : 0.0;
+}
 
-    std::vector<std::vector<double>> out(static_cast<std::size_t>(num_colors));
-    for (int c = 0; c < num_colors; ++c) {
-        const int occupied_height = max_occupied_z[static_cast<std::size_t>(c)] + 1;
-        if (occupied_height <= 0) continue;
-        out[static_cast<std::size_t>(c)].assign(
-            static_cast<std::size_t>(occupied_height), 0.0);
-        for (int z = 0; z < occupied_height; ++z) {
-            out[static_cast<std::size_t>(c)][static_cast<std::size_t>(z)] =
-                static_cast<double>(
-                    counts[static_cast<std::size_t>(c)][static_cast<std::size_t>(z)]) *
-                inv_layer_area;
+std::vector<int> compute_upper_surface_heights(
+    const GridRegular& grid,
+    const int num_colors,
+    const int color_idx,
+    const std::vector<std::int8_t>& site_state,
+    const int upper_height)
+{
+    if (num_colors <= 0 || color_idx < 0 || color_idx >= num_colors ||
+        upper_height < 0) {
+        return {};
+    }
+
+    const int active_val = color_to_active_value(num_colors, color_idx);
+    const int top = std::min(upper_height, grid.grow_top_coord());
+    const int lateral_size = (grid.dim == 2) ? grid.SX : grid.SX * grid.SY;
+    std::vector<int> heights(static_cast<std::size_t>(lateral_size), -1);
+
+    const int n_sites = std::min(
+        grid.total_size,
+        static_cast<int>(site_state.size()));
+    for (int idx = 0; idx < n_sites; ++idx) {
+        if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) != active_val) {
+            continue;
+        }
+
+        const int h = grid.grow_coord(idx);
+        if (h < 0 || h > top) continue;
+
+        const int lateral_idx = (grid.dim == 2)
+            ? grid.x_of(idx)
+            : grid.x_of(idx) + grid.SX * grid.y_of(idx);
+        heights[static_cast<std::size_t>(lateral_idx)] =
+            std::max(heights[static_cast<std::size_t>(lateral_idx)], h);
+    }
+
+    return heights;
+}
+
+double compute_surface_width(const std::vector<int>& heights)
+{
+    double sum = 0.0;
+    double sum_sq = 0.0;
+    int n = 0;
+    for (const int h : heights) {
+        if (h < 0) continue;
+        const double value = static_cast<double>(h);
+        sum += value;
+        sum_sq += value * value;
+        ++n;
+    }
+    if (n <= 0) return 0.0;
+    const double mean = sum / static_cast<double>(n);
+    const double mean_sq = sum_sq / static_cast<double>(n);
+    return std::sqrt(std::max(0.0, mean_sq - mean * mean));
+}
+
+double compute_surface_gradient(
+    const GridRegular& grid,
+    const std::vector<int>& heights)
+{
+    if (heights.empty()) return 0.0;
+
+    double sum = 0.0;
+    int n = 0;
+
+    if (grid.dim == 2) {
+        for (int x = 0; x < grid.SX; ++x) {
+            const int h0 = heights[static_cast<std::size_t>(x)];
+            const int h1 = heights[static_cast<std::size_t>((x + 1) % grid.SX)];
+            if (h0 < 0 || h1 < 0) continue;
+            sum += std::abs(h1 - h0);
+            ++n;
+        }
+    } else {
+        for (int y = 0; y < grid.SY; ++y) {
+            for (int x = 0; x < grid.SX; ++x) {
+                const int idx = x + grid.SX * y;
+                const int hx = ((x + 1) % grid.SX) + grid.SX * y;
+                const int hy = x + grid.SX * ((y + 1) % grid.SY);
+                const int h0 = heights[static_cast<std::size_t>(idx)];
+                const int h_x = heights[static_cast<std::size_t>(hx)];
+                const int h_y = heights[static_cast<std::size_t>(hy)];
+                if (h0 >= 0 && h_x >= 0) {
+                    sum += std::abs(h_x - h0);
+                    ++n;
+                }
+                if (h0 >= 0 && h_y >= 0) {
+                    sum += std::abs(h_y - h0);
+                    ++n;
+                }
+            }
         }
     }
-    return out;
+
+    return n > 0 ? sum / static_cast<double>(n) : 0.0;
+}
+
+double compute_lateral_area(const GridRegular& grid)
+{
+    return (grid.dim == 2)
+        ? static_cast<double>(grid.SX)
+        : static_cast<double>(grid.SX) * static_cast<double>(grid.SY);
+}
+
+struct SlabClusterMassResult {
+    double largest_spanning_mass = 0.0;
+    std::vector<int> cluster_sizes;
+};
+
+SlabClusterMassResult compute_slab_cluster_masses(
+    const GridRegular& grid,
+    const int num_colors,
+    const int color_idx,
+    const std::vector<std::int8_t>& site_state,
+    const int lower_height,
+    const int upper_height)
+{
+    if (num_colors <= 0 || color_idx < 0 || color_idx >= num_colors ||
+        upper_height < lower_height) {
+        return {};
+    }
+
+    const int active_val = color_to_active_value(num_colors, color_idx);
+    const int bottom = std::max(0, lower_height);
+    const int top = std::min(upper_height, grid.grow_top_coord());
+    if (top < bottom) return {};
+
+    const int n_sites = std::min(
+        grid.total_size,
+        static_cast<int>(site_state.size()));
+    std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
+    std::deque<int> queue;
+    int neigh[6];
+    std::uint64_t largest_spanning_mass = 0u;
+    std::vector<int> cluster_sizes;
+
+    for (int idx = 0; idx < n_sites; ++idx) {
+        if (visited[static_cast<std::size_t>(idx)]) continue;
+        if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) != active_val) {
+            continue;
+        }
+
+        const int h = grid.grow_coord(idx);
+        if (h < bottom || h > top) {
+            continue;
+        }
+
+        visited[static_cast<std::size_t>(idx)] = 1;
+        queue.push_back(idx);
+        std::uint64_t component_mass = 0u;
+        bool touches_bottom = false;
+        bool touches_top = false;
+
+        while (!queue.empty()) {
+            const int u = queue.front();
+            queue.pop_front();
+            ++component_mass;
+            const int hu = grid.grow_coord(u);
+            touches_bottom = touches_bottom || (hu == bottom);
+            touches_top = touches_top || (hu == top);
+
+            const int nneigh = collect_neighbors(grid, u, neigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const int v = neigh[ni];
+                if (v < 0 || v >= n_sites) continue;
+                if (visited[static_cast<std::size_t>(v)]) continue;
+                if (static_cast<int>(site_state[static_cast<std::size_t>(v)]) != active_val) {
+                    continue;
+                }
+
+                const int hv = grid.grow_coord(v);
+                if (hv < bottom || hv > top) continue;
+
+                visited[static_cast<std::size_t>(v)] = 1;
+                queue.push_back(v);
+            }
+        }
+
+        cluster_sizes.push_back(static_cast<int>(component_mass));
+        if (touches_bottom && touches_top) {
+            largest_spanning_mass =
+                std::max(largest_spanning_mass, component_mass);
+        }
+    }
+
+    std::sort(cluster_sizes.begin(), cluster_sizes.end(), std::greater<int>());
+    return {
+        static_cast<double>(largest_spanning_mass),
+        std::move(cluster_sizes)
+    };
+}
+
+double compute_volume_fraction_between_upper_surfaces(
+    const GridRegular& grid,
+    const int num_colors,
+    const int color_idx,
+    const std::vector<std::int8_t>& site_state,
+    const std::vector<int>& previous_heights,
+    const std::vector<int>& current_heights,
+    const int analysis_height)
+{
+    if (num_colors <= 0 || color_idx < 0 || color_idx >= num_colors) return 0.0;
+    if (previous_heights.size() != current_heights.size()) return 0.0;
+
+    const int active_val = color_to_active_value(num_colors, color_idx);
+    long long occupied_between_surfaces = 0;
+    const int n_sites = std::min(
+        grid.total_size,
+        static_cast<int>(site_state.size()));
+    for (int idx = 0; idx < n_sites; ++idx) {
+        if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) != active_val) {
+            continue;
+        }
+
+        const int lateral_idx = (grid.dim == 2)
+            ? grid.x_of(idx)
+            : grid.x_of(idx) + grid.SX * grid.y_of(idx);
+        if (lateral_idx < 0 ||
+            lateral_idx >= static_cast<int>(current_heights.size())) {
+            continue;
+        }
+
+        const int h = grid.grow_coord(idx);
+        if (h > previous_heights[static_cast<std::size_t>(lateral_idx)] &&
+            h <= current_heights[static_cast<std::size_t>(lateral_idx)]) {
+            ++occupied_between_surfaces;
+        }
+    }
+
+    const double lateral_area = (grid.dim == 2)
+        ? static_cast<double>(grid.SX)
+        : static_cast<double>(grid.SX) * static_cast<double>(grid.SY);
+    const double max_volume =
+        lateral_area * static_cast<double>(std::max(1, analysis_height));
+    return max_volume > 0.0
+        ? static_cast<double>(occupied_between_surfaces) / max_volume
+        : 0.0;
 }
 
 inline double estimate_t_eq_from_timeseries(const TimeSeries& ts,
@@ -1992,6 +2252,39 @@ NetworkPattern network::create_network(
     std::vector<double> t_eq_online_by_species(
         static_cast<std::size_t>(num_colors),
         std::numeric_limits<double>::quiet_NaN());
+    constexpr int surface_deltaT = 15;
+    const int post_equilibrium_sampling_height_increment =
+        std::max(1, lenght_network);
+    const int post_equilibrium_height_increment =
+        (3 * std::max(1, lenght_network) + 1) / 2;
+    std::vector<int> equilibrium_detection_time_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> post_equilibrium_sampling_stop_height_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> post_equilibrium_stop_height_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> next_surface_sample_time_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<bool> surface_sampling_finished_by_species(
+        static_cast<std::size_t>(num_colors), false);
+    std::vector<std::vector<double>> f_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<int>> t_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> volume_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<int>> t_volume_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<std::vector<int>>> h_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> w_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> grad_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> S_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<int>> previous_surface_heights_by_species(
+        static_cast<std::size_t>(num_colors));
     std::string growth_test_stop_reason = "not_stopped";
     int growth_test_stop_time = -1;
     std::deque<double> error_window;
@@ -2327,7 +2620,8 @@ NetworkPattern network::create_network(
                 if (finished[c]) continue;
                 any_running = true;
 
-                if (t % teq_window_block == 0) {
+                if (!species_equilibrated[static_cast<std::size_t>(c)] &&
+                    t % teq_window_block == 0) {
                     const bool reached_global_height =
                         !stop_config.dynamic_height ||
                         max_heights[static_cast<std::size_t>(c)] >= lenght_network;
@@ -2352,32 +2646,106 @@ NetworkPattern network::create_network(
                             t_eq_candidate;
                         z_stat_by_species[static_cast<std::size_t>(c)] =
                             max_heights[static_cast<std::size_t>(c)];
-                    } else {
-                        species_equilibrated[static_cast<std::size_t>(c)] = false;
-                        t_eq_online_by_species[static_cast<std::size_t>(c)] =
-                            std::numeric_limits<double>::quiet_NaN();
-                        z_stat_by_species[static_cast<std::size_t>(c)] = -1;
+                        equilibrium_detection_time_by_species[static_cast<std::size_t>(c)] = t;
+                        post_equilibrium_sampling_stop_height_by_species[static_cast<std::size_t>(c)] =
+                            z_stat_by_species[static_cast<std::size_t>(c)] +
+                            post_equilibrium_sampling_height_increment;
+                        post_equilibrium_stop_height_by_species[static_cast<std::size_t>(c)] =
+                            z_stat_by_species[static_cast<std::size_t>(c)] +
+                            post_equilibrium_height_increment;
+                        next_surface_sample_time_by_species[static_cast<std::size_t>(c)] =
+                            t + surface_deltaT;
                     }
                 }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
                     all_running_equilibrated = false;
+                    continue;
+                }
+
+                const int next_surface_t =
+                    next_surface_sample_time_by_species[static_cast<std::size_t>(c)];
+                const int sampling_stop_height =
+                    post_equilibrium_sampling_stop_height_by_species[static_cast<std::size_t>(c)];
+                const bool reached_sampling_height =
+                    sampling_stop_height >= 0 &&
+                    max_heights[static_cast<std::size_t>(c)] >= sampling_stop_height;
+                const bool should_sample_surface =
+                    stop_config.save_surface_observables &&
+                    !surface_sampling_finished_by_species[static_cast<std::size_t>(c)] &&
+                    next_surface_t >= 0 &&
+                    (t >= next_surface_t || reached_sampling_height);
+                if (should_sample_surface) {
+                    std::vector<int> current_surface_heights =
+                        compute_upper_surface_heights(
+                            grid,
+                            num_colors,
+                            c,
+                            site_state,
+                            max_heights[static_cast<std::size_t>(c)]);
+                    std::vector<int>& previous_surface_heights =
+                        previous_surface_heights_by_species[static_cast<std::size_t>(c)];
+                    if (!previous_surface_heights.empty()) {
+                        volume_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                            compute_volume_fraction_between_upper_surfaces(
+                                grid,
+                                num_colors,
+                                c,
+                                site_state,
+                                previous_surface_heights,
+                                current_surface_heights,
+                                post_equilibrium_sampling_height_increment));
+                        t_volume_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                            static_cast<int>(
+                                t_volume_sur_by_species[static_cast<std::size_t>(c)].size()) + 1);
+                    }
+
+                    t_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        static_cast<int>(
+                            t_sur_by_species[static_cast<std::size_t>(c)].size()) + 1);
+                    w_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        compute_surface_width(current_surface_heights));
+                    grad_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        compute_surface_gradient(grid, current_surface_heights));
+                    h_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        current_surface_heights);
+                    const double f_sur_value =
+                        compute_upper_surface_fraction(
+                            grid,
+                            num_colors,
+                            c,
+                            site_state,
+                            max_heights[static_cast<std::size_t>(c)],
+                            z_stat_by_species[static_cast<std::size_t>(c)] + 1);
+                    f_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        f_sur_value);
+                    S_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        f_sur_value * compute_lateral_area(grid));
+                    if (reached_sampling_height) {
+                        surface_sampling_finished_by_species[static_cast<std::size_t>(c)] = true;
+                        next_surface_sample_time_by_species[static_cast<std::size_t>(c)] = -1;
+                    } else {
+                        next_surface_sample_time_by_species[static_cast<std::size_t>(c)] =
+                            t + surface_deltaT;
+                    }
+                    previous_surface_heights = std::move(current_surface_heights);
                 }
             }
             if (any_running && all_running_equilibrated) {
-                double latest_t_eq = -std::numeric_limits<double>::infinity();
-                bool any_t_eq = false;
-                for (const double value : t_eq_online_by_species) {
-                    if (!std::isfinite(value)) continue;
-                    latest_t_eq = std::max(latest_t_eq, value);
-                    any_t_eq = true;
+                bool all_reached_post_equilibrium_height = true;
+                for (int c = 0; c < num_colors; ++c) {
+                    if (finished[c]) continue;
+                    const int target_height =
+                        post_equilibrium_stop_height_by_species[static_cast<std::size_t>(c)];
+                    if (target_height < 0 ||
+                        max_heights[static_cast<std::size_t>(c)] < target_height) {
+                        all_reached_post_equilibrium_height = false;
+                        break;
+                    }
                 }
-                const int extra_steps =
-                    std::max(0, stop_config.post_equilibrium_extra_steps);
                 stop_equilibrated =
-                    any_t_eq &&
-                    t % teq_window_block == 0 &&
-                    t >= static_cast<int>(std::ceil(latest_t_eq)) + extra_steps;
+                    all_reached_post_equilibrium_height &&
+                    t % teq_window_block == 0;
             }
         }
 
@@ -2397,7 +2765,7 @@ NetworkPattern network::create_network(
             } else if (stop_partial_percolation) {
                 growth_test_stop_reason = "partial_percolation";
             } else if (stop_equilibrated) {
-                growth_test_stop_reason = "all_running_equilibrated";
+                growth_test_stop_reason = "post_equilibrium_height_reached";
             } else if (stop_stationary_dynamics) {
                 growth_test_stop_reason = "stationary_dynamics";
             } else if (stop_hard_limit) {
@@ -2584,29 +2952,55 @@ NetworkPattern network::create_network(
         set_species_order_from_t_eq(ps_out, ps_out.t_eq_by_species);
     }
 
-    std::vector<bool> fL_z_include_species(static_cast<std::size_t>(num_colors), false);
-    bool any_fL_z_species = false;
-    for (int c = 0; c < num_colors; ++c) {
-        const bool include =
-            species_equilibrated[static_cast<std::size_t>(c)] &&
-            c < static_cast<int>(ps_out.t_eq_by_species.size()) &&
-            std::isfinite(ps_out.t_eq_by_species[static_cast<std::size_t>(c)]);
-        fL_z_include_species[static_cast<std::size_t>(c)] = include;
-        any_fL_z_species = any_fL_z_species || include;
-    }
-
-    if (stop_config.stop_at_equilibrium &&
-        !stop_config.stop_at_percolation &&
-        growth_test_stop_reason == "all_running_equilibrated" &&
-        any_fL_z_species) {
-        ps_out.fL_z_by_species =
-            compute_final_layer_species_fractions(
-                grid,
-                num_colors,
-                site_state,
-                fL_z_include_species);
+    if (stop_config.stop_at_equilibrium && stop_config.save_surface_observables) {
+        ps_out.f_sur_by_species = std::move(f_sur_by_species);
+        ps_out.t_sur_by_species = std::move(t_sur_by_species);
+        ps_out.volume_sur_by_species = std::move(volume_sur_by_species);
+        ps_out.t_volume_sur_by_species = std::move(t_volume_sur_by_species);
+        ps_out.h_sur_by_species = std::move(h_sur_by_species);
+        ps_out.w_sur_by_species = std::move(w_sur_by_species);
+        ps_out.grad_sur_by_species = std::move(grad_sur_by_species);
+        ps_out.M_L_by_species.assign(
+            static_cast<std::size_t>(num_colors),
+            std::numeric_limits<double>::quiet_NaN());
+        ps_out.M_cluster_sizes_by_species.assign(
+            static_cast<std::size_t>(num_colors),
+            std::vector<int>{});
+        for (int c = 0; c < num_colors; ++c) {
+            const int z_stat = z_stat_by_species[static_cast<std::size_t>(c)];
+            if (z_stat >= 0) {
+                const int analysis_top = z_stat + post_equilibrium_sampling_height_increment;
+                const int analysis_bottom = z_stat;
+                SlabClusterMassResult cluster_masses =
+                    compute_slab_cluster_masses(
+                        grid,
+                        num_colors,
+                        c,
+                        site_state,
+                        analysis_bottom,
+                        analysis_top);
+                ps_out.M_L_by_species[static_cast<std::size_t>(c)] =
+                    cluster_masses.largest_spanning_mass;
+                ps_out.M_cluster_sizes_by_species[static_cast<std::size_t>(c)] =
+                    std::move(cluster_masses.cluster_sizes);
+            }
+        }
+        ps_out.S_sur_by_species = std::move(S_sur_by_species);
+        ps_out.surface_deltaT = surface_deltaT;
+        ps_out.surface_observables_enabled = true;
     } else {
-        ps_out.fL_z_by_species.clear();
+        ps_out.f_sur_by_species.clear();
+        ps_out.t_sur_by_species.clear();
+        ps_out.volume_sur_by_species.clear();
+        ps_out.t_volume_sur_by_species.clear();
+        ps_out.h_sur_by_species.clear();
+        ps_out.w_sur_by_species.clear();
+        ps_out.grad_sur_by_species.clear();
+        ps_out.S_sur_by_species.clear();
+        ps_out.M_L_by_species.clear();
+        ps_out.M_cluster_sizes_by_species.clear();
+        ps_out.surface_deltaT = -1;
+        ps_out.surface_observables_enabled = false;
     }
 
     if (calculate_detailed_properties) {
@@ -3007,6 +3401,39 @@ NetworkPattern network::animate_network(
     std::vector<double> t_eq_online_by_species(
         static_cast<std::size_t>(num_colors),
         std::numeric_limits<double>::quiet_NaN());
+    constexpr int surface_deltaT = 15;
+    const int post_equilibrium_sampling_height_increment =
+        std::max(1, lenght_network);
+    const int post_equilibrium_height_increment =
+        (3 * std::max(1, lenght_network) + 1) / 2;
+    std::vector<int> equilibrium_detection_time_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> post_equilibrium_sampling_stop_height_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> post_equilibrium_stop_height_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<int> next_surface_sample_time_by_species(
+        static_cast<std::size_t>(num_colors), -1);
+    std::vector<bool> surface_sampling_finished_by_species(
+        static_cast<std::size_t>(num_colors), false);
+    std::vector<std::vector<double>> f_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<int>> t_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> volume_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<int>> t_volume_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<std::vector<int>>> h_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> w_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> grad_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<double>> S_sur_by_species(
+        static_cast<std::size_t>(num_colors));
+    std::vector<std::vector<int>> previous_surface_heights_by_species(
+        static_cast<std::size_t>(num_colors));
     std::deque<double> error_window;
     std::deque<double> derivative_window;
     std::vector<std::deque<double>> control_derivative_windows(
@@ -3661,7 +4088,8 @@ NetworkPattern network::animate_network(
                 if (finished[c]) continue;
                 any_running = true;
 
-                if (t % teq_window_block == 0) {
+                if (!species_equilibrated[static_cast<std::size_t>(c)] &&
+                    t % teq_window_block == 0) {
                     const bool reached_global_height =
                         !stop_config.dynamic_height ||
                         max_heights[static_cast<std::size_t>(c)] >= lenght_network;
@@ -3686,32 +4114,106 @@ NetworkPattern network::animate_network(
                             t_eq_candidate;
                         z_stat_by_species[static_cast<std::size_t>(c)] =
                             max_heights[static_cast<std::size_t>(c)];
-                    } else {
-                        species_equilibrated[static_cast<std::size_t>(c)] = false;
-                        t_eq_online_by_species[static_cast<std::size_t>(c)] =
-                            std::numeric_limits<double>::quiet_NaN();
-                        z_stat_by_species[static_cast<std::size_t>(c)] = -1;
+                        equilibrium_detection_time_by_species[static_cast<std::size_t>(c)] = t;
+                        post_equilibrium_sampling_stop_height_by_species[static_cast<std::size_t>(c)] =
+                            z_stat_by_species[static_cast<std::size_t>(c)] +
+                            post_equilibrium_sampling_height_increment;
+                        post_equilibrium_stop_height_by_species[static_cast<std::size_t>(c)] =
+                            z_stat_by_species[static_cast<std::size_t>(c)] +
+                            post_equilibrium_height_increment;
+                        next_surface_sample_time_by_species[static_cast<std::size_t>(c)] =
+                            t + surface_deltaT;
                     }
                 }
 
                 if (!species_equilibrated[static_cast<std::size_t>(c)]) {
                     all_running_equilibrated = false;
+                    continue;
+                }
+
+                const int next_surface_t =
+                    next_surface_sample_time_by_species[static_cast<std::size_t>(c)];
+                const int sampling_stop_height =
+                    post_equilibrium_sampling_stop_height_by_species[static_cast<std::size_t>(c)];
+                const bool reached_sampling_height =
+                    sampling_stop_height >= 0 &&
+                    max_heights[static_cast<std::size_t>(c)] >= sampling_stop_height;
+                const bool should_sample_surface =
+                    stop_config.save_surface_observables &&
+                    !surface_sampling_finished_by_species[static_cast<std::size_t>(c)] &&
+                    next_surface_t >= 0 &&
+                    (t >= next_surface_t || reached_sampling_height);
+                if (should_sample_surface) {
+                    std::vector<int> current_surface_heights =
+                        compute_upper_surface_heights(
+                            grid,
+                            num_colors,
+                            c,
+                            site_state,
+                            max_heights[static_cast<std::size_t>(c)]);
+                    std::vector<int>& previous_surface_heights =
+                        previous_surface_heights_by_species[static_cast<std::size_t>(c)];
+                    if (!previous_surface_heights.empty()) {
+                        volume_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                            compute_volume_fraction_between_upper_surfaces(
+                                grid,
+                                num_colors,
+                                c,
+                                site_state,
+                                previous_surface_heights,
+                                current_surface_heights,
+                                post_equilibrium_sampling_height_increment));
+                        t_volume_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                            static_cast<int>(
+                                t_volume_sur_by_species[static_cast<std::size_t>(c)].size()) + 1);
+                    }
+
+                    t_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        static_cast<int>(
+                            t_sur_by_species[static_cast<std::size_t>(c)].size()) + 1);
+                    w_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        compute_surface_width(current_surface_heights));
+                    grad_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        compute_surface_gradient(grid, current_surface_heights));
+                    h_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        current_surface_heights);
+                    const double f_sur_value =
+                        compute_upper_surface_fraction(
+                            grid,
+                            num_colors,
+                            c,
+                            site_state,
+                            max_heights[static_cast<std::size_t>(c)],
+                            z_stat_by_species[static_cast<std::size_t>(c)] + 1);
+                    f_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        f_sur_value);
+                    S_sur_by_species[static_cast<std::size_t>(c)].push_back(
+                        f_sur_value * compute_lateral_area(grid));
+                    if (reached_sampling_height) {
+                        surface_sampling_finished_by_species[static_cast<std::size_t>(c)] = true;
+                        next_surface_sample_time_by_species[static_cast<std::size_t>(c)] = -1;
+                    } else {
+                        next_surface_sample_time_by_species[static_cast<std::size_t>(c)] =
+                            t + surface_deltaT;
+                    }
+                    previous_surface_heights = std::move(current_surface_heights);
                 }
             }
             if (any_running && all_running_equilibrated) {
-                double latest_t_eq = -std::numeric_limits<double>::infinity();
-                bool any_t_eq = false;
-                for (const double value : t_eq_online_by_species) {
-                    if (!std::isfinite(value)) continue;
-                    latest_t_eq = std::max(latest_t_eq, value);
-                    any_t_eq = true;
+                bool all_reached_post_equilibrium_height = true;
+                for (int c = 0; c < num_colors; ++c) {
+                    if (finished[c]) continue;
+                    const int target_height =
+                        post_equilibrium_stop_height_by_species[static_cast<std::size_t>(c)];
+                    if (target_height < 0 ||
+                        max_heights[static_cast<std::size_t>(c)] < target_height) {
+                        all_reached_post_equilibrium_height = false;
+                        break;
+                    }
                 }
-                const int extra_steps =
-                    std::max(0, stop_config.post_equilibrium_extra_steps);
                 stop_equilibrated =
-                    any_t_eq &&
-                    t % teq_window_block == 0 &&
-                    t >= static_cast<int>(std::ceil(latest_t_eq)) + extra_steps;
+                    all_reached_post_equilibrium_height &&
+                    t % teq_window_block == 0;
             }
         }
 
@@ -3786,28 +4288,55 @@ NetworkPattern network::animate_network(
         set_species_order_from_t_eq(ps_out, ps_out.t_eq_by_species);
     }
 
-    std::vector<bool> fL_z_include_species(static_cast<std::size_t>(num_colors), false);
-    bool any_fL_z_species = false;
-    for (int c = 0; c < num_colors; ++c) {
-        const bool include =
-            species_equilibrated[static_cast<std::size_t>(c)] &&
-            c < static_cast<int>(ps_out.t_eq_by_species.size()) &&
-            std::isfinite(ps_out.t_eq_by_species[static_cast<std::size_t>(c)]);
-        fL_z_include_species[static_cast<std::size_t>(c)] = include;
-        any_fL_z_species = any_fL_z_species || include;
-    }
-
-    if (stop_config.stop_at_equilibrium &&
-        !stop_config.stop_at_percolation &&
-        any_fL_z_species) {
-        ps_out.fL_z_by_species =
-            compute_final_layer_species_fractions(
-                grid,
-                num_colors,
-                site_state,
-                fL_z_include_species);
+    if (stop_config.stop_at_equilibrium && stop_config.save_surface_observables) {
+        ps_out.f_sur_by_species = std::move(f_sur_by_species);
+        ps_out.t_sur_by_species = std::move(t_sur_by_species);
+        ps_out.volume_sur_by_species = std::move(volume_sur_by_species);
+        ps_out.t_volume_sur_by_species = std::move(t_volume_sur_by_species);
+        ps_out.h_sur_by_species = std::move(h_sur_by_species);
+        ps_out.w_sur_by_species = std::move(w_sur_by_species);
+        ps_out.grad_sur_by_species = std::move(grad_sur_by_species);
+        ps_out.M_L_by_species.assign(
+            static_cast<std::size_t>(num_colors),
+            std::numeric_limits<double>::quiet_NaN());
+        ps_out.M_cluster_sizes_by_species.assign(
+            static_cast<std::size_t>(num_colors),
+            std::vector<int>{});
+        for (int c = 0; c < num_colors; ++c) {
+            const int z_stat = z_stat_by_species[static_cast<std::size_t>(c)];
+            if (z_stat >= 0) {
+                const int analysis_top = z_stat + post_equilibrium_sampling_height_increment;
+                const int analysis_bottom = z_stat;
+                SlabClusterMassResult cluster_masses =
+                    compute_slab_cluster_masses(
+                        grid,
+                        num_colors,
+                        c,
+                        site_state,
+                        analysis_bottom,
+                        analysis_top);
+                ps_out.M_L_by_species[static_cast<std::size_t>(c)] =
+                    cluster_masses.largest_spanning_mass;
+                ps_out.M_cluster_sizes_by_species[static_cast<std::size_t>(c)] =
+                    std::move(cluster_masses.cluster_sizes);
+            }
+        }
+        ps_out.S_sur_by_species = std::move(S_sur_by_species);
+        ps_out.surface_deltaT = surface_deltaT;
+        ps_out.surface_observables_enabled = true;
     } else {
-        ps_out.fL_z_by_species.clear();
+        ps_out.f_sur_by_species.clear();
+        ps_out.t_sur_by_species.clear();
+        ps_out.volume_sur_by_species.clear();
+        ps_out.t_volume_sur_by_species.clear();
+        ps_out.h_sur_by_species.clear();
+        ps_out.w_sur_by_species.clear();
+        ps_out.grad_sur_by_species.clear();
+        ps_out.S_sur_by_species.clear();
+        ps_out.M_L_by_species.clear();
+        ps_out.M_cluster_sizes_by_species.clear();
+        ps_out.surface_deltaT = -1;
+        ps_out.surface_observables_enabled = false;
     }
 
     if (calculate_detailed_properties) {
