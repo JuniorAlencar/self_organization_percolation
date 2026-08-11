@@ -54,6 +54,17 @@ void write_json_nullable_double_array(std::ostream& os,
     os << "]";
 }
 
+void write_json_int_matrix(std::ostream& os,
+                           const std::vector<std::vector<int>>& rows)
+{
+    os << "[";
+    for (size_t i = 0; i < rows.size(); ++i) {
+        write_json_array(os, rows[i]);
+        if (i + 1 < rows.size()) os << ", ";
+    }
+    os << "]";
+}
+
 void write_json_nullable_int_array(std::ostream& os,
                                    const std::vector<int>& v)
 {
@@ -437,6 +448,22 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 ofs << "    \"growth_test_post_equilibrium_extra_steps\": "
                     << ps.post_equilibrium_extra_steps << ",\n";
             }
+            if (ps.surface_observables_enabled && ps.surface_deltaT > 0) {
+                ofs << "    \"growth_test_surface_deltaT\": "
+                    << ps.surface_deltaT << ",\n";
+                ofs << "    \"f_sur_convention\": \"upper_exterior_exposed_species_surface_sites_over_lateral_area_sampled_every_deltaT_sur_steps\",\n";
+                ofs << "    \"t_sur_convention\": \"linear_surface_sample_index_1_based; physical_samples_are_spaced_by_deltaT_sur_steps\",\n";
+                ofs << "    \"f_vol_convention\": \"occupied_fraction_between_consecutive_upper_surface_height_profiles_denominator_full_analysis_box_L2_or_L3\",\n";
+                ofs << "    \"t_vol_convention\": \"linear_interval_index_between_consecutive_surface_samples_1_based\",\n";
+                ofs << "    \"h_sur_convention\": \"upper_surface_height_profile_per_sample; 2D_index_x; 3D_flat_index_x_plus_L_times_y\",\n";
+                ofs << "    \"w_sur_convention\": \"standard_deviation_of_valid_h_sur_heights_per_surface_sample\",\n";
+                ofs << "    \"grad_sur_convention\": \"mean_absolute_periodic_lateral_height_difference_of_h_sur_per_surface_sample\",\n";
+                ofs << "    \"S_sur_convention\": \"surface_site_count_per_sample_inside_post_equilibrium_height_L_slab_z_stat_plus_1_to_z_stat_plus_L_equal_f_sur_times_lateral_area\",\n";
+                ofs << "    \"M_L_convention\": \"largest_connected_cluster_mass_spanning_from_z_stat_to_z_stat_plus_L_inside_post_equilibrium_slab_for_fractal_dimension\",\n";
+                ofs << "    \"M_cluster_sizes_convention\": \"all_connected_cluster_sizes_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L_sorted_descending\",\n";
+                ofs << "    \"growth_test_surface_sampling_height_increment\": \"L\",\n";
+                ofs << "    \"growth_test_post_equilibrium_stop_height_increment\": \"ceil(1.5L)\",\n";
+            }
             if (ps.dynamic_min_stop_height >= 0) {
                 ofs << "    \"growth_test_dynamic_min_stop_height\": "
                     << ps.dynamic_min_stop_height << ",\n";
@@ -484,9 +511,6 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     if (!ps.initial_base_layout.empty()) {
         ofs << "    \"initial_base_layout\": \"" << ps.initial_base_layout << "\",\n";
     }
-    if (!ps.fL_z_by_species.empty()) {
-        ofs << "    \"fL_z_convention\": \"final_species_layer_fraction_N_i_z_over_lateral_layer_size\",\n";
-    }
     ofs << "    \"pt_convention\": \"p_used_to_generate_same_time_step\",\n";
     ofs << "    \"nt_convention\": \"new_active_front_fraction_same_time_step\"\n";
     ofs << "  },\n";
@@ -531,11 +555,80 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 ? ps.t_eq_by_species[static_cast<std::size_t>(crow)]
                 : std::numeric_limits<double>::quiet_NaN();
 
-        const std::vector<double>* fL_z_ptr = nullptr;
-        if (crow >= 0 && crow < static_cast<int>(ps.fL_z_by_species.size())) {
-            const auto& row = ps.fL_z_by_species[static_cast<std::size_t>(crow)];
+        const std::vector<double>* f_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.f_sur_by_species.size())) {
+            const auto& row = ps.f_sur_by_species[static_cast<std::size_t>(crow)];
             if (!row.empty()) {
-                fL_z_ptr = &row;
+                f_sur_ptr = &row;
+            }
+        }
+
+        const std::vector<int>* t_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.t_sur_by_species.size())) {
+            const auto& row = ps.t_sur_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                t_sur_ptr = &row;
+            }
+        }
+
+        const std::vector<double>* volume_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.volume_sur_by_species.size())) {
+            const auto& row = ps.volume_sur_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                volume_sur_ptr = &row;
+            }
+        }
+
+        const std::vector<int>* t_volume_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.t_volume_sur_by_species.size())) {
+            const auto& row = ps.t_volume_sur_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                t_volume_sur_ptr = &row;
+            }
+        }
+
+        const std::vector<std::vector<int>>* h_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.h_sur_by_species.size())) {
+            const auto& row = ps.h_sur_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                h_sur_ptr = &row;
+            }
+        }
+
+        const std::vector<double>* w_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.w_sur_by_species.size())) {
+            const auto& row = ps.w_sur_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                w_sur_ptr = &row;
+            }
+        }
+
+        const std::vector<double>* grad_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.grad_sur_by_species.size())) {
+            const auto& row = ps.grad_sur_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                grad_sur_ptr = &row;
+            }
+        }
+
+        const std::vector<double>* S_sur_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.S_sur_by_species.size())) {
+            const auto& row = ps.S_sur_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                S_sur_ptr = &row;
+            }
+        }
+
+        const double M_L_value =
+            (crow >= 0 && crow < static_cast<int>(ps.M_L_by_species.size()))
+                ? ps.M_L_by_species[static_cast<std::size_t>(crow)]
+                : std::numeric_limits<double>::quiet_NaN();
+
+        const std::vector<int>* M_cluster_sizes_ptr = nullptr;
+        if (crow >= 0 && crow < static_cast<int>(ps.M_cluster_sizes_by_species.size())) {
+            const auto& row = ps.M_cluster_sizes_by_species[static_cast<std::size_t>(crow)];
+            if (!row.empty()) {
+                M_cluster_sizes_ptr = &row;
             }
         }
 
@@ -566,9 +659,58 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         ofs << "        \"nt\": ";
         write_json_row(ofs, ts.f_t, crow);
         ofs << ",\n";
-        if (fL_z_ptr != nullptr) {
-            ofs << "        \"fL_z\": ";
-            write_json_array(ofs, *fL_z_ptr);
+        if (t_sur_ptr != nullptr) {
+            ofs << "        \"t_sur\": ";
+            write_json_array(ofs, *t_sur_ptr);
+            ofs << ",\n";
+        }
+        if (f_sur_ptr != nullptr) {
+            ofs << "        \"f_sur\": ";
+            write_json_array(ofs, *f_sur_ptr);
+            ofs << ",\n";
+        }
+        if (h_sur_ptr != nullptr) {
+            ofs << "        \"h_sur\": ";
+            write_json_int_matrix(ofs, *h_sur_ptr);
+            ofs << ",\n";
+        }
+        if (w_sur_ptr != nullptr) {
+            ofs << "        \"w_sur\": ";
+            write_json_array(ofs, *w_sur_ptr);
+            ofs << ",\n";
+        }
+        if (grad_sur_ptr != nullptr) {
+            ofs << "        \"grad_sur\": ";
+            write_json_array(ofs, *grad_sur_ptr);
+            ofs << ",\n";
+        }
+        if (S_sur_ptr != nullptr) {
+            ofs << "        \"S_sur\": ";
+            write_json_array(ofs, *S_sur_ptr);
+            ofs << ",\n";
+        }
+        if (std::isfinite(M_L_value)) {
+            ofs << "        \"M_L\": ";
+            write_json_nullable_double(ofs, M_L_value);
+            ofs << ",\n";
+        }
+        if (M_cluster_sizes_ptr != nullptr) {
+            ofs << "        \"M_cluster_sizes\": ";
+            write_json_array(ofs, *M_cluster_sizes_ptr);
+            ofs << ",\n";
+        }
+        if (t_volume_sur_ptr != nullptr) {
+            ofs << "        \"t_vol\": ";
+            write_json_array(ofs, *t_volume_sur_ptr);
+            ofs << ",\n";
+        }
+        if (volume_sur_ptr != nullptr) {
+            ofs << "        \"f_vol\": ";
+            write_json_array(ofs, *volume_sur_ptr);
+            ofs << ",\n";
+        }
+        if (ps.surface_observables_enabled && ps.surface_deltaT > 0) {
+            ofs << "        \"deltaT_sur\": " << ps.surface_deltaT;
             ofs << ",\n";
         }
         if (!ps.t_eq_by_species.empty()) {

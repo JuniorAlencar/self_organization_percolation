@@ -84,7 +84,7 @@ int main(int argc, char* argv[]) {
 
     // Allow either zero-argument (use defaults) or full-argument run.
     // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15) {
+    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15 && argc != 16) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -107,8 +107,9 @@ int main(int argc, char* argv[]) {
         bool calculate_detailed_properties = false;
         std::string run_mode = "growth_test";
         std::string initial_layout = "random";
+        bool save_surface_observables = false;
         
-        if (argc == 12 || argc == 13 || argc == 14 || argc == 15) {
+        if (argc == 12 || argc == 13 || argc == 14 || argc == 15 || argc == 16) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -126,9 +127,12 @@ int main(int argc, char* argv[]) {
             if (argc == 14) {
                 run_mode = argv[13];
             }
-            if (argc == 15) {
+            if (argc >= 15) {
                 run_mode = argv[13];
                 initial_layout = argv[14];
+            }
+            if (argc == 16) {
+                save_surface_observables = helpers::parse_bool(argv[15]);
             }
         }
 
@@ -203,6 +207,7 @@ int main(int argc, char* argv[]) {
             stop_config.stop_at_percolation = false;
             stop_config.stop_at_equilibrium = true;
             stop_config.save_lateral_observables = false;
+            stop_config.save_surface_observables = save_surface_observables;
             stop_config.equilibrium_consecutive_steps = 10;
             stop_config.dynamics_window_steps = -1;
         }
