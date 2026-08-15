@@ -451,14 +451,14 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             if (ps.surface_observables_enabled && ps.surface_deltaT > 0) {
                 ofs << "    \"growth_test_surface_deltaT\": "
                     << ps.surface_deltaT << ",\n";
-                ofs << "    \"f_sur_convention\": \"upper_exterior_exposed_species_surface_sites_over_lateral_area_sampled_every_deltaT_sur_steps\",\n";
+                ofs << "    \"f_sur_convention\": \"upper_exterior_exposed_species_surface_sites_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L_over_lateral_area_sampled_every_deltaT_sur_steps\",\n";
                 ofs << "    \"t_sur_convention\": \"linear_surface_sample_index_1_based; physical_samples_are_spaced_by_deltaT_sur_steps\",\n";
-                ofs << "    \"f_vol_convention\": \"occupied_fraction_between_consecutive_upper_surface_height_profiles_denominator_full_analysis_box_L2_or_L3\",\n";
+                ofs << "    \"f_vol_convention\": \"occupied_fraction_between_consecutive_upper_surface_height_profiles_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L_denominator_full_slab_volume\",\n";
                 ofs << "    \"t_vol_convention\": \"linear_interval_index_between_consecutive_surface_samples_1_based\",\n";
-                ofs << "    \"h_sur_convention\": \"upper_surface_height_profile_per_sample; 2D_index_x; 3D_flat_index_x_plus_L_times_y\",\n";
-                ofs << "    \"w_sur_convention\": \"standard_deviation_of_valid_h_sur_heights_per_surface_sample\",\n";
-                ofs << "    \"grad_sur_convention\": \"mean_absolute_periodic_lateral_height_difference_of_h_sur_per_surface_sample\",\n";
-                ofs << "    \"S_sur_convention\": \"surface_site_count_per_sample_inside_post_equilibrium_height_L_slab_z_stat_plus_1_to_z_stat_plus_L_equal_f_sur_times_lateral_area\",\n";
+                ofs << "    \"h_sur_convention\": \"upper_surface_height_profile_per_sample_restricted_to_post_equilibrium_slab_z_stat_to_z_stat_plus_L; 2D_index_x; 3D_flat_index_x_plus_L_times_y; -1_when_no_active_site_in_slab_column\",\n";
+                ofs << "    \"w_sur_convention\": \"standard_deviation_of_valid_h_sur_heights_per_surface_sample_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L\",\n";
+                ofs << "    \"grad_sur_convention\": \"mean_absolute_periodic_lateral_height_difference_of_valid_h_sur_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L\",\n";
+                ofs << "    \"S_sur_convention\": \"surface_site_count_per_sample_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L_equal_f_sur_times_lateral_area\",\n";
                 ofs << "    \"M_L_convention\": \"largest_connected_cluster_mass_spanning_from_z_stat_to_z_stat_plus_L_inside_post_equilibrium_slab_for_fractal_dimension\",\n";
                 ofs << "    \"M_cluster_sizes_convention\": \"all_connected_cluster_sizes_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L_sorted_descending\",\n";
                 ofs << "    \"growth_test_surface_sampling_height_increment\": \"L\",\n";

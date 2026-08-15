@@ -93,7 +93,7 @@ int main(int argc, char* argv[]) {
     try {
         // If no arguments provided, use a set of reasonable defaults you can
         // edit here. If full argv are provided (11), parse them.
-        int L = 128;
+        int L = 128; 
         double pp0 = 1.0;
         int seed = 12345;
         std::string type_percolation = "site";
