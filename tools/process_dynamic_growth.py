@@ -23,7 +23,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 14
+DYNAMIC_PROCESSING_VERSION = 15
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
@@ -52,8 +52,8 @@ RE_p0 = re.compile(rf"(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)")
 ALL_DATA_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
     "order", "N_samples", "N_samples_perc",
-    "p_mean", "p_err", "f_mean", "f_err", "z_max_mean", "z_max_err",
-    "z_max_median", "z_max_q75", "z_max_q90",
+    "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
+    "z_stat_median", "z_stat_q75", "z_stat_q90",
     "t_eq_validation", "t_eq_s_prime_threshold",
 ]
 
@@ -864,20 +864,20 @@ def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def zmax_for_order(
+def meta_value_for_order(
     *,
     order_pos: int,
     color_1b: int | None,
     t_eq_species: float,
     result_t_eq_order: list[float],
     meta_t_eq: list[Any],
-    meta_zmax: list[Any],
+    meta_values: list[Any],
 ) -> float | None:
-    if not meta_zmax:
+    if not meta_values:
         return None
 
     # New/fixed raw format: meta.t_eq_by_species is already ordered by
-    # stabilization and nulls are trailing; z_max is aligned to that order.
+    # stabilization and nulls are trailing; values are aligned to that order.
     ordered_prefix = True
     if len(meta_t_eq) >= len(result_t_eq_order):
         for a, b in zip(meta_t_eq[:len(result_t_eq_order)], result_t_eq_order):
@@ -888,26 +888,26 @@ def zmax_for_order(
     else:
         ordered_prefix = False
 
-    if ordered_prefix and order_pos < len(meta_zmax):
-        return finite_float(meta_zmax[order_pos])
+    if ordered_prefix and order_pos < len(meta_values):
+        return finite_float(meta_values[order_pos])
 
     # Older raw files were species-indexed. Fall back to color when available.
     if color_1b is not None:
         idx = int(color_1b) - 1
-        if 0 <= idx < len(meta_zmax):
-            return finite_float(meta_zmax[idx])
+        if 0 <= idx < len(meta_values):
+            return finite_float(meta_values[idx])
 
-    # Last resort: pair the finite t_eq entries with z_max by position, skipping
+    # Last resort: pair the finite t_eq entries with values by position, skipping
     # null t_eq values. This implements the dynamic-order convention requested.
     finite_positions = [
         i for i, v in enumerate(meta_t_eq)
-        if finite_float(v) is not None and i < len(meta_zmax)
+        if finite_float(v) is not None and i < len(meta_values)
     ]
     if order_pos < len(finite_positions):
-        return finite_float(meta_zmax[finite_positions[order_pos]])
+        return finite_float(meta_values[finite_positions[order_pos]])
 
-    if order_pos < len(meta_zmax):
-        return finite_float(meta_zmax[order_pos])
+    if order_pos < len(meta_values):
+        return finite_float(meta_values[order_pos])
     return None
 
 
@@ -961,12 +961,9 @@ def load_dynamic_sample(
 
     result_t_eq_order = [float(d.get("t_eq_species")) for _, d in parsed_blocks]
     meta_t_eq = meta.get("t_eq_by_species", [])
-    meta_zmax = meta.get("z_max", meta.get("z_max_final", []))
     meta_zstat = meta.get("z_stat", [])
     if not isinstance(meta_t_eq, list):
         meta_t_eq = []
-    if not isinstance(meta_zmax, list):
-        meta_zmax = []
     if not isinstance(meta_zstat, list):
         meta_zstat = []
 
@@ -981,21 +978,13 @@ def load_dynamic_sample(
 
         p_mean = tail_mean_after_t_eq(data.get("time"), data.get("pt"), t_eq)
         f_mean = tail_mean_after_t_eq(data.get("time"), data.get("nt"), t_eq)
-        z_max = zmax_for_order(
+        z_stat = meta_value_for_order(
             order_pos=order_pos,
             color_1b=color_1b,
             t_eq_species=t_eq,
             result_t_eq_order=result_t_eq_order,
             meta_t_eq=meta_t_eq,
-            meta_zmax=meta_zmax,
-        )
-        z_stat = zmax_for_order(
-            order_pos=order_pos,
-            color_1b=color_1b,
-            t_eq_species=t_eq,
-            result_t_eq_order=result_t_eq_order,
-            meta_t_eq=meta_t_eq,
-            meta_zmax=meta_zstat,
+            meta_values=meta_zstat,
         )
 
         row = {
@@ -1004,7 +993,6 @@ def load_dynamic_sample(
             "t_eq_species": t_eq,
             "p_sample_mean": p_mean,
             "f_sample_mean": f_mean,
-            "z_max": z_max,
             "z_stat": z_stat,
             **criterion_meta,
         }
@@ -1040,7 +1028,6 @@ def process_one_sample_file(
             "ft": item.get("ft"),
             "p_sample_mean": item.get("p_sample_mean"),
             "f_sample_mean": item.get("f_sample_mean"),
-            "z_max": item.get("z_max"),
             "z_stat": item.get("z_stat"),
             "stop_criterion": item.get("stop_criterion"),
             "t_eq_validation": item.get("t_eq_validation"),
@@ -1702,14 +1689,11 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
                 continue
             p_stats = order_block.get("p", {})
             f_stats = order_block.get("f", {})
-            z_stats = order_block.get("z_max", {})
             z_stat_stats = order_block.get("z_stat", {})
             if not isinstance(p_stats, dict):
                 p_stats = {}
             if not isinstance(f_stats, dict):
                 f_stats = {}
-            if not isinstance(z_stats, dict):
-                z_stats = {}
             if not isinstance(z_stat_stats, dict):
                 z_stat_stats = {}
 
@@ -1724,11 +1708,11 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
                 "p_err": p_stats.get("err"),
                 "f_mean": f_stats.get("mean"),
                 "f_err": f_stats.get("err"),
-                "z_max_mean": z_stats.get("mean"),
-                "z_max_err": z_stats.get("err"),
-                "z_max_median": summary_field(z_stats, "median"),
-                "z_max_q75": summary_field(z_stats, "q75"),
-                "z_max_q90": summary_field(z_stats, "q90"),
+                "z_stat_mean": z_stat_stats.get("mean"),
+                "z_stat_err": z_stat_stats.get("err"),
+                "z_stat_median": summary_field(z_stat_stats, "median"),
+                "z_stat_q75": summary_field(z_stat_stats, "q75"),
+                "z_stat_q90": summary_field(z_stat_stats, "q90"),
             })
 
     return all_rows, all_color_rows
@@ -1799,7 +1783,7 @@ def values_differ(left: Any, right: Any, tol: float = 1.0e-12) -> bool:
     return abs(left_float - right_float) > tol
 
 
-def update_dynamic_bundle_zmax_quantiles(bundle: dict[str, Any]) -> bool:
+def update_dynamic_bundle_zstat_quantiles(bundle: dict[str, Any]) -> bool:
     changed = False
     p0_groups = bundle.get("p0_groups", [])
     if not isinstance(p0_groups, list):
@@ -1819,13 +1803,13 @@ def update_dynamic_bundle_zmax_quantiles(bundle: dict[str, Any]) -> bool:
                 data = {}
                 order["data"] = data
                 changed = True
-            z_stats = order.get("z_max", {})
+            z_stats = order.get("z_stat", {})
             if not isinstance(z_stats, dict):
                 z_stats = {}
-                order["z_max"] = z_stats
+                order["z_stat"] = z_stats
                 changed = True
 
-            values = data.get("z_max_values")
+            values = data.get("z_stat_values")
             if not isinstance(values, list) or not values:
                 values = z_stats.get("values")
             if not isinstance(values, list) or not values:
@@ -1841,10 +1825,10 @@ def update_dynamic_bundle_zmax_quantiles(bundle: dict[str, Any]) -> bool:
                     changed = True
 
             data_quantile_keys = {
-                "z_max_median": "median",
-                "z_max_q25": "q25",
-                "z_max_q75": "q75",
-                "z_max_q90": "q90",
+                "z_stat_median": "median",
+                "z_stat_q25": "q25",
+                "z_stat_q75": "q75",
+                "z_stat_q90": "q90",
             }
             for data_key, summary_key in data_quantile_keys.items():
                 new_value = summary.get(summary_key)
@@ -2302,20 +2286,6 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
         merged_data["t_eq_max"] = max(maxs)
         merged_data["t_eq"] = max(maxs)
 
-    z_old = existing_order.get("z_max", {}) if isinstance(existing_order.get("z_max", {}), dict) else {}
-    z_new = new_order.get("z_max", {}) if isinstance(new_order.get("z_max", {}), dict) else {}
-    merged["z_max"] = combine_summary_dicts(z_old, z_new)
-    z_mean = merged["z_max"]["mean"]
-    z_err = merged["z_max"]["err"]
-    merged_data["z_max_mean"] = z_mean
-    merged_data["z_max_err"] = z_err
-    merged_data["z_max_std"] = merged["z_max"].get("std")
-    merged_data["z_max_median"] = merged["z_max"].get("median")
-    merged_data["z_max_q25"] = merged["z_max"].get("q25")
-    merged_data["z_max_q75"] = merged["z_max"].get("q75")
-    merged_data["z_max_q90"] = merged["z_max"].get("q90")
-    merged_data["z_max_values"] = merged["z_max"].get("values", [])
-
     z_stat_old = existing_order.get("z_stat", {}) if isinstance(existing_order.get("z_stat", {}), dict) else {}
     z_stat_new = new_order.get("z_stat", {}) if isinstance(new_order.get("z_stat", {}), dict) else {}
     merged["z_stat"] = combine_summary_dicts(z_stat_old, z_stat_new)
@@ -2323,6 +2293,12 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     z_stat_err = merged["z_stat"]["err"]
     merged_data["z_stat_mean"] = z_stat_mean
     merged_data["z_stat_err"] = z_stat_err
+    merged_data["z_stat_std"] = merged["z_stat"].get("std")
+    merged_data["z_stat_median"] = merged["z_stat"].get("median")
+    merged_data["z_stat_q25"] = merged["z_stat"].get("q25")
+    merged_data["z_stat_q75"] = merged["z_stat"].get("q75")
+    merged_data["z_stat_q90"] = merged["z_stat"].get("q90")
+    merged_data["z_stat_values"] = merged["z_stat"].get("values", [])
     merged_data["n_samples_perc"] = merged["N_samples_perc"]
     merged_data["n_samples_total"] = merged["N_samples"]
 
@@ -2441,24 +2417,17 @@ def build_bundle_for_files(
             items = by_order[order]
             p_vals = [x["p_sample_mean"] for x in items if x["p_sample_mean"] is not None]
             f_vals = [x["f_sample_mean"] for x in items if x["f_sample_mean"] is not None]
-            z_vals = [x["z_max"] for x in items if x["z_max"] is not None]
             z_stat_vals = [x["z_stat"] for x in items if x["z_stat"] is not None]
             teq_vals = [x["t_eq_species"] for x in items if x["t_eq_species"] is not None]
 
             p_summary = summary_with_values(p_vals)
             f_summary = summary_with_values(f_vals)
-            z_summary = summary_with_values(z_vals)
-            z_stat_summary = summary_from_values(z_stat_vals)
+            z_stat_summary = summary_with_values(z_stat_vals)
             teq_summary = summary_from_values(teq_vals)
             p_mean = p_summary["mean"]
             p_err = p_summary["err"]
             f_mean = f_summary["mean"]
             f_err = f_summary["err"]
-            z_mean = z_summary["mean"]
-            z_err = z_summary["err"]
-            z_median = z_summary["median"]
-            z_q75 = z_summary["q75"]
-            z_q90 = z_summary["q90"]
             z_stat_mean = z_stat_summary["mean"]
             z_stat_err = z_stat_summary["err"]
             series_data = average_dynamic_time_series(items)
@@ -2478,23 +2447,20 @@ def build_bundle_for_files(
                     "f_tail_err": f_err,
                     "f_tail_sample_values": f_summary.get("values", []),
                     "f_tail_estimator": "mean_of_per_sample_tail_means_after_each_sample_t_eq",
-                    "z_max_mean": z_mean,
-                    "z_max_err": z_err,
-                    "z_max_std": z_summary["std"],
-                    "z_max_median": z_median,
-                    "z_max_q25": z_summary["q25"],
-                    "z_max_q75": z_q75,
-                    "z_max_q90": z_q90,
-                    "z_max_values": z_summary.get("values", []),
                     "z_stat_mean": z_stat_mean,
                     "z_stat_err": z_stat_err,
+                    "z_stat_std": z_stat_summary["std"],
+                    "z_stat_median": z_stat_summary["median"],
+                    "z_stat_q25": z_stat_summary["q25"],
+                    "z_stat_q75": z_stat_summary["q75"],
+                    "z_stat_q90": z_stat_summary["q90"],
+                    "z_stat_values": z_stat_summary.get("values", []),
                     "n_samples_perc": N_samples_perc,
                     "n_samples_total": processed,
                 },
                 "t_eq_species": teq_summary,
                 "p": p_summary,
                 "f": f_summary,
-                "z_max": z_summary,
                 "z_stat": z_stat_summary,
                 "samples": [
                     {
@@ -2503,7 +2469,6 @@ def build_bundle_for_files(
                         "t_eq_species": x["t_eq_species"],
                         "p_sample_mean": x["p_sample_mean"],
                         "f_sample_mean": x["f_sample_mean"],
-                        "z_max": x["z_max"],
                         "z_stat": x["z_stat"],
                         "stop_criterion": x.get("stop_criterion"),
                         "t_eq_validation": x.get("t_eq_validation"),
@@ -2527,11 +2492,11 @@ def build_bundle_for_files(
                 "p_err": p_err,
                 "f_mean": f_mean,
                 "f_err": f_err,
-                "z_max_mean": z_mean,
-                "z_max_err": z_err,
-                "z_max_median": z_median,
-                "z_max_q75": z_q75,
-                "z_max_q90": z_q90,
+                "z_stat_mean": z_stat_mean,
+                "z_stat_err": z_stat_err,
+                "z_stat_median": z_stat_summary["median"],
+                "z_stat_q75": z_stat_summary["q75"],
+                "z_stat_q90": z_stat_summary["q90"],
             })
 
         bundle["p0_groups"].append(p0_group)
@@ -3219,12 +3184,12 @@ def compress_published_only(
             schema_updated = False
             try:
                 bundle = load_json_bundle(after_dynamic)
-                schema_updated = update_dynamic_bundle_zmax_quantiles(bundle)
+                schema_updated = update_dynamic_bundle_zstat_quantiles(bundle)
                 if schema_updated:
                     write_json_bundle_atomic(after_dynamic, bundle, compresslevel=compresslevel)
-                    print(f"[update] z_max q90 -> {after_dynamic}")
+                    print(f"[update] z_stat q90 -> {after_dynamic}")
             except Exception as exc:
-                print(f"[warn] failed to update z_max q90 in {after_dynamic}: {exc}")
+                print(f"[warn] failed to update z_stat q90 in {after_dynamic}: {exc}")
             if converted:
                 dynamic_converted += 1
                 print(f"[compress] {before_dynamic} -> {after_dynamic}")

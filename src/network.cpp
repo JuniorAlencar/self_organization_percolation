@@ -1424,15 +1424,18 @@ std::vector<int> compute_upper_surface_heights(
     const int num_colors,
     const int color_idx,
     const std::vector<std::int8_t>& site_state,
+    const int lower_height,
     const int upper_height)
 {
     if (num_colors <= 0 || color_idx < 0 || color_idx >= num_colors ||
-        upper_height < 0) {
+        upper_height < lower_height) {
         return {};
     }
 
     const int active_val = color_to_active_value(num_colors, color_idx);
+    const int bottom = std::max(0, lower_height);
     const int top = std::min(upper_height, grid.grow_top_coord());
+    if (top < bottom) return {};
     const int lateral_size = (grid.dim == 2) ? grid.SX : grid.SX * grid.SY;
     std::vector<int> heights(static_cast<std::size_t>(lateral_size), -1);
 
@@ -1445,7 +1448,7 @@ std::vector<int> compute_upper_surface_heights(
         }
 
         const int h = grid.grow_coord(idx);
-        if (h < 0 || h > top) continue;
+        if (h < bottom || h > top) continue;
 
         const int lateral_idx = (grid.dim == 2)
             ? grid.x_of(idx)
@@ -1618,12 +1621,17 @@ double compute_volume_fraction_between_upper_surfaces(
     const std::vector<std::int8_t>& site_state,
     const std::vector<int>& previous_heights,
     const std::vector<int>& current_heights,
-    const int analysis_height)
+    const int lower_height,
+    const int upper_height)
 {
     if (num_colors <= 0 || color_idx < 0 || color_idx >= num_colors) return 0.0;
     if (previous_heights.size() != current_heights.size()) return 0.0;
 
     const int active_val = color_to_active_value(num_colors, color_idx);
+    const int bottom = std::max(0, lower_height);
+    const int top = std::min(upper_height, grid.grow_top_coord());
+    if (top < bottom) return 0.0;
+
     long long occupied_between_surfaces = 0;
     const int n_sites = std::min(
         grid.total_size,
@@ -1642,6 +1650,7 @@ double compute_volume_fraction_between_upper_surfaces(
         }
 
         const int h = grid.grow_coord(idx);
+        if (h < bottom || h > top) continue;
         if (h > previous_heights[static_cast<std::size_t>(lateral_idx)] &&
             h <= current_heights[static_cast<std::size_t>(lateral_idx)]) {
             ++occupied_between_surfaces;
@@ -1652,7 +1661,7 @@ double compute_volume_fraction_between_upper_surfaces(
         ? static_cast<double>(grid.SX)
         : static_cast<double>(grid.SX) * static_cast<double>(grid.SY);
     const double max_volume =
-        lateral_area * static_cast<double>(std::max(1, analysis_height));
+        lateral_area * static_cast<double>(std::max(1, top - bottom + 1));
     return max_volume > 0.0
         ? static_cast<double>(occupied_between_surfaces) / max_volume
         : 0.0;
@@ -2676,13 +2685,20 @@ NetworkPattern network::create_network(
                     next_surface_t >= 0 &&
                     (t >= next_surface_t || reached_sampling_height);
                 if (should_sample_surface) {
+                    const int analysis_bottom =
+                        z_stat_by_species[static_cast<std::size_t>(c)];
+                    const int analysis_top = sampling_stop_height;
+                    const int sample_top = std::min(
+                        max_heights[static_cast<std::size_t>(c)],
+                        analysis_top);
                     std::vector<int> current_surface_heights =
                         compute_upper_surface_heights(
                             grid,
                             num_colors,
                             c,
                             site_state,
-                            max_heights[static_cast<std::size_t>(c)]);
+                            analysis_bottom,
+                            sample_top);
                     std::vector<int>& previous_surface_heights =
                         previous_surface_heights_by_species[static_cast<std::size_t>(c)];
                     if (!previous_surface_heights.empty()) {
@@ -2694,7 +2710,8 @@ NetworkPattern network::create_network(
                                 site_state,
                                 previous_surface_heights,
                                 current_surface_heights,
-                                post_equilibrium_sampling_height_increment));
+                                analysis_bottom,
+                                analysis_top));
                         t_volume_sur_by_species[static_cast<std::size_t>(c)].push_back(
                             static_cast<int>(
                                 t_volume_sur_by_species[static_cast<std::size_t>(c)].size()) + 1);
@@ -2715,8 +2732,8 @@ NetworkPattern network::create_network(
                             num_colors,
                             c,
                             site_state,
-                            max_heights[static_cast<std::size_t>(c)],
-                            z_stat_by_species[static_cast<std::size_t>(c)] + 1);
+                            sample_top,
+                            analysis_bottom);
                     f_sur_by_species[static_cast<std::size_t>(c)].push_back(
                         f_sur_value);
                     S_sur_by_species[static_cast<std::size_t>(c)].push_back(
@@ -4144,13 +4161,20 @@ NetworkPattern network::animate_network(
                     next_surface_t >= 0 &&
                     (t >= next_surface_t || reached_sampling_height);
                 if (should_sample_surface) {
+                    const int analysis_bottom =
+                        z_stat_by_species[static_cast<std::size_t>(c)];
+                    const int analysis_top = sampling_stop_height;
+                    const int sample_top = std::min(
+                        max_heights[static_cast<std::size_t>(c)],
+                        analysis_top);
                     std::vector<int> current_surface_heights =
                         compute_upper_surface_heights(
                             grid,
                             num_colors,
                             c,
                             site_state,
-                            max_heights[static_cast<std::size_t>(c)]);
+                            analysis_bottom,
+                            sample_top);
                     std::vector<int>& previous_surface_heights =
                         previous_surface_heights_by_species[static_cast<std::size_t>(c)];
                     if (!previous_surface_heights.empty()) {
@@ -4162,7 +4186,8 @@ NetworkPattern network::animate_network(
                                 site_state,
                                 previous_surface_heights,
                                 current_surface_heights,
-                                post_equilibrium_sampling_height_increment));
+                                analysis_bottom,
+                                analysis_top));
                         t_volume_sur_by_species[static_cast<std::size_t>(c)].push_back(
                             static_cast<int>(
                                 t_volume_sur_by_species[static_cast<std::size_t>(c)].size()) + 1);
@@ -4183,8 +4208,8 @@ NetworkPattern network::animate_network(
                             num_colors,
                             c,
                             site_state,
-                            max_heights[static_cast<std::size_t>(c)],
-                            z_stat_by_species[static_cast<std::size_t>(c)] + 1);
+                            sample_top,
+                            analysis_bottom);
                     f_sur_by_species[static_cast<std::size_t>(c)].push_back(
                         f_sur_value);
                     S_sur_by_species[static_cast<std::size_t>(c)].push_back(
