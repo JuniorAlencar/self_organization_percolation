@@ -13,8 +13,11 @@
 #include <array>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstdint>
 #include <deque>
+#include <cstdlib>
+#include <iostream>
 
 namespace {
 
@@ -1751,6 +1754,411 @@ inline double mean_finite_values(const std::vector<double>& values)
     return sum / static_cast<double>(count);
 }
 
+inline std::uint64_t splitmix64_hash(std::uint64_t x)
+{
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+struct AbsSiteKeyHash {
+    std::size_t operator()(const std::uint64_t key) const noexcept {
+        return static_cast<std::size_t>(splitmix64_hash(key));
+    }
+};
+
+inline std::uint64_t abs_site_key(const int x, const int y, const int z)
+{
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(z)) << 32) |
+           (static_cast<std::uint64_t>(static_cast<std::uint16_t>(y)) << 16) |
+           static_cast<std::uint64_t>(static_cast<std::uint16_t>(x));
+}
+
+inline void decode_abs_site_key(const std::uint64_t key, int& x, int& y, int& z)
+{
+    x = static_cast<int>(key & 0xffffu);
+    y = static_cast<int>((key >> 16) & 0xffffu);
+    z = static_cast<int>((key >> 32) & 0xffffffffu);
+}
+
+inline int abs_grow_coord_from_key(const std::uint64_t key, const int dim)
+{
+    int x = 0, y = 0, z = 0;
+    decode_abs_site_key(key, x, y, z);
+    return (dim == 2) ? y : z;
+}
+
+inline std::uint64_t abs_bond_key(std::uint64_t a, std::uint64_t b)
+{
+    if (b < a) std::swap(a, b);
+    return splitmix64_hash(a) ^ (splitmix64_hash(b) + 0x9e3779b97f4a7c15ULL +
+                                 (splitmix64_hash(a) << 6) + (splitmix64_hash(a) >> 2));
+}
+
+struct AbsBondKey {
+    std::uint64_t a = 0;
+    std::uint64_t b = 0;
+
+    bool operator==(const AbsBondKey& other) const noexcept {
+        return a == other.a && b == other.b;
+    }
+};
+
+struct AbsBondKeyHash {
+    std::size_t operator()(const AbsBondKey& key) const noexcept {
+        return static_cast<std::size_t>(
+            splitmix64_hash(key.a) ^
+            (splitmix64_hash(key.b) + 0x9e3779b97f4a7c15ULL +
+             (splitmix64_hash(key.a) << 6) + (splitmix64_hash(key.a) >> 2)));
+    }
+};
+
+inline AbsBondKey make_abs_bond_key(std::uint64_t a, std::uint64_t b)
+{
+    if (b < a) std::swap(a, b);
+    return {a, b};
+}
+
+inline void collect_abs_neighbors(const int dim,
+                                  const int L,
+                                  const std::uint64_t key,
+                                  std::uint64_t out[6],
+                                  int& count)
+{
+    int x = 0, y = 0, z = 0;
+    decode_abs_site_key(key, x, y, z);
+    count = 0;
+
+    out[count++] = abs_site_key((x + L - 1) % L, y, z);
+    out[count++] = abs_site_key((x + 1) % L, y, z);
+
+    if (dim == 2) {
+        if (y > 0) out[count++] = abs_site_key(x, y - 1, 0);
+        out[count++] = abs_site_key(x, y + 1, 0);
+        return;
+    }
+
+    out[count++] = abs_site_key(x, (y + L - 1) % L, z);
+    out[count++] = abs_site_key(x, (y + 1) % L, z);
+    if (z > 0) out[count++] = abs_site_key(x, y, z - 1);
+    out[count++] = abs_site_key(x, y, z + 1);
+}
+
+struct SlabFractionResult {
+    double p_node = 0.0;
+    double p_bond = 0.0;
+    int largest_component = 0;
+    long long largest_component_edges = 0;
+    int shortest_path_edges = -1;
+    long long hull_length = 0;
+    std::vector<int> hole_sizes;
+};
+
+struct SlabHullHoleResult {
+    long long hull_length = 0;
+    std::vector<int> hole_sizes;
+};
+
+SlabHullHoleResult compute_cylindrical_slab_hull_holes_2d(
+    const int L,
+    const int height,
+    const std::vector<unsigned char>& in_giant)
+{
+    SlabHullHoleResult result;
+    if (L <= 0 || height <= 0) return result;
+    const std::size_t grid_size =
+        static_cast<std::size_t>(L) * static_cast<std::size_t>(height);
+    if (in_giant.size() != grid_size) return result;
+
+    auto idx = [&](const int x, const int y) -> std::uint32_t {
+        return static_cast<std::uint32_t>(y * L + x);
+    };
+
+    std::vector<unsigned char> exterior(grid_size, 0u);
+    std::vector<unsigned char> seen(grid_size, 0u);
+    std::vector<std::uint32_t> queue;
+    queue.reserve(grid_size);
+
+    auto push_exterior_seed = [&](const int x, const int y) {
+        const std::uint32_t seed = idx(x, y);
+        if (in_giant[seed] || exterior[seed]) return;
+        exterior[seed] = 1u;
+        queue.push_back(seed);
+    };
+
+    for (int x = 0; x < L; ++x) {
+        push_exterior_seed(x, 0);
+        if (height > 1) push_exterior_seed(x, height - 1);
+    }
+
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        const std::uint32_t cur = queue[head];
+        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+        const int cy = static_cast<int>(cur / static_cast<std::uint32_t>(L));
+        const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
+        const int ny_values[4] = {cy, cy, cy - 1, cy + 1};
+        for (int ni = 0; ni < 4; ++ni) {
+            const int ny = ny_values[ni];
+            if (ny < 0 || ny >= height) continue;
+            const std::uint32_t nidx = idx(nx_values[ni], ny);
+            if (in_giant[nidx] || exterior[nidx]) continue;
+            exterior[nidx] = 1u;
+            queue.push_back(nidx);
+        }
+    }
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < L; ++x) {
+            const std::uint32_t seed = idx(x, y);
+            if (in_giant[seed] || exterior[seed] || seen[seed]) continue;
+
+            int area = 0;
+            bool wraps_periodic_x = false;
+            seen[seed] = 1u;
+            queue.clear();
+            queue.push_back(seed);
+
+            for (std::size_t head = 0; head < queue.size(); ++head) {
+                const std::uint32_t cur = queue[head];
+                const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+                const int cy = static_cast<int>(cur / static_cast<std::uint32_t>(L));
+                ++area;
+
+                const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
+                const int ny_values[4] = {cy, cy, cy - 1, cy + 1};
+                for (int ni = 0; ni < 4; ++ni) {
+                    const int nx = nx_values[ni];
+                    const int ny = ny_values[ni];
+                    if (ny < 0 || ny >= height) continue;
+                    if ((cx == 0 && nx == L - 1) || (cx == L - 1 && nx == 0)) {
+                        wraps_periodic_x = true;
+                    }
+                    const std::uint32_t nidx = idx(nx, ny);
+                    if (in_giant[nidx] || exterior[nidx] || seen[nidx]) continue;
+                    seen[nidx] = 1u;
+                    queue.push_back(nidx);
+                }
+            }
+
+            if (!wraps_periodic_x) {
+                result.hole_sizes.push_back(area);
+            }
+        }
+    }
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < L; ++x) {
+            const std::uint32_t cur = idx(x, y);
+            if (!in_giant[cur]) continue;
+
+            const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
+            const int ny_values[4] = {y, y, y - 1, y + 1};
+            for (int ni = 0; ni < 4; ++ni) {
+                const int ny = ny_values[ni];
+                if (ny < 0 || ny >= height) {
+                    ++result.hull_length;
+                    continue;
+                }
+                const std::uint32_t nidx = idx(nx_values[ni], ny);
+                if (exterior[nidx]) ++result.hull_length;
+            }
+        }
+    }
+
+    std::sort(result.hole_sizes.begin(), result.hole_sizes.end());
+    return result;
+}
+
+SlabFractionResult compute_abs_slab_fractions(
+    const int dim,
+    const int L,
+    const std::unordered_map<std::uint64_t, std::int8_t, AbsSiteKeyHash>& site_state,
+    const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds,
+    const int bottom,
+    const int top,
+    const bool is_node)
+{
+    if (top < bottom) return {};
+
+    const long long lateral_area = (dim == 2)
+        ? static_cast<long long>(L)
+        : static_cast<long long>(L) * static_cast<long long>(L);
+    const long long height = static_cast<long long>(top - bottom + 1);
+    const long long total_sites = lateral_area * height;
+
+    long long occupied_sites = 0;
+    long long open_bonds_in_slab = 0;
+    const long long total_bonds = (dim == 2)
+        ? (static_cast<long long>(L) * height +
+           static_cast<long long>(L) * std::max<long long>(0, height - 1))
+        : (2LL * static_cast<long long>(L) * static_cast<long long>(L) * height +
+           static_cast<long long>(L) * static_cast<long long>(L) *
+               std::max<long long>(0, height - 1));
+
+    for (const auto& kv : site_state) {
+        if (kv.second <= 0) continue;
+        const int h = abs_grow_coord_from_key(kv.first, dim);
+        if (h < bottom || h > top) continue;
+        ++occupied_sites;
+    }
+
+    std::unordered_set<std::uint64_t, AbsSiteKeyHash> visited;
+    visited.reserve(static_cast<std::size_t>(std::max<long long>(1, occupied_sites)));
+    std::vector<std::uint64_t> stack;
+    stack.reserve(1024);
+    std::uint64_t neigh[6];
+    int nneigh = 0;
+    int largest = 0;
+    long long largest_edges = 0;
+    std::uint64_t largest_seed = std::numeric_limits<std::uint64_t>::max();
+
+    for (const auto& kv : site_state) {
+        if (kv.second <= 0) continue;
+        const std::uint64_t seed = kv.first;
+        const int h0 = abs_grow_coord_from_key(seed, dim);
+        if (h0 < bottom || h0 > top) continue;
+        if (visited.find(seed) != visited.end()) continue;
+
+        int component = 0;
+        long long component_edge_visits = 0;
+        visited.insert(seed);
+        stack.clear();
+        stack.push_back(seed);
+
+        while (!stack.empty()) {
+            const std::uint64_t u = stack.back();
+            stack.pop_back();
+            ++component;
+
+            collect_abs_neighbors(dim, L, u, neigh, nneigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const std::uint64_t v = neigh[ni];
+                const int hv = abs_grow_coord_from_key(v, dim);
+                if (hv < bottom || hv > top) continue;
+
+                const auto itv = site_state.find(v);
+                if (itv == site_state.end() || itv->second <= 0) continue;
+                if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
+                    continue;
+                }
+                ++component_edge_visits;
+                if (visited.insert(v).second) {
+                    stack.push_back(v);
+                }
+            }
+        }
+
+        if (component > largest) {
+            largest = component;
+            largest_edges = component_edge_visits / 2;
+            largest_seed = seed;
+        }
+    }
+
+    int shortest_path_edges = -1;
+    if (largest_seed != std::numeric_limits<std::uint64_t>::max()) {
+        std::unordered_set<std::uint64_t, AbsSiteKeyHash> in_giant;
+        in_giant.reserve(static_cast<std::size_t>(std::max(1, largest)));
+        std::vector<std::uint64_t> bottom_sources;
+
+        stack.clear();
+        stack.push_back(largest_seed);
+        in_giant.insert(largest_seed);
+        for (std::size_t head = 0; head < stack.size(); ++head) {
+            const std::uint64_t u = stack[head];
+            const int hu = abs_grow_coord_from_key(u, dim);
+            if (hu == bottom) bottom_sources.push_back(u);
+
+            collect_abs_neighbors(dim, L, u, neigh, nneigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const std::uint64_t v = neigh[ni];
+                const int hv = abs_grow_coord_from_key(v, dim);
+                if (hv < bottom || hv > top) continue;
+
+                const auto itv = site_state.find(v);
+                if (itv == site_state.end() || itv->second <= 0) continue;
+                if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
+                    continue;
+                }
+                if (in_giant.insert(v).second) {
+                    stack.push_back(v);
+                }
+            }
+        }
+
+        if (!bottom_sources.empty()) {
+            std::unordered_set<std::uint64_t, AbsSiteKeyHash> reached;
+            reached.reserve(in_giant.size());
+            std::vector<std::uint64_t> current;
+            std::vector<std::uint64_t> next;
+            current.reserve(bottom_sources.size());
+            next.reserve(bottom_sources.size());
+            for (const std::uint64_t src : bottom_sources) {
+                reached.insert(src);
+                current.push_back(src);
+            }
+
+            int distance = 0;
+            while (!current.empty() && shortest_path_edges < 0) {
+                next.clear();
+                for (const std::uint64_t u : current) {
+                    if (abs_grow_coord_from_key(u, dim) == top) {
+                        shortest_path_edges = distance;
+                        break;
+                    }
+
+                    collect_abs_neighbors(dim, L, u, neigh, nneigh);
+                    for (int ni = 0; ni < nneigh; ++ni) {
+                        const std::uint64_t v = neigh[ni];
+                        const int hv = abs_grow_coord_from_key(v, dim);
+                        if (hv < bottom || hv > top) continue;
+                        if (in_giant.find(v) == in_giant.end()) continue;
+                        if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
+                            continue;
+                        }
+                        if (reached.insert(v).second) {
+                            next.push_back(v);
+                        }
+                    }
+                }
+                current.swap(next);
+                ++distance;
+            }
+        }
+    }
+
+    if (!is_node) {
+        for (const auto& kv : site_state) {
+            if (kv.second <= 0) continue;
+            const std::uint64_t u = kv.first;
+            const int hu = abs_grow_coord_from_key(u, dim);
+            if (hu < bottom || hu > top) continue;
+
+            collect_abs_neighbors(dim, L, u, neigh, nneigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const std::uint64_t v = neigh[ni];
+                if (v < u) continue;
+                const int hv = abs_grow_coord_from_key(v, dim);
+                if (hv < bottom || hv > top) continue;
+                const auto itv = site_state.find(v);
+                if (itv == site_state.end() || itv->second <= 0) continue;
+                if (open_bonds.find(make_abs_bond_key(u, v)) != open_bonds.end()) {
+                    ++open_bonds_in_slab;
+                }
+            }
+        }
+    }
+
+    return {
+        total_sites > 0 ? static_cast<double>(occupied_sites) / static_cast<double>(total_sites) : 0.0,
+        total_bonds > 0 ? static_cast<double>(open_bonds_in_slab) / static_cast<double>(total_bonds) : 0.0,
+        largest,
+        largest_edges,
+        shortest_path_edges
+    };
+}
+
 inline bool all_values_finite(const std::vector<double>& values)
 {
     if (values.empty()) return false;
@@ -1836,6 +2244,1248 @@ double network::generate_p(const int type_f_T,
     if (p_next < 0.0) p_next = 0.0;
 
     return p_next;
+}
+
+RawFractionsSeries network::create_raw_fractions(
+    const int dim,
+    const int lenght_network,
+    const int fraction_samples,
+    const double c_value,
+    const double f_T,
+    const int type_f_T,
+    const std::vector<double> p0,
+    const double P0,
+    const double a,
+    const double alpha,
+    const std::string& type_percolation,
+    const int& num_colors,
+    const std::vector<double>& rho,
+    all_random& rng,
+    const double sample_gap_over_L,
+    const GrowthStopConfig stop_config)
+{
+    this->c = c_value;
+    this->f_T = f_T;
+
+    if (dim != 2 && dim != 3) {
+        throw std::runtime_error("create_raw_fractions: dim must be 2 or 3");
+    }
+    if (lenght_network <= 0) {
+        throw std::runtime_error("create_raw_fractions: L must be positive");
+    }
+    if (num_colors <= 0 || num_colors > 125) {
+        throw std::runtime_error("create_raw_fractions: invalid num_colors");
+    }
+
+    const bool is_node = (type_percolation == "node");
+    const int L = lenght_network;
+    const long long base_size = (dim == 2)
+        ? static_cast<long long>(L)
+        : static_cast<long long>(L) * static_cast<long long>(L);
+    const double norm_factor = static_cast<double>(base_size);
+    const int requested = std::max(1, fraction_samples);
+    const double gap_over_L = std::max(0.0, sample_gap_over_L);
+    const int sample_gap_layers = std::max(
+        0,
+        static_cast<int>(std::llround(gap_over_L * static_cast<double>(L))));
+    int hard_max_steps = stop_config.hard_max_steps;
+    if (const char* env_steps = std::getenv("SOP_FRACTION_MAX_STEPS")) {
+        hard_max_steps = std::max(1, std::stoi(env_steps));
+    }
+    int progress_interval = std::max(1000, L);
+    if (const char* env_progress = std::getenv("SOP_FRACTION_PROGRESS_INTERVAL")) {
+        progress_interval = std::max(0, std::stoi(env_progress));
+    }
+
+    if (dim == 2) {
+        RawFractionsSeries out;
+        out.dim = dim;
+        out.L = L;
+        out.seed = rng.get_seed();
+        out.num_colors = num_colors;
+        out.requested_samples = requested;
+        out.N_total = static_cast<long long>(L) * static_cast<long long>(L);
+        out.E_total = 2LL * static_cast<long long>(L) * static_cast<long long>(L) -
+                      static_cast<long long>(L);
+        out.sample_gap_layers = sample_gap_layers;
+        out.sample_gap_over_L = gap_over_L;
+        out.type_percolation = type_percolation;
+        out.rho = rho;
+        out.t_eq_by_species.assign(static_cast<std::size_t>(num_colors),
+                                   std::numeric_limits<double>::quiet_NaN());
+        out.z_stat_by_species.assign(static_cast<std::size_t>(num_colors), -1);
+        out.stop_reason = "not_stopped";
+
+        const int cap_h = std::max(8, L + sample_gap_layers + 8);
+        const std::size_t layer_size = static_cast<std::size_t>(L);
+        const std::size_t total_slots =
+            static_cast<std::size_t>(cap_h) * layer_size;
+        std::vector<std::int8_t> state(total_slots, static_cast<std::int8_t>(-1));
+        std::vector<int> layer_tag(static_cast<std::size_t>(cap_h), -1);
+
+        std::vector<unsigned char> tested_x;
+        std::vector<unsigned char> tested_y;
+        std::vector<unsigned char> open_x;
+        std::vector<unsigned char> open_y;
+        std::vector<int> bond_layer_tag;
+        if (!is_node) {
+            tested_x.assign(total_slots, 0u);
+            tested_y.assign(total_slots, 0u);
+            open_x.assign(total_slots, 0u);
+            open_y.assign(total_slots, 0u);
+            bond_layer_tag.assign(static_cast<std::size_t>(cap_h), -1);
+        }
+
+        auto site_slot = [&](const int x, const int y) -> std::size_t {
+            return static_cast<std::size_t>(y % cap_h) * layer_size +
+                   static_cast<std::size_t>(x);
+        };
+        auto ensure_site_layer = [&](const int y) {
+            const int slot = y % cap_h;
+            if (layer_tag[static_cast<std::size_t>(slot)] == y) return;
+            const std::size_t begin = static_cast<std::size_t>(slot) * layer_size;
+            std::fill(state.begin() + static_cast<std::ptrdiff_t>(begin),
+                      state.begin() + static_cast<std::ptrdiff_t>(begin + layer_size),
+                      static_cast<std::int8_t>(-1));
+            layer_tag[static_cast<std::size_t>(slot)] = y;
+        };
+        auto get_site_2d = [&](const int x, const int y) -> int {
+            if (y < 0) return 0;
+            const int slot = y % cap_h;
+            if (layer_tag[static_cast<std::size_t>(slot)] != y) return -1;
+            return static_cast<int>(state[site_slot(x, y)]);
+        };
+        auto set_site_2d = [&](const int x, const int y, const int value) {
+            ensure_site_layer(y);
+            state[site_slot(x, y)] = static_cast<std::int8_t>(value);
+        };
+        auto ensure_bond_layer = [&](const int y) {
+            if (is_node || y < 0) return;
+            const int slot = y % cap_h;
+            if (bond_layer_tag[static_cast<std::size_t>(slot)] == y) return;
+            const std::size_t begin = static_cast<std::size_t>(slot) * layer_size;
+            std::fill(tested_x.begin() + static_cast<std::ptrdiff_t>(begin),
+                      tested_x.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
+            std::fill(tested_y.begin() + static_cast<std::ptrdiff_t>(begin),
+                      tested_y.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
+            std::fill(open_x.begin() + static_cast<std::ptrdiff_t>(begin),
+                      open_x.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
+            std::fill(open_y.begin() + static_cast<std::ptrdiff_t>(begin),
+                      open_y.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
+            bond_layer_tag[static_cast<std::size_t>(slot)] = y;
+        };
+        auto bond_slot = [&](const int x, const int y) -> std::size_t {
+            return static_cast<std::size_t>(y % cap_h) * layer_size +
+                   static_cast<std::size_t>(x);
+        };
+        auto mark_tested_bond_2d = [&](const int x1, const int y1,
+                                       const int x2, const int y2) -> bool {
+            if (is_node) return true;
+            if (y1 == y2) {
+                const int x_low = (x2 == ((x1 + 1) % L)) ? x1 : x2;
+                ensure_bond_layer(y1);
+                unsigned char& value = tested_x[bond_slot(x_low, y1)];
+                const bool fresh = value == 0u;
+                value = 1u;
+                return fresh;
+            }
+            const int y_low = std::min(y1, y2);
+            const int x = x1;
+            ensure_bond_layer(y_low);
+            unsigned char& value = tested_y[bond_slot(x, y_low)];
+            const bool fresh = value == 0u;
+            value = 1u;
+            return fresh;
+        };
+        auto set_open_bond_2d = [&](const int x1, const int y1,
+                                    const int x2, const int y2) {
+            if (is_node) return;
+            if (y1 == y2) {
+                const int x_low = (x2 == ((x1 + 1) % L)) ? x1 : x2;
+                ensure_bond_layer(y1);
+                open_x[bond_slot(x_low, y1)] = 1u;
+                return;
+            }
+            const int y_low = std::min(y1, y2);
+            const int x = x1;
+            ensure_bond_layer(y_low);
+            open_y[bond_slot(x, y_low)] = 1u;
+        };
+        auto is_open_bond_2d = [&](const int x1, const int y1,
+                                   const int x2, const int y2) -> bool {
+            if (is_node) return false;
+            if (y1 == y2) {
+                const int slot = y1 % cap_h;
+                if (bond_layer_tag[static_cast<std::size_t>(slot)] != y1) return false;
+                const int x_low = (x2 == ((x1 + 1) % L)) ? x1 : x2;
+                return open_x[bond_slot(x_low, y1)] != 0u;
+            }
+            const int y_low = std::min(y1, y2);
+            const int slot = y_low % cap_h;
+            if (bond_layer_tag[static_cast<std::size_t>(slot)] != y_low) return false;
+            return open_y[bond_slot(x1, y_low)] != 0u;
+        };
+
+        auto encode_xy = [&](const int x, const int y) -> std::uint64_t {
+            return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(y)) << 32) |
+                   static_cast<std::uint64_t>(static_cast<std::uint32_t>(x));
+        };
+        auto decode_xy = [&](const std::uint64_t key, int& x, int& y) {
+            x = static_cast<int>(key & 0xffffffffu);
+            y = static_cast<int>(key >> 32);
+        };
+
+        std::vector<double> p_curr = p0;
+        std::vector<double> p_next(static_cast<std::size_t>(num_colors), 0.0);
+        std::vector<int> N_current(static_cast<std::size_t>(num_colors), 0);
+        std::vector<double> f_current(static_cast<std::size_t>(num_colors), 0.0);
+        std::vector<int> max_heights(static_cast<std::size_t>(num_colors), 0);
+        std::vector<std::uint64_t> frontier;
+        std::vector<std::uint64_t> next_frontier;
+        frontier.reserve(static_cast<std::size_t>(L));
+        next_frontier.reserve(static_cast<std::size_t>(L));
+
+        std::vector<std::vector<double>> p_series(static_cast<std::size_t>(num_colors));
+        std::vector<int> t_list;
+        t_list.reserve(4096);
+        auto commit_equilibrium_step = [&](const int t) {
+            t_list.push_back(t);
+            for (int color = 0; color < num_colors; ++color) {
+                p_series[static_cast<std::size_t>(color)].push_back(
+                    p_curr[static_cast<std::size_t>(color)]);
+            }
+        };
+
+        std::vector<int> seeds_quota(static_cast<std::size_t>(num_colors), 0);
+        for (int color = 0; color < num_colors; ++color) {
+            long long q = std::llround(P0 * rho[static_cast<std::size_t>(color)] * base_size);
+            q = std::max<long long>(0, std::min<long long>(q, base_size));
+            seeds_quota[static_cast<std::size_t>(color)] = static_cast<int>(q);
+        }
+
+        for (int color = 0; color < num_colors; ++color) {
+            const int active_val = color_to_active_value(num_colors, color);
+            auto activate_base_site = [&](const int x) -> bool {
+                const int v = get_site_2d(x, 0);
+                if (v != -1 && v != color_to_negative_value(num_colors, color)) return false;
+                set_site_2d(x, 0, active_val);
+                frontier.push_back(encode_xy(x, 0));
+                ++N_current[static_cast<std::size_t>(color)];
+                return true;
+            };
+
+            if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
+                int activated = 0;
+                int tries = 0;
+                const int max_tries = L * 20;
+                while (activated < seeds_quota[static_cast<std::size_t>(color)] &&
+                       tries < max_tries) {
+                    const int x = rng.uniform_int(0, L - 1);
+                    if (activate_base_site(x)) ++activated;
+                    ++tries;
+                }
+            } else {
+                int activated = 0;
+                const int quota = seeds_quota[static_cast<std::size_t>(color)];
+                for (int x = 0; x < L && activated < quota; ++x) {
+                    const bool belongs =
+                        stop_config.initial_base_layout == InitialBaseLayout::Alternating
+                            ? ((x % num_colors) == color)
+                            : (x >= (color * L) / num_colors &&
+                               x < ((color + 1) * L) / num_colors);
+                    if (belongs && activate_base_site(x)) ++activated;
+                }
+            }
+        }
+
+        for (int color = 0; color < num_colors; ++color) {
+            f_current[static_cast<std::size_t>(color)] =
+                static_cast<double>(N_current[static_cast<std::size_t>(color)]) / norm_factor;
+        }
+        commit_equilibrium_step(0);
+
+        struct DenseCandidate {
+            int color = 0;
+            int x_from = 0;
+            int y_from = 0;
+        };
+        std::vector<bool> died(static_cast<std::size_t>(num_colors), false);
+        std::vector<bool> species_equilibrated(static_cast<std::size_t>(num_colors), false);
+        bool all_equilibrated = false;
+        int anchor = -1;
+        bool inst_pending = true;
+        SlabFractionResult pending_inst;
+        int pending_t_inst = -1;
+        auto print_progress_2d = [&](const int t, const char* phase) {
+            if (progress_interval <= 0 || (t % progress_interval) != 0) return;
+            const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
+            const int next_target = !all_equilibrated
+                ? L
+                : (inst_pending ? anchor + L : anchor + L + sample_gap_layers);
+            std::cout << "[fractions] phase=" << phase
+                      << " t=" << t
+                      << " z_max=" << z_max
+                      << " next_z=" << next_target
+                      << " collected=" << out.collected_samples << "/" << requested
+                      << " z_stab=" << out.z_stab
+                      << " anchor=" << anchor;
+            if (!p_curr.empty()) {
+                std::cout << " p=" << p_curr.front();
+            }
+            std::cout << std::endl;
+        };
+
+        auto compute_slab_2d = [&](const int bottom, const int top) -> SlabFractionResult {
+            if (top < bottom) return {};
+            const int h_count = top - bottom + 1;
+            const long long total_sites = static_cast<long long>(L) * h_count;
+            const long long total_bonds =
+                static_cast<long long>(L) * h_count +
+                static_cast<long long>(L) * std::max(0, h_count - 1);
+            long long active_sites = 0;
+            long long open_bonds_count = 0;
+            for (int y = bottom; y <= top; ++y) {
+                for (int x = 0; x < L; ++x) {
+                    if (get_site_2d(x, y) > 0) ++active_sites;
+                    if (!is_node) {
+                        if (is_open_bond_2d(x, y, (x + 1) % L, y)) {
+                            ++open_bonds_count;
+                        }
+                        if (y < top && is_open_bond_2d(x, y, x, y + 1)) {
+                            ++open_bonds_count;
+                        }
+                    }
+                }
+            }
+
+            std::vector<unsigned char> visited(
+                static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
+            std::vector<std::uint32_t> queue;
+            queue.reserve(static_cast<std::size_t>(L));
+            int largest = 0;
+            long long largest_edges = 0;
+            std::uint32_t largest_seed = std::numeric_limits<std::uint32_t>::max();
+            auto local_idx = [&](const int x, const int y) -> std::uint32_t {
+                return static_cast<std::uint32_t>(
+                    (y - bottom) * L + x);
+            };
+            auto can_traverse_2d = [&](const int x1, const int y1,
+                                       const int x2, const int y2) -> bool {
+                if (y2 < bottom || y2 > top) return false;
+                if (get_site_2d(x2, y2) <= 0) return false;
+                return is_node || is_open_bond_2d(x1, y1, x2, y2);
+            };
+
+            for (int y = bottom; y <= top; ++y) {
+                for (int x = 0; x < L; ++x) {
+                    const std::uint32_t seed = local_idx(x, y);
+                    if (visited[seed] || get_site_2d(x, y) <= 0) continue;
+
+                    int component = 0;
+                    long long component_edge_visits = 0;
+                    std::size_t head = 0;
+                    queue.clear();
+                    queue.push_back(seed);
+                    visited[seed] = 1u;
+
+                    while (head < queue.size()) {
+                        const std::uint32_t cur = queue[head++];
+                        const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
+                        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+                        ++component;
+
+                        const int nx_values[4] = {
+                            (cx + L - 1) % L,
+                            (cx + 1) % L,
+                            cx,
+                            cx
+                        };
+                        const int ny_values[4] = {
+                            cy,
+                            cy,
+                            cy - 1,
+                            cy + 1
+                        };
+                        for (int ni = 0; ni < 4; ++ni) {
+                            const int nx = nx_values[ni];
+                            const int ny = ny_values[ni];
+                            if (ny < bottom || ny > top) continue;
+                            if (get_site_2d(nx, ny) <= 0) continue;
+                            if (!is_node && !is_open_bond_2d(cx, cy, nx, ny)) continue;
+                            ++component_edge_visits;
+                            const std::uint32_t nidx = local_idx(nx, ny);
+                            if (visited[nidx]) continue;
+                            visited[nidx] = 1u;
+                            queue.push_back(nidx);
+                        }
+                    }
+
+                    if (component > largest) {
+                        largest = component;
+                        largest_edges = component_edge_visits / 2;
+                        largest_seed = seed;
+                    }
+                }
+            }
+
+            int shortest_path_edges = -1;
+            long long hull_length = 0;
+            std::vector<int> hole_sizes;
+            if (largest_seed != std::numeric_limits<std::uint32_t>::max()) {
+                std::vector<unsigned char> in_giant(
+                    static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
+                std::vector<std::uint32_t> bottom_sources;
+                bottom_sources.reserve(static_cast<std::size_t>(L));
+
+                std::size_t head = 0;
+                queue.clear();
+                queue.push_back(largest_seed);
+                in_giant[largest_seed] = 1u;
+                while (head < queue.size()) {
+                    const std::uint32_t cur = queue[head++];
+                    const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
+                    const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+                    if (cy == bottom) {
+                        bottom_sources.push_back(cur);
+                    }
+
+                    const int nx_values[4] = {
+                        (cx + L - 1) % L,
+                        (cx + 1) % L,
+                        cx,
+                        cx
+                    };
+                    const int ny_values[4] = {
+                        cy,
+                        cy,
+                        cy - 1,
+                        cy + 1
+                    };
+                    for (int ni = 0; ni < 4; ++ni) {
+                        const int nx = nx_values[ni];
+                        const int ny = ny_values[ni];
+                        if (!can_traverse_2d(cx, cy, nx, ny)) continue;
+                        const std::uint32_t nidx = local_idx(nx, ny);
+                        if (in_giant[nidx]) continue;
+                        in_giant[nidx] = 1u;
+                        queue.push_back(nidx);
+                    }
+                }
+
+                SlabHullHoleResult geometry =
+                    compute_cylindrical_slab_hull_holes_2d(L, h_count, in_giant);
+                hull_length = geometry.hull_length;
+                hole_sizes = std::move(geometry.hole_sizes);
+
+                if (!bottom_sources.empty()) {
+                    std::vector<unsigned char> reached(
+                        static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
+                    std::vector<std::uint32_t> current;
+                    std::vector<std::uint32_t> next;
+                    current.reserve(bottom_sources.size());
+                    next.reserve(bottom_sources.size());
+                    for (const std::uint32_t src : bottom_sources) {
+                        reached[src] = 1u;
+                        current.push_back(src);
+                    }
+
+                    int distance = 0;
+                    while (!current.empty() && shortest_path_edges < 0) {
+                        next.clear();
+                        for (const std::uint32_t cur : current) {
+                            const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
+                            const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+                            if (cy == top) {
+                                shortest_path_edges = distance;
+                                break;
+                            }
+
+                            const int nx_values[4] = {
+                                (cx + L - 1) % L,
+                                (cx + 1) % L,
+                                cx,
+                                cx
+                            };
+                            const int ny_values[4] = {
+                                cy,
+                                cy,
+                                cy - 1,
+                                cy + 1
+                            };
+                            for (int ni = 0; ni < 4; ++ni) {
+                                const int nx = nx_values[ni];
+                                const int ny = ny_values[ni];
+                                if (!can_traverse_2d(cx, cy, nx, ny)) continue;
+                                const std::uint32_t nidx = local_idx(nx, ny);
+                                if (!in_giant[nidx] || reached[nidx]) continue;
+                                reached[nidx] = 1u;
+                                next.push_back(nidx);
+                            }
+                        }
+                        current.swap(next);
+                        ++distance;
+                    }
+                }
+            }
+
+            return {
+                total_sites > 0 ? static_cast<double>(active_sites) / static_cast<double>(total_sites) : 0.0,
+                total_bonds > 0 ? static_cast<double>(open_bonds_count) / static_cast<double>(total_bonds) : 0.0,
+                largest,
+                largest_edges,
+                shortest_path_edges,
+                hull_length,
+                std::move(hole_sizes)
+            };
+        };
+
+        for (int t = 1; hard_max_steps <= 0 || t <= hard_max_steps; ++t) {
+            std::fill(N_current.begin(), N_current.end(), 0);
+            std::fill(f_current.begin(), f_current.end(), 0.0);
+            next_frontier.clear();
+
+            std::unordered_map<std::uint64_t, std::vector<DenseCandidate>, AbsSiteKeyHash> candidates;
+            candidates.reserve(frontier.size() * 2u + 16u);
+
+            for (const std::uint64_t key : frontier) {
+                int x = 0, y = 0;
+                decode_xy(key, x, y);
+                const int a_val = get_site_2d(x, y);
+                if (a_val <= 0) continue;
+                const int color = value_to_color_index(num_colors, a_val);
+                if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
+
+                const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
+                const int ny_values[4] = {y, y, y - 1, y + 1};
+                for (int ni = 0; ni < 4; ++ni) {
+                    const int nx = nx_values[ni];
+                    const int ny = ny_values[ni];
+                    if (ny < 0) continue;
+                    if (is_node) {
+                        const int vv = get_site_2d(nx, ny);
+                        if (vv >= 0) continue;
+                        candidates[encode_xy(nx, ny)].push_back(DenseCandidate{color, x, y});
+                    } else {
+                        if (!mark_tested_bond_2d(x, y, nx, ny)) continue;
+                        const int vv = get_site_2d(nx, ny);
+                        if (vv > 0) {
+                            if (rng.uniform_real(0.0, 1.0) <
+                                p_curr[static_cast<std::size_t>(color)]) {
+                                set_open_bond_2d(x, y, nx, ny);
+                            }
+                            continue;
+                        }
+                        if (vv == 0) continue;
+                        candidates[encode_xy(nx, ny)].push_back(DenseCandidate{color, x, y});
+                    }
+                }
+            }
+
+            for (const auto& kv : candidates) {
+                const auto& list = kv.second;
+                const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
+                const DenseCandidate chosen = list[static_cast<std::size_t>(pick)];
+                int x = 0, y = 0;
+                decode_xy(kv.first, x, y);
+                if (rng.uniform_real(0.0, 1.0) >=
+                    p_curr[static_cast<std::size_t>(chosen.color)]) {
+                    if (is_node) set_site_2d(x, y, 0);
+                    continue;
+                }
+
+                set_site_2d(x, y, color_to_active_value(num_colors, chosen.color));
+                if (!is_node) {
+                    set_open_bond_2d(chosen.x_from, chosen.y_from, x, y);
+                }
+                next_frontier.push_back(kv.first);
+                ++N_current[static_cast<std::size_t>(chosen.color)];
+                max_heights[static_cast<std::size_t>(chosen.color)] =
+                    std::max(max_heights[static_cast<std::size_t>(chosen.color)], y);
+            }
+
+            for (int color = 0; color < num_colors; ++color) {
+                f_current[static_cast<std::size_t>(color)] =
+                    static_cast<double>(N_current[static_cast<std::size_t>(color)]) / norm_factor;
+            }
+
+            if (!all_equilibrated) {
+                commit_equilibrium_step(t);
+                constexpr int teq_window_block = 10;
+                const double teq_rel_tol = growth_test_effective_rel_tol(
+                    stop_config.equilibrium_rel_tol, num_colors);
+                const int teq_min_stable_steps =
+                    growth_test_global_min_stable_steps(
+                        stop_config.equilibrium_consecutive_steps,
+                        teq_window_block);
+                const int teq_validation_window_steps =
+                    growth_test_global_validation_window_steps(
+                        stop_config.post_equilibrium_extra_steps,
+                        teq_window_block);
+
+                if (t % teq_window_block == 0) {
+                    for (int color = 0; color < num_colors; ++color) {
+                        if (died[static_cast<std::size_t>(color)] ||
+                            species_equilibrated[static_cast<std::size_t>(color)]) {
+                            continue;
+                        }
+                        if (max_heights[static_cast<std::size_t>(color)] < L) continue;
+                        const double t_eq = estimate_t_eq_from_series(
+                            t_list,
+                            p_series[static_cast<std::size_t>(color)],
+                            15,
+                            teq_window_block,
+                            teq_min_stable_steps,
+                            teq_rel_tol,
+                            stop_config.equilibrium_abs_tol,
+                            1.0e-5,
+                            false,
+                            0.0,
+                            teq_validation_window_steps,
+                            0u);
+                        if (std::isfinite(t_eq)) {
+                            species_equilibrated[static_cast<std::size_t>(color)] = true;
+                            out.t_eq_by_species[static_cast<std::size_t>(color)] = t_eq;
+                            out.z_stat_by_species[static_cast<std::size_t>(color)] =
+                                max_heights[static_cast<std::size_t>(color)];
+                        }
+                    }
+                }
+
+                bool any_alive = false;
+                all_equilibrated = true;
+                for (int color = 0; color < num_colors; ++color) {
+                    if (died[static_cast<std::size_t>(color)]) continue;
+                    any_alive = true;
+                    if (!species_equilibrated[static_cast<std::size_t>(color)]) {
+                        all_equilibrated = false;
+                    }
+                }
+                if (!any_alive) {
+                    out.stop_reason = "all_dead";
+                    out.stop_time = t;
+                    break;
+                }
+                if (all_equilibrated) {
+                    anchor = *std::max_element(out.z_stat_by_species.begin(),
+                                               out.z_stat_by_species.end());
+                    out.z_stab = anchor;
+                    std::cout << "[fractions] stabilized"
+                              << " t=" << t
+                              << " z_stab=" << out.z_stab
+                              << " next_inst_z=" << (anchor + L)
+                              << " gap_layers=" << sample_gap_layers
+                              << " requested=" << requested
+                              << std::endl;
+                    p_series.clear();
+                    t_list.clear();
+                }
+            } else {
+                const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
+                if (inst_pending && z_max >= anchor + L) {
+                    pending_inst = compute_slab_2d(anchor, anchor + L - 1);
+                    pending_t_inst = t;
+                    inst_pending = false;
+                    std::cout << "[fractions] inst_sample_ready"
+                              << " sample=" << (out.collected_samples + 1)
+                              << "/" << requested
+                              << " t=" << t
+                              << " window=[" << anchor << "," << (anchor + L - 1) << "]"
+                              << " next_stab_z=" << (anchor + L + sample_gap_layers)
+                              << " p_node=" << pending_inst.p_node
+                              << " p_bond=" << pending_inst.p_bond
+                              << " S=" << pending_inst.largest_component
+                              << " E=" << pending_inst.largest_component_edges
+                              << " SP=" << pending_inst.shortest_path_edges
+                              << std::endl;
+                }
+                if (!inst_pending && z_max >= anchor + L + sample_gap_layers) {
+                    const SlabFractionResult stab = compute_slab_2d(anchor, anchor + L - 1);
+                    out.p_inst_bond.push_back(pending_inst.p_bond);
+                    out.p_inst_node.push_back(pending_inst.p_node);
+                    out.S_inst.push_back(pending_inst.largest_component);
+                    out.E_inst.push_back(pending_inst.largest_component_edges);
+                    out.SP_inst.push_back(pending_inst.shortest_path_edges);
+                    out.p_stab_bond.push_back(stab.p_bond);
+                    out.p_stab_node.push_back(stab.p_node);
+                    out.S_stab.push_back(stab.largest_component);
+                    out.E_stab.push_back(stab.largest_component_edges);
+                    out.SP_stab.push_back(stab.shortest_path_edges);
+                    out.hull_length.push_back(stab.hull_length);
+                    out.hole_sizes.push_back(stab.hole_sizes);
+                    out.anchor_z.push_back(anchor);
+                    out.t_inst.push_back(pending_t_inst);
+                    out.t_stab.push_back(t);
+                    out.collected_samples = static_cast<int>(out.S_stab.size());
+                    std::cout << "[fractions] sample_collected"
+                              << " sample=" << out.collected_samples
+                              << "/" << requested
+                              << " t=" << t
+                              << " window=[" << anchor << "," << (anchor + L - 1) << "]"
+                              << " p_node=" << stab.p_node
+                              << " p_bond=" << stab.p_bond
+                              << " S=" << stab.largest_component
+                              << " E=" << stab.largest_component_edges
+                              << " SP=" << stab.shortest_path_edges
+                              << std::endl;
+
+                    anchor += L + sample_gap_layers;
+                    pending_inst = {};
+                    pending_t_inst = -1;
+                    inst_pending = true;
+                    if (out.collected_samples >= requested) {
+                        out.stop_reason = "requested_samples_collected";
+                        out.stop_time = t;
+                        break;
+                    }
+                }
+            }
+            print_progress_2d(
+                t,
+                !all_equilibrated ? "equilibrating"
+                                  : (inst_pending ? "waiting_inst" : "waiting_stab"));
+
+            std::vector<int> next_counts(static_cast<std::size_t>(num_colors), 0);
+            for (const std::uint64_t key : next_frontier) {
+                int x = 0, y = 0;
+                decode_xy(key, x, y);
+                const int v = get_site_2d(x, y);
+                if (v <= 0) continue;
+                const int color = value_to_color_index(num_colors, v);
+                if (color >= 0 && color < num_colors) {
+                    ++next_counts[static_cast<std::size_t>(color)];
+                }
+            }
+            for (int color = 0; color < num_colors; ++color) {
+                if (!died[static_cast<std::size_t>(color)] &&
+                    next_counts[static_cast<std::size_t>(color)] == 0) {
+                    died[static_cast<std::size_t>(color)] = true;
+                }
+            }
+            if (std::all_of(died.begin(), died.end(), [](const bool v) { return v; })) {
+                out.stop_reason = "all_dead";
+                out.stop_time = t;
+                break;
+            }
+
+            for (int color = 0; color < num_colors; ++color) {
+                p_next[static_cast<std::size_t>(color)] =
+                    died[static_cast<std::size_t>(color)]
+                        ? p_curr[static_cast<std::size_t>(color)]
+                        : generate_p(type_f_T,
+                                     p_curr[static_cast<std::size_t>(color)],
+                                     t,
+                                     f_current[static_cast<std::size_t>(color)],
+                                     c_value,
+                                     f_T,
+                                     a,
+                                     alpha);
+            }
+
+            frontier.swap(next_frontier);
+            p_curr.swap(p_next);
+        }
+
+        if (out.stop_time < 0 && hard_max_steps > 0) {
+            out.stop_time = hard_max_steps;
+            out.stop_reason = "hard_max_steps";
+        }
+        return out;
+    }
+
+    RawFractionsSeries out;
+    out.dim = dim;
+    out.L = L;
+    out.seed = rng.get_seed();
+    out.num_colors = num_colors;
+    out.requested_samples = requested;
+    if (dim == 2) {
+        out.N_total = static_cast<long long>(L) * static_cast<long long>(L);
+        out.E_total = 2LL * static_cast<long long>(L) * static_cast<long long>(L) -
+                      static_cast<long long>(L);
+    } else {
+        const long long LL = static_cast<long long>(L);
+        out.N_total = LL * LL * LL;
+        out.E_total = 3LL * LL * LL * LL - LL * LL;
+    }
+    out.sample_gap_layers = sample_gap_layers;
+    out.sample_gap_over_L = gap_over_L;
+    out.type_percolation = type_percolation;
+    out.rho = rho;
+    out.t_eq_by_species.assign(static_cast<std::size_t>(num_colors),
+                               std::numeric_limits<double>::quiet_NaN());
+    out.z_stat_by_species.assign(static_cast<std::size_t>(num_colors), -1);
+    out.stop_reason = "not_stopped";
+
+    std::unordered_map<std::uint64_t, std::int8_t, AbsSiteKeyHash> site_state;
+    site_state.reserve(static_cast<std::size_t>(base_size * 3));
+    std::unordered_set<AbsBondKey, AbsBondKeyHash> tested_bonds;
+    std::unordered_set<AbsBondKey, AbsBondKeyHash> open_bonds;
+    tested_bonds.reserve(static_cast<std::size_t>(base_size * 6));
+    open_bonds.reserve(static_cast<std::size_t>(base_size * 4));
+
+    auto get_site = [&](const std::uint64_t key) -> int {
+        const auto it = site_state.find(key);
+        return it == site_state.end() ? -1 : static_cast<int>(it->second);
+    };
+    auto set_site = [&](const std::uint64_t key, const int value) {
+        site_state[key] = static_cast<std::int8_t>(value);
+    };
+
+    std::vector<double> p_curr = p0;
+    std::vector<double> p_next(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<int> N_current(static_cast<std::size_t>(num_colors), 0);
+    std::vector<double> f_current(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<int> max_heights(static_cast<std::size_t>(num_colors), 0);
+    std::vector<std::uint64_t> frontier;
+    std::vector<std::uint64_t> next_frontier;
+    frontier.reserve(static_cast<std::size_t>(base_size));
+    next_frontier.reserve(static_cast<std::size_t>(base_size));
+
+    std::vector<std::vector<double>> p_series(static_cast<std::size_t>(num_colors));
+    std::vector<int> t_list;
+    t_list.reserve(4096);
+    auto commit_equilibrium_step = [&](const int t) {
+        t_list.push_back(t);
+        for (int c = 0; c < num_colors; ++c) {
+            p_series[static_cast<std::size_t>(c)].push_back(p_curr[static_cast<std::size_t>(c)]);
+        }
+    };
+
+    std::vector<int> seeds_quota(static_cast<std::size_t>(num_colors), 0);
+    for (int c = 0; c < num_colors; ++c) {
+        long long q = std::llround(P0 * rho[static_cast<std::size_t>(c)] * base_size);
+        q = std::max<long long>(0, std::min<long long>(q, base_size));
+        seeds_quota[static_cast<std::size_t>(c)] = static_cast<int>(q);
+    }
+
+    for (int color = 0; color < num_colors; ++color) {
+        const int active_val = color_to_active_value(num_colors, color);
+        auto activate_base_site = [&](const std::uint64_t key) -> bool {
+            const int v = get_site(key);
+            if (v != -1 && v != color_to_negative_value(num_colors, color)) return false;
+            set_site(key, active_val);
+            frontier.push_back(key);
+            ++N_current[static_cast<std::size_t>(color)];
+            return true;
+        };
+
+        if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
+            int activated = 0;
+            int tries = 0;
+            const int max_tries = static_cast<int>(base_size) * 20;
+            while (activated < seeds_quota[static_cast<std::size_t>(color)] &&
+                   tries < max_tries) {
+                const int x = rng.uniform_int(0, L - 1);
+                const int y = (dim == 3) ? rng.uniform_int(0, L - 1) : 0;
+                const std::uint64_t key = abs_site_key(x, y, 0);
+                if (activate_base_site(key)) ++activated;
+                ++tries;
+            }
+        } else {
+            const int quota = seeds_quota[static_cast<std::size_t>(color)];
+            int activated = 0;
+            if (dim == 2) {
+                for (int x = 0; x < L && activated < quota; ++x) {
+                    const bool belongs =
+                        stop_config.initial_base_layout == InitialBaseLayout::Alternating
+                            ? ((x % num_colors) == color)
+                            : (x >= (color * L) / num_colors &&
+                               x < ((color + 1) * L) / num_colors);
+                    if (belongs && activate_base_site(abs_site_key(x, 0, 0))) ++activated;
+                }
+            } else {
+                for (int y = 0; y < L && activated < quota; ++y) {
+                    for (int x = 0; x < L && activated < quota; ++x) {
+                        const bool belongs =
+                            stop_config.initial_base_layout == InitialBaseLayout::Alternating
+                                ? (((x + L * y) % num_colors) == color)
+                                : (((x + L * y) % num_colors) == color);
+                        if (belongs && activate_base_site(abs_site_key(x, y, 0))) ++activated;
+                    }
+                }
+            }
+        }
+    }
+
+    for (int c = 0; c < num_colors; ++c) {
+        f_current[static_cast<std::size_t>(c)] =
+            static_cast<double>(N_current[static_cast<std::size_t>(c)]) / norm_factor;
+    }
+    commit_equilibrium_step(0);
+
+    std::vector<bool> died(static_cast<std::size_t>(num_colors), false);
+    std::vector<bool> species_equilibrated(static_cast<std::size_t>(num_colors), false);
+    bool all_equilibrated = false;
+    int z_stab = -1;
+    int anchor = -1;
+    bool inst_pending = true;
+    SlabFractionResult pending_inst;
+    int pending_t_inst = -1;
+    auto print_progress_sparse = [&](const int t, const char* phase) {
+        if (progress_interval <= 0 || (t % progress_interval) != 0) return;
+        const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
+        const int next_target = !all_equilibrated
+            ? L
+            : (inst_pending ? anchor + L : anchor + L + sample_gap_layers);
+        std::cout << "[fractions] phase=" << phase
+                  << " t=" << t
+                  << " z_max=" << z_max
+                  << " next_z=" << next_target
+                  << " collected=" << out.collected_samples << "/" << requested
+                  << " z_stab=" << out.z_stab
+                  << " anchor=" << anchor;
+        if (!p_curr.empty()) {
+            std::cout << " p=" << p_curr.front();
+        }
+        std::cout << std::endl;
+    };
+
+    struct RawBondCandidate {
+        int color = 0;
+        AbsBondKey bond;
+    };
+
+    auto active_frontier_by_color = [&]() {
+        std::vector<int> counts(static_cast<std::size_t>(num_colors), 0);
+        for (const std::uint64_t key : next_frontier) {
+            const int v = get_site(key);
+            if (v <= 0) continue;
+            const int color = value_to_color_index(num_colors, v);
+            if (color >= 0 && color < num_colors) {
+                ++counts[static_cast<std::size_t>(color)];
+            }
+        }
+        return counts;
+    };
+
+    auto discard_below = [&](const int min_height_to_keep) {
+        for (auto it = site_state.begin(); it != site_state.end(); ) {
+            if (abs_grow_coord_from_key(it->first, dim) < min_height_to_keep) {
+                it = site_state.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        frontier.erase(
+            std::remove_if(frontier.begin(), frontier.end(),
+                           [&](const std::uint64_t key) {
+                               return abs_grow_coord_from_key(key, dim) < min_height_to_keep;
+                           }),
+            frontier.end());
+        next_frontier.erase(
+            std::remove_if(next_frontier.begin(), next_frontier.end(),
+                           [&](const std::uint64_t key) {
+                               return abs_grow_coord_from_key(key, dim) < min_height_to_keep;
+                           }),
+            next_frontier.end());
+
+        std::unordered_set<AbsBondKey, AbsBondKeyHash> kept_tested;
+        kept_tested.reserve(tested_bonds.size());
+        std::unordered_set<AbsBondKey, AbsBondKeyHash> kept_open;
+        kept_open.reserve(open_bonds.size());
+        for (const AbsBondKey& bond : tested_bonds) {
+            const int ha = abs_grow_coord_from_key(bond.a, dim);
+            const int hb = abs_grow_coord_from_key(bond.b, dim);
+            if (ha >= min_height_to_keep && hb >= min_height_to_keep) {
+                kept_tested.insert(bond);
+            }
+        }
+        for (const AbsBondKey& bond : open_bonds) {
+            const int ha = abs_grow_coord_from_key(bond.a, dim);
+            const int hb = abs_grow_coord_from_key(bond.b, dim);
+            if (ha >= min_height_to_keep && hb >= min_height_to_keep) {
+                kept_open.insert(bond);
+            }
+        }
+        for (const auto& kv : site_state) {
+            std::uint64_t neigh[6];
+            int nneigh = 0;
+            collect_abs_neighbors(dim, L, kv.first, neigh, nneigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const AbsBondKey bond = make_abs_bond_key(kv.first, neigh[ni]);
+                if (open_bonds.find(bond) != open_bonds.end()) {
+                    kept_tested.insert(bond);
+                    kept_open.insert(bond);
+                }
+            }
+        }
+        tested_bonds.swap(kept_tested);
+        open_bonds.swap(kept_open);
+    };
+
+    for (int t = 1; hard_max_steps <= 0 || t <= hard_max_steps; ++t) {
+        std::fill(N_current.begin(), N_current.end(), 0);
+        std::fill(f_current.begin(), f_current.end(), 0.0);
+        next_frontier.clear();
+
+        std::unordered_map<std::uint64_t, std::vector<FrontCandidate>, AbsSiteKeyHash> candidates;
+        std::unordered_map<std::uint64_t, std::vector<RawBondCandidate>, AbsSiteKeyHash> bond_candidates;
+        candidates.reserve(frontier.size() * 2u + 16u);
+        bond_candidates.reserve(frontier.size() * 2u + 16u);
+        std::uint64_t neigh[6];
+        int nneigh = 0;
+
+        if (is_node) {
+            for (const std::uint64_t idx : frontier) {
+                const int a_val = get_site(idx);
+                if (a_val <= 0) continue;
+                const int color = value_to_color_index(num_colors, a_val);
+                if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
+
+                collect_abs_neighbors(dim, L, idx, neigh, nneigh);
+                for (int ni = 0; ni < nneigh; ++ni) {
+                    const std::uint64_t target = neigh[ni];
+                    const int vv = get_site(target);
+                    if (vv >= 0) continue;
+                    candidates[target].push_back(FrontCandidate{0, color});
+                }
+            }
+
+            for (const auto& kv : candidates) {
+                const auto& list = kv.second;
+                const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
+                const int color = static_cast<int>(list[static_cast<std::size_t>(pick)].color_idx);
+                if (rng.uniform_real(0.0, 1.0) >= p_curr[static_cast<std::size_t>(color)]) {
+                    set_site(kv.first, 0);
+                    continue;
+                }
+                set_site(kv.first, color_to_active_value(num_colors, color));
+                next_frontier.push_back(kv.first);
+                ++N_current[static_cast<std::size_t>(color)];
+                max_heights[static_cast<std::size_t>(color)] =
+                    std::max(max_heights[static_cast<std::size_t>(color)],
+                             abs_grow_coord_from_key(kv.first, dim));
+            }
+        } else {
+            for (const std::uint64_t idx : frontier) {
+                const int a_val = get_site(idx);
+                if (a_val <= 0) continue;
+                const int color = value_to_color_index(num_colors, a_val);
+                if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
+
+                collect_abs_neighbors(dim, L, idx, neigh, nneigh);
+                for (int ni = 0; ni < nneigh; ++ni) {
+                    const std::uint64_t target = neigh[ni];
+                    const AbsBondKey bkey = make_abs_bond_key(idx, target);
+                    if (!tested_bonds.insert(bkey).second) continue;
+
+                    const int vv = get_site(target);
+                    if (vv > 0) {
+                        if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(color)]) {
+                            open_bonds.insert(bkey);
+                        }
+                        continue;
+                    }
+                    if (vv == 0) continue;
+                    bond_candidates[target].push_back(RawBondCandidate{color, bkey});
+                }
+            }
+
+            for (const auto& kv : bond_candidates) {
+                const auto& list = kv.second;
+                const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
+                const RawBondCandidate chosen = list[static_cast<std::size_t>(pick)];
+                const int color = chosen.color;
+                if (rng.uniform_real(0.0, 1.0) >= p_curr[static_cast<std::size_t>(color)]) {
+                    continue;
+                }
+                set_site(kv.first, color_to_active_value(num_colors, color));
+                open_bonds.insert(chosen.bond);
+                next_frontier.push_back(kv.first);
+                ++N_current[static_cast<std::size_t>(color)];
+                max_heights[static_cast<std::size_t>(color)] =
+                    std::max(max_heights[static_cast<std::size_t>(color)],
+                             abs_grow_coord_from_key(kv.first, dim));
+            }
+        }
+
+        for (int color = 0; color < num_colors; ++color) {
+            f_current[static_cast<std::size_t>(color)] =
+                static_cast<double>(N_current[static_cast<std::size_t>(color)]) / norm_factor;
+        }
+
+        if (!all_equilibrated) {
+            commit_equilibrium_step(t);
+            constexpr int teq_window_block = 10;
+            const double teq_rel_tol = growth_test_effective_rel_tol(
+                stop_config.equilibrium_rel_tol, num_colors);
+            const int teq_min_stable_steps =
+                growth_test_global_min_stable_steps(
+                    stop_config.equilibrium_consecutive_steps,
+                    teq_window_block);
+            const int teq_validation_window_steps =
+                growth_test_global_validation_window_steps(
+                    stop_config.post_equilibrium_extra_steps,
+                    teq_window_block);
+
+            if (t % teq_window_block == 0) {
+                for (int color = 0; color < num_colors; ++color) {
+                    if (died[static_cast<std::size_t>(color)] ||
+                        species_equilibrated[static_cast<std::size_t>(color)]) {
+                        continue;
+                    }
+                    if (max_heights[static_cast<std::size_t>(color)] < L) continue;
+
+                    const double t_eq = estimate_t_eq_from_series(
+                        t_list,
+                        p_series[static_cast<std::size_t>(color)],
+                        15,
+                        teq_window_block,
+                        teq_min_stable_steps,
+                        teq_rel_tol,
+                        stop_config.equilibrium_abs_tol,
+                        1.0e-5,
+                        false,
+                        0.0,
+                        teq_validation_window_steps,
+                        0u);
+                    if (std::isfinite(t_eq)) {
+                        species_equilibrated[static_cast<std::size_t>(color)] = true;
+                        out.t_eq_by_species[static_cast<std::size_t>(color)] = t_eq;
+                        out.z_stat_by_species[static_cast<std::size_t>(color)] =
+                            max_heights[static_cast<std::size_t>(color)];
+                    }
+                }
+            }
+
+            bool any_alive = false;
+            all_equilibrated = true;
+            for (int color = 0; color < num_colors; ++color) {
+                if (died[static_cast<std::size_t>(color)]) continue;
+                any_alive = true;
+                if (!species_equilibrated[static_cast<std::size_t>(color)]) {
+                    all_equilibrated = false;
+                }
+            }
+            if (!any_alive) {
+                out.stop_reason = "all_dead";
+                out.stop_time = t;
+                break;
+            }
+            if (all_equilibrated) {
+                z_stab = *std::max_element(out.z_stat_by_species.begin(),
+                                           out.z_stat_by_species.end());
+                out.z_stab = z_stab;
+                anchor = z_stab;
+                std::cout << "[fractions] stabilized"
+                          << " t=" << t
+                          << " z_stab=" << out.z_stab
+                          << " next_inst_z=" << (anchor + L)
+                          << " gap_layers=" << sample_gap_layers
+                          << " requested=" << requested
+                          << std::endl;
+                p_series.clear();
+                t_list.clear();
+            }
+        } else {
+            const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
+            if (inst_pending && z_max >= anchor + L) {
+                pending_inst = compute_abs_slab_fractions(
+                    dim, L, site_state, open_bonds, anchor, anchor + L - 1, is_node);
+                pending_t_inst = t;
+                inst_pending = false;
+                std::cout << "[fractions] inst_sample_ready"
+                          << " sample=" << (out.collected_samples + 1)
+                          << "/" << requested
+                          << " t=" << t
+                          << " window=[" << anchor << "," << (anchor + L - 1) << "]"
+                          << " next_stab_z=" << (anchor + L + sample_gap_layers)
+                          << " p_node=" << pending_inst.p_node
+                          << " p_bond=" << pending_inst.p_bond
+                          << " S=" << pending_inst.largest_component
+                          << " E=" << pending_inst.largest_component_edges
+                          << " SP=" << pending_inst.shortest_path_edges
+                          << std::endl;
+            }
+            if (!inst_pending && z_max >= anchor + L + sample_gap_layers) {
+                const SlabFractionResult stab = compute_abs_slab_fractions(
+                    dim, L, site_state, open_bonds, anchor, anchor + L - 1, is_node);
+
+                out.p_inst_bond.push_back(pending_inst.p_bond);
+                out.p_inst_node.push_back(pending_inst.p_node);
+                out.S_inst.push_back(pending_inst.largest_component);
+                out.E_inst.push_back(pending_inst.largest_component_edges);
+                out.SP_inst.push_back(pending_inst.shortest_path_edges);
+                out.p_stab_bond.push_back(stab.p_bond);
+                out.p_stab_node.push_back(stab.p_node);
+                out.S_stab.push_back(stab.largest_component);
+                out.E_stab.push_back(stab.largest_component_edges);
+                out.SP_stab.push_back(stab.shortest_path_edges);
+                out.hull_length.push_back(stab.hull_length);
+                out.hole_sizes.push_back(stab.hole_sizes);
+                out.anchor_z.push_back(anchor);
+                out.t_inst.push_back(pending_t_inst);
+                out.t_stab.push_back(t);
+                out.collected_samples = static_cast<int>(out.S_stab.size());
+                std::cout << "[fractions] sample_collected"
+                          << " sample=" << out.collected_samples
+                          << "/" << requested
+                          << " t=" << t
+                          << " window=[" << anchor << "," << (anchor + L - 1) << "]"
+                          << " p_node=" << stab.p_node
+                          << " p_bond=" << stab.p_bond
+                          << " S=" << stab.largest_component
+                          << " E=" << stab.largest_component_edges
+                          << " SP=" << stab.shortest_path_edges
+                          << std::endl;
+
+                const int next_anchor = anchor + L + sample_gap_layers;
+                discard_below(next_anchor);
+                anchor = next_anchor;
+                pending_inst = {};
+                pending_t_inst = -1;
+                inst_pending = true;
+
+                if (out.collected_samples >= requested) {
+                    out.stop_reason = "requested_samples_collected";
+                    out.stop_time = t;
+                    break;
+                }
+            }
+        }
+        print_progress_sparse(
+            t,
+            !all_equilibrated ? "equilibrating"
+                              : (inst_pending ? "waiting_inst" : "waiting_stab"));
+
+        const std::vector<int> next_counts = active_frontier_by_color();
+        for (int color = 0; color < num_colors; ++color) {
+            if (!died[static_cast<std::size_t>(color)] &&
+                next_counts[static_cast<std::size_t>(color)] == 0) {
+                died[static_cast<std::size_t>(color)] = true;
+            }
+        }
+        if (std::all_of(died.begin(), died.end(), [](const bool v) { return v; })) {
+            out.stop_reason = "all_dead";
+            out.stop_time = t;
+            break;
+        }
+
+        for (int color = 0; color < num_colors; ++color) {
+            p_next[static_cast<std::size_t>(color)] =
+                died[static_cast<std::size_t>(color)]
+                    ? p_curr[static_cast<std::size_t>(color)]
+                    : generate_p(type_f_T,
+                                 p_curr[static_cast<std::size_t>(color)],
+                                 t,
+                                 f_current[static_cast<std::size_t>(color)],
+                                 c_value,
+                                 f_T,
+                                 a,
+                                 alpha);
+        }
+
+        frontier.swap(next_frontier);
+        p_curr.swap(p_next);
+    }
+
+    if (out.stop_time < 0 && hard_max_steps > 0) {
+        out.stop_time = hard_max_steps;
+        out.stop_reason = "hard_max_steps";
+    }
+
+    return out;
 }
 
 NetworkPattern network::create_network(

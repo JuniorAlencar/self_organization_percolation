@@ -157,6 +157,41 @@ struct PercolationSeries {
     
 };
 
+struct RawFractionsSeries {
+    int dim = 0;
+    int L = 0;
+    int seed = -1;
+    int num_colors = 0;
+    int requested_samples = 0;
+    int collected_samples = 0;
+    long long N_total = 0;
+    long long E_total = 0;
+    int sample_gap_layers = -1;
+    double sample_gap_over_L = std::numeric_limits<double>::quiet_NaN();
+    int z_stab = -1;
+    int stop_time = -1;
+    std::string stop_reason;
+    std::string type_percolation;
+    std::vector<double> rho;
+    std::vector<double> t_eq_by_species;
+    std::vector<int> z_stat_by_species;
+    std::vector<double> p_inst_bond;
+    std::vector<double> p_inst_node;
+    std::vector<int> S_inst;
+    std::vector<long long> E_inst;
+    std::vector<int> SP_inst;
+    std::vector<double> p_stab_bond;
+    std::vector<double> p_stab_node;
+    std::vector<int> S_stab;
+    std::vector<long long> E_stab;
+    std::vector<int> SP_stab;
+    std::vector<long long> hull_length;
+    std::vector<std::vector<int>> hole_sizes;
+    std::vector<int> anchor_z;
+    std::vector<int> t_inst;
+    std::vector<int> t_stab;
+};
+
 // Compact network representation: Structure of Arrays (SoA) + CSR edges
 struct NetworkCompact {
     using index_t = uint32_t;

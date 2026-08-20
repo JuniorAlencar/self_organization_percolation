@@ -753,6 +753,101 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "}\n";
 }
 
+void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
+                                        const std::string& filename_json) const
+{
+    const std::filesystem::path out_path(filename_json);
+    if (!out_path.parent_path().empty()) {
+        std::filesystem::create_directories(out_path.parent_path());
+    }
+
+    std::ofstream ofs(filename_json);
+    if (!ofs) {
+        throw std::runtime_error(
+            std::string("[save_raw_fractions_json] nao abriu: ") + filename_json);
+    }
+
+    ofs << "{\n";
+    ofs << "  \"meta\": {\n";
+    ofs << "    \"mode\": \"raw_fractions\",\n";
+    ofs << "    \"dim\": " << fractions.dim << ",\n";
+    ofs << "    \"L\": " << fractions.L << ",\n";
+    ofs << "    \"seed\": " << fractions.seed << ",\n";
+    ofs << "    \"num_colors\": " << fractions.num_colors << ",\n";
+    ofs << "    \"type_percolation\": \"" << fractions.type_percolation << "\",\n";
+    ofs << "    \"requested_samples\": " << fractions.requested_samples << ",\n";
+    ofs << "    \"collected_samples\": " << fractions.collected_samples << ",\n";
+    ofs << "    \"N_total\": " << fractions.N_total << ",\n";
+    ofs << "    \"E_total\": " << fractions.E_total << ",\n";
+    ofs << "    \"sample_gap_layers\": " << fractions.sample_gap_layers << ",\n";
+    ofs << "    \"sample_gap_over_L\": ";
+    write_json_nullable_double(ofs, fractions.sample_gap_over_L);
+    ofs << ",\n";
+    ofs << "    \"z_stab\": " << fractions.z_stab << ",\n";
+    ofs << "    \"stop_time\": " << fractions.stop_time << ",\n";
+    ofs << "    \"stop_reason\": \"" << fractions.stop_reason << "\",\n";
+    ofs << "    \"rho\": ";
+    write_json_array(ofs, fractions.rho);
+    ofs << ",\n";
+    ofs << "    \"t_eq_by_species\": ";
+    write_json_nullable_double_array(ofs, fractions.t_eq_by_species);
+    ofs << ",\n";
+    ofs << "    \"z_stat_by_species\": ";
+    write_json_nullable_int_array(ofs, fractions.z_stat_by_species);
+    ofs << ",\n";
+    ofs << "    \"window_convention\": \"sample k uses slab [anchor_z[k], anchor_z[k]+L-1], exactly L layers; inst is measured when global height reaches anchor_z+L; stab is measured after sample_gap_layers extra layers, at anchor_z+L+sample_gap_layers; next anchor advances by L+sample_gap_layers\",\n";
+    ofs << "    \"memory_convention\": \"layers below the moving retained window are discarded after each completed sample\"\n";
+    ofs << "  },\n";
+    ofs << "  \"data\": {\n";
+    ofs << "    \"anchor_z\": ";
+    write_json_array(ofs, fractions.anchor_z);
+    ofs << ",\n";
+    ofs << "    \"t_inst\": ";
+    write_json_array(ofs, fractions.t_inst);
+    ofs << ",\n";
+    ofs << "    \"t_stab\": ";
+    write_json_array(ofs, fractions.t_stab);
+    ofs << ",\n";
+    ofs << "    \"p_inst_bond\": ";
+    write_json_array(ofs, fractions.p_inst_bond);
+    ofs << ",\n";
+    ofs << "    \"p_inst_node\": ";
+    write_json_array(ofs, fractions.p_inst_node);
+    ofs << ",\n";
+    ofs << "    \"S_inst\": ";
+    write_json_array(ofs, fractions.S_inst);
+    ofs << ",\n";
+    ofs << "    \"E_inst\": ";
+    write_json_array(ofs, fractions.E_inst);
+    ofs << ",\n";
+    ofs << "    \"SP_inst\": ";
+    write_json_array(ofs, fractions.SP_inst);
+    ofs << ",\n";
+    ofs << "    \"p_stab_bond\": ";
+    write_json_array(ofs, fractions.p_stab_bond);
+    ofs << ",\n";
+    ofs << "    \"p_stab_node\": ";
+    write_json_array(ofs, fractions.p_stab_node);
+    ofs << ",\n";
+    ofs << "    \"S_stab\": ";
+    write_json_array(ofs, fractions.S_stab);
+    ofs << ",\n";
+    ofs << "    \"E_stab\": ";
+    write_json_array(ofs, fractions.E_stab);
+    ofs << ",\n";
+    ofs << "    \"SP_stab\": ";
+    write_json_array(ofs, fractions.SP_stab);
+    ofs << ",\n";
+    ofs << "    \"hull_length\": ";
+    write_json_array(ofs, fractions.hull_length);
+    ofs << ",\n";
+    ofs << "    \"hole_sizes\": ";
+    write_json_int_matrix(ofs, fractions.hole_sizes);
+    ofs << "\n";
+    ofs << "  }\n";
+    ofs << "}\n";
+}
+
 void save_data::save_network_compact_bin(const NetworkCompact& net,
                                         const std::string& filename) const
 {

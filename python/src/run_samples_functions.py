@@ -25,12 +25,14 @@ def shell_data(
     mode: str = "sop",
     initial_layout: str = "random",
     surface_observables=False,
+    fraction_samples: int | None = None,
+    fraction_gap_over_L: float = 1.0,
 ):
     """
     Generate a shell script to run SOP multiple times.
 
     New SOP executable signature:
-        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables]
+        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [FractionSamples] [FractionGapOverL]
 
     The old inputs k and N_T were removed. The update rule is now:
         p_i(t+1) = p_i(t) + c * (f_T - f_i(t))
@@ -69,8 +71,16 @@ def shell_data(
     num_runs = int(num_runs)
 
     mode = str(mode).strip()
-    if mode not in ("sop", "growth_test"):
-        raise ValueError("mode must be 'sop' or 'growth_test'")
+    if mode not in ("sop", "growth_test", "fractions", "raw_fractions"):
+        raise ValueError("mode must be 'sop', 'growth_test', or 'fractions'")
+
+    if fraction_samples is not None:
+        fraction_samples = int(fraction_samples)
+        if fraction_samples <= 0:
+            raise ValueError("fraction_samples must be positive")
+    fraction_gap_over_L = float(fraction_gap_over_L)
+    if fraction_gap_over_L < 0:
+        raise ValueError("fraction_gap_over_L must be non-negative")
 
     if isinstance(properties, bool):
         properties = "true" if properties else "false"
@@ -122,9 +132,13 @@ Properties={properties}
 Mode="{mode}"
 InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
+FractionSamples={fraction_samples if fraction_samples is not None else 30}
+FractionGapOverL={fraction_gap_over_L}
 
 extra_args=()
-if [[ "$SurfaceObservables" != "false" ]]; then
+if [[ "$Mode" == "fractions" || "$Mode" == "raw_fractions" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$FractionSamples" "$FractionGapOverL")
+elif [[ "$SurfaceObservables" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
 elif [[ "$InitialLayout" != "random" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")
@@ -151,7 +165,7 @@ if ! command -v /usr/bin/time >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout SurfaceObservables
+export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout SurfaceObservables FractionSamples FractionGapOverL
 
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 if [[ "$TOTAL" -le 0 ]]; then
@@ -271,7 +285,9 @@ parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
   RUN={{2}}
   extra_args=()
-  if [[ "$SurfaceObservables" != "false" ]]; then
+  if [[ "$Mode" == "fractions" || "$Mode" == "raw_fractions" ]]; then
+    extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$FractionSamples" "$FractionGapOverL")
+  elif [[ "$SurfaceObservables" != "false" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
   elif [[ "$InitialLayout" != "random" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout")
@@ -310,9 +326,13 @@ Properties={properties}
 Mode="{mode}"
 InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
+FractionSamples={fraction_samples if fraction_samples is not None else 30}
+FractionGapOverL={fraction_gap_over_L}
 
 extra_args=()
-if [[ "$SurfaceObservables" != "false" ]]; then
+if [[ "$Mode" == "fractions" || "$Mode" == "raw_fractions" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$FractionSamples" "$FractionGapOverL")
+elif [[ "$SurfaceObservables" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
 elif [[ "$InitialLayout" != "random" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")
@@ -338,7 +358,13 @@ progress_bar() {{
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 DONE=0
 
-VERBOSE=${{VERBOSE:-0}}
+if [[ -z "${{VERBOSE+x}}" ]]; then
+  if [[ "$Mode" == "fractions" || "$Mode" == "raw_fractions" ]]; then
+    VERBOSE=1
+  else
+    VERBOSE=0
+  fi
+fi
 
 for ((run=1; run<=num_runs; run++)); do
   for idx in "${{!rho[@]}}"; do

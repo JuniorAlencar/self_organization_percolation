@@ -91,6 +91,24 @@ public:
         bool calculate_detailed_properties = false,
         GrowthStopConfig stop_config = GrowthStopConfig{});
 
+    RawFractionsSeries create_raw_fractions(
+        int dim,
+        int lenght_network,
+        int fraction_samples,
+        double c,
+        double f_T,
+        int type_f_T,
+        std::vector<double> p0,
+        double P0,
+        double a,
+        double alpha,
+        const std::string& type_percolation,
+        const int& num_colors,
+        const std::vector<double>& rho,
+        all_random& rng,
+        double sample_gap_over_L = 1.0,
+        GrowthStopConfig stop_config = GrowthStopConfig{});
+
     NetworkPattern filter_percolating_clusters_from_encoded(
         const NetworkPattern& encoded_net) const;
 

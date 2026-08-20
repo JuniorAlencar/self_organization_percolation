@@ -20,6 +20,7 @@
 #include <string>
 #include <optional>
 #include <algorithm>
+#include <filesystem>
 
 namespace rh = reanalysis_helpers;
 
@@ -84,7 +85,7 @@ int main(int argc, char* argv[]) {
 
     // Allow either zero-argument (use defaults) or full-argument run.
     // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15 && argc != 16) {
+    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15 && argc != 16 && argc != 17 && argc != 18) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -108,8 +109,10 @@ int main(int argc, char* argv[]) {
         std::string run_mode = "growth_test";
         std::string initial_layout = "random";
         bool save_surface_observables = false;
+        int fraction_samples = 30;
+        double sample_gap_over_L = 1.0;
         
-        if (argc == 12 || argc == 13 || argc == 14 || argc == 15 || argc == 16) {
+        if (argc == 12 || argc == 13 || argc == 14 || argc == 15 || argc == 16 || argc == 17 || argc == 18) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -134,11 +137,27 @@ int main(int argc, char* argv[]) {
             if (argc == 16) {
                 save_surface_observables = helpers::parse_bool(argv[15]);
             }
+            if (argc == 17) {
+                save_surface_observables = helpers::parse_bool(argv[15]);
+                fraction_samples = std::stoi(argv[16]);
+            }
+            if (argc == 18) {
+                save_surface_observables = helpers::parse_bool(argv[15]);
+                fraction_samples = std::stoi(argv[16]);
+                sample_gap_over_L = std::stod(argv[17]);
+            }
+        }
+        if (const char* env_m = std::getenv("SOP_FRACTION_SAMPLES")) {
+            fraction_samples = std::stoi(env_m);
+        }
+        if (const char* env_gap = std::getenv("SOP_FRACTION_GAP_OVER_L")) {
+            sample_gap_over_L = std::stod(env_gap);
         }
 
         const bool teste = (run_mode == "growth_test");
-        if (run_mode != "sop" && run_mode != "growth_test") {
-            std::cerr << "[ERROR] run mode must be 'sop' or 'growth_test'.\n";
+        const bool fractions_mode = (run_mode == "fractions" || run_mode == "raw_fractions");
+        if (run_mode != "sop" && run_mode != "growth_test" && !fractions_mode) {
+            std::cerr << "[ERROR] run mode must be 'sop', 'growth_test', or 'fractions'.\n";
             helpers::print_help(argv[0]);
             return 1;
         }
@@ -216,6 +235,68 @@ int main(int argc, char* argv[]) {
         //double alpha = 0.0;
         
         network net_generator(N_samples, num_colors);
+
+        if (fractions_mode) {
+            stop_config.height_multiplier = 1;
+            stop_config.dynamic_height = true;
+            stop_config.stop_at_percolation = false;
+            stop_config.stop_at_equilibrium = true;
+            stop_config.save_lateral_observables = false;
+            stop_config.save_surface_observables = false;
+            stop_config.equilibrium_consecutive_steps = 10;
+            stop_config.dynamics_window_steps = -1;
+
+            RawFractionsSeries fractions = net_generator.create_raw_fractions(
+                dim, L, fraction_samples, c, f_T, type_f_T,
+                p0, P0, a, alpha, type_percolation,
+                num_colors, rho, rng, sample_gap_over_L, stop_config);
+
+            std::filesystem::path fractions_dir =
+                std::filesystem::path("./SOP_data") /
+                "raw_fractions" /
+                (type_percolation + "_percolation") /
+                ("num_colors_" + std::to_string(num_colors)) /
+                ("dim_" + std::to_string(dim)) /
+                ("L_" + std::to_string(L));
+
+            char branch[512];
+            if (type_f_T == 0) {
+                std::snprintf(branch, sizeof(branch),
+                              "fT_constant/fT_%.6e/c_%.6e/rho_%.4e",
+                              f_T, c, rho_val);
+            } else {
+                std::snprintf(branch, sizeof(branch),
+                              "fT_variable/type_%d/a_%.2f/alpha_%.2f/c_%.6e/rho_%.4e",
+                              type_f_T, a, alpha, c, rho_val);
+            }
+            fractions_dir /= branch;
+            char gap_folder[64];
+            std::snprintf(gap_folder, sizeof(gap_folder),
+                          "gap_%.3fL", fractions.sample_gap_over_L);
+            fractions_dir /= gap_folder;
+
+            const std::string machine_name = helpers::get_machine_name();
+            const std::string timestamp_now = helpers::get_timestamp_now();
+            std::ostringstream base_name;
+            base_name << machine_name
+                      << "_seed_" << seed
+                      << "_ts_" << timestamp_now
+                      << "_P0_" << std::fixed << std::setprecision(2) << P0
+                      << "_p0_" << std::fixed << std::setprecision(2) << pp0;
+            if (initial_layout != "random") {
+                base_name << "_base_" << helpers::sanitize_for_filename(initial_layout);
+            }
+
+            save_data saver;
+            saver.save_raw_fractions_json(
+                fractions,
+                (fractions_dir / (base_name.str() + ".json")).string());
+            std::cout << "seed = " << seed << std::endl;
+            std::cout << "[INFO] raw_fractions samples collected: "
+                      << fractions.collected_samples << "/"
+                      << fractions.requested_samples << std::endl;
+            return 0;
+        }
 
         const bool build_full_network = return_encoded_network;
 

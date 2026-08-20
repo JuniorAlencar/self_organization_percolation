@@ -7,6 +7,7 @@ self="$(realpath "$0")"
 
 EXCLUDED_SCRIPTS=(
   "install_python_dependencies.sh"
+  "run_jobs_array.sh"
   "run_python.sh"
 )
 
@@ -54,6 +55,11 @@ RAM_LOG_DIR="${RAM_LOG_DIR:-.run_all_ram_logs}"
 # If GNU parallel is used by child scripts during probe, this wrapper tries to stop
 # after the first successful job. Set to 0 if your GNU parallel version rejects it.
 RUN_ALL_PROBE_ONE_PARALLEL_JOB="${RUN_ALL_PROBE_ONE_PARALLEL_JOB:-1}"
+
+# The new raw_fractions scripts can be long-running and may already contain their
+# own RAM benchmark when generated with multi=True. By default, run_all executes
+# them directly instead of doing a full extra probe first.
+RUN_ALL_AUTO_RAM_FRACTIONS="${RUN_ALL_AUTO_RAM_FRACTIONS:-0}"
 
 # Optional timeout for the probe, e.g. RAM_PROBE_TIMEOUT=20m. Use 0 to disable.
 RAM_PROBE_TIMEOUT="${RAM_PROBE_TIMEOUT:-0}"
@@ -268,7 +274,11 @@ setup_parallel_wrapper() {
 set -euo pipefail
 
 real_parallel="${RUN_ALL_REAL_PARALLEL:?RUN_ALL_REAL_PARALLEL is not set}"
-jobs="${RUN_ALL_JOBS:-1}"
+jobs="${RUN_ALL_JOBS:-}"
+
+if [[ "${RUN_ALL_PROBE:-0}" != "1" && -z "$jobs" ]]; then
+  exec "$real_parallel" "$@"
+fi
 
 args=()
 skip_next=0
@@ -309,7 +319,7 @@ done
 if [[ "${RUN_ALL_PROBE:-0}" == "1" && "${RUN_ALL_PROBE_ONE_PARALLEL_JOB:-1}" == "1" ]]; then
   exec "$real_parallel" --jobs 1 --halt soon,success=1 "${args[@]}"
 else
-  exec "$real_parallel" --jobs "$jobs" "${args[@]}"
+  exec "$real_parallel" --jobs "${jobs:-1}" "${args[@]}"
 fi
 WRAPPER_EOF
 
@@ -327,6 +337,11 @@ is_excluded_script() {
     [[ "$name" == "$excluded" ]] && return 0
   done
   return 1
+}
+
+is_fractions_script() {
+  local script="$1"
+  grep -Eq '^[[:space:]]*Mode="?((raw_)?fractions)"?' "$script" 2>/dev/null
 }
 
 run_script_measured() {
@@ -478,6 +493,9 @@ trap cleanup EXIT
 log "run_all.sh started"
 log "Working directory: $(pwd)"
 log "Script path: $self"
+if [[ "$#" -gt 0 ]]; then
+  log "Script filters: $*"
+fi
 
 apply_cpu_limit
 
@@ -495,7 +513,18 @@ else
 fi
 
 log "Scanning .sh files in current directory..."
-mapfile -t scripts < <(printf '%s\n' ./*.sh | sort -V)
+if [[ "$#" -gt 0 ]]; then
+  scripts=()
+  for pattern in "$@"; do
+    for candidate in $pattern; do
+      [[ -f "$candidate" ]] || continue
+      scripts+=("$candidate")
+    done
+  done
+  mapfile -t scripts < <(printf '%s\n' "${scripts[@]}" | sort -Vu)
+else
+  mapfile -t scripts < <(printf '%s\n' ./*.sh | sort -V)
+fi
 log "Found ${#scripts[@]} shell script(s)."
 
 ran_any=0
@@ -517,11 +546,15 @@ for f in "${scripts[@]}"; do
   ran_any=1
   log "------------------------------------------------------------"
 
-  if [[ "$AUTO_RAM_JOBS" -eq 1 ]]; then
+  if [[ "$AUTO_RAM_JOBS" -eq 1 ]] &&
+     { ! is_fractions_script "$f" || [[ "$RUN_ALL_AUTO_RAM_FRACTIONS" -eq 1 ]]; }; then
     if ! run_with_auto_ram_jobs "$f" "$base"; then
       failed_any=1
     fi
   else
+    if [[ "$AUTO_RAM_JOBS" -eq 1 ]] && is_fractions_script "$f"; then
+      log "Detected fractions script; skipping run_all RAM probe. Set RUN_ALL_AUTO_RAM_FRACTIONS=1 to force probing."
+    fi
     if ! run_without_auto_ram_jobs "$f" "$base"; then
       failed_any=1
     fi
@@ -530,6 +563,8 @@ done
 
 if [[ "$ran_any" -eq 0 ]]; then
   log "No runnable scripts found."
+  log "Generate job scripts first with: cd .. && python3 python/run_samples.py"
+  log "Then run this script again from shells/: ./run_all.sh"
 fi
 
 if [[ "$failed_any" -ne 0 ]]; then
