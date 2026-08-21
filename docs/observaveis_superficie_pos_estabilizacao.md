@@ -17,7 +17,7 @@ $$z_{stat} = \text{altura maxima da rede no equilibrio}.$$
 
 Depois disso, a rede continua crescendo ate:
 
-$$z_{stop} = z_{stat} + \lceil 1.5L \rceil.$$
+$$z_{stop} = z_{stat} + \lceil 2.5L \rceil.$$
 
 As propriedades de superficie e volume sao amostradas somente ate a regiao destacada:
 

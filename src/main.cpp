@@ -198,7 +198,7 @@ int main(int argc, char* argv[]) {
         std::vector<double> rho(num_colors, rho_val);
         std::vector<double> p0(num_colors, pp0);
 
-        int N_samples = 100000;
+        int N_samples = teste ? std::max(100000, 20 * L) : 100000;
         GrowthStopConfig stop_config;
         stop_config.initial_base_layout = initial_base_layout;
         if (teste) {
@@ -357,6 +357,16 @@ int main(int argc, char* argv[]) {
             try {
                 NetworkCompact fullc = convert_encoded_to_compact(net);
                 saver.save_network_compact_bin(fullc, net_compact_filename);
+                if (dynamic_growth_artifacts) {
+                    const std::string overlay_filename =
+                        network_dir + "/" + sample_base + "_animation_overlay.json";
+                    saver.save_animation_overlay_json(
+                        fullc,
+                        ps,
+                        dim,
+                        L,
+                        overlay_filename);
+                }
             } catch (const std::exception &e) {
                 std::cerr << "Warning: failed to save encoded compact network: "
                           << e.what() << '\n';
