@@ -2,6 +2,7 @@
 #include "equilibration_partition.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -462,7 +463,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 ofs << "    \"M_L_convention\": \"largest_connected_cluster_mass_spanning_from_z_stat_to_z_stat_plus_L_inside_post_equilibrium_slab_for_fractal_dimension\",\n";
                 ofs << "    \"M_cluster_sizes_convention\": \"all_connected_cluster_sizes_inside_post_equilibrium_slab_z_stat_to_z_stat_plus_L_sorted_descending\",\n";
                 ofs << "    \"growth_test_surface_sampling_height_increment\": \"L\",\n";
-                ofs << "    \"growth_test_post_equilibrium_stop_height_increment\": \"ceil(1.5L)\",\n";
+                ofs << "    \"growth_test_post_equilibrium_stop_height_increment\": \"ceil(2.5L)\",\n";
             }
             if (ps.dynamic_min_stop_height >= 0) {
                 ofs << "    \"growth_test_dynamic_min_stop_height\": "
@@ -764,6 +765,216 @@ void save_data::save_network_compact_bin(const NetworkCompact& net,
     if (!net.write_binary(filename)) {
         throw std::runtime_error("save_network_compact_bin: falha ao gravar " + filename);
     }
+}
+
+void save_data::save_animation_overlay_json(const NetworkCompact& net,
+                                            const PercolationSeries& ps,
+                                            const int dim,
+                                            const int L,
+                                            const std::string& filename) const
+{
+    if (L <= 0) {
+        throw std::runtime_error("save_animation_overlay_json: L invalido");
+    }
+    if (dim != 2 && dim != 3) {
+        throw std::runtime_error("save_animation_overlay_json: dim deve ser 2 ou 3");
+    }
+
+    const fs::path out_path(filename);
+    if (!out_path.parent_path().empty()) {
+        fs::create_directories(out_path.parent_path());
+    }
+
+    const std::size_t n_colors = std::max<std::size_t>(
+        ps.z_stat_by_species.size(),
+        ps.species_final_status.size());
+    const int layer_size = dim == 3 ? L * L : L;
+
+    auto z_of_pos = [layer_size](const NetworkCompact::index_t pos_flat) -> int {
+        return static_cast<int>(pos_flat / static_cast<NetworkCompact::index_t>(layer_size));
+    };
+
+    auto compute_for_color = [&](const int color_idx,
+                                 std::vector<NetworkCompact::index_t>& component_positions,
+                                 std::vector<NetworkCompact::index_t>& path_positions,
+                                 bool& spans_window) {
+        component_positions.clear();
+        path_positions.clear();
+        spans_window = false;
+
+        if (color_idx < 0 ||
+            color_idx >= static_cast<int>(ps.z_stat_by_species.size())) {
+            return;
+        }
+
+        const int z_bottom = ps.z_stat_by_species[static_cast<std::size_t>(color_idx)];
+        if (z_bottom < 0) return;
+        const int z_top = z_bottom + L;
+        const uint8_t species_value = static_cast<uint8_t>(color_idx + 1);
+
+        std::vector<uint8_t> in_slab(static_cast<std::size_t>(net.N), 0);
+        std::vector<uint8_t> visited(static_cast<std::size_t>(net.N), 0);
+        std::vector<NetworkCompact::index_t> slab_nodes;
+
+        for (NetworkCompact::index_t node = 0; node < net.N; ++node) {
+            if (net.species[static_cast<std::size_t>(node)] != species_value) continue;
+            const int z = z_of_pos(net.pos_flat[static_cast<std::size_t>(node)]);
+            if (z < z_bottom || z > z_top) continue;
+            in_slab[static_cast<std::size_t>(node)] = 1;
+            slab_nodes.push_back(node);
+        }
+
+        std::vector<NetworkCompact::index_t> best_nodes;
+        bool best_spans = false;
+        std::deque<NetworkCompact::index_t> queue;
+        std::vector<NetworkCompact::index_t> current;
+
+        for (const NetworkCompact::index_t seed : slab_nodes) {
+            if (visited[static_cast<std::size_t>(seed)]) continue;
+
+            current.clear();
+            bool touches_bottom = false;
+            bool touches_top = false;
+            visited[static_cast<std::size_t>(seed)] = 1;
+            queue.push_back(seed);
+
+            while (!queue.empty()) {
+                const NetworkCompact::index_t u = queue.front();
+                queue.pop_front();
+                current.push_back(u);
+
+                const int z = z_of_pos(net.pos_flat[static_cast<std::size_t>(u)]);
+                touches_bottom = touches_bottom || (z == z_bottom);
+                touches_top = touches_top || (z == z_top);
+
+                const NetworkCompact::index_t nb = net.neighbors_start(u);
+                const NetworkCompact::index_t ne = net.neighbors_end(u);
+                for (NetworkCompact::index_t ei = nb; ei < ne; ++ei) {
+                    const NetworkCompact::index_t v =
+                        net.edges[static_cast<std::size_t>(ei)];
+                    if (v >= net.N) continue;
+                    if (!in_slab[static_cast<std::size_t>(v)] ||
+                        visited[static_cast<std::size_t>(v)]) {
+                        continue;
+                    }
+                    visited[static_cast<std::size_t>(v)] = 1;
+                    queue.push_back(v);
+                }
+            }
+
+            const bool current_spans = touches_bottom && touches_top;
+            if ((current_spans && !best_spans) ||
+                (current_spans == best_spans && current.size() > best_nodes.size())) {
+                best_spans = current_spans;
+                best_nodes = current;
+            }
+        }
+
+        if (best_nodes.empty()) return;
+        spans_window = best_spans;
+        component_positions.reserve(best_nodes.size());
+        std::vector<uint8_t> in_best(static_cast<std::size_t>(net.N), 0);
+        for (const NetworkCompact::index_t node : best_nodes) {
+            in_best[static_cast<std::size_t>(node)] = 1;
+            component_positions.push_back(net.pos_flat[static_cast<std::size_t>(node)]);
+        }
+        std::sort(component_positions.begin(), component_positions.end());
+
+        std::vector<NetworkCompact::index_t> parent(
+            static_cast<std::size_t>(net.N),
+            std::numeric_limits<NetworkCompact::index_t>::max());
+        std::deque<NetworkCompact::index_t> bfs;
+        NetworkCompact::index_t target =
+            std::numeric_limits<NetworkCompact::index_t>::max();
+
+        for (const NetworkCompact::index_t node : best_nodes) {
+            const int z = z_of_pos(net.pos_flat[static_cast<std::size_t>(node)]);
+            if (z != z_bottom) continue;
+            parent[static_cast<std::size_t>(node)] = node;
+            bfs.push_back(node);
+        }
+
+        while (!bfs.empty() &&
+               target == std::numeric_limits<NetworkCompact::index_t>::max()) {
+            const NetworkCompact::index_t u = bfs.front();
+            bfs.pop_front();
+            const int z = z_of_pos(net.pos_flat[static_cast<std::size_t>(u)]);
+            if (z == z_top) {
+                target = u;
+                break;
+            }
+
+            const NetworkCompact::index_t nb = net.neighbors_start(u);
+            const NetworkCompact::index_t ne = net.neighbors_end(u);
+            for (NetworkCompact::index_t ei = nb; ei < ne; ++ei) {
+                const NetworkCompact::index_t v =
+                    net.edges[static_cast<std::size_t>(ei)];
+                if (v >= net.N) continue;
+                if (!in_best[static_cast<std::size_t>(v)] ||
+                    parent[static_cast<std::size_t>(v)] !=
+                        std::numeric_limits<NetworkCompact::index_t>::max()) {
+                    continue;
+                }
+                parent[static_cast<std::size_t>(v)] = u;
+                bfs.push_back(v);
+            }
+        }
+
+        if (target == std::numeric_limits<NetworkCompact::index_t>::max()) return;
+
+        std::vector<NetworkCompact::index_t> path_nodes;
+        for (NetworkCompact::index_t cur = target;; cur = parent[static_cast<std::size_t>(cur)]) {
+            path_nodes.push_back(cur);
+            if (parent[static_cast<std::size_t>(cur)] == cur) break;
+        }
+        std::reverse(path_nodes.begin(), path_nodes.end());
+        path_positions.reserve(path_nodes.size());
+        for (const NetworkCompact::index_t node : path_nodes) {
+            path_positions.push_back(net.pos_flat[static_cast<std::size_t>(node)]);
+        }
+    };
+
+    std::ofstream ofs(out_path);
+    if (!ofs) {
+        throw std::runtime_error("save_animation_overlay_json: falha ao abrir " + filename);
+    }
+
+    ofs << "{\n";
+    ofs << "  \"format\": \"sop_animation_overlay_v1\",\n";
+    ofs << "  \"dim\": " << dim << ",\n";
+    ofs << "  \"L\": " << L << ",\n";
+    ofs << "  \"layers\": \"z_stab,z_stab_plus_L,z_stab_plus_2_5L\",\n";
+    ofs << "  \"by_color\": [\n";
+
+    for (std::size_t c = 0; c < n_colors; ++c) {
+        std::vector<NetworkCompact::index_t> component_positions;
+        std::vector<NetworkCompact::index_t> path_positions;
+        bool spans_window = false;
+        compute_for_color(static_cast<int>(c), component_positions, path_positions, spans_window);
+
+        const int z_stat = c < ps.z_stat_by_species.size()
+            ? ps.z_stat_by_species[c]
+            : -1;
+        ofs << "    {\n";
+        ofs << "      \"color_index\": " << c << ",\n";
+        ofs << "      \"species_value\": " << (c + 1) << ",\n";
+        ofs << "      \"z_stab\": " << z_stat << ",\n";
+        ofs << "      \"z_stab_plus_L\": " << (z_stat >= 0 ? z_stat + L : -1) << ",\n";
+        ofs << "      \"z_stab_plus_2_5L\": " << (z_stat >= 0 ? z_stat + (5 * L + 1) / 2 : -1) << ",\n";
+        ofs << "      \"spans_window\": " << (spans_window ? "true" : "false") << ",\n";
+        ofs << "      \"giant_component_pos_flat\": ";
+        write_json_array(ofs, component_positions);
+        ofs << ",\n";
+        ofs << "      \"shortest_path_pos_flat\": ";
+        write_json_array(ofs, path_positions);
+        ofs << "\n";
+        ofs << "    }";
+        if (c + 1 < n_colors) ofs << ",";
+        ofs << "\n";
+    }
+
+    ofs << "  ]\n";
+    ofs << "}\n";
 }
 
 void save_data::save_lateral_observables_csv(

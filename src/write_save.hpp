@@ -39,6 +39,12 @@ public:
     void save_network_compact_bin(const NetworkCompact& net,
                                   const std::string& filename) const;
 
+    void save_animation_overlay_json(const NetworkCompact& net,
+                                     const PercolationSeries& ps,
+                                     int dim,
+                                     int L,
+                                     const std::string& filename) const;
+
     void save_lateral_observables_csv(
         const std::string& output_dir,
         const std::string& sample_id,

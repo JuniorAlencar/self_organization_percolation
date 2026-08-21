@@ -2265,7 +2265,7 @@ NetworkPattern network::create_network(
     const int post_equilibrium_sampling_height_increment =
         std::max(1, lenght_network);
     const int post_equilibrium_height_increment =
-        (3 * std::max(1, lenght_network) + 1) / 2;
+        (5 * std::max(1, lenght_network) + 1) / 2;
     std::vector<int> equilibrium_detection_time_by_species(
         static_cast<std::size_t>(num_colors), -1);
     std::vector<int> post_equilibrium_sampling_stop_height_by_species(
@@ -3422,7 +3422,7 @@ NetworkPattern network::animate_network(
     const int post_equilibrium_sampling_height_increment =
         std::max(1, lenght_network);
     const int post_equilibrium_height_increment =
-        (3 * std::max(1, lenght_network) + 1) / 2;
+        (5 * std::max(1, lenght_network) + 1) / 2;
     std::vector<int> equilibrium_detection_time_by_species(
         static_cast<std::size_t>(num_colors), -1);
     std::vector<int> post_equilibrium_sampling_stop_height_by_species(
@@ -3862,12 +3862,10 @@ NetworkPattern network::animate_network(
                     z_max_at_perc[cor_idx] = max_heights[cor_idx];
                 }
 
-                if (calculate_detailed_properties) {
-                    edge_pairs.emplace_back(static_cast<uint32_t>(chosen.activator),
-                                            static_cast<uint32_t>(viz));
-                    edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                            static_cast<uint32_t>(chosen.activator));
-                }
+                edge_pairs.emplace_back(static_cast<uint32_t>(chosen.activator),
+                                        static_cast<uint32_t>(viz));
+                edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                        static_cast<uint32_t>(chosen.activator));
             }
         } else {
             // Same activation logic used by create_network for bond/SOP.
@@ -3897,20 +3895,16 @@ NetworkPattern network::animate_network(
                     }
 
                     if (vv > 0) {
-                        if (!calculate_detailed_properties) continue;
-
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
 
                         if (!mark_tested_bond(edge_bit)) continue;
 
                         if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
-                            if (calculate_detailed_properties) {
-                                edge_pairs.emplace_back(static_cast<uint32_t>(idx),
-                                                        static_cast<uint32_t>(viz_idx));
-                                edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
-                                                        static_cast<uint32_t>(idx));
-                            }
+                            edge_pairs.emplace_back(static_cast<uint32_t>(idx),
+                                                    static_cast<uint32_t>(viz_idx));
+                            edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
+                                                    static_cast<uint32_t>(idx));
                         }
                         continue;
                     }
@@ -4000,23 +3994,19 @@ NetworkPattern network::animate_network(
                     for (int i = 0; i < n_cand; ++i) {
                         const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
-                        if (calculate_detailed_properties) {
-                            edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
-                                                    static_cast<uint32_t>(viz));
-                            edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                                    static_cast<uint32_t>(fc.activator));
-                        }
+                        edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
+                                                static_cast<uint32_t>(viz));
+                        edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                                static_cast<uint32_t>(fc.activator));
                     }
                 } else {
                     for (int i = 0; i < n_cand; ++i) {
                         const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
-                        if (calculate_detailed_properties) {
-                            edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
-                                                    static_cast<uint32_t>(viz));
-                            edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                                    static_cast<uint32_t>(fc.activator));
-                        }
+                        edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
+                                                static_cast<uint32_t>(viz));
+                        edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                                static_cast<uint32_t>(fc.activator));
                     }
                 }
             }
