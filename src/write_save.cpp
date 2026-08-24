@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -60,6 +61,34 @@ void write_json_int_matrix(std::ostream& os,
     os << "[";
     for (size_t i = 0; i < rows.size(); ++i) {
         write_json_array(os, rows[i]);
+        if (i + 1 < rows.size()) os << ", ";
+    }
+    os << "]";
+}
+
+void write_json_int_matrix(std::ostream& os,
+                           const std::vector<std::vector<long long>>& rows)
+{
+    os << "[";
+    for (size_t i = 0; i < rows.size(); ++i) {
+        write_json_array(os, rows[i]);
+        if (i + 1 < rows.size()) os << ", ";
+    }
+    os << "]";
+}
+
+void write_json_count_maps(std::ostream& os,
+                           const std::vector<std::map<long long, long long>>& rows)
+{
+    os << "[";
+    for (size_t i = 0; i < rows.size(); ++i) {
+        os << "{";
+        size_t j = 0;
+        for (const auto& kv : rows[i]) {
+            os << "\"" << kv.first << "\": " << kv.second;
+            if (++j < rows[i].size()) os << ", ";
+        }
+        os << "}";
         if (i + 1 < rows.size()) os << ", ";
     }
     os << "]";
@@ -779,6 +808,10 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     ofs << "    \"collected_samples\": " << fractions.collected_samples << ",\n";
     ofs << "    \"N_total\": " << fractions.N_total << ",\n";
     ofs << "    \"E_total\": " << fractions.E_total << ",\n";
+    ofs << "    \"sample_stability_layers\": " << fractions.sample_stability_layers << ",\n";
+    ofs << "    \"sample_stability_over_L\": ";
+    write_json_nullable_double(ofs, fractions.sample_stability_over_L);
+    ofs << ",\n";
     ofs << "    \"sample_gap_layers\": " << fractions.sample_gap_layers << ",\n";
     ofs << "    \"sample_gap_over_L\": ";
     write_json_nullable_double(ofs, fractions.sample_gap_over_L);
@@ -795,7 +828,8 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     ofs << "    \"z_stat_by_species\": ";
     write_json_nullable_int_array(ofs, fractions.z_stat_by_species);
     ofs << ",\n";
-    ofs << "    \"window_convention\": \"sample k uses slab [anchor_z[k], anchor_z[k]+L-1], exactly L layers; inst is measured when global height reaches anchor_z+L; stab is measured after sample_gap_layers extra layers, at anchor_z+L+sample_gap_layers; next anchor advances by L+sample_gap_layers\",\n";
+    ofs << "    \"window_convention\": \"sample k uses slab [anchor_z[k], anchor_z[k]+L-1], exactly L layers; inst is measured when global height reaches anchor_z+L; stab remeasures the same slab after sample_stability_layers extra layers, at anchor_z+L+sample_stability_layers; next anchor advances by L+sample_gap_layers\",\n";
+    ofs << "    \"hull_convention\": \"hull_length counts the full lattice boundary of the giant component: edges in 2D or faces in 3D between the component and its complement, including internal holes/cavities/fjords and top/bottom window boundary facets; external_perimeter_length counts only boundary elements adjacent to the exterior complement; hole_size_counts stores enclosed void area/volume histograms per sample as {size: count}\",\n";
     ofs << "    \"memory_convention\": \"layers below the moving retained window are discarded after each completed sample\"\n";
     ofs << "  },\n";
     ofs << "  \"data\": {\n";
@@ -841,8 +875,11 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     ofs << "    \"hull_length\": ";
     write_json_array(ofs, fractions.hull_length);
     ofs << ",\n";
-    ofs << "    \"hole_sizes\": ";
-    write_json_int_matrix(ofs, fractions.hole_sizes);
+    ofs << "    \"external_perimeter_length\": ";
+    write_json_array(ofs, fractions.external_perimeter_length);
+    ofs << ",\n";
+    ofs << "    \"hole_size_counts\": ";
+    write_json_count_maps(ofs, fractions.hole_size_counts);
     ofs << "\n";
     ofs << "  }\n";
     ofs << "}\n";
