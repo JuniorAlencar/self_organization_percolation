@@ -8,6 +8,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
@@ -166,6 +167,8 @@ struct RawFractionsSeries {
     int collected_samples = 0;
     long long N_total = 0;
     long long E_total = 0;
+    int sample_stability_layers = -1;
+    double sample_stability_over_L = std::numeric_limits<double>::quiet_NaN();
     int sample_gap_layers = -1;
     double sample_gap_over_L = std::numeric_limits<double>::quiet_NaN();
     int z_stab = -1;
@@ -186,7 +189,8 @@ struct RawFractionsSeries {
     std::vector<long long> E_stab;
     std::vector<int> SP_stab;
     std::vector<long long> hull_length;
-    std::vector<std::vector<int>> hole_sizes;
+    std::vector<long long> external_perimeter_length;
+    std::vector<std::map<long long, long long>> hole_size_counts;
     std::vector<int> anchor_z;
     std::vector<int> t_inst;
     std::vector<int> t_stab;

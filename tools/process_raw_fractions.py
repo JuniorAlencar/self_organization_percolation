@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-FRACTIONS_PROCESSING_VERSION = 3
+FRACTIONS_PROCESSING_VERSION = 7
 
 FILENAME_TAG_RE = re.compile(
     r"_P0_(?P<P0>[^_]+)_p0_(?P<p0>[^_.]+(?:\.[^_.]+)?)"
@@ -27,12 +27,21 @@ PARAM_META_KEYS = (
     "type_percolation",
     "N_total",
     "E_total",
+    "sample_stability_layers",
+    "sample_stability_over_L",
     "sample_gap_layers",
     "sample_gap_over_L",
     "rho",
     "window_convention",
+    "hull_convention",
     "memory_convention",
 )
+
+OPTIONAL_BACKCOMPAT_META_KEYS = {
+    "sample_stability_layers",
+    "sample_stability_over_L",
+    "hull_convention",
+}
 
 FRACTION_DATA_KEYS = (
     "anchor_z",
@@ -49,7 +58,8 @@ FRACTION_DATA_KEYS = (
     "E_stab",
     "SP_stab",
     "hull_length",
-    "hole_sizes",
+    "external_perimeter_length",
+    "hole_size_counts",
 )
 
 
@@ -174,6 +184,11 @@ def validate_parameter_meta(
 ) -> list[str]:
     mismatches = []
     for key in PARAM_META_KEYS:
+        if (
+            key in OPTIONAL_BACKCOMPAT_META_KEYS
+            and (key not in first_meta or key not in next_meta)
+        ):
+            continue
         if first_meta.get(key) != next_meta.get(key):
             mismatches.append(key)
     if mismatches and strict:
@@ -190,6 +205,29 @@ def normalize_sample_list(value: list[Any], n_samples: int) -> list[Any]:
     return value + [None] * (n_samples - len(value))
 
 
+def hole_list_to_count_map(value: Any) -> dict[str, int] | None:
+    if isinstance(value, dict):
+        out: dict[str, int] = {}
+        for key, count in value.items():
+            try:
+                normalized_key = str(int(key))
+                normalized_count = int(count)
+            except (TypeError, ValueError):
+                continue
+            if normalized_count > 0:
+                out[normalized_key] = out.get(normalized_key, 0) + normalized_count
+        return dict(sorted(out.items(), key=lambda item: int(item[0])))
+    if not isinstance(value, list):
+        return None
+    counts: Counter[int] = Counter()
+    for item in value:
+        try:
+            counts[int(item)] += 1
+        except (TypeError, ValueError):
+            continue
+    return {str(size): counts[size] for size in sorted(counts)}
+
+
 def concatenate_fraction_data(
     data_out: dict[str, list[Any]],
     data_in: dict[str, Any],
@@ -198,12 +236,28 @@ def concatenate_fraction_data(
     total_samples_so_far: int,
 ) -> int:
     list_values: dict[str, list[Any]] = {}
+    raw_hole_sizes: list[Any] | None = None
     for key, value in data_in.items():
         if not isinstance(value, list):
             if strict:
                 raise ValueError(f"{path}: data.{key} is not a list")
             continue
+        if key == "hole_sizes":
+            raw_hole_sizes = value
+            continue
+        if key == "hole_size_counts":
+            list_values[key] = [
+                hole_list_to_count_map(item) or {}
+                for item in value
+            ]
+            continue
         list_values[key] = value
+
+    if "hole_size_counts" not in list_values and raw_hole_sizes is not None:
+        list_values["hole_size_counts"] = [
+            hole_list_to_count_map(item) or {}
+            for item in raw_hole_sizes
+        ]
 
     if not list_values:
         return 0
@@ -258,6 +312,9 @@ def build_published_fractions_bundle(
         data = payload.get("data", {})
         for key in validate_parameter_meta(first_meta, meta, path, strict):
             inconsistent_meta[key] += 1
+        for key in OPTIONAL_BACKCOMPAT_META_KEYS:
+            if key not in first_param_meta and key in meta:
+                first_param_meta[key] = meta.get(key)
 
         n_samples = concatenate_fraction_data(
             data_out=data_out,

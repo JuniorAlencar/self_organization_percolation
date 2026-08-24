@@ -11,6 +11,7 @@
 #include <sstream>
 #include <random>
 #include <array>
+#include <map>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -1852,12 +1853,14 @@ struct SlabFractionResult {
     long long largest_component_edges = 0;
     int shortest_path_edges = -1;
     long long hull_length = 0;
-    std::vector<int> hole_sizes;
+    long long external_perimeter_length = 0;
+    std::map<long long, long long> hole_size_counts;
 };
 
 struct SlabHullHoleResult {
     long long hull_length = 0;
-    std::vector<int> hole_sizes;
+    long long external_perimeter_length = 0;
+    std::map<long long, long long> hole_size_counts;
 };
 
 SlabHullHoleResult compute_cylindrical_slab_hull_holes_2d(
@@ -1913,7 +1916,7 @@ SlabHullHoleResult compute_cylindrical_slab_hull_holes_2d(
             const std::uint32_t seed = idx(x, y);
             if (in_giant[seed] || exterior[seed] || seen[seed]) continue;
 
-            int area = 0;
+            long long area = 0;
             bool wraps_periodic_x = false;
             seen[seed] = 1u;
             queue.clear();
@@ -1942,7 +1945,7 @@ SlabHullHoleResult compute_cylindrical_slab_hull_holes_2d(
             }
 
             if (!wraps_periodic_x) {
-                result.hole_sizes.push_back(area);
+                ++result.hole_size_counts[area];
             }
         }
     }
@@ -1958,15 +1961,196 @@ SlabHullHoleResult compute_cylindrical_slab_hull_holes_2d(
                 const int ny = ny_values[ni];
                 if (ny < 0 || ny >= height) {
                     ++result.hull_length;
+                    ++result.external_perimeter_length;
                     continue;
                 }
                 const std::uint32_t nidx = idx(nx_values[ni], ny);
-                if (exterior[nidx]) ++result.hull_length;
+                if (!in_giant[nidx]) {
+                    ++result.hull_length;
+                    if (exterior[nidx]) {
+                        ++result.external_perimeter_length;
+                    }
+                }
             }
         }
     }
 
-    std::sort(result.hole_sizes.begin(), result.hole_sizes.end());
+    return result;
+}
+
+SlabHullHoleResult compute_abs_slab_hull_holes(
+    const int dim,
+    const int L,
+    const int bottom,
+    const int top,
+    const std::unordered_set<std::uint64_t, AbsSiteKeyHash>& in_giant)
+{
+    SlabHullHoleResult result;
+    if ((dim != 2 && dim != 3) || L <= 0 || top < bottom || in_giant.empty()) {
+        return result;
+    }
+
+    auto in_bounds = [&](const int x, const int y, const int z) -> bool {
+        if (x < 0 || x >= L) return false;
+        if (dim == 2) return y >= bottom && y <= top && z == 0;
+        return y >= 0 && y < L && z >= bottom && z <= top;
+    };
+    auto make_key = [&](const int x, const int y, const int z) -> std::uint64_t {
+        return dim == 2 ? abs_site_key(x, y, 0) : abs_site_key(x, y, z);
+    };
+    auto collect_complement_neighbors =
+        [&](const std::uint64_t key, std::uint64_t out[6], int& count) {
+            int x = 0, y = 0, z = 0;
+            decode_abs_site_key(key, x, y, z);
+            count = 0;
+
+            out[count++] = make_key((x + L - 1) % L, y, z);
+            out[count++] = make_key((x + 1) % L, y, z);
+            if (dim == 2) {
+                if (y > bottom) out[count++] = make_key(x, y - 1, 0);
+                if (y < top) out[count++] = make_key(x, y + 1, 0);
+                return;
+            }
+
+            out[count++] = make_key(x, (y + L - 1) % L, z);
+            out[count++] = make_key(x, (y + 1) % L, z);
+            if (z > bottom) out[count++] = make_key(x, y, z - 1);
+            if (z < top) out[count++] = make_key(x, y, z + 1);
+        };
+
+    std::unordered_set<std::uint64_t, AbsSiteKeyHash> exterior;
+    std::vector<std::uint64_t> queue;
+    queue.reserve(1024);
+    auto push_exterior_seed = [&](const int x, const int y, const int z) {
+        if (!in_bounds(x, y, z)) return;
+        const std::uint64_t key = make_key(x, y, z);
+        if (in_giant.find(key) != in_giant.end()) return;
+        if (exterior.insert(key).second) {
+            queue.push_back(key);
+        }
+    };
+
+    if (dim == 2) {
+        for (int x = 0; x < L; ++x) {
+            push_exterior_seed(x, bottom, 0);
+            if (top > bottom) push_exterior_seed(x, top, 0);
+        }
+    } else {
+        for (int y = 0; y < L; ++y) {
+            for (int x = 0; x < L; ++x) {
+                push_exterior_seed(x, y, bottom);
+                if (top > bottom) push_exterior_seed(x, y, top);
+            }
+        }
+    }
+
+    std::uint64_t neigh[6];
+    int nneigh = 0;
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        collect_complement_neighbors(queue[head], neigh, nneigh);
+        for (int ni = 0; ni < nneigh; ++ni) {
+            if (in_giant.find(neigh[ni]) != in_giant.end()) continue;
+            if (exterior.insert(neigh[ni]).second) {
+                queue.push_back(neigh[ni]);
+            }
+        }
+    }
+
+    std::unordered_set<std::uint64_t, AbsSiteKeyHash> seen_void;
+    seen_void.reserve(exterior.size());
+    auto visit_void_component = [&](const std::uint64_t seed) {
+        long long volume = 0;
+        queue.clear();
+        queue.push_back(seed);
+        seen_void.insert(seed);
+        for (std::size_t head = 0; head < queue.size(); ++head) {
+            ++volume;
+            collect_complement_neighbors(queue[head], neigh, nneigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const std::uint64_t next = neigh[ni];
+                if (in_giant.find(next) != in_giant.end() ||
+                    exterior.find(next) != exterior.end() ||
+                    seen_void.find(next) != seen_void.end()) {
+                    continue;
+                }
+                seen_void.insert(next);
+                queue.push_back(next);
+            }
+        }
+        return volume;
+    };
+
+    if (dim == 2) {
+        for (int y = bottom; y <= top; ++y) {
+            for (int x = 0; x < L; ++x) {
+                const std::uint64_t key = make_key(x, y, 0);
+                if (in_giant.find(key) != in_giant.end() ||
+                    exterior.find(key) != exterior.end() ||
+                    seen_void.find(key) != seen_void.end()) {
+                    continue;
+                }
+                ++result.hole_size_counts[visit_void_component(key)];
+            }
+        }
+    } else {
+        for (int z = bottom; z <= top; ++z) {
+            for (int y = 0; y < L; ++y) {
+                for (int x = 0; x < L; ++x) {
+                    const std::uint64_t key = make_key(x, y, z);
+                    if (in_giant.find(key) != in_giant.end() ||
+                        exterior.find(key) != exterior.end() ||
+                        seen_void.find(key) != seen_void.end()) {
+                        continue;
+                    }
+                    ++result.hole_size_counts[visit_void_component(key)];
+                }
+            }
+        }
+    }
+
+    for (const std::uint64_t key : in_giant) {
+        int x = 0, y = 0, z = 0;
+        decode_abs_site_key(key, x, y, z);
+        if (dim == 2) {
+            const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
+            const int ny_values[4] = {y, y, y - 1, y + 1};
+            for (int ni = 0; ni < 4; ++ni) {
+                const int ny = ny_values[ni];
+                if (ny < bottom || ny > top) {
+                    ++result.hull_length;
+                    ++result.external_perimeter_length;
+                    continue;
+                }
+                const std::uint64_t nkey = make_key(nx_values[ni], ny, 0);
+                if (in_giant.find(nkey) == in_giant.end()) {
+                    ++result.hull_length;
+                    if (exterior.find(nkey) != exterior.end()) {
+                        ++result.external_perimeter_length;
+                    }
+                }
+            }
+        } else {
+            const int nx_values[6] = {(x + L - 1) % L, (x + 1) % L, x, x, x, x};
+            const int ny_values[6] = {y, y, (y + L - 1) % L, (y + 1) % L, y, y};
+            const int nz_values[6] = {z, z, z, z, z - 1, z + 1};
+            for (int ni = 0; ni < 6; ++ni) {
+                const int nz = nz_values[ni];
+                if (nz < bottom || nz > top) {
+                    ++result.hull_length;
+                    ++result.external_perimeter_length;
+                    continue;
+                }
+                const std::uint64_t nkey = make_key(nx_values[ni], ny_values[ni], nz);
+                if (in_giant.find(nkey) == in_giant.end()) {
+                    ++result.hull_length;
+                    if (exterior.find(nkey) != exterior.end()) {
+                        ++result.external_perimeter_length;
+                    }
+                }
+            }
+        }
+    }
+
     return result;
 }
 
@@ -2057,6 +2241,9 @@ SlabFractionResult compute_abs_slab_fractions(
     }
 
     int shortest_path_edges = -1;
+    long long hull_length = 0;
+    long long external_perimeter_length = 0;
+    std::map<long long, long long> hole_size_counts;
     if (largest_seed != std::numeric_limits<std::uint64_t>::max()) {
         std::unordered_set<std::uint64_t, AbsSiteKeyHash> in_giant;
         in_giant.reserve(static_cast<std::size_t>(std::max(1, largest)));
@@ -2126,6 +2313,12 @@ SlabFractionResult compute_abs_slab_fractions(
                 ++distance;
             }
         }
+
+        const SlabHullHoleResult geometry =
+            compute_abs_slab_hull_holes(dim, L, bottom, top, in_giant);
+        hull_length = geometry.hull_length;
+        external_perimeter_length = geometry.external_perimeter_length;
+        hole_size_counts = geometry.hole_size_counts;
     }
 
     if (!is_node) {
@@ -2155,7 +2348,10 @@ SlabFractionResult compute_abs_slab_fractions(
         total_bonds > 0 ? static_cast<double>(open_bonds_in_slab) / static_cast<double>(total_bonds) : 0.0,
         largest,
         largest_edges,
-        shortest_path_edges
+        shortest_path_edges,
+        hull_length,
+        external_perimeter_length,
+        std::move(hole_size_counts)
     };
 }
 
@@ -2288,6 +2484,10 @@ RawFractionsSeries network::create_raw_fractions(
     const int sample_gap_layers = std::max(
         0,
         static_cast<int>(std::llround(gap_over_L * static_cast<double>(L))));
+    const double stability_over_L = 2.0;
+    const int sample_stability_layers = std::max(
+        0,
+        static_cast<int>(std::llround(stability_over_L * static_cast<double>(L))));
     int hard_max_steps = stop_config.hard_max_steps;
     if (const char* env_steps = std::getenv("SOP_FRACTION_MAX_STEPS")) {
         hard_max_steps = std::max(1, std::stoi(env_steps));
@@ -2307,6 +2507,8 @@ RawFractionsSeries network::create_raw_fractions(
         out.N_total = static_cast<long long>(L) * static_cast<long long>(L);
         out.E_total = 2LL * static_cast<long long>(L) * static_cast<long long>(L) -
                       static_cast<long long>(L);
+        out.sample_stability_layers = sample_stability_layers;
+        out.sample_stability_over_L = stability_over_L;
         out.sample_gap_layers = sample_gap_layers;
         out.sample_gap_over_L = gap_over_L;
         out.type_percolation = type_percolation;
@@ -2316,7 +2518,7 @@ RawFractionsSeries network::create_raw_fractions(
         out.z_stat_by_species.assign(static_cast<std::size_t>(num_colors), -1);
         out.stop_reason = "not_stopped";
 
-        const int cap_h = std::max(8, L + sample_gap_layers + 8);
+        const int cap_h = std::max(8, L + sample_stability_layers + 8);
         const std::size_t layer_size = static_cast<std::size_t>(L);
         const std::size_t total_slots =
             static_cast<std::size_t>(cap_h) * layer_size;
@@ -2513,15 +2715,20 @@ RawFractionsSeries network::create_raw_fractions(
         std::vector<bool> species_equilibrated(static_cast<std::size_t>(num_colors), false);
         bool all_equilibrated = false;
         int anchor = -1;
-        bool inst_pending = true;
-        SlabFractionResult pending_inst;
-        int pending_t_inst = -1;
+        struct PendingFractionSample {
+            int anchor = -1;
+            SlabFractionResult inst;
+            int t_inst = -1;
+        };
+        std::deque<PendingFractionSample> pending_samples;
         auto print_progress_2d = [&](const int t, const char* phase) {
             if (progress_interval <= 0 || (t % progress_interval) != 0) return;
             const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
             const int next_target = !all_equilibrated
                 ? L
-                : (inst_pending ? anchor + L : anchor + L + sample_gap_layers);
+                : (pending_samples.empty()
+                    ? anchor + L
+                    : pending_samples.front().anchor + L + sample_stability_layers);
             std::cout << "[fractions] phase=" << phase
                       << " t=" << t
                       << " z_max=" << z_max
@@ -2630,7 +2837,8 @@ RawFractionsSeries network::create_raw_fractions(
 
             int shortest_path_edges = -1;
             long long hull_length = 0;
-            std::vector<int> hole_sizes;
+            long long external_perimeter_length = 0;
+            std::map<long long, long long> hole_size_counts;
             if (largest_seed != std::numeric_limits<std::uint32_t>::max()) {
                 std::vector<unsigned char> in_giant(
                     static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
@@ -2675,7 +2883,8 @@ RawFractionsSeries network::create_raw_fractions(
                 SlabHullHoleResult geometry =
                     compute_cylindrical_slab_hull_holes_2d(L, h_count, in_giant);
                 hull_length = geometry.hull_length;
-                hole_sizes = std::move(geometry.hole_sizes);
+                external_perimeter_length = geometry.external_perimeter_length;
+                hole_size_counts = std::move(geometry.hole_size_counts);
 
                 if (!bottom_sources.empty()) {
                     std::vector<unsigned char> reached(
@@ -2735,7 +2944,8 @@ RawFractionsSeries network::create_raw_fractions(
                 largest_edges,
                 shortest_path_edges,
                 hull_length,
-                std::move(hole_sizes)
+                external_perimeter_length,
+                std::move(hole_size_counts)
             };
         };
 
@@ -2873,6 +3083,8 @@ RawFractionsSeries network::create_raw_fractions(
                               << " t=" << t
                               << " z_stab=" << out.z_stab
                               << " next_inst_z=" << (anchor + L)
+                              << " next_stab_z=" << (anchor + L + sample_stability_layers)
+                              << " stability_layers=" << sample_stability_layers
                               << " gap_layers=" << sample_gap_layers
                               << " requested=" << requested
                               << std::endl;
@@ -2881,46 +3093,57 @@ RawFractionsSeries network::create_raw_fractions(
                 }
             } else {
                 const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
-                if (inst_pending && z_max >= anchor + L) {
-                    pending_inst = compute_slab_2d(anchor, anchor + L - 1);
-                    pending_t_inst = t;
-                    inst_pending = false;
+                while (out.collected_samples + static_cast<int>(pending_samples.size()) < requested &&
+                       z_max >= anchor + L) {
+                    PendingFractionSample sample;
+                    sample.anchor = anchor;
+                    sample.inst = compute_slab_2d(sample.anchor, sample.anchor + L - 1);
+                    sample.t_inst = t;
                     std::cout << "[fractions] inst_sample_ready"
-                              << " sample=" << (out.collected_samples + 1)
+                              << " sample=" << (out.collected_samples +
+                                                static_cast<int>(pending_samples.size()) + 1)
                               << "/" << requested
                               << " t=" << t
-                              << " window=[" << anchor << "," << (anchor + L - 1) << "]"
-                              << " next_stab_z=" << (anchor + L + sample_gap_layers)
-                              << " p_node=" << pending_inst.p_node
-                              << " p_bond=" << pending_inst.p_bond
-                              << " S=" << pending_inst.largest_component
-                              << " E=" << pending_inst.largest_component_edges
-                              << " SP=" << pending_inst.shortest_path_edges
+                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                              << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
+                              << " p_node=" << sample.inst.p_node
+                              << " p_bond=" << sample.inst.p_bond
+                              << " S=" << sample.inst.largest_component
+                              << " E=" << sample.inst.largest_component_edges
+                              << " SP=" << sample.inst.shortest_path_edges
                               << std::endl;
+                    pending_samples.push_back(std::move(sample));
+                    anchor += L + sample_gap_layers;
                 }
-                if (!inst_pending && z_max >= anchor + L + sample_gap_layers) {
-                    const SlabFractionResult stab = compute_slab_2d(anchor, anchor + L - 1);
-                    out.p_inst_bond.push_back(pending_inst.p_bond);
-                    out.p_inst_node.push_back(pending_inst.p_node);
-                    out.S_inst.push_back(pending_inst.largest_component);
-                    out.E_inst.push_back(pending_inst.largest_component_edges);
-                    out.SP_inst.push_back(pending_inst.shortest_path_edges);
+                while (!pending_samples.empty() &&
+                       z_max >= pending_samples.front().anchor + L + sample_stability_layers) {
+                    const PendingFractionSample sample = std::move(pending_samples.front());
+                    pending_samples.pop_front();
+                    const SlabFractionResult stab = compute_slab_2d(
+                        sample.anchor, sample.anchor + L - 1);
+                    out.p_inst_bond.push_back(sample.inst.p_bond);
+                    out.p_inst_node.push_back(sample.inst.p_node);
+                    out.S_inst.push_back(sample.inst.largest_component);
+                    out.E_inst.push_back(sample.inst.largest_component_edges);
+                    out.SP_inst.push_back(sample.inst.shortest_path_edges);
                     out.p_stab_bond.push_back(stab.p_bond);
                     out.p_stab_node.push_back(stab.p_node);
                     out.S_stab.push_back(stab.largest_component);
                     out.E_stab.push_back(stab.largest_component_edges);
                     out.SP_stab.push_back(stab.shortest_path_edges);
                     out.hull_length.push_back(stab.hull_length);
-                    out.hole_sizes.push_back(stab.hole_sizes);
-                    out.anchor_z.push_back(anchor);
-                    out.t_inst.push_back(pending_t_inst);
+                    out.external_perimeter_length.push_back(stab.external_perimeter_length);
+                    out.hole_size_counts.push_back(stab.hole_size_counts);
+                    out.anchor_z.push_back(sample.anchor);
+                    out.t_inst.push_back(sample.t_inst);
                     out.t_stab.push_back(t);
                     out.collected_samples = static_cast<int>(out.S_stab.size());
                     std::cout << "[fractions] sample_collected"
                               << " sample=" << out.collected_samples
                               << "/" << requested
                               << " t=" << t
-                              << " window=[" << anchor << "," << (anchor + L - 1) << "]"
+                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                              << " next_anchor_z=" << anchor
                               << " p_node=" << stab.p_node
                               << " p_bond=" << stab.p_bond
                               << " S=" << stab.largest_component
@@ -2928,21 +3151,20 @@ RawFractionsSeries network::create_raw_fractions(
                               << " SP=" << stab.shortest_path_edges
                               << std::endl;
 
-                    anchor += L + sample_gap_layers;
-                    pending_inst = {};
-                    pending_t_inst = -1;
-                    inst_pending = true;
                     if (out.collected_samples >= requested) {
                         out.stop_reason = "requested_samples_collected";
                         out.stop_time = t;
                         break;
                     }
                 }
+                if (out.collected_samples >= requested) {
+                    break;
+                }
             }
             print_progress_2d(
                 t,
                 !all_equilibrated ? "equilibrating"
-                                  : (inst_pending ? "waiting_inst" : "waiting_stab"));
+                                  : (pending_samples.empty() ? "waiting_inst" : "waiting_stab"));
 
             std::vector<int> next_counts(static_cast<std::size_t>(num_colors), 0);
             for (const std::uint64_t key : next_frontier) {
@@ -3007,6 +3229,8 @@ RawFractionsSeries network::create_raw_fractions(
         out.N_total = LL * LL * LL;
         out.E_total = 3LL * LL * LL * LL - LL * LL;
     }
+    out.sample_stability_layers = sample_stability_layers;
+    out.sample_stability_over_L = stability_over_L;
     out.sample_gap_layers = sample_gap_layers;
     out.sample_gap_over_L = gap_over_L;
     out.type_percolation = type_percolation;
@@ -3118,15 +3342,20 @@ RawFractionsSeries network::create_raw_fractions(
     bool all_equilibrated = false;
     int z_stab = -1;
     int anchor = -1;
-    bool inst_pending = true;
-    SlabFractionResult pending_inst;
-    int pending_t_inst = -1;
+    struct PendingFractionSample {
+        int anchor = -1;
+        SlabFractionResult inst;
+        int t_inst = -1;
+    };
+    std::deque<PendingFractionSample> pending_samples;
     auto print_progress_sparse = [&](const int t, const char* phase) {
         if (progress_interval <= 0 || (t % progress_interval) != 0) return;
         const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
         const int next_target = !all_equilibrated
             ? L
-            : (inst_pending ? anchor + L : anchor + L + sample_gap_layers);
+            : (pending_samples.empty()
+                ? anchor + L
+                : pending_samples.front().anchor + L + sample_stability_layers);
         std::cout << "[fractions] phase=" << phase
                   << " t=" << t
                   << " z_max=" << z_max
@@ -3372,6 +3601,8 @@ RawFractionsSeries network::create_raw_fractions(
                           << " t=" << t
                           << " z_stab=" << out.z_stab
                           << " next_inst_z=" << (anchor + L)
+                          << " next_stab_z=" << (anchor + L + sample_stability_layers)
+                          << " stability_layers=" << sample_stability_layers
                           << " gap_layers=" << sample_gap_layers
                           << " requested=" << requested
                           << std::endl;
@@ -3380,62 +3611,67 @@ RawFractionsSeries network::create_raw_fractions(
             }
         } else {
             const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
-            if (inst_pending && z_max >= anchor + L) {
-                pending_inst = compute_abs_slab_fractions(
-                    dim, L, site_state, open_bonds, anchor, anchor + L - 1, is_node);
-                pending_t_inst = t;
-                inst_pending = false;
+            while (out.collected_samples + static_cast<int>(pending_samples.size()) < requested &&
+                   z_max >= anchor + L) {
+                PendingFractionSample sample;
+                sample.anchor = anchor;
+                sample.inst = compute_abs_slab_fractions(
+                    dim, L, site_state, open_bonds, sample.anchor, sample.anchor + L - 1, is_node);
+                sample.t_inst = t;
                 std::cout << "[fractions] inst_sample_ready"
-                          << " sample=" << (out.collected_samples + 1)
+                          << " sample=" << (out.collected_samples +
+                                            static_cast<int>(pending_samples.size()) + 1)
                           << "/" << requested
                           << " t=" << t
-                          << " window=[" << anchor << "," << (anchor + L - 1) << "]"
-                          << " next_stab_z=" << (anchor + L + sample_gap_layers)
-                          << " p_node=" << pending_inst.p_node
-                          << " p_bond=" << pending_inst.p_bond
-                          << " S=" << pending_inst.largest_component
-                          << " E=" << pending_inst.largest_component_edges
-                          << " SP=" << pending_inst.shortest_path_edges
+                          << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                          << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
+                          << " p_node=" << sample.inst.p_node
+                          << " p_bond=" << sample.inst.p_bond
+                          << " S=" << sample.inst.largest_component
+                          << " E=" << sample.inst.largest_component_edges
+                          << " SP=" << sample.inst.shortest_path_edges
                           << std::endl;
+                pending_samples.push_back(std::move(sample));
+                anchor += L + sample_gap_layers;
             }
-            if (!inst_pending && z_max >= anchor + L + sample_gap_layers) {
+            bool collected_this_step = false;
+            while (!pending_samples.empty() &&
+                   z_max >= pending_samples.front().anchor + L + sample_stability_layers) {
+                const PendingFractionSample sample = std::move(pending_samples.front());
+                pending_samples.pop_front();
                 const SlabFractionResult stab = compute_abs_slab_fractions(
-                    dim, L, site_state, open_bonds, anchor, anchor + L - 1, is_node);
+                    dim, L, site_state, open_bonds, sample.anchor, sample.anchor + L - 1, is_node);
 
-                out.p_inst_bond.push_back(pending_inst.p_bond);
-                out.p_inst_node.push_back(pending_inst.p_node);
-                out.S_inst.push_back(pending_inst.largest_component);
-                out.E_inst.push_back(pending_inst.largest_component_edges);
-                out.SP_inst.push_back(pending_inst.shortest_path_edges);
+                out.p_inst_bond.push_back(sample.inst.p_bond);
+                out.p_inst_node.push_back(sample.inst.p_node);
+                out.S_inst.push_back(sample.inst.largest_component);
+                out.E_inst.push_back(sample.inst.largest_component_edges);
+                out.SP_inst.push_back(sample.inst.shortest_path_edges);
                 out.p_stab_bond.push_back(stab.p_bond);
                 out.p_stab_node.push_back(stab.p_node);
                 out.S_stab.push_back(stab.largest_component);
                 out.E_stab.push_back(stab.largest_component_edges);
                 out.SP_stab.push_back(stab.shortest_path_edges);
                 out.hull_length.push_back(stab.hull_length);
-                out.hole_sizes.push_back(stab.hole_sizes);
-                out.anchor_z.push_back(anchor);
-                out.t_inst.push_back(pending_t_inst);
+                out.external_perimeter_length.push_back(stab.external_perimeter_length);
+                out.hole_size_counts.push_back(stab.hole_size_counts);
+                out.anchor_z.push_back(sample.anchor);
+                out.t_inst.push_back(sample.t_inst);
                 out.t_stab.push_back(t);
                 out.collected_samples = static_cast<int>(out.S_stab.size());
                 std::cout << "[fractions] sample_collected"
                           << " sample=" << out.collected_samples
                           << "/" << requested
                           << " t=" << t
-                          << " window=[" << anchor << "," << (anchor + L - 1) << "]"
+                          << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                          << " next_anchor_z=" << anchor
                           << " p_node=" << stab.p_node
                           << " p_bond=" << stab.p_bond
                           << " S=" << stab.largest_component
                           << " E=" << stab.largest_component_edges
                           << " SP=" << stab.shortest_path_edges
                           << std::endl;
-
-                const int next_anchor = anchor + L + sample_gap_layers;
-                discard_below(next_anchor);
-                anchor = next_anchor;
-                pending_inst = {};
-                pending_t_inst = -1;
-                inst_pending = true;
+                collected_this_step = true;
 
                 if (out.collected_samples >= requested) {
                     out.stop_reason = "requested_samples_collected";
@@ -3443,11 +3679,23 @@ RawFractionsSeries network::create_raw_fractions(
                     break;
                 }
             }
+            if (collected_this_step) {
+                int min_keep = anchor;
+                if (!pending_samples.empty()) {
+                    min_keep = std::min(min_keep, pending_samples.front().anchor);
+                }
+                if (min_keep <= z_max) {
+                    discard_below(min_keep);
+                }
+            }
+            if (out.collected_samples >= requested) {
+                break;
+            }
         }
         print_progress_sparse(
             t,
             !all_equilibrated ? "equilibrating"
-                              : (inst_pending ? "waiting_inst" : "waiting_stab"));
+                              : (pending_samples.empty() ? "waiting_inst" : "waiting_stab"));
 
         const std::vector<int> next_counts = active_frontier_by_color();
         for (int color = 0; color < num_colors; ++color) {
