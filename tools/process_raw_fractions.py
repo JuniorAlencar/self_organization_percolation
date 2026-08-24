@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-FRACTIONS_PROCESSING_VERSION = 7
+FRACTIONS_PROCESSING_VERSION = 8
 
 FILENAME_TAG_RE = re.compile(
     r"_P0_(?P<P0>[^_]+)_p0_(?P<p0>[^_.]+(?:\.[^_.]+)?)"
@@ -58,6 +58,7 @@ FRACTION_DATA_KEYS = (
     "E_stab",
     "SP_stab",
     "hull_length",
+    "full_boundary_length",
     "external_perimeter_length",
     "hole_size_counts",
 )

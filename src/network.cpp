@@ -1853,12 +1853,14 @@ struct SlabFractionResult {
     long long largest_component_edges = 0;
     int shortest_path_edges = -1;
     long long hull_length = 0;
+    long long full_boundary_length = 0;
     long long external_perimeter_length = 0;
     std::map<long long, long long> hole_size_counts;
 };
 
 struct SlabHullHoleResult {
     long long hull_length = 0;
+    long long full_boundary_length = 0;
     long long external_perimeter_length = 0;
     std::map<long long, long long> hole_size_counts;
 };
@@ -1960,14 +1962,16 @@ SlabHullHoleResult compute_cylindrical_slab_hull_holes_2d(
             for (int ni = 0; ni < 4; ++ni) {
                 const int ny = ny_values[ni];
                 if (ny < 0 || ny >= height) {
+                    ++result.full_boundary_length;
                     ++result.hull_length;
                     ++result.external_perimeter_length;
                     continue;
                 }
                 const std::uint32_t nidx = idx(nx_values[ni], ny);
                 if (!in_giant[nidx]) {
-                    ++result.hull_length;
+                    ++result.full_boundary_length;
                     if (exterior[nidx]) {
+                        ++result.hull_length;
                         ++result.external_perimeter_length;
                     }
                 }
@@ -2117,14 +2121,16 @@ SlabHullHoleResult compute_abs_slab_hull_holes(
             for (int ni = 0; ni < 4; ++ni) {
                 const int ny = ny_values[ni];
                 if (ny < bottom || ny > top) {
+                    ++result.full_boundary_length;
                     ++result.hull_length;
                     ++result.external_perimeter_length;
                     continue;
                 }
                 const std::uint64_t nkey = make_key(nx_values[ni], ny, 0);
                 if (in_giant.find(nkey) == in_giant.end()) {
-                    ++result.hull_length;
+                    ++result.full_boundary_length;
                     if (exterior.find(nkey) != exterior.end()) {
+                        ++result.hull_length;
                         ++result.external_perimeter_length;
                     }
                 }
@@ -2136,14 +2142,16 @@ SlabHullHoleResult compute_abs_slab_hull_holes(
             for (int ni = 0; ni < 6; ++ni) {
                 const int nz = nz_values[ni];
                 if (nz < bottom || nz > top) {
+                    ++result.full_boundary_length;
                     ++result.hull_length;
                     ++result.external_perimeter_length;
                     continue;
                 }
                 const std::uint64_t nkey = make_key(nx_values[ni], ny_values[ni], nz);
                 if (in_giant.find(nkey) == in_giant.end()) {
-                    ++result.hull_length;
+                    ++result.full_boundary_length;
                     if (exterior.find(nkey) != exterior.end()) {
+                        ++result.hull_length;
                         ++result.external_perimeter_length;
                     }
                 }
@@ -2242,6 +2250,7 @@ SlabFractionResult compute_abs_slab_fractions(
 
     int shortest_path_edges = -1;
     long long hull_length = 0;
+    long long full_boundary_length = 0;
     long long external_perimeter_length = 0;
     std::map<long long, long long> hole_size_counts;
     if (largest_seed != std::numeric_limits<std::uint64_t>::max()) {
@@ -2317,6 +2326,7 @@ SlabFractionResult compute_abs_slab_fractions(
         const SlabHullHoleResult geometry =
             compute_abs_slab_hull_holes(dim, L, bottom, top, in_giant);
         hull_length = geometry.hull_length;
+        full_boundary_length = geometry.full_boundary_length;
         external_perimeter_length = geometry.external_perimeter_length;
         hole_size_counts = geometry.hole_size_counts;
     }
@@ -2350,6 +2360,7 @@ SlabFractionResult compute_abs_slab_fractions(
         largest_edges,
         shortest_path_edges,
         hull_length,
+        full_boundary_length,
         external_perimeter_length,
         std::move(hole_size_counts)
     };
@@ -2837,6 +2848,7 @@ RawFractionsSeries network::create_raw_fractions(
 
             int shortest_path_edges = -1;
             long long hull_length = 0;
+            long long full_boundary_length = 0;
             long long external_perimeter_length = 0;
             std::map<long long, long long> hole_size_counts;
             if (largest_seed != std::numeric_limits<std::uint32_t>::max()) {
@@ -2883,6 +2895,7 @@ RawFractionsSeries network::create_raw_fractions(
                 SlabHullHoleResult geometry =
                     compute_cylindrical_slab_hull_holes_2d(L, h_count, in_giant);
                 hull_length = geometry.hull_length;
+                full_boundary_length = geometry.full_boundary_length;
                 external_perimeter_length = geometry.external_perimeter_length;
                 hole_size_counts = std::move(geometry.hole_size_counts);
 
@@ -2944,6 +2957,7 @@ RawFractionsSeries network::create_raw_fractions(
                 largest_edges,
                 shortest_path_edges,
                 hull_length,
+                full_boundary_length,
                 external_perimeter_length,
                 std::move(hole_size_counts)
             };
@@ -3132,6 +3146,7 @@ RawFractionsSeries network::create_raw_fractions(
                     out.E_stab.push_back(stab.largest_component_edges);
                     out.SP_stab.push_back(stab.shortest_path_edges);
                     out.hull_length.push_back(stab.hull_length);
+                    out.full_boundary_length.push_back(stab.full_boundary_length);
                     out.external_perimeter_length.push_back(stab.external_perimeter_length);
                     out.hole_size_counts.push_back(stab.hole_size_counts);
                     out.anchor_z.push_back(sample.anchor);
@@ -3653,6 +3668,7 @@ RawFractionsSeries network::create_raw_fractions(
                 out.E_stab.push_back(stab.largest_component_edges);
                 out.SP_stab.push_back(stab.shortest_path_edges);
                 out.hull_length.push_back(stab.hull_length);
+                out.full_boundary_length.push_back(stab.full_boundary_length);
                 out.external_perimeter_length.push_back(stab.external_perimeter_length);
                 out.hole_size_counts.push_back(stab.hole_size_counts);
                 out.anchor_z.push_back(sample.anchor);

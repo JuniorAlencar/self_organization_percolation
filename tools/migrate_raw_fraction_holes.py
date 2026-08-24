@@ -48,6 +48,16 @@ def migrate_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                 data["hole_size_counts"] = []
         changed = True
 
+    hull = data.get("hull_length")
+    external = data.get("external_perimeter_length")
+    if isinstance(hull, list) and isinstance(external, list):
+        if "full_boundary_length" not in data:
+            data["full_boundary_length"] = hull
+            changed = True
+        if data.get("hull_length") != external:
+            data["hull_length"] = external
+            changed = True
+
     meta = payload.get("meta")
     if isinstance(meta, dict):
         try:
@@ -68,12 +78,13 @@ def migrate_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 
         convention = meta.get("hull_convention")
         new_convention = (
-            "hull_length counts the full lattice boundary of the giant component: "
-            "edges in 2D or faces in 3D between the component and its complement, "
-            "including internal holes/cavities/fjords and top/bottom window boundary "
-            "facets; external_perimeter_length counts only boundary elements adjacent "
-            "to the exterior complement; hole_size_counts stores enclosed void "
-            "area/volume histograms per sample as {size: count}"
+            "hull_length counts the exterior hull of the giant component: edges in "
+            "2D or faces in 3D adjacent to the exterior complement, excluding "
+            "enclosed holes/cavities; full_boundary_length counts all "
+            "component-complement boundary elements including internal "
+            "holes/cavities/fjords; external_perimeter_length is kept as an alias "
+            "of hull_length for backward comparison; hole_size_counts stores "
+            "enclosed void area/volume histograms per sample as {size: count}"
         )
         if convention != new_convention:
             meta["hull_convention"] = new_convention

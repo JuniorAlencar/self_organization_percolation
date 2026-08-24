@@ -829,7 +829,7 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     write_json_nullable_int_array(ofs, fractions.z_stat_by_species);
     ofs << ",\n";
     ofs << "    \"window_convention\": \"sample k uses slab [anchor_z[k], anchor_z[k]+L-1], exactly L layers; inst is measured when global height reaches anchor_z+L; stab remeasures the same slab after sample_stability_layers extra layers, at anchor_z+L+sample_stability_layers; next anchor advances by L+sample_gap_layers\",\n";
-    ofs << "    \"hull_convention\": \"hull_length counts the full lattice boundary of the giant component: edges in 2D or faces in 3D between the component and its complement, including internal holes/cavities/fjords and top/bottom window boundary facets; external_perimeter_length counts only boundary elements adjacent to the exterior complement; hole_size_counts stores enclosed void area/volume histograms per sample as {size: count}\",\n";
+    ofs << "    \"hull_convention\": \"hull_length counts the exterior hull of the giant component: edges in 2D or faces in 3D adjacent to the exterior complement, excluding enclosed holes/cavities; full_boundary_length counts all component-complement boundary elements including internal holes/cavities/fjords; external_perimeter_length is kept as an alias of hull_length for backward comparison; hole_size_counts stores enclosed void area/volume histograms per sample as {size: count}\",\n";
     ofs << "    \"memory_convention\": \"layers below the moving retained window are discarded after each completed sample\"\n";
     ofs << "  },\n";
     ofs << "  \"data\": {\n";
@@ -874,6 +874,9 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     ofs << ",\n";
     ofs << "    \"hull_length\": ";
     write_json_array(ofs, fractions.hull_length);
+    ofs << ",\n";
+    ofs << "    \"full_boundary_length\": ";
+    write_json_array(ofs, fractions.full_boundary_length);
     ofs << ",\n";
     ofs << "    \"external_perimeter_length\": ";
     write_json_array(ofs, fractions.external_perimeter_length);
