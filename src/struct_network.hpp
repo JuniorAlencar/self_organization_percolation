@@ -189,6 +189,7 @@ struct RawFractionsSeries {
     std::vector<long long> E_stab;
     std::vector<int> SP_stab;
     std::vector<long long> hull_length;
+    std::vector<long long> full_boundary_length;
     std::vector<long long> external_perimeter_length;
     std::vector<std::map<long long, long long>> hole_size_counts;
     std::vector<int> anchor_z;
