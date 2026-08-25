@@ -226,7 +226,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual({row["order"]: row["N_samples_perc"] for row in all_rows}, {0: 2, 1: 1})
             self.assertEqual(all_color_rows[0]["N_samples"], 2)
 
-    def test_incremental_merge_counts_empty_new_samples_only_in_total_samples(self) -> None:
+    def test_incremental_merge_counts_metadata_only_samples_only_in_total_samples(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
@@ -263,7 +263,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(all_color_rows[0]["N_samples"], 2)
             self.assertAlmostEqual(all_color_rows[0]["nc"], 0.5)
 
-    def test_new_group_with_only_empty_samples_updates_color_counts_but_has_no_order_rows(self) -> None:
+    def test_new_group_with_only_metadata_only_samples_counts_total_but_has_no_order_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
@@ -285,6 +285,32 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(all_rows, [])
             self.assertEqual(all_color_rows[0]["N_samples"], 1)
             self.assertEqual(all_color_rows[0]["nc"], 0.0)
+
+    def test_invalid_zero_byte_samples_are_ignored_in_sample_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+
+            self._write_sample(data_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            (data_dir / "sample_empty_0kb_P0_0.7_p0_0.2.json").write_text("", encoding="utf-8")
+            out_path, all_rows, all_color_rows = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            group = bundle["p0_groups"][0]
+            order = group["orders"][0]
+
+            self.assertEqual(group["num_samples_total"], 1)
+            self.assertEqual(order["N_samples"], 1)
+            self.assertEqual(order["N_samples_perc"], 1)
+            self.assertEqual(all_rows[0]["N_samples"], 1)
+            self.assertEqual(all_rows[0]["N_samples_perc"], 1)
+            self.assertEqual(all_color_rows[0]["N_samples"], 1)
 
     def test_updates_time_series_from_published_when_raw_is_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

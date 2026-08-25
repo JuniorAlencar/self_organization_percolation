@@ -23,7 +23,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 15
+DYNAMIC_PROCESSING_VERSION = 17
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
@@ -1015,6 +1015,8 @@ def process_one_sample_file(
     )
     if sample_orders is None:
         return [], None
+    if not sample_orders:
+        return [], 0.0
 
     rows: list[dict[str, Any]] = []
     for item in sample_orders:
