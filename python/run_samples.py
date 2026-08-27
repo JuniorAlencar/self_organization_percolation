@@ -14,11 +14,11 @@ seed = -1
 dim = 2
 #nc=2
 
-type_perc = 'bond'
+type_perc = 'node'
 # L_lst = [1024, 2048, 4096, 8192, 16384]
 # num_runs_lst = [500, 400, 200, 100, 50]
-L_lst = [500]
-num_runs_lst = [700]
+L_lst = [16384]
+num_runs_lst = [50]
 
 # L_lst = [1024]
 # num_runs_lst = [500]
@@ -43,9 +43,7 @@ Mode = 'growth_test'  # use 'sop' for the original fixed-height SOP run
 InitialLayout = 'random'  # 'random', 'blocks', or 'alternating'
 p0 = 0.8
 P0 = 0.2
-ft = 0.4631579
-#df = pd.read_csv("../SOP_data/ft_min_max_2D.csv")
-# ft = 0.3178947
+ft = 0.06873726
 step = 0.01 * abs(ft)
 
 left_points = ft - step * np.arange(7, 0, -1)
@@ -55,25 +53,13 @@ ft_lst = np.concatenate([
     left_points,
     right_points
 ])
-p0_lst = [0.4, 0.8, 1.0]
-for p0 in p0_lst:
-    L = L_lst[0]
-    rho = 1/nc
-    num_runs = num_runs_por_L[L]
-    mode_tag = "" if Mode == "sop" else f"_{Mode}"
-    layout_tag = "" if InitialLayout == "random" else f"_{InitialLayout}"
-    exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}{layout_tag}.sh"
-
-    shell_data(L, type_perc, p0, seed, c, ft, dim,
-            nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
-            properties=Properties, mode=Mode,
-            initial_layout=InitialLayout)   
-
+#df = pd.read_csv("../SOP_data/ft_min_max_2D.csv")
+# ft = 0.3178947
+rho = 1/nc
+p0 = 0.8
 for L in L_lst:
-#    ft_lst = np.linspace(0.4, 0.6, 20)
-
     for ft in ft_lst:
-        rho = 1/nc
+
         num_runs = num_runs_por_L[L]
         mode_tag = "" if Mode == "sop" else f"_{Mode}"
         layout_tag = "" if InitialLayout == "random" else f"_{InitialLayout}"
@@ -82,7 +68,22 @@ for L in L_lst:
         shell_data(L, type_perc, p0, seed, c, ft, dim,
                 nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
                 properties=Properties, mode=Mode,
-                initial_layout=InitialLayout)    
+                initial_layout=InitialLayout)   
+
+# for L in L_lst:
+# #    ft_lst = np.linspace(0.4, 0.6, 20)
+
+#     for ft in ft_lst:
+#         rho = 1/nc
+#         num_runs = num_runs_por_L[L]
+#         mode_tag = "" if Mode == "sop" else f"_{Mode}"
+#         layout_tag = "" if InitialLayout == "random" else f"_{InitialLayout}"
+#         exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}{layout_tag}.sh"
+
+#         shell_data(L, type_perc, p0, seed, c, ft, dim,
+#                 nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
+#                 properties=Properties, mode=Mode,
+#                 initial_layout=InitialLayout)    
 
 
 #for idx, L in enumerate(L_lst):

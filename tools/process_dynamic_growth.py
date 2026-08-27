@@ -27,6 +27,7 @@ DYNAMIC_PROCESSING_VERSION = 17
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
+SUMMARY_FILE_FINGERPRINT_KEY = "summary_file_fingerprint"
 
 FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
@@ -63,6 +64,16 @@ ALL_COLORS_COLUMNS = [
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
+
+ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "stat_window")
+ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "stat_window")
+DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window"}
+DAT_FLOAT_COLUMNS = {
+    "f_T", "c", "rho", "p0", "P0", "p_mean", "p_err", "f_mean", "f_err",
+    "z_stat_mean", "z_stat_err", "z_stat_median", "z_stat_q75", "z_stat_q90",
+    "t_eq_s_prime_threshold", "nc", "nc_err", "nc_std",
+    "equilibrium_effective_rel_tol",
+}
 
 
 def ensure_dir(path: Path) -> None:
@@ -323,6 +334,79 @@ def dat_value(value: Any) -> str:
             return "nan"
         return f"{value:.12g}"
     return str(value)
+
+
+def parse_dat_token(token: str, column: str) -> Any:
+    if token == "nan":
+        return math.nan
+    if column in DAT_INT_COLUMNS:
+        try:
+            return int(float(token))
+        except Exception:
+            return token
+    if column in DAT_FLOAT_COLUMNS:
+        try:
+            return float(token)
+        except Exception:
+            return token
+    return token
+
+
+def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as handle:
+        header = handle.readline().split()
+        if not header:
+            return []
+        if header != expected_columns:
+            raise ValueError(f"Unexpected header in {path}: {' '.join(header)}")
+        rows: list[dict[str, Any]] = []
+        for line in handle:
+            parts = line.split()
+            if not parts:
+                continue
+            row = {
+                column: parse_dat_token(parts[idx], column) if idx < len(parts) else math.nan
+                for idx, column in enumerate(header)
+            }
+            if "stat_window" not in row:
+                row["stat_window"] = 0
+            rows.append(row)
+    return rows
+
+
+def normalized_group_value(value: Any) -> Any:
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return "nan"
+        return round(value, 12)
+    return value
+
+
+def group_key(row: dict[str, Any], columns: tuple[str, ...]) -> tuple[Any, ...]:
+    return tuple(normalized_group_value(row.get(column)) for column in columns)
+
+
+def all_data_group_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
+    return group_key(params, ALL_DATA_GROUP_COLUMNS)
+
+
+def all_colors_group_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
+    row = dict(params)
+    row["num_colors"] = params.get("nc")
+    return group_key(row, ALL_COLORS_GROUP_COLUMNS)
+
+
+def replace_changed_groups(
+    existing_rows: list[dict[str, Any]],
+    new_rows: list[dict[str, Any]],
+    group_columns: tuple[str, ...],
+    changed_group_keys: set[tuple[Any, ...]],
+) -> list[dict[str, Any]]:
+    kept_rows = [
+        row for row in existing_rows
+        if group_key(row, group_columns) not in changed_group_keys
+    ]
+    return kept_rows + new_rows
 
 
 def parse_order_key(key: str) -> int | None:
@@ -1725,6 +1809,38 @@ def rows_from_existing_bundle(bundle_path: Path) -> tuple[list[dict[str, Any]], 
     return rows_from_bundle(bundle)
 
 
+def rows_from_published_bundle_cached(
+    bundle_path: Path,
+    published_root: Path,
+    manifests_root: Path,
+    series_mode: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+    rel_group = bundle_path.parent.relative_to(published_root)
+    manifest = load_manifest(manifests_root, rel_group)
+    bundle_fingerprint = file_stat_fingerprint(bundle_path)
+
+    cached_rows = rows_from_manifest_cache(manifest, series_mode)
+    if (
+        cached_rows is not None
+        and manifest.get(SUMMARY_FILE_FINGERPRINT_KEY) == bundle_fingerprint
+    ):
+        rows, color_rows = cached_rows
+        return rows, color_rows, True
+
+    rows, color_rows = rows_from_existing_bundle(bundle_path)
+    manifest.update({
+        "group_relpath": rel_group.as_posix(),
+        "summary_file": bundle_path.as_posix(),
+        SUMMARY_FILE_FINGERPRINT_KEY: bundle_fingerprint,
+        "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+        "series_mode": series_mode,
+        "last_update": datetime.now(timezone.utc).isoformat(),
+    })
+    manifest.update(manifest_rows_cache_payload(rows, color_rows))
+    save_manifest(manifests_root, rel_group, manifest)
+    return rows, color_rows, False
+
+
 def dynamic_bundle_path(out_dir: Path) -> Path:
     return out_dir / "properties_dynamic_bundle.json.xz"
 
@@ -2867,7 +2983,9 @@ def process_group(
     series_mode: str = "full",
     collect_rows: bool = True,
     migrate_published: bool = True,
-) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]]:
+    skip_unchanged_rows: bool = False,
+    return_changed: bool = False,
+) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]] | tuple[Path, list[dict[str, Any]], list[dict[str, Any]], bool]:
     if series_mode not in ("full", "profiles", "scalars"):
         raise ValueError(f"Unknown series_mode: {series_mode}")
     params = parse_data_dir(data_dir)
@@ -2968,9 +3086,9 @@ def process_group(
             if migrated_out_path is not None:
                 out_path = migrated_out_path
                 existing_bundle_for_validation = None
-        cached_rows = rows_from_manifest_cache(manifest, series_mode) if collect_rows else None
-        rows_cache_missing = collect_rows and cached_rows is None
-        if not collect_rows:
+        cached_rows = None if skip_unchanged_rows else (rows_from_manifest_cache(manifest, series_mode) if collect_rows else None)
+        rows_cache_missing = collect_rows and not skip_unchanged_rows and cached_rows is None
+        if not collect_rows or skip_unchanged_rows:
             all_rows, all_color_rows = [], []
         elif cached_rows is not None:
             all_rows, all_color_rows = cached_rows
@@ -2990,6 +3108,11 @@ def process_group(
                         current_file_fingerprints[name] = file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
             fingerprints_out = dict(manifest_fingerprints)
             fingerprints_out.update(current_file_fingerprints)
+            summary_fingerprint = (
+                file_stat_fingerprint(out_path)
+                if out_path.exists()
+                else manifest.get(SUMMARY_FILE_FINGERPRINT_KEY)
+            )
             manifest.update({
                 "group_relpath": rel_group.as_posix(),
                 "data_dir": data_dir.as_posix(),
@@ -3002,10 +3125,14 @@ def process_group(
                 "series_mode": series_mode,
                 "last_update": datetime.now(timezone.utc).isoformat(),
             })
-            if collect_rows:
+            if summary_fingerprint:
+                manifest[SUMMARY_FILE_FINGERPRINT_KEY] = summary_fingerprint
+            if collect_rows and not skip_unchanged_rows:
                 manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
             save_manifest(manifests_root, rel_group, manifest)
         print(f"[skip] {out_path} ({len(all_rows)} rows)")
+        if return_changed:
+            return out_path, all_rows, all_color_rows, False
         return out_path, all_rows, all_color_rows
 
     if new_sample_files:
@@ -3088,6 +3215,7 @@ def process_group(
     out_path = dynamic_bundle_path(out_dir)
     write_json_bundle(out_path, bundle, pretty=pretty_json)
     remove_legacy_dynamic_bundles(out_dir, keep=out_path)
+    summary_fingerprint = file_stat_fingerprint(out_path)
 
     if clear:
         processed_files_out = set(current_json_files)
@@ -3111,6 +3239,7 @@ def process_group(
         "processed_json_file_fingerprints": dict(sorted(fingerprints_out.items())),
         "fingerprint_mode": fingerprint_mode,
         "summary_file": out_path.as_posix(),
+        SUMMARY_FILE_FINGERPRINT_KEY: summary_fingerprint,
         "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
         "series_mode": series_mode,
         "last_update": datetime.now(timezone.utc).isoformat(),
@@ -3119,6 +3248,8 @@ def process_group(
         manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
     save_manifest(manifests_root, rel_group, manifest)
 
+    if return_changed:
+        return out_path, all_rows, all_color_rows, True
     return out_path, all_rows, all_color_rows
 
 
@@ -3360,12 +3491,23 @@ def main() -> int:
     data_dirs = discover_data_dirs(raw_root)
     print(f"[dynamic] data dirs found: {len(data_dirs)}")
 
+    all_data_path = sop_root / args.all_data_name
+    all_colors_path = sop_root / args.all_colors_name
+    incremental_all_data = (
+        args.write_all_data_outputs
+        and not args.clear
+        and all_data_path.exists()
+        and all_colors_path.exists()
+    )
+
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
+    changed_all_data_groups: set[tuple[Any, ...]] = set()
+    changed_all_colors_groups: set[tuple[Any, ...]] = set()
     processed_bundle_paths: set[Path] = set()
     # First, ensure all raw data groups are processed and published bundles are up-to-date.
     for data_dir in data_dirs:
-        out_path, rows, color_rows = process_group(
+        result = process_group(
             data_dir,
             raw_root,
             published_root,
@@ -3379,43 +3521,106 @@ def main() -> int:
             series_mode=args.series_mode,
             collect_rows=args.write_all_data_outputs,
             migrate_published=args.migrate_published,
+            skip_unchanged_rows=incremental_all_data,
+            return_changed=incremental_all_data,
         )
+        if incremental_all_data:
+            out_path, rows, color_rows, group_changed = result
+        else:
+            out_path, rows, color_rows = result
+            group_changed = True
         processed_bundle_paths.add(out_path.resolve())
         all_rows.extend(rows)
         all_color_rows.extend(color_rows)
+        if group_changed:
+            params = parse_data_dir(data_dir)
+            if params is not None:
+                changed_all_data_groups.add(all_data_group_key_from_params(params))
+                changed_all_colors_groups.add(all_colors_group_key_from_params(params))
         print(f"[published] ensured {out_path}")
 
     if args.write_all_data_outputs:
-        # Regardless of raw presence, build the final all_data and all_colors from published bundles.
-        bundle_paths = sorted(
-            set(published_root.rglob("properties_dynamic_bundle.json.xz"))
-            | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
-            | set(published_root.rglob("properties_dynamic_bundle.json"))
-        )
-        remaining_bundle_paths = [
-            path for path in bundle_paths
-            if path.resolve() not in processed_bundle_paths
-        ]
-        print(
-            f"[dynamic] building all-data from {len(bundle_paths)} published bundles "
-            f"({len(remaining_bundle_paths)} imported from disk)"
-        )
-        for bundle_path in remaining_bundle_paths:
+        if incremental_all_data:
+            if not changed_all_data_groups and not changed_all_colors_groups:
+                print("[dynamic] all-data unchanged; kept existing all_data/all_colors files")
+                return 0
             try:
-                rows, color_rows = rows_from_existing_bundle(bundle_path)
-                if rows:
-                    all_rows.extend(rows)
-                    print(f"[import] {bundle_path} ({len(rows)} rows)")
-                if color_rows:
-                    all_color_rows.extend(color_rows)
+                existing_rows = read_dat_rows(all_data_path, ALL_DATA_COLUMNS)
+                existing_color_rows = read_dat_rows(all_colors_path, ALL_COLORS_COLUMNS)
+                all_rows = replace_changed_groups(
+                    existing_rows,
+                    all_rows,
+                    ALL_DATA_GROUP_COLUMNS,
+                    changed_all_data_groups,
+                )
+                all_color_rows = replace_changed_groups(
+                    existing_color_rows,
+                    all_color_rows,
+                    ALL_COLORS_GROUP_COLUMNS,
+                    changed_all_colors_groups,
+                )
+                print(
+                    f"[dynamic] incremental all-data update: "
+                    f"{len(changed_all_data_groups)} changed groups, no published bundle import"
+                )
             except Exception as exc:
-                print(f"[warn] failed to import {bundle_path}: {exc}")
+                print(f"[warn] incremental all-data update failed ({exc}); rebuilding from published bundles")
+                all_rows = []
+                all_color_rows = []
+                bundle_paths = sorted(
+                    set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+                    | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+                    | set(published_root.rglob("properties_dynamic_bundle.json"))
+                )
+                for bundle_path in bundle_paths:
+                    try:
+                        rows, color_rows, from_cache = rows_from_published_bundle_cached(
+                            bundle_path,
+                            published_root,
+                            manifests_root,
+                            args.series_mode,
+                        )
+                        all_rows.extend(rows)
+                        all_color_rows.extend(color_rows)
+                        action = "cache" if from_cache else "import"
+                        print(f"[{action}] {bundle_path} ({len(rows)} rows)")
+                    except Exception as import_exc:
+                        print(f"[warn] failed to import {bundle_path}: {import_exc}")
+        else:
+            # Full rebuild path: needed for first run, --clear, or missing .dat files.
+            bundle_paths = sorted(
+                set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+                | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+                | set(published_root.rglob("properties_dynamic_bundle.json"))
+            )
+            remaining_bundle_paths = [
+                path for path in bundle_paths
+                if path.resolve() not in processed_bundle_paths
+            ]
+            print(
+                f"[dynamic] building all-data from {len(bundle_paths)} published bundles "
+                f"({len(remaining_bundle_paths)} imported from disk)"
+            )
+            for bundle_path in remaining_bundle_paths:
+                try:
+                    rows, color_rows, from_cache = rows_from_published_bundle_cached(
+                        bundle_path,
+                        published_root,
+                        manifests_root,
+                        args.series_mode,
+                    )
+                    if rows:
+                        all_rows.extend(rows)
+                        action = "cache" if from_cache else "import"
+                        print(f"[{action}] {bundle_path} ({len(rows)} rows)")
+                    if color_rows:
+                        all_color_rows.extend(color_rows)
+                except Exception as exc:
+                    print(f"[warn] failed to import {bundle_path}: {exc}")
 
-        all_data_path = sop_root / args.all_data_name
         write_all_data(all_rows, all_data_path)
         print(f"[write] {all_data_path} ({len(all_rows)} rows)")
 
-        all_colors_path = sop_root / args.all_colors_name
         write_all_colors(all_color_rows, all_colors_path)
         print(f"[write] {all_colors_path} ({len(all_color_rows)} rows)")
     else:
