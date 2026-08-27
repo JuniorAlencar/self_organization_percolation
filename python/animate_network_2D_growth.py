@@ -36,7 +36,7 @@ def read_compact_bin_header(path):
     return n_sites, n_edges
 
 
-def read_compact_bin_arrays(path):
+def read_compact_bin_arrays(path, read_edges=False):
     with open(path, "rb") as f:
         magic = struct.unpack("<I", f.read(4))[0]
         if magic != MAGIC_NETG:
@@ -47,14 +47,23 @@ def read_compact_bin_arrays(path):
         pos_flat = np.fromfile(f, dtype=np.uint32, count=n_sites)
         species = np.fromfile(f, dtype=np.uint8, count=n_sites)
         activation_time = np.fromfile(f, dtype=np.uint32, count=n_sites)
+        edge_offsets = None
+        edges = None
+        if read_edges:
+            edge_offsets = np.fromfile(f, dtype=np.uint32, count=n_sites + 1)
+            edges = np.fromfile(f, dtype=np.uint32, count=n_edges)
 
-    return {
+    info = {
         "N": int(n_sites),
         "E": int(n_edges),
         "pos_flat": pos_flat,
         "species": species,
         "activation_time": activation_time,
     }
+    if read_edges:
+        info["edge_offsets"] = edge_offsets
+        info["edges"] = edges
+    return info
 
 
 def choose_frame_times(times, max_frames=None, stride=1):
@@ -241,6 +250,329 @@ def positions_to_pixels(pos, L, viewport_bottom, viewport_top, out_w, out_h):
     return px, py
 
 
+def infer_site_pixel_size(L, viewport_bottom, viewport_top, out_w, out_h, requested):
+    requested = float(requested)
+    if requested > 0:
+        return requested
+    layers = max(1, int(viewport_top) - int(viewport_bottom) + 1)
+    scale = min(float(out_w) / float(L), float(out_h) / float(layers))
+    return float(max(1, min(6, int(round(scale)))))
+
+
+def paint_lattice_points(canvas, px, py, color, site_pixel_size=1):
+    if px.size == 0:
+        return
+    size = max(1.0, float(site_pixel_size))
+    if size <= 1.0:
+        canvas[py, px] = color
+        return
+
+    base = np.asarray(color, dtype=np.float32)
+    radius = size / 2.0
+    radius_i = max(1, int(np.ceil(radius)))
+    for dy in range(-radius_i, radius_i + 1):
+        yy = py + dy
+        ymask = (yy >= 0) & (yy < canvas.shape[0])
+        if not np.any(ymask):
+            continue
+        wy = np.clip(radius + 0.5 - abs(float(dy)), 0.0, 1.0)
+        for dx in range(-radius_i, radius_i + 1):
+            xx = px + dx
+            mask = ymask & (xx >= 0) & (xx < canvas.shape[1])
+            if np.any(mask):
+                wx = np.clip(radius + 0.5 - abs(float(dx)), 0.0, 1.0)
+                alpha = float(wx * wy)
+                if alpha >= 0.999:
+                    canvas[yy[mask], xx[mask]] = color
+                elif alpha > 0.0:
+                    old = canvas[yy[mask], xx[mask]].astype(np.float32)
+                    blended = old * (1.0 - alpha) + base * alpha
+                    canvas[yy[mask], xx[mask]] = np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def positions_to_resampled_mask(
+    positions,
+    L,
+    viewport_bottom,
+    viewport_top,
+    out_w,
+    out_h,
+    reference_L=4096,
+):
+    positions = np.asarray(positions, dtype=np.uint64)
+    if positions.size == 0:
+        return np.zeros((out_h, out_w), dtype=np.uint8)
+
+    z_bottom = int(viewport_bottom)
+    z_top = int(viewport_top)
+    layers = max(1, z_top - z_bottom + 1)
+    reference_L = max(1, int(reference_L))
+
+    if L > reference_L:
+        px, py = positions_to_pixels(positions, L, z_bottom, z_top, out_w, out_h)
+        mask = np.zeros((out_h, out_w), dtype=np.uint8)
+        if px.size:
+            mask[out_h - 1 - py, px] = 255
+        return mask
+
+    x = positions % np.uint64(L)
+    z = positions // np.uint64(L)
+    visible = (z >= np.uint64(z_bottom)) & (z <= np.uint64(z_top))
+    if not np.any(visible):
+        return np.zeros((out_h, out_w), dtype=np.uint8)
+
+    x = x[visible].astype(np.int64, copy=False)
+    row = (np.uint64(z_top) - z[visible]).astype(np.int64, copy=False)
+    source = np.zeros((layers, L), dtype=np.uint8)
+    source[row, x] = 255
+
+    img = Image.fromarray(source, mode="L")
+    if L < reference_L:
+        ref_h = max(1, int(round(layers * float(reference_L) / float(L))))
+        img = img.resize((reference_L, ref_h), Image.Resampling.NEAREST)
+    img = img.resize((out_w, out_h), Image.Resampling.LANCZOS)
+    return np.asarray(img, dtype=np.uint8)
+
+
+def blend_mask(canvas, mask, color, opacity=1.0):
+    if mask.size == 0 or not np.any(mask):
+        return
+    alpha = (mask.astype(np.float32) / 255.0)[..., None]
+    alpha *= float(np.clip(opacity, 0.0, 1.0))
+    base = np.asarray(color, dtype=np.float32)
+    blended = canvas.astype(np.float32) * (1.0 - alpha) + base * alpha
+    canvas[:, :] = np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def component_color(label):
+    x = (int(label) + 1) * 0x9E3779B1
+    x ^= (x >> 16)
+    x = (x * 0x85EBCA6B) & 0xFFFFFFFF
+    hue = (x % 360) / 360.0
+    sat = 0.86 + 0.12 * (((x >> 9) & 255) / 255.0)
+    val = 0.74 + 0.20 * (((x >> 17) & 255) / 255.0)
+
+    import colorsys
+    rgb = colorsys.hsv_to_rgb(hue, sat, val)
+    return tuple(int(round(255 * c)) for c in rgb)
+
+
+def compute_connected_components(species, edge_offsets, edges):
+    if edge_offsets is None or edges is None:
+        raise ValueError("--cluster-colors requer leitura das arestas do .bin")
+    n_sites = int(species.size)
+    labels = np.full(n_sites, -1, dtype=np.int32)
+    sizes = []
+    stack = []
+    current_label = 0
+
+    for seed in range(n_sites):
+        if species[seed] == 0 or labels[seed] >= 0:
+            continue
+        labels[seed] = current_label
+        stack.append(seed)
+        size = 0
+        while stack:
+            u = stack.pop()
+            size += 1
+            start = int(edge_offsets[u])
+            end = int(edge_offsets[u + 1])
+            for v in edges[start:end]:
+                v = int(v)
+                if v < 0 or v >= n_sites:
+                    continue
+                if species[v] == 0 or labels[v] >= 0:
+                    continue
+                labels[v] = current_label
+                stack.append(v)
+        sizes.append(size)
+        current_label += 1
+
+    if not sizes:
+        return labels, -1, np.asarray([], dtype=np.int64)
+    sizes = np.asarray(sizes, dtype=np.int64)
+    return labels, int(np.argmax(sizes)), sizes
+
+
+def render_cluster_color_frame(
+    pos,
+    labels,
+    largest_label,
+    L,
+    viewport_bottom,
+    viewport_top,
+    out_w,
+    out_h,
+    background_color,
+    giant_color,
+    path_color=None,
+    overlay=None,
+    path_fraction=1.0,
+    path_width=9,
+    path_radius=4,
+    layer_times=None,
+    line_color=(35, 35, 35),
+    reference_L=4096,
+    cluster_alpha=1.0,
+):
+    labels = np.asarray(labels, dtype=np.int32)
+    valid = labels >= 0
+    pos = np.asarray(pos, dtype=np.uint64)
+    z_bottom = int(viewport_bottom)
+    z_top = int(viewport_top)
+    layers = max(1, z_top - z_bottom + 1)
+    reference_L = max(1, int(reference_L))
+    bg = np.asarray(background_color, dtype=np.float32)
+    largest_label = int(largest_label)
+    cluster_alpha = float(np.clip(cluster_alpha, 0.0, 1.0))
+
+    max_label = int(labels[valid].max()) if np.any(valid) else -1
+    label_colors = np.empty((max_label + 1, 3), dtype=np.uint8) if max_label >= 0 else np.empty((0, 3), dtype=np.uint8)
+    for label in range(max_label + 1):
+        color = np.asarray(giant_color if label == largest_label else component_color(label), dtype=np.float32)
+        opacity = 1.0 if label == largest_label else cluster_alpha
+        label_colors[label] = np.clip(bg * (1.0 - opacity) + color * opacity, 0, 255).astype(np.uint8)
+
+    visible = valid
+    z = pos // np.uint64(L)
+    visible &= (z >= np.uint64(z_bottom)) & (z <= np.uint64(z_top))
+
+    if L <= reference_L:
+        source = np.empty((layers, L, 3), dtype=np.uint8)
+        source[:, :] = background_color
+        if np.any(visible):
+            x = (pos[visible] % np.uint64(L)).astype(np.int64, copy=False)
+            row = (np.uint64(z_top) - z[visible]).astype(np.int64, copy=False)
+            source[row, x] = label_colors[labels[visible]]
+        img = Image.fromarray(source, mode="RGB")
+        if L < reference_L:
+            ref_h = max(1, int(round(layers * float(reference_L) / float(L))))
+            img = img.resize((reference_L, ref_h), Image.Resampling.NEAREST)
+        img = img.resize((out_w, out_h), Image.Resampling.NEAREST)
+    else:
+        canvas = np.empty((out_h, out_w, 3), dtype=np.uint8)
+        canvas[:, :] = background_color
+        if np.any(visible):
+            px, py = positions_to_pixels(pos[visible], L, z_bottom, z_top, out_w, out_h)
+            canvas[out_h - 1 - py, px] = label_colors[labels[visible]]
+        img = Image.fromarray(canvas, mode="RGB")
+
+    draw_layer_lines(
+        img,
+        overlay,
+        viewport_bottom,
+        viewport_top,
+        color=line_color,
+        current_t=None,
+        layer_times=layer_times,
+    )
+
+    if overlay is not None and path_color is not None:
+        path_x, path_y = positions_to_pixels(
+            overlay.get("shortest_path_pos_flat", []),
+            L,
+            viewport_bottom,
+            viewport_top,
+            out_w,
+            out_h,
+        )
+        if path_x.size:
+            draw_path_pixels(
+                img,
+                path_x,
+                path_y,
+                path_color,
+                path_fraction,
+                path_width,
+                path_radius,
+            )
+
+    return img
+
+
+def render_reference_style_frame(
+    pos,
+    times,
+    t,
+    L,
+    viewport_bottom,
+    viewport_top,
+    out_w,
+    out_h,
+    background_color,
+    active_color,
+    overlay=None,
+    giant_color=None,
+    path_color=None,
+    path_fraction=1.0,
+    path_width=9,
+    path_radius=4,
+    layer_times=None,
+    line_color=(35, 35, 35),
+    reference_L=4096,
+    active_alpha=0.35,
+):
+    canvas = np.empty((out_h, out_w, 3), dtype=np.uint8)
+    canvas[:, :] = background_color
+
+    visible = times <= t
+    active_mask = positions_to_resampled_mask(
+        pos[visible],
+        L,
+        viewport_bottom,
+        viewport_top,
+        out_w,
+        out_h,
+        reference_L=reference_L,
+    )
+    blend_mask(canvas, active_mask, active_color, opacity=active_alpha)
+
+    if overlay is not None and giant_color is not None:
+        giant_mask = positions_to_resampled_mask(
+            overlay.get("giant_component_pos_flat", []),
+            L,
+            viewport_bottom,
+            viewport_top,
+            out_w,
+            out_h,
+            reference_L=reference_L,
+        )
+        blend_mask(canvas, giant_mask, giant_color, opacity=1.0)
+
+    img = Image.fromarray(canvas, mode="RGB")
+    draw_layer_lines(
+        img,
+        overlay,
+        viewport_bottom,
+        viewport_top,
+        color=line_color,
+        current_t=t,
+        layer_times=layer_times,
+    )
+
+    if overlay is not None and path_color is not None:
+        path_x, path_y = positions_to_pixels(
+            overlay.get("shortest_path_pos_flat", []),
+            L,
+            viewport_bottom,
+            viewport_top,
+            out_w,
+            out_h,
+        )
+        if path_x.size:
+            draw_path_pixels(
+                img,
+                path_x,
+                path_y,
+                path_color,
+                path_fraction,
+                path_width,
+                path_radius,
+            )
+
+    return img
+
+
 def render_viewport_frame(
     pos,
     times,
@@ -260,15 +592,23 @@ def render_viewport_frame(
     path_radius=4,
     layer_times=None,
     line_color=(35, 35, 35),
+    site_pixel_size=0,
 ):
     canvas = np.empty((out_h, out_w, 3), dtype=np.uint8)
     canvas[:, :] = background_color
+    point_size = infer_site_pixel_size(
+        L,
+        viewport_bottom,
+        viewport_top,
+        out_w,
+        out_h,
+        site_pixel_size,
+    )
 
     visible = times <= t
     active_pos = pos[visible]
     px, py = positions_to_pixels(active_pos, L, viewport_bottom, viewport_top, out_w, out_h)
-    if px.size:
-        canvas[py, px] = active_color
+    paint_lattice_points(canvas, px, py, active_color, point_size)
 
     if overlay is not None and giant_color is not None:
         gx, gy = positions_to_pixels(
@@ -279,8 +619,7 @@ def render_viewport_frame(
             out_w,
             out_h,
         )
-        if gx.size:
-            canvas[gy, gx] = giant_color
+        paint_lattice_points(canvas, gx, gy, giant_color, point_size)
 
     img = Image.fromarray(np.flipud(canvas), mode="RGB")
     draw_layer_lines(
@@ -450,6 +789,7 @@ def render_scaled_view_frame(
     path_radius=4,
     layer_times=None,
     line_color=(35, 35, 35),
+    site_pixel_size=0,
 ):
     span = max(1, int(viewport_top) - int(viewport_bottom))
     view_w, view_h, off_x, off_y = fit_physical_view(frame_w, frame_h, L, span)
@@ -472,6 +812,7 @@ def render_scaled_view_frame(
         path_radius=path_radius,
         layer_times=layer_times,
         line_color=line_color,
+        site_pixel_size=site_pixel_size,
     )
     img = Image.new("RGB", (frame_w, frame_h), background_color)
     img.paste(view, (off_x, off_y))
@@ -490,7 +831,18 @@ def draw_path_pixels(img, path_x, path_y, color, fraction=1.0, width=9, radius=4
         for x, y in zip(path_x[:n], path_y[:n])
     ]
     if len(display_points) >= 2:
-        draw.line(display_points, fill=color, width=max(1, int(width)), joint="curve")
+        out_w = img.size[0]
+        wrap_jump = max(1, out_w // 2)
+        segment = [display_points[0]]
+        for point in display_points[1:]:
+            if abs(point[0] - segment[-1][0]) > wrap_jump:
+                if len(segment) >= 2:
+                    draw.line(segment, fill=color, width=max(1, int(width)), joint="curve")
+                segment = [point]
+            else:
+                segment.append(point)
+        if len(segment) >= 2:
+            draw.line(segment, fill=color, width=max(1, int(width)), joint="curve")
     r = max(1, int(radius))
     for x, y in display_points:
         draw.ellipse((x - r, y - r, x + r, y + r), fill=color)
@@ -501,12 +853,15 @@ def render_growth_animation(args):
     if not input_path.exists():
         raise FileNotFoundError(input_path)
 
-    info = read_compact_bin_arrays(input_path)
+    info = read_compact_bin_arrays(input_path, read_edges=args.cluster_colors)
     n_sites = info["N"]
-    if n_sites % args.L != 0:
-        raise ValueError(f"N={n_sites} nao e multiplo de L={args.L}; informe o L correto")
 
-    height = n_sites // args.L
+    if info["pos_flat"].size:
+        z_min = int(info["pos_flat"].min()) // args.L
+        z_max = int(info["pos_flat"].max()) // args.L
+        height = z_max - z_min + 1
+    else:
+        height = 1
     out_w = even_dimension(args.output_width)
     out_h = even_dimension(args.output_height or round(out_w * height / args.L))
     out_h = max(2, out_h)
@@ -514,6 +869,9 @@ def render_growth_animation(args):
     active_mask = info["species"] > 0
     pos = info["pos_flat"][active_mask]
     times = info["activation_time"][active_mask]
+    active_labels = None
+    largest_label = -1
+    component_sizes = None
     active_count = int(active_mask.sum())
     overlay = load_overlay(args.overlay_json, args.overlay_color_index)
     if overlay is not None and args.output_height is None:
@@ -533,6 +891,20 @@ def render_growth_animation(args):
             f"componente={len(overlay.get('giant_component_pos_flat', []))}, "
             f"caminho={len(overlay.get('shortest_path_pos_flat', []))}"
         )
+    if args.cluster_colors:
+        print("[info] calculando componentes conectados para cluster-colors...")
+        labels, largest_label, component_sizes = compute_connected_components(
+            info["species"],
+            info.get("edge_offsets"),
+            info.get("edges"),
+        )
+        active_labels = labels[active_mask]
+        print(
+            "[info] clusters: "
+            f"num={component_sizes.size}, "
+            f"maior_label={largest_label}, "
+            f"maior_size={int(component_sizes[largest_label]) if largest_label >= 0 else 0}"
+        )
     if time_series is not None:
         print(
             "[info] serie temporal: "
@@ -545,7 +917,6 @@ def render_growth_animation(args):
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     frames_dir = output_dir / "frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
 
     frame_times = choose_frame_times(times, max_frames=args.max_frames, stride=args.frame_stride)
     if frame_times.size == 0:
@@ -563,6 +934,85 @@ def render_growth_animation(args):
             "[info] tempos das retas: "
             + ", ".join(f"{k}={v}" for k, v in layer_times.items() if v is not None)
         )
+
+    if args.final_frame_only:
+        if overlay is None:
+            raise ValueError("--final-frame-only requer --overlay-json")
+        z_bottom = int(overlay.get("z_stab", -1))
+        z_top = int(overlay.get("z_stab_plus_L", -1))
+        if z_bottom < 0 or z_top < z_bottom:
+            raise ValueError(
+                "--final-frame-only requer z_stab e z_stab_plus_L validos no overlay"
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_frame_path = output_dir / args.final_frame_name
+        point_size = infer_site_pixel_size(
+            args.L,
+            z_bottom,
+            z_top,
+            out_w,
+            out_h,
+            args.site_pixel_size,
+        )
+        print(
+            f"[info] site_pixel_size={point_size}, "
+            f"visual_reference_L={args.visual_reference_L}, "
+            + (
+                f"cluster_alpha={args.cluster_alpha}"
+                if args.cluster_colors
+                else f"active_alpha={args.active_alpha}"
+            )
+        )
+        if args.cluster_colors:
+            final_img = render_cluster_color_frame(
+                pos,
+                active_labels,
+                largest_label,
+                args.L,
+                z_bottom,
+                z_top,
+                out_w,
+                out_h,
+                args.background_color,
+                args.giant_color,
+                path_color=args.path_color,
+                overlay=overlay,
+                path_fraction=1.0,
+                path_width=args.path_width,
+                path_radius=args.path_radius,
+                layer_times=layer_times,
+                line_color=args.stab_line_color,
+                reference_L=args.visual_reference_L,
+                cluster_alpha=args.cluster_alpha,
+            )
+        else:
+            final_img = render_reference_style_frame(
+                pos,
+                times,
+                int(frame_times[-1]),
+                args.L,
+                z_bottom,
+                z_top,
+                out_w,
+                out_h,
+                args.background_color,
+                args.active_color,
+                overlay=overlay,
+                giant_color=args.giant_color,
+                path_color=args.path_color,
+                path_fraction=1.0,
+                path_width=args.path_width,
+                path_radius=args.path_radius,
+                layer_times=layer_times,
+                line_color=args.stab_line_color,
+                reference_L=args.visual_reference_L,
+                active_alpha=args.active_alpha,
+            )
+        final_img.save(final_frame_path, optimize=False)
+        print(f"[done] final frame: {final_frame_path}")
+        return
+
+    frames_dir.mkdir(parents=True, exist_ok=True)
 
     main_has_series = time_series is not None
     plot_w = int(args.plot_width) if main_has_series else 0
@@ -774,6 +1224,9 @@ def main():
     parser.add_argument("--frame-stride", type=int, default=1, help="usa um a cada N tempos unicos antes do max-frames")
     parser.add_argument("--fps", type=int, default=24, help="FPS do video")
     parser.add_argument("--active-color", type=parse_hex_color, default=parse_hex_color("#1f77b4"))
+    parser.add_argument("--active-alpha", type=float, default=0.35, help="opacidade dos sitios ativos fora do maior componente no frame final")
+    parser.add_argument("--cluster-colors", action="store_true", help="pinta cada componente conectado com uma cor diferente no frame final")
+    parser.add_argument("--cluster-alpha", type=float, default=1.0, help="opacidade dos clusters que nao sao o maior componente")
     parser.add_argument("--front-color", type=parse_hex_color, default=parse_hex_color("#62b6ff"))
     parser.add_argument("--background-color", type=parse_hex_color, default=parse_hex_color("#fff7ef"))
     parser.add_argument("--giant-color", type=parse_hex_color, default=parse_hex_color("#2a9d8f"))
@@ -794,11 +1247,19 @@ def main():
     parser.add_argument("--path-frames", type=int, default=96, help="frames para desenhar o shortest path da base ao topo")
     parser.add_argument("--freeze-frames", type=int, default=72, help="frames congelados no zoom final")
     parser.add_argument("--hold-seconds", type=float, default=0.0, help="segundos extras clonando o ultimo frame no MP4")
+    parser.add_argument("--site-pixel-size", type=float, default=1.5, help="tamanho dos sitios em pixels; 0 escolhe automaticamente pela escala")
+    parser.add_argument("--visual-reference-L", type=int, default=4096, help="L de referencia para padronizar a textura do frame final")
     parser.add_argument("--path-width", type=int, default=11, help="espessura do traco do shortest path")
     parser.add_argument("--path-radius", type=int, default=4, help="raio dos sitios desenhados no shortest path")
     parser.add_argument("--skip-main-frames", action="store_true", help="pula os frames principais se frame final ja existir")
     parser.add_argument("--video", action="store_true", help="monta MP4 com ffmpeg ao final")
     parser.add_argument("--video-name", default="growth_2D.mp4")
+    parser.add_argument(
+        "--final-frame-only",
+        action="store_true",
+        help="salva apenas o frame final no recorte [z_stab,z_stab+L], com componente e caminho",
+    )
+    parser.add_argument("--final-frame-name", default="final_frame_zstab.png")
     parser.add_argument("--info", action="store_true", help="mostra metadados e nao renderiza")
     parser.add_argument("--preview-main-frame", default=None, help="salva apenas o ultimo frame da fase principal neste PNG")
     parser.add_argument("--report-every", type=int, default=10)

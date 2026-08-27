@@ -20,6 +20,7 @@
 #include <string>
 #include <optional>
 #include <algorithm>
+#include <limits>
 
 namespace rh = reanalysis_helpers;
 
@@ -68,6 +69,136 @@ NetworkCompact convert_encoded_to_compact(const NetworkPattern& np)
     return nc;
 }
 
+NetworkCompact build_animation_window_compact_from_encoded(const NetworkPattern& np,
+                                                           const PercolationSeries& ps,
+                                                           const int dim,
+                                                           const int L)
+{
+    if (L <= 0) {
+        throw std::runtime_error("build_animation_window_compact_from_encoded: L invalido");
+    }
+    if (dim != 2 && dim != 3) {
+        throw std::runtime_error("build_animation_window_compact_from_encoded: dim deve ser 2 ou 3");
+    }
+    if (static_cast<int>(np.shape.size()) != dim) {
+        throw std::runtime_error("build_animation_window_compact_from_encoded: shape incompatível com dim");
+    }
+
+    const NetworkCompact::index_t invalid =
+        std::numeric_limits<NetworkCompact::index_t>::max();
+    const NetworkCompact::index_t layer_size =
+        dim == 3
+            ? static_cast<NetworkCompact::index_t>(L) * static_cast<NetworkCompact::index_t>(L)
+            : static_cast<NetworkCompact::index_t>(L);
+    const int max_z = np.shape[dim - 1] - 1;
+
+    struct Window {
+        int z0 = 0;
+        int z1 = 0;
+        std::size_t base = 0;
+    };
+
+    std::vector<Window> windows;
+    windows.reserve(ps.z_stat_by_species.size());
+    for (const int z_bottom : ps.z_stat_by_species) {
+        if (z_bottom < 0) continue;
+        const int z0 = std::max(0, z_bottom);
+        const int z1 = std::min(max_z, z_bottom + L);
+        if (z0 <= z1) windows.push_back(Window{z0, z1, 0});
+    }
+    if (windows.empty()) {
+        NetworkCompact out;
+        out.edge_offsets.assign(1, 0);
+        return out;
+    }
+
+    std::sort(windows.begin(), windows.end(), [](const Window& a, const Window& b) {
+        return a.z0 < b.z0 || (a.z0 == b.z0 && a.z1 < b.z1);
+    });
+    std::vector<Window> merged;
+    for (const Window& w : windows) {
+        if (merged.empty() || w.z0 > merged.back().z1 + 1) {
+            merged.push_back(w);
+        } else {
+            merged.back().z1 = std::max(merged.back().z1, w.z1);
+        }
+    }
+
+    std::size_t window_positions = 0;
+    for (Window& w : merged) {
+        w.base = window_positions;
+        const std::size_t layers = static_cast<std::size_t>(w.z1 - w.z0 + 1);
+        window_positions += layers * static_cast<std::size_t>(layer_size);
+    }
+
+    std::vector<NetworkCompact::index_t> remap(window_positions, invalid);
+    NetworkCompact out;
+
+    auto local_window_offset = [&](const NetworkCompact::index_t pos,
+                                   std::size_t& local) -> bool {
+        const int z = static_cast<int>(pos / layer_size);
+        for (const Window& w : merged) {
+            if (z < w.z0) return false;
+            if (z > w.z1) continue;
+            local = w.base
+                + static_cast<std::size_t>(z - w.z0) * static_cast<std::size_t>(layer_size)
+                + static_cast<std::size_t>(pos % layer_size);
+            return local < remap.size();
+        }
+        return false;
+    };
+
+    for (const Window& w : merged) {
+        for (int z = w.z0; z <= w.z1; ++z) {
+            const std::size_t layer_begin =
+                static_cast<std::size_t>(z) * static_cast<std::size_t>(layer_size);
+            for (NetworkCompact::index_t d = 0; d < layer_size; ++d) {
+                const std::size_t pos = layer_begin + static_cast<std::size_t>(d);
+                if (pos >= np.data.size()) break;
+                const long long code = static_cast<long long>(np.data[pos]);
+                if (code <= 0) continue;
+                if (out.N == invalid) {
+                    throw std::runtime_error("build_animation_window_compact_from_encoded: muitos sitios ativos");
+                }
+                std::size_t local = 0;
+                if (!local_window_offset(static_cast<NetworkCompact::index_t>(pos), local)) continue;
+                remap[local] = out.N++;
+                out.pos_flat.push_back(static_cast<NetworkCompact::index_t>(pos));
+                const int color_1b = static_cast<int>(code / SPECIES_FACTOR);
+                const int time = static_cast<int>(code % SPECIES_FACTOR);
+                const int color_idx = np.num_colors == 1
+                    ? 0
+                    : std::max(0, std::min(np.num_colors - 1, color_1b - 1));
+                out.species.push_back(static_cast<uint8_t>(color_idx + 1));
+                out.activation_time.push_back(static_cast<uint32_t>(std::max(0, time)));
+            }
+        }
+    }
+
+    std::vector<std::pair<NetworkCompact::index_t, NetworkCompact::index_t>> pairs;
+    for (const auto& edge : np.edge_pairs) {
+        std::size_t lu = 0;
+        std::size_t lv = 0;
+        if (!local_window_offset(edge.first, lu) ||
+            !local_window_offset(edge.second, lv)) {
+            continue;
+        }
+        const NetworkCompact::index_t mu = remap[lu];
+        const NetworkCompact::index_t mv = remap[lv];
+        if (mu == invalid || mv == invalid) continue;
+        pairs.emplace_back(mu, mv);
+    }
+
+    if (!pairs.empty()) {
+        out.build_csr_from_edge_pairs(pairs);
+    } else {
+        out.edge_offsets.assign(out.N + 1, 0);
+        out.edges.clear();
+    }
+
+    return out;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -84,7 +215,7 @@ int main(int argc, char* argv[]) {
 
     // Allow either zero-argument (use defaults) or full-argument run.
     // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15 && argc != 16) {
+    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15 && argc != 16 && argc != 17) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -108,8 +239,9 @@ int main(int argc, char* argv[]) {
         std::string run_mode = "growth_test";
         std::string initial_layout = "random";
         bool save_surface_observables = false;
+        bool save_animation_window_only = false;
         
-        if (argc == 12 || argc == 13 || argc == 14 || argc == 15 || argc == 16) {
+        if (argc == 12 || argc == 13 || argc == 14 || argc == 15 || argc == 16 || argc == 17) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -133,6 +265,10 @@ int main(int argc, char* argv[]) {
             }
             if (argc == 16) {
                 save_surface_observables = helpers::parse_bool(argv[15]);
+            }
+            if (argc == 17) {
+                save_surface_observables = helpers::parse_bool(argv[15]);
+                save_animation_window_only = helpers::parse_bool(argv[16]);
             }
         }
 
@@ -355,17 +491,35 @@ int main(int argc, char* argv[]) {
 
         if (write_encoded_network_artifact) {
             try {
-                NetworkCompact fullc = convert_encoded_to_compact(net);
-                saver.save_network_compact_bin(fullc, net_compact_filename);
-                if (dynamic_growth_artifacts) {
+                if (dynamic_growth_artifacts && save_animation_window_only) {
+                    NetworkCompact windowc =
+                        build_animation_window_compact_from_encoded(net, ps, dim, L);
                     const std::string overlay_filename =
                         network_dir + "/" + sample_base + "_animation_overlay.json";
                     saver.save_animation_overlay_json(
-                        fullc,
+                        windowc,
                         ps,
                         dim,
                         L,
                         overlay_filename);
+                    saver.save_network_compact_bin(windowc, net_compact_filename);
+                    std::cout << "[INFO] Saved animation window compact network only: "
+                              << windowc.N << " sites, "
+                              << windowc.num_edges() << " edges."
+                              << std::endl;
+                } else {
+                    NetworkCompact fullc = convert_encoded_to_compact(net);
+                    if (dynamic_growth_artifacts) {
+                        const std::string overlay_filename =
+                            network_dir + "/" + sample_base + "_animation_overlay.json";
+                        saver.save_animation_overlay_json(
+                            fullc,
+                            ps,
+                            dim,
+                            L,
+                            overlay_filename);
+                    }
+                    saver.save_network_compact_bin(fullc, net_compact_filename);
                 }
             } catch (const std::exception &e) {
                 std::cerr << "Warning: failed to save encoded compact network: "

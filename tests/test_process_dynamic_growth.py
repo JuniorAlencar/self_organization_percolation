@@ -181,6 +181,112 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertAlmostEqual(all_rows[0]["t_eq_s_prime_threshold"], 1.0e-5)
             self.assertEqual(all_rows[0]["post_equilibrium_extra_steps"], 100)
 
+    def test_published_bundle_import_uses_manifest_cache_when_bundle_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+
+            self._write_sample(data_dir, "sample_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            out_path, expected_rows, expected_color_rows = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=2,
+            )
+
+            rows, color_rows, from_cache = PROCESS_DYNAMIC_GROWTH.rows_from_published_bundle_cached(
+                out_path,
+                published_root,
+                manifests_root,
+                series_mode="full",
+            )
+
+            self.assertTrue(from_cache)
+            self.assertEqual(rows, expected_rows)
+            self.assertEqual(color_rows, expected_color_rows)
+
+            manifest = PROCESS_DYNAMIC_GROWTH.load_manifest(
+                manifests_root,
+                out_path.parent.relative_to(published_root),
+            )
+            self.assertEqual(
+                manifest[PROCESS_DYNAMIC_GROWTH.SUMMARY_FILE_FINGERPRINT_KEY],
+                PROCESS_DYNAMIC_GROWTH.file_stat_fingerprint(out_path),
+            )
+
+    def test_main_incremental_all_data_updates_only_changed_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, _, _, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "sample_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+
+            old_argv = sys.argv
+            original_import = PROCESS_DYNAMIC_GROWTH.rows_from_published_bundle_cached
+            try:
+                sys.argv = [
+                    "process_dynamic_growth.py",
+                    "--sop-root",
+                    str(root / "SOP_data"),
+                    "--series-mode",
+                    "full",
+                ]
+                self.assertEqual(PROCESS_DYNAMIC_GROWTH.main(), 0)
+
+                data_dir_2 = Path(str(data_dir).replace("/L_8/", "/L_16/"))
+                data_dir_2.mkdir(parents=True, exist_ok=True)
+                self._write_sample(data_dir_2, "sample_P0_0.7_p0_0.2.json", [0.6, 0.8, 1.0])
+
+                def fail_import(*args, **kwargs):
+                    raise AssertionError("published bundle import should not run during incremental all-data update")
+
+                PROCESS_DYNAMIC_GROWTH.rows_from_published_bundle_cached = fail_import
+                sys.argv = [
+                    "process_dynamic_growth.py",
+                    "--sop-root",
+                    str(root / "SOP_data"),
+                    "--series-mode",
+                    "full",
+                ]
+                self.assertEqual(PROCESS_DYNAMIC_GROWTH.main(), 0)
+            finally:
+                sys.argv = old_argv
+                PROCESS_DYNAMIC_GROWTH.rows_from_published_bundle_cached = original_import
+
+            rows = PROCESS_DYNAMIC_GROWTH.read_dat_rows(
+                root / "SOP_data" / "all_data_dynamic.dat",
+                PROCESS_DYNAMIC_GROWTH.ALL_DATA_COLUMNS,
+            )
+            self.assertEqual({int(row["L"]) for row in rows}, {8, 16})
+            self.assertEqual(len(rows), 2)
+
+    def test_main_incremental_all_data_skips_write_when_no_groups_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, _, _, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "sample_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+
+            old_argv = sys.argv
+            original_write_all_data = PROCESS_DYNAMIC_GROWTH.write_all_data
+            try:
+                sys.argv = [
+                    "process_dynamic_growth.py",
+                    "--sop-root",
+                    str(root / "SOP_data"),
+                    "--series-mode",
+                    "full",
+                ]
+                self.assertEqual(PROCESS_DYNAMIC_GROWTH.main(), 0)
+
+                def fail_write(*args, **kwargs):
+                    raise AssertionError("all_data should not be rewritten when no groups changed")
+
+                PROCESS_DYNAMIC_GROWTH.write_all_data = fail_write
+                self.assertEqual(PROCESS_DYNAMIC_GROWTH.main(), 0)
+            finally:
+                sys.argv = old_argv
+                PROCESS_DYNAMIC_GROWTH.write_all_data = original_write_all_data
+
     def test_incremental_merge_updates_total_samples_for_orders_not_in_new_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
