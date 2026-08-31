@@ -1856,6 +1856,8 @@ struct SlabFractionResult {
     long long full_boundary_length = 0;
     long long external_perimeter_length = 0;
     std::map<long long, long long> hole_size_counts;
+    bool has_fractal_counts = false;
+    FractalCountsSample fractal_counts;
 };
 
 struct SlabHullHoleResult {
@@ -2162,6 +2164,680 @@ SlabHullHoleResult compute_abs_slab_hull_holes(
     return result;
 }
 
+bool fractal_counts_eligible(const int dim, const int L)
+{
+    if (const char* force = std::getenv("SOP_FRACTAL_FORCE_COUNTS")) {
+        if (std::string(force) == "1" || std::string(force) == "true") {
+            return true;
+        }
+    }
+    return (dim == 2 && L == 16384) || (dim == 3 && L == 1024);
+}
+
+int env_int_or_default(const char* name, const int fallback)
+{
+    if (const char* value = std::getenv(name)) {
+        return std::stoi(value);
+    }
+    return fallback;
+}
+
+double env_double_or_default(const char* name, const double fallback)
+{
+    if (const char* value = std::getenv(name)) {
+        return std::stod(value);
+    }
+    return fallback;
+}
+
+std::uint64_t box_key3(const int bx, const int by, const int bz)
+{
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(bz)) << 42) ^
+           (static_cast<std::uint64_t>(static_cast<std::uint32_t>(by)) << 21) ^
+           static_cast<std::uint64_t>(static_cast<std::uint32_t>(bx));
+}
+
+std::vector<double> make_log_bin_edges(const double r_min,
+                                       const double r_max,
+                                       const int num_bins)
+{
+    std::vector<double> edges(static_cast<std::size_t>(num_bins) + 1u, r_min);
+    if (num_bins <= 0 || r_min <= 0.0 || r_max <= r_min) return edges;
+    const double ratio = std::pow(r_max / r_min, 1.0 / static_cast<double>(num_bins));
+    for (int i = 0; i <= num_bins; ++i) {
+        edges[static_cast<std::size_t>(i)] = r_min * std::pow(ratio, i);
+    }
+    edges.back() = r_max;
+    return edges;
+}
+
+std::vector<int> default_fractal_epsilons(const int dim)
+{
+    if (dim == 2) {
+        return {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
+    }
+    return {2, 4, 8, 16, 32, 64, 128, 256};
+}
+
+std::vector<std::vector<int>> make_fractal_offsets(const int dim,
+                                                   const int epsilon,
+                                                   const int n_offsets,
+                                                   std::mt19937& rng)
+{
+    std::vector<std::vector<int>> offsets;
+    offsets.reserve(static_cast<std::size_t>(std::max(1, n_offsets)));
+    offsets.push_back(std::vector<int>(static_cast<std::size_t>(dim), 0));
+    std::uniform_int_distribution<int> dist(0, std::max(0, epsilon - 1));
+    while (static_cast<int>(offsets.size()) < n_offsets) {
+        std::vector<int> row(static_cast<std::size_t>(dim), 0);
+        for (int d = 0; d < dim; ++d) row[static_cast<std::size_t>(d)] = dist(rng);
+        offsets.push_back(std::move(row));
+    }
+    return offsets;
+}
+
+void init_distance_bins(FractalOriginDistances& origin,
+                        const std::vector<double>& edges)
+{
+    const int n = std::max(0, static_cast<int>(edges.size()) - 1);
+    origin.bins.assign(static_cast<std::size_t>(n), {});
+    for (int i = 0; i < n; ++i) {
+        auto& bin = origin.bins[static_cast<std::size_t>(i)];
+        bin.r_lower = edges[static_cast<std::size_t>(i)];
+        bin.r_upper = edges[static_cast<std::size_t>(i + 1)];
+        bin.r_center = std::sqrt(bin.r_lower * bin.r_upper);
+    }
+}
+
+int find_bin_index(const std::vector<double>& edges, const double r)
+{
+    if (edges.size() < 2 || r < edges.front() || r > edges.back()) return -1;
+    if (r == edges.back()) return static_cast<int>(edges.size()) - 2;
+    const auto it = std::upper_bound(edges.begin(), edges.end(), r);
+    const int idx = static_cast<int>(std::distance(edges.begin(), it)) - 1;
+    return (idx >= 0 && idx + 1 < static_cast<int>(edges.size())) ? idx : -1;
+}
+
+void accumulate_distance_bin(FractalDistanceBin& bin,
+                             const double r,
+                             const int ell)
+{
+    ++bin.count;
+    bin.sum_r += r;
+    bin.sum_r2 += r * r;
+    bin.sum_ell += static_cast<double>(ell);
+    bin.sum_ell2 += static_cast<double>(ell) * static_cast<double>(ell);
+    bin.sum_r_ell += r * static_cast<double>(ell);
+    bin.min_r = std::min(bin.min_r, r);
+    bin.max_r = std::max(bin.max_r, r);
+    if (ell < bin.min_ell ||
+        (ell == bin.min_ell &&
+         (!std::isfinite(bin.r_at_min_ell) || r < bin.r_at_min_ell))) {
+        bin.min_ell = ell;
+        bin.r_at_min_ell = r;
+    }
+    bin.max_ell = std::max(bin.max_ell, ell);
+}
+
+long long count_boxes_2d_local_indices(const int L,
+                                       const int epsilon,
+                                       const std::vector<int>& offset,
+                                       const std::vector<std::uint32_t>& indices,
+                                       const bool encoded_hull_element)
+{
+    const int nx_boxes = (L + epsilon - 1) / epsilon;
+    const int ny_boxes = (L + 2 * epsilon - 2) / epsilon;
+    std::vector<unsigned char> marked(
+        static_cast<std::size_t>(nx_boxes) * static_cast<std::size_t>(ny_boxes), 0u);
+    std::vector<std::uint32_t> touched;
+    touched.reserve(std::min<std::size_t>(indices.size(), 1024u * 1024u));
+    long long count = 0;
+
+    for (std::uint32_t raw : indices) {
+        const std::uint32_t idx = encoded_hull_element ? (raw >> 3) : raw;
+        const int x = static_cast<int>(idx % static_cast<std::uint32_t>(L));
+        const int y = static_cast<int>(idx / static_cast<std::uint32_t>(L));
+        const int bx = ((x + offset[0]) % L) / epsilon;
+        const int by = (y + offset[1]) / epsilon;
+        const std::uint32_t box = static_cast<std::uint32_t>(by * nx_boxes + bx);
+        if (!marked[box]) {
+            marked[box] = 1u;
+            touched.push_back(box);
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+long long count_boxes_abs_keys(const int dim,
+                               const int L,
+                               const int bottom,
+                               const int epsilon,
+                               const std::vector<int>& offset,
+                               const std::vector<std::uint64_t>& keys)
+{
+    const int boxes_x = (L + epsilon - 1) / epsilon;
+    const int boxes_y = boxes_x;
+    const int boxes_z = (dim == 2) ? 1 : ((L + 2 * epsilon - 2) / epsilon);
+    std::vector<unsigned char> marked(
+        static_cast<std::size_t>(boxes_x) *
+        static_cast<std::size_t>(boxes_y) *
+        static_cast<std::size_t>(boxes_z), 0u);
+    long long count = 0;
+
+    for (const std::uint64_t key : keys) {
+        int x = 0, y = 0, z = 0;
+        decode_abs_site_key(key, x, y, z);
+        const int bx = ((x + offset[0]) % L) / epsilon;
+        int by = 0;
+        int bz = 0;
+        if (dim == 2) {
+            by = (y - bottom + offset[1]) / epsilon;
+        } else {
+            by = ((y + offset[1]) % L) / epsilon;
+            bz = (z - bottom + offset[2]) / epsilon;
+        }
+        const std::size_t box =
+            static_cast<std::size_t>(bx) +
+            static_cast<std::size_t>(boxes_x) *
+                (static_cast<std::size_t>(by) +
+                 static_cast<std::size_t>(boxes_y) * static_cast<std::size_t>(bz));
+        if (!marked[box]) {
+            marked[box] = 1u;
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+FractalCountsSample compute_fractal_counts_2d(
+    const int L,
+    const int bottom,
+    const int top,
+    const bool is_node,
+    const int seed,
+    const int sample_index,
+    const int t_stab,
+    const long long total_occupied_sites,
+    const long long total_active_bonds,
+    const long long largest_edges,
+    const std::vector<unsigned char>& in_giant,
+    const std::function<bool(int, int, int, int)>& can_traverse)
+{
+    FractalCountsSample out;
+    const int h_count = top - bottom + 1;
+    if (!fractal_counts_eligible(2, L) || h_count != L || in_giant.empty()) {
+        return out;
+    }
+
+    out.eligible = true;
+    out.sample_index = sample_index;
+    out.dim = 2;
+    out.L = L;
+    out.anchor_z = bottom;
+    out.t_stab = t_stab;
+    out.type_percolation = is_node ? "node" : "bond";
+    out.boundary_conditions = {"x:periodic", "y:open"};
+    out.total_occupied_sites = total_occupied_sites;
+    out.total_active_bonds = total_active_bonds;
+    out.largest_component_bonds = largest_edges;
+    out.hull_complete.num_elements_by_orientation.assign(4, 0);
+    out.hull_external.num_elements_by_orientation.assign(4, 0);
+
+    std::vector<std::uint32_t> giant_sites;
+    giant_sites.reserve(in_giant.size() / 2u);
+    for (std::uint32_t idx = 0; idx < in_giant.size(); ++idx) {
+        if (in_giant[static_cast<std::size_t>(idx)]) {
+            giant_sites.push_back(idx);
+        }
+    }
+    out.largest_component_sites = static_cast<long long>(giant_sites.size());
+    if (!giant_sites.empty()) out.largest_component_seed = giant_sites.front();
+
+    const int requested_origins_default = 64;
+    out.requested_origins = env_int_or_default("SOP_FRACTAL_ORIGINS", requested_origins_default);
+    out.r_min = env_double_or_default("SOP_FRACTAL_R_MIN", 4.0);
+    out.r_max = env_double_or_default("SOP_FRACTAL_R_MAX", static_cast<double>(L) / 4.0);
+    out.num_bins = env_int_or_default("SOP_FRACTAL_NUM_BINS", 30);
+    out.max_chemical_distance = env_int_or_default(
+        "SOP_FRACTAL_MAX_ELL",
+        std::max(1, static_cast<int>(std::ceil(4.0 * out.r_max))));
+    out.chemical_seed = env_int_or_default("SOP_FRACTAL_CHEMICAL_SEED",
+                                           seed + 1000003 * (sample_index + 1));
+    out.bin_edges = make_log_bin_edges(out.r_min, out.r_max, out.num_bins);
+
+    std::mt19937 chem_rng(static_cast<std::uint32_t>(out.chemical_seed));
+    std::shuffle(giant_sites.begin(), giant_sites.end(), chem_rng);
+    out.effective_origins = std::min(
+        std::max(0, out.requested_origins),
+        static_cast<int>(giant_sites.size()));
+
+    std::vector<int> dist(in_giant.size(), -1);
+    std::vector<std::uint32_t> queue;
+    std::vector<std::uint32_t> touched;
+    queue.reserve(std::min<std::size_t>(giant_sites.size(), 1024u * 1024u));
+    touched.reserve(std::min<std::size_t>(giant_sites.size(), 1024u * 1024u));
+
+    for (int oi = 0; oi < out.effective_origins; ++oi) {
+        const std::uint32_t origin_idx = giant_sites[static_cast<std::size_t>(oi)];
+        const int ox = static_cast<int>(origin_idx % static_cast<std::uint32_t>(L));
+        const int oy_local = static_cast<int>(origin_idx / static_cast<std::uint32_t>(L));
+        FractalOriginDistances origin;
+        origin.site_id = origin_idx;
+        origin.coordinates = {ox, bottom + oy_local};
+        init_distance_bins(origin, out.bin_edges);
+
+        queue.clear();
+        touched.clear();
+        queue.push_back(origin_idx);
+        touched.push_back(origin_idx);
+        dist[origin_idx] = 0;
+        for (std::size_t head = 0; head < queue.size(); ++head) {
+            const std::uint32_t cur = queue[head];
+            if (dist[cur] >= out.max_chemical_distance) continue;
+            const int cy_local = static_cast<int>(cur / static_cast<std::uint32_t>(L));
+            const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+            const int cy_abs = bottom + cy_local;
+            const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
+            const int ny_values[4] = {cy_abs, cy_abs, cy_abs - 1, cy_abs + 1};
+            for (int ni = 0; ni < 4; ++ni) {
+                const int ny_abs = ny_values[ni];
+                if (ny_abs < bottom || ny_abs > top) continue;
+                if (!can_traverse(cx, cy_abs, nx_values[ni], ny_abs)) continue;
+                const std::uint32_t nidx = static_cast<std::uint32_t>(
+                    (ny_abs - bottom) * L + nx_values[ni]);
+                if (!in_giant[nidx] || dist[nidx] >= 0) continue;
+                dist[nidx] = dist[cur] + 1;
+                touched.push_back(nidx);
+                queue.push_back(nidx);
+            }
+        }
+
+        for (const std::uint32_t idx : touched) {
+            const int ell = dist[idx];
+            if (ell <= 0) continue;
+            const int x = static_cast<int>(idx % static_cast<std::uint32_t>(L));
+            const int y_local = static_cast<int>(idx / static_cast<std::uint32_t>(L));
+            const int dx_raw = std::abs(x - ox);
+            const int dx = std::min(dx_raw, L - dx_raw);
+            const int dy = std::abs(y_local - oy_local);
+            const double r = std::sqrt(static_cast<double>(dx * dx + dy * dy));
+            const int bin_idx = find_bin_index(out.bin_edges, r);
+            if (bin_idx < 0) {
+                ++out.pairs_discarded_out_of_range;
+                continue;
+            }
+            ++out.total_pairs_processed;
+            accumulate_distance_bin(origin.bins[static_cast<std::size_t>(bin_idx)], r, ell);
+        }
+        for (const std::uint32_t idx : touched) dist[idx] = -1;
+        out.origins.push_back(std::move(origin));
+    }
+
+    out.epsilons = default_fractal_epsilons(2);
+    out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
+                                         seed + 2000003 * (sample_index + 1));
+    const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);
+    std::mt19937 offset_rng(static_cast<std::uint32_t>(out.offset_seed));
+    for (const int eps : out.epsilons) {
+        const auto offsets = make_fractal_offsets(2, eps, n_offsets, offset_rng);
+        for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
+            const auto& off = offsets[static_cast<std::size_t>(offset_id)];
+            out.component_box_counts.push_back({eps, offset_id, off,
+                                                count_boxes_2d_local_indices(
+                                                    L, eps, off, giant_sites, false)});
+        }
+    }
+
+    std::vector<unsigned char> exterior(in_giant.size(), 0u);
+    queue.clear();
+    auto push_ext = [&](const int x, const int y_local) {
+        const std::uint32_t idx = static_cast<std::uint32_t>(y_local * L + x);
+        if (in_giant[idx] || exterior[idx]) return;
+        exterior[idx] = 1u;
+        queue.push_back(idx);
+    };
+    for (int x = 0; x < L; ++x) {
+        push_ext(x, 0);
+        push_ext(x, h_count - 1);
+    }
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        const std::uint32_t cur = queue[head];
+        const int cy = static_cast<int>(cur / static_cast<std::uint32_t>(L));
+        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+        const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
+        const int ny_values[4] = {cy, cy, cy - 1, cy + 1};
+        for (int ni = 0; ni < 4; ++ni) {
+            const int ny = ny_values[ni];
+            if (ny < 0 || ny >= h_count) continue;
+            const std::uint32_t nidx = static_cast<std::uint32_t>(ny * L + nx_values[ni]);
+            if (in_giant[nidx] || exterior[nidx]) continue;
+            exterior[nidx] = 1u;
+            queue.push_back(nidx);
+        }
+    }
+
+    std::vector<std::uint64_t> hull_complete_elements;
+    std::vector<std::uint64_t> hull_external_elements;
+    for (const std::uint32_t idx : giant_sites) {
+        const int y = static_cast<int>(idx / static_cast<std::uint32_t>(L));
+        const int x = static_cast<int>(idx % static_cast<std::uint32_t>(L));
+        const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
+        const int ny_values[4] = {y, y, y - 1, y + 1};
+        for (int ni = 0; ni < 4; ++ni) {
+            const int ny = ny_values[ni];
+            bool is_boundary = false;
+            bool is_external = false;
+            if (ny < 0 || ny >= h_count) {
+                is_boundary = true;
+                is_external = true;
+            } else {
+                const std::uint32_t nidx = static_cast<std::uint32_t>(ny * L + nx_values[ni]);
+                if (!in_giant[nidx]) {
+                    is_boundary = true;
+                    is_external = exterior[nidx] != 0u;
+                }
+            }
+            if (!is_boundary) continue;
+            ++out.hull_complete.num_elements_by_orientation[static_cast<std::size_t>(ni)];
+            const std::uint64_t encoded =
+                (static_cast<std::uint64_t>(idx) << 3) | static_cast<std::uint64_t>(ni);
+            hull_complete_elements.push_back(encoded);
+            if (is_external) {
+                ++out.hull_external.num_elements_by_orientation[static_cast<std::size_t>(ni)];
+                hull_external_elements.push_back(encoded);
+            }
+        }
+    }
+    out.hull_complete.num_elements = static_cast<long long>(hull_complete_elements.size());
+    out.hull_external.num_elements = static_cast<long long>(hull_external_elements.size());
+    out.hull_complete_minus_external =
+        out.hull_complete.num_elements - out.hull_external.num_elements;
+
+    auto add_hull_box_counts = [&](const std::vector<std::uint64_t>& elements,
+                                   FractalHullSummary& summary) {
+        std::vector<std::uint32_t> local_elements;
+        local_elements.reserve(elements.size());
+        for (const std::uint64_t elem : elements) {
+            local_elements.push_back(static_cast<std::uint32_t>(elem));
+        }
+        std::mt19937 rng2(static_cast<std::uint32_t>(out.offset_seed));
+        for (const int eps : out.epsilons) {
+            const auto offsets = make_fractal_offsets(2, eps, n_offsets, rng2);
+            for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
+                const auto& off = offsets[static_cast<std::size_t>(offset_id)];
+                summary.box_counts.push_back({eps, offset_id, off,
+                                              count_boxes_2d_local_indices(
+                                                  L, eps, off, local_elements, true)});
+            }
+        }
+    };
+    add_hull_box_counts(hull_complete_elements, out.hull_complete);
+    add_hull_box_counts(hull_external_elements, out.hull_external);
+
+    return out;
+}
+
+FractalCountsSample compute_fractal_counts_sparse(
+    const int dim,
+    const int L,
+    const int bottom,
+    const int top,
+    const bool is_node,
+    const int seed,
+    const int sample_index,
+    const int t_stab,
+    const long long total_occupied_sites,
+    const long long total_active_bonds,
+    const long long largest_edges,
+    const std::unordered_set<std::uint64_t, AbsSiteKeyHash>& in_giant,
+    const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds)
+{
+    FractalCountsSample out;
+    if (!fractal_counts_eligible(dim, L) || top < bottom || in_giant.empty()) {
+        return out;
+    }
+
+    out.eligible = true;
+    out.sample_index = sample_index;
+    out.dim = dim;
+    out.L = L;
+    out.anchor_z = bottom;
+    out.t_stab = t_stab;
+    out.type_percolation = is_node ? "node" : "bond";
+    out.boundary_conditions = dim == 2
+        ? std::vector<std::string>{"x:periodic", "y:open"}
+        : std::vector<std::string>{"x:periodic", "y:periodic", "z:open"};
+    out.total_occupied_sites = total_occupied_sites;
+    out.total_active_bonds = total_active_bonds;
+    out.largest_component_sites = static_cast<long long>(in_giant.size());
+    out.largest_component_bonds = largest_edges;
+    out.largest_component_seed = *in_giant.begin();
+    out.hull_complete.num_elements_by_orientation.assign(static_cast<std::size_t>(2 * dim), 0);
+    out.hull_external.num_elements_by_orientation.assign(static_cast<std::size_t>(2 * dim), 0);
+
+    std::vector<std::uint64_t> giant_sites(in_giant.begin(), in_giant.end());
+    out.requested_origins = env_int_or_default("SOP_FRACTAL_ORIGINS", dim == 2 ? 64 : 32);
+    out.r_min = env_double_or_default("SOP_FRACTAL_R_MIN", 4.0);
+    out.r_max = env_double_or_default("SOP_FRACTAL_R_MAX", static_cast<double>(L) / 4.0);
+    out.num_bins = env_int_or_default("SOP_FRACTAL_NUM_BINS", dim == 2 ? 30 : 24);
+    out.max_chemical_distance = env_int_or_default(
+        "SOP_FRACTAL_MAX_ELL",
+        std::max(1, static_cast<int>(std::ceil(4.0 * out.r_max))));
+    out.chemical_seed = env_int_or_default("SOP_FRACTAL_CHEMICAL_SEED",
+                                           seed + 1000003 * (sample_index + 1));
+    out.bin_edges = make_log_bin_edges(out.r_min, out.r_max, out.num_bins);
+
+    std::mt19937 chem_rng(static_cast<std::uint32_t>(out.chemical_seed));
+    std::shuffle(giant_sites.begin(), giant_sites.end(), chem_rng);
+    out.effective_origins = std::min(
+        std::max(0, out.requested_origins),
+        static_cast<int>(giant_sites.size()));
+
+    std::uint64_t neigh[6];
+    int nneigh = 0;
+    for (int oi = 0; oi < out.effective_origins; ++oi) {
+        const std::uint64_t origin_key = giant_sites[static_cast<std::size_t>(oi)];
+        int ox = 0, oy = 0, oz = 0;
+        decode_abs_site_key(origin_key, ox, oy, oz);
+        FractalOriginDistances origin;
+        origin.site_id = origin_key;
+        origin.coordinates = dim == 2
+            ? std::vector<int>{ox, oy}
+            : std::vector<int>{ox, oy, oz};
+        init_distance_bins(origin, out.bin_edges);
+
+        std::unordered_map<std::uint64_t, int, AbsSiteKeyHash> dist;
+        dist.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
+        std::vector<std::uint64_t> queue;
+        queue.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
+        queue.push_back(origin_key);
+        dist.emplace(origin_key, 0);
+        for (std::size_t head = 0; head < queue.size(); ++head) {
+            const std::uint64_t u = queue[head];
+            const int du = dist[u];
+            if (du >= out.max_chemical_distance) continue;
+            collect_abs_neighbors(dim, L, u, neigh, nneigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const std::uint64_t v = neigh[ni];
+                const int hv = abs_grow_coord_from_key(v, dim);
+                if (hv < bottom || hv > top) continue;
+                if (in_giant.find(v) == in_giant.end()) continue;
+                if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
+                    continue;
+                }
+                if (dist.find(v) != dist.end()) continue;
+                dist.emplace(v, du + 1);
+                queue.push_back(v);
+            }
+        }
+
+        for (const auto& kv : dist) {
+            const int ell = kv.second;
+            if (ell <= 0) continue;
+            int x = 0, y = 0, z = 0;
+            decode_abs_site_key(kv.first, x, y, z);
+            const int dx_raw = std::abs(x - ox);
+            const int dx = std::min(dx_raw, L - dx_raw);
+            double r2 = static_cast<double>(dx * dx);
+            if (dim == 2) {
+                const int dy = std::abs(y - oy);
+                r2 += static_cast<double>(dy * dy);
+            } else {
+                const int dy_raw = std::abs(y - oy);
+                const int dy = std::min(dy_raw, L - dy_raw);
+                const int dz = std::abs(z - oz);
+                r2 += static_cast<double>(dy * dy + dz * dz);
+            }
+            const double r = std::sqrt(r2);
+            const int bin_idx = find_bin_index(out.bin_edges, r);
+            if (bin_idx < 0) {
+                ++out.pairs_discarded_out_of_range;
+                continue;
+            }
+            ++out.total_pairs_processed;
+            accumulate_distance_bin(origin.bins[static_cast<std::size_t>(bin_idx)], r, ell);
+        }
+        out.origins.push_back(std::move(origin));
+    }
+
+    out.epsilons = default_fractal_epsilons(dim);
+    out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
+                                         seed + 2000003 * (sample_index + 1));
+    const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);
+    std::mt19937 offset_rng(static_cast<std::uint32_t>(out.offset_seed));
+    for (const int eps : out.epsilons) {
+        const auto offsets = make_fractal_offsets(dim, eps, n_offsets, offset_rng);
+        for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
+            const auto& off = offsets[static_cast<std::size_t>(offset_id)];
+            out.component_box_counts.push_back({eps, offset_id, off,
+                                                count_boxes_abs_keys(
+                                                    dim, L, bottom, eps, off, giant_sites)});
+        }
+    }
+
+    auto make_key = [&](const int x, const int y, const int z) {
+        return dim == 2 ? abs_site_key(x, y, 0) : abs_site_key(x, y, z);
+    };
+    auto in_bounds = [&](const int x, const int y, const int z) {
+        if (x < 0 || x >= L) return false;
+        if (dim == 2) return y >= bottom && y <= top && z == 0;
+        return y >= 0 && y < L && z >= bottom && z <= top;
+    };
+    auto complement_neighbors = [&](const std::uint64_t key,
+                                    std::uint64_t out_neigh[6],
+                                    int& count) {
+        int x = 0, y = 0, z = 0;
+        decode_abs_site_key(key, x, y, z);
+        count = 0;
+        out_neigh[count++] = make_key((x + L - 1) % L, y, z);
+        out_neigh[count++] = make_key((x + 1) % L, y, z);
+        if (dim == 2) {
+            if (y > bottom) out_neigh[count++] = make_key(x, y - 1, 0);
+            if (y < top) out_neigh[count++] = make_key(x, y + 1, 0);
+        } else {
+            out_neigh[count++] = make_key(x, (y + L - 1) % L, z);
+            out_neigh[count++] = make_key(x, (y + 1) % L, z);
+            if (z > bottom) out_neigh[count++] = make_key(x, y, z - 1);
+            if (z < top) out_neigh[count++] = make_key(x, y, z + 1);
+        }
+    };
+
+    std::unordered_set<std::uint64_t, AbsSiteKeyHash> exterior;
+    std::vector<std::uint64_t> queue;
+    exterior.reserve(in_giant.size());
+    queue.reserve(1024);
+    auto push_ext = [&](const int x, const int y, const int z) {
+        if (!in_bounds(x, y, z)) return;
+        const std::uint64_t key = make_key(x, y, z);
+        if (in_giant.find(key) != in_giant.end()) return;
+        if (exterior.insert(key).second) queue.push_back(key);
+    };
+    if (dim == 2) {
+        for (int x = 0; x < L; ++x) {
+            push_ext(x, bottom, 0);
+            push_ext(x, top, 0);
+        }
+    } else {
+        for (int y = 0; y < L; ++y) {
+            for (int x = 0; x < L; ++x) {
+                push_ext(x, y, bottom);
+                push_ext(x, y, top);
+            }
+        }
+    }
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        complement_neighbors(queue[head], neigh, nneigh);
+        for (int ni = 0; ni < nneigh; ++ni) {
+            if (in_giant.find(neigh[ni]) != in_giant.end()) continue;
+            if (exterior.insert(neigh[ni]).second) queue.push_back(neigh[ni]);
+        }
+    }
+
+    std::vector<std::uint64_t> hull_complete_elements;
+    std::vector<std::uint64_t> hull_external_elements;
+    for (const std::uint64_t key : giant_sites) {
+        int x = 0, y = 0, z = 0;
+        decode_abs_site_key(key, x, y, z);
+        const int nx_values[6] = {(x + L - 1) % L, (x + 1) % L, x,
+                                  x, x, x};
+        const int ny_values[6] = {y, y,
+                                  dim == 3 ? (y + L - 1) % L : y - 1,
+                                  dim == 3 ? (y + 1) % L : y + 1,
+                                  y, y};
+        const int nz_values[6] = {z, z, z, z, z - 1, z + 1};
+        const int n_dirs = 2 * dim;
+        for (int ni = 0; ni < n_dirs; ++ni) {
+            const int nx = nx_values[ni];
+            const int ny = ny_values[ni];
+            const int nz = dim == 2 ? 0 : nz_values[ni];
+            bool boundary = false;
+            bool external = false;
+            if (!in_bounds(nx, ny, nz)) {
+                boundary = true;
+                external = true;
+            } else {
+                const std::uint64_t nkey = make_key(nx, ny, nz);
+                if (in_giant.find(nkey) == in_giant.end()) {
+                    boundary = true;
+                    external = exterior.find(nkey) != exterior.end();
+                }
+            }
+            if (!boundary) continue;
+            ++out.hull_complete.num_elements_by_orientation[static_cast<std::size_t>(ni)];
+            hull_complete_elements.push_back(key);
+            if (external) {
+                ++out.hull_external.num_elements_by_orientation[static_cast<std::size_t>(ni)];
+                hull_external_elements.push_back(key);
+            }
+        }
+    }
+    out.hull_complete.num_elements = static_cast<long long>(hull_complete_elements.size());
+    out.hull_external.num_elements = static_cast<long long>(hull_external_elements.size());
+    out.hull_complete_minus_external =
+        out.hull_complete.num_elements - out.hull_external.num_elements;
+
+    auto add_hull_box_counts = [&](const std::vector<std::uint64_t>& elements,
+                                   FractalHullSummary& summary) {
+        std::mt19937 rng2(static_cast<std::uint32_t>(out.offset_seed));
+        for (const int eps : out.epsilons) {
+            const auto offsets = make_fractal_offsets(dim, eps, n_offsets, rng2);
+            for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
+                const auto& off = offsets[static_cast<std::size_t>(offset_id)];
+                summary.box_counts.push_back({eps, offset_id, off,
+                                              count_boxes_abs_keys(
+                                                  dim, L, bottom, eps, off, elements)});
+            }
+        }
+    };
+    add_hull_box_counts(hull_complete_elements, out.hull_complete);
+    add_hull_box_counts(hull_external_elements, out.hull_external);
+
+    return out;
+}
+
 SlabFractionResult compute_abs_slab_fractions(
     const int dim,
     const int L,
@@ -2169,7 +2845,11 @@ SlabFractionResult compute_abs_slab_fractions(
     const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds,
     const int bottom,
     const int top,
-    const bool is_node)
+    const bool is_node,
+    const bool compute_fractal_counts = false,
+    const int fractal_seed = 0,
+    const int fractal_sample_index = -1,
+    const int fractal_t_stab = -1)
 {
     if (top < bottom) return {};
 
@@ -2253,6 +2933,31 @@ SlabFractionResult compute_abs_slab_fractions(
     long long full_boundary_length = 0;
     long long external_perimeter_length = 0;
     std::map<long long, long long> hole_size_counts;
+    bool has_fractal_counts = false;
+    FractalCountsSample fractal_counts;
+
+    if (!is_node) {
+        for (const auto& kv : site_state) {
+            if (kv.second <= 0) continue;
+            const std::uint64_t u = kv.first;
+            const int hu = abs_grow_coord_from_key(u, dim);
+            if (hu < bottom || hu > top) continue;
+
+            collect_abs_neighbors(dim, L, u, neigh, nneigh);
+            for (int ni = 0; ni < nneigh; ++ni) {
+                const std::uint64_t v = neigh[ni];
+                if (v < u) continue;
+                const int hv = abs_grow_coord_from_key(v, dim);
+                if (hv < bottom || hv > top) continue;
+                const auto itv = site_state.find(v);
+                if (itv == site_state.end() || itv->second <= 0) continue;
+                if (open_bonds.find(make_abs_bond_key(u, v)) != open_bonds.end()) {
+                    ++open_bonds_in_slab;
+                }
+            }
+        }
+    }
+
     if (largest_seed != std::numeric_limits<std::uint64_t>::max()) {
         std::unordered_set<std::uint64_t, AbsSiteKeyHash> in_giant;
         in_giant.reserve(static_cast<std::size_t>(std::max(1, largest)));
@@ -2329,26 +3034,24 @@ SlabFractionResult compute_abs_slab_fractions(
         full_boundary_length = geometry.full_boundary_length;
         external_perimeter_length = geometry.external_perimeter_length;
         hole_size_counts = geometry.hole_size_counts;
-    }
 
-    if (!is_node) {
-        for (const auto& kv : site_state) {
-            if (kv.second <= 0) continue;
-            const std::uint64_t u = kv.first;
-            const int hu = abs_grow_coord_from_key(u, dim);
-            if (hu < bottom || hu > top) continue;
-
-            collect_abs_neighbors(dim, L, u, neigh, nneigh);
-            for (int ni = 0; ni < nneigh; ++ni) {
-                const std::uint64_t v = neigh[ni];
-                if (v < u) continue;
-                const int hv = abs_grow_coord_from_key(v, dim);
-                if (hv < bottom || hv > top) continue;
-                const auto itv = site_state.find(v);
-                if (itv == site_state.end() || itv->second <= 0) continue;
-                if (open_bonds.find(make_abs_bond_key(u, v)) != open_bonds.end()) {
-                    ++open_bonds_in_slab;
-                }
+        if (fractal_counts_eligible(dim, L)) {
+            if (compute_fractal_counts) {
+                fractal_counts = compute_fractal_counts_sparse(
+                    dim,
+                    L,
+                    bottom,
+                    top,
+                    is_node,
+                    fractal_seed,
+                    fractal_sample_index,
+                    fractal_t_stab,
+                    occupied_sites,
+                    open_bonds_in_slab,
+                    largest_edges,
+                    in_giant,
+                    open_bonds);
+                has_fractal_counts = fractal_counts.eligible;
             }
         }
     }
@@ -2362,7 +3065,9 @@ SlabFractionResult compute_abs_slab_fractions(
         hull_length,
         full_boundary_length,
         external_perimeter_length,
-        std::move(hole_size_counts)
+        std::move(hole_size_counts),
+        has_fractal_counts,
+        std::move(fractal_counts)
     };
 }
 
@@ -2507,6 +3212,7 @@ RawFractionsSeries network::create_raw_fractions(
     if (const char* env_progress = std::getenv("SOP_FRACTION_PROGRESS_INTERVAL")) {
         progress_interval = std::max(0, std::stoi(env_progress));
     }
+    const bool run_fractal_counts = fractal_counts_eligible(dim, L);
 
     if (dim == 2) {
         RawFractionsSeries out;
@@ -2733,6 +3439,7 @@ RawFractionsSeries network::create_raw_fractions(
         };
         std::deque<PendingFractionSample> pending_samples;
         auto print_progress_2d = [&](const int t, const char* phase) {
+            if (run_fractal_counts) return;
             if (progress_interval <= 0 || (t % progress_interval) != 0) return;
             const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
             const int next_target = !all_equilibrated
@@ -2753,7 +3460,11 @@ RawFractionsSeries network::create_raw_fractions(
             std::cout << std::endl;
         };
 
-        auto compute_slab_2d = [&](const int bottom, const int top) -> SlabFractionResult {
+        auto compute_slab_2d = [&](const int bottom,
+                                   const int top,
+                                   const bool compute_fractal_counts = false,
+                                   const int fractal_sample_index = -1,
+                                   const int fractal_t_stab = -1) -> SlabFractionResult {
             if (top < bottom) return {};
             const int h_count = top - bottom + 1;
             const long long total_sites = static_cast<long long>(L) * h_count;
@@ -2851,6 +3562,8 @@ RawFractionsSeries network::create_raw_fractions(
             long long full_boundary_length = 0;
             long long external_perimeter_length = 0;
             std::map<long long, long long> hole_size_counts;
+            bool has_fractal_counts = false;
+            FractalCountsSample fractal_counts;
             if (largest_seed != std::numeric_limits<std::uint32_t>::max()) {
                 std::vector<unsigned char> in_giant(
                     static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
@@ -2948,6 +3661,23 @@ RawFractionsSeries network::create_raw_fractions(
                         ++distance;
                     }
                 }
+
+                if (compute_fractal_counts && fractal_counts_eligible(dim, L)) {
+                    fractal_counts = compute_fractal_counts_2d(
+                        L,
+                        bottom,
+                        top,
+                        is_node,
+                        out.seed,
+                        fractal_sample_index,
+                        fractal_t_stab,
+                        active_sites,
+                        open_bonds_count,
+                        largest_edges,
+                        in_giant,
+                        can_traverse_2d);
+                    has_fractal_counts = fractal_counts.eligible;
+                }
             }
 
             return {
@@ -2959,7 +3689,9 @@ RawFractionsSeries network::create_raw_fractions(
                 hull_length,
                 full_boundary_length,
                 external_perimeter_length,
-                std::move(hole_size_counts)
+                std::move(hole_size_counts),
+                has_fractal_counts,
+                std::move(fractal_counts)
             };
         };
 
@@ -3093,15 +3825,17 @@ RawFractionsSeries network::create_raw_fractions(
                     anchor = *std::max_element(out.z_stat_by_species.begin(),
                                                out.z_stat_by_species.end());
                     out.z_stab = anchor;
-                    std::cout << "[fractions] stabilized"
-                              << " t=" << t
-                              << " z_stab=" << out.z_stab
-                              << " next_inst_z=" << (anchor + L)
-                              << " next_stab_z=" << (anchor + L + sample_stability_layers)
-                              << " stability_layers=" << sample_stability_layers
-                              << " gap_layers=" << sample_gap_layers
-                              << " requested=" << requested
-                              << std::endl;
+                    if (!run_fractal_counts) {
+                        std::cout << "[fractions] stabilized"
+                                  << " t=" << t
+                                  << " z_stab=" << out.z_stab
+                                  << " next_inst_z=" << (anchor + L)
+                                  << " next_stab_z=" << (anchor + L + sample_stability_layers)
+                                  << " stability_layers=" << sample_stability_layers
+                                  << " gap_layers=" << sample_gap_layers
+                                  << " requested=" << requested
+                                  << std::endl;
+                    }
                     p_series.clear();
                     t_list.clear();
                 }
@@ -3113,19 +3847,21 @@ RawFractionsSeries network::create_raw_fractions(
                     sample.anchor = anchor;
                     sample.inst = compute_slab_2d(sample.anchor, sample.anchor + L - 1);
                     sample.t_inst = t;
-                    std::cout << "[fractions] inst_sample_ready"
-                              << " sample=" << (out.collected_samples +
-                                                static_cast<int>(pending_samples.size()) + 1)
-                              << "/" << requested
-                              << " t=" << t
-                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                              << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
-                              << " p_node=" << sample.inst.p_node
-                              << " p_bond=" << sample.inst.p_bond
-                              << " S=" << sample.inst.largest_component
-                              << " E=" << sample.inst.largest_component_edges
-                              << " SP=" << sample.inst.shortest_path_edges
-                              << std::endl;
+                    if (!run_fractal_counts) {
+                        std::cout << "[fractions] inst_sample_ready"
+                                  << " sample=" << (out.collected_samples +
+                                                    static_cast<int>(pending_samples.size()) + 1)
+                                  << "/" << requested
+                                  << " t=" << t
+                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                                  << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
+                                  << " p_node=" << sample.inst.p_node
+                                  << " p_bond=" << sample.inst.p_bond
+                                  << " S=" << sample.inst.largest_component
+                                  << " E=" << sample.inst.largest_component_edges
+                                  << " SP=" << sample.inst.shortest_path_edges
+                                  << std::endl;
+                    }
                     pending_samples.push_back(std::move(sample));
                     anchor += L + sample_gap_layers;
                 }
@@ -3133,8 +3869,21 @@ RawFractionsSeries network::create_raw_fractions(
                        z_max >= pending_samples.front().anchor + L + sample_stability_layers) {
                     const PendingFractionSample sample = std::move(pending_samples.front());
                     pending_samples.pop_front();
+                    if (run_fractal_counts) {
+                        std::cout << "[counts] sample_collecting"
+                                  << " sample=" << (out.collected_samples + 1)
+                                  << "/" << requested
+                                  << " t=" << t
+                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                                  << " status=calculating_stabilized_counts"
+                                  << std::endl;
+                    }
                     const SlabFractionResult stab = compute_slab_2d(
-                        sample.anchor, sample.anchor + L - 1);
+                        sample.anchor,
+                        sample.anchor + L - 1,
+                        true,
+                        out.collected_samples,
+                        t);
                     out.p_inst_bond.push_back(sample.inst.p_bond);
                     out.p_inst_node.push_back(sample.inst.p_node);
                     out.S_inst.push_back(sample.inst.largest_component);
@@ -3152,19 +3901,35 @@ RawFractionsSeries network::create_raw_fractions(
                     out.anchor_z.push_back(sample.anchor);
                     out.t_inst.push_back(sample.t_inst);
                     out.t_stab.push_back(t);
+                    if (stab.has_fractal_counts) {
+                        out.fractal_counts.push_back(stab.fractal_counts);
+                    }
                     out.collected_samples = static_cast<int>(out.S_stab.size());
-                    std::cout << "[fractions] sample_collected"
-                              << " sample=" << out.collected_samples
-                              << "/" << requested
-                              << " t=" << t
-                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                              << " next_anchor_z=" << anchor
-                              << " p_node=" << stab.p_node
-                              << " p_bond=" << stab.p_bond
-                              << " S=" << stab.largest_component
-                              << " E=" << stab.largest_component_edges
-                              << " SP=" << stab.shortest_path_edges
-                              << std::endl;
+                    if (run_fractal_counts && stab.has_fractal_counts) {
+                        std::cout << "[counts] sample_collected"
+                                  << " sample=" << out.collected_samples
+                                  << "/" << requested
+                                  << " t=" << t
+                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                                  << " origins=" << stab.fractal_counts.effective_origins
+                                  << " component_boxes=" << stab.fractal_counts.component_box_counts.size()
+                                  << " hull_boxes=" << stab.fractal_counts.hull_complete.box_counts.size()
+                                  << " external_hull_boxes=" << stab.fractal_counts.hull_external.box_counts.size()
+                                  << std::endl;
+                    } else if (!run_fractal_counts) {
+                        std::cout << "[fractions] sample_collected"
+                                  << " sample=" << out.collected_samples
+                                  << "/" << requested
+                                  << " t=" << t
+                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                                  << " next_anchor_z=" << anchor
+                                  << " p_node=" << stab.p_node
+                                  << " p_bond=" << stab.p_bond
+                                  << " S=" << stab.largest_component
+                                  << " E=" << stab.largest_component_edges
+                                  << " SP=" << stab.shortest_path_edges
+                                  << std::endl;
+                    }
 
                     if (out.collected_samples >= requested) {
                         out.stop_reason = "requested_samples_collected";
@@ -3364,6 +4129,7 @@ RawFractionsSeries network::create_raw_fractions(
     };
     std::deque<PendingFractionSample> pending_samples;
     auto print_progress_sparse = [&](const int t, const char* phase) {
+        if (run_fractal_counts) return;
         if (progress_interval <= 0 || (t % progress_interval) != 0) return;
         const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
         const int next_target = !all_equilibrated
@@ -3612,15 +4378,17 @@ RawFractionsSeries network::create_raw_fractions(
                                            out.z_stat_by_species.end());
                 out.z_stab = z_stab;
                 anchor = z_stab;
-                std::cout << "[fractions] stabilized"
-                          << " t=" << t
-                          << " z_stab=" << out.z_stab
-                          << " next_inst_z=" << (anchor + L)
-                          << " next_stab_z=" << (anchor + L + sample_stability_layers)
-                          << " stability_layers=" << sample_stability_layers
-                          << " gap_layers=" << sample_gap_layers
-                          << " requested=" << requested
-                          << std::endl;
+                if (!run_fractal_counts) {
+                    std::cout << "[fractions] stabilized"
+                              << " t=" << t
+                              << " z_stab=" << out.z_stab
+                              << " next_inst_z=" << (anchor + L)
+                              << " next_stab_z=" << (anchor + L + sample_stability_layers)
+                              << " stability_layers=" << sample_stability_layers
+                              << " gap_layers=" << sample_gap_layers
+                              << " requested=" << requested
+                              << std::endl;
+                }
                 p_series.clear();
                 t_list.clear();
             }
@@ -3633,19 +4401,21 @@ RawFractionsSeries network::create_raw_fractions(
                 sample.inst = compute_abs_slab_fractions(
                     dim, L, site_state, open_bonds, sample.anchor, sample.anchor + L - 1, is_node);
                 sample.t_inst = t;
-                std::cout << "[fractions] inst_sample_ready"
-                          << " sample=" << (out.collected_samples +
-                                            static_cast<int>(pending_samples.size()) + 1)
-                          << "/" << requested
-                          << " t=" << t
-                          << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                          << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
-                          << " p_node=" << sample.inst.p_node
-                          << " p_bond=" << sample.inst.p_bond
-                          << " S=" << sample.inst.largest_component
-                          << " E=" << sample.inst.largest_component_edges
-                          << " SP=" << sample.inst.shortest_path_edges
-                          << std::endl;
+                if (!run_fractal_counts) {
+                    std::cout << "[fractions] inst_sample_ready"
+                              << " sample=" << (out.collected_samples +
+                                                static_cast<int>(pending_samples.size()) + 1)
+                              << "/" << requested
+                              << " t=" << t
+                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                              << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
+                              << " p_node=" << sample.inst.p_node
+                              << " p_bond=" << sample.inst.p_bond
+                              << " S=" << sample.inst.largest_component
+                              << " E=" << sample.inst.largest_component_edges
+                              << " SP=" << sample.inst.shortest_path_edges
+                              << std::endl;
+                }
                 pending_samples.push_back(std::move(sample));
                 anchor += L + sample_gap_layers;
             }
@@ -3654,8 +4424,27 @@ RawFractionsSeries network::create_raw_fractions(
                    z_max >= pending_samples.front().anchor + L + sample_stability_layers) {
                 const PendingFractionSample sample = std::move(pending_samples.front());
                 pending_samples.pop_front();
+                if (run_fractal_counts) {
+                    std::cout << "[counts] sample_collecting"
+                              << " sample=" << (out.collected_samples + 1)
+                              << "/" << requested
+                              << " t=" << t
+                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                              << " status=calculating_stabilized_counts"
+                              << std::endl;
+                }
                 const SlabFractionResult stab = compute_abs_slab_fractions(
-                    dim, L, site_state, open_bonds, sample.anchor, sample.anchor + L - 1, is_node);
+                    dim,
+                    L,
+                    site_state,
+                    open_bonds,
+                    sample.anchor,
+                    sample.anchor + L - 1,
+                    is_node,
+                    true,
+                    out.seed,
+                    out.collected_samples,
+                    t);
 
                 out.p_inst_bond.push_back(sample.inst.p_bond);
                 out.p_inst_node.push_back(sample.inst.p_node);
@@ -3674,19 +4463,35 @@ RawFractionsSeries network::create_raw_fractions(
                 out.anchor_z.push_back(sample.anchor);
                 out.t_inst.push_back(sample.t_inst);
                 out.t_stab.push_back(t);
+                if (stab.has_fractal_counts) {
+                    out.fractal_counts.push_back(stab.fractal_counts);
+                }
                 out.collected_samples = static_cast<int>(out.S_stab.size());
-                std::cout << "[fractions] sample_collected"
-                          << " sample=" << out.collected_samples
-                          << "/" << requested
-                          << " t=" << t
-                          << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                          << " next_anchor_z=" << anchor
-                          << " p_node=" << stab.p_node
-                          << " p_bond=" << stab.p_bond
-                          << " S=" << stab.largest_component
-                          << " E=" << stab.largest_component_edges
-                          << " SP=" << stab.shortest_path_edges
-                          << std::endl;
+                if (run_fractal_counts && stab.has_fractal_counts) {
+                    std::cout << "[counts] sample_collected"
+                              << " sample=" << out.collected_samples
+                              << "/" << requested
+                              << " t=" << t
+                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                              << " origins=" << stab.fractal_counts.effective_origins
+                              << " component_boxes=" << stab.fractal_counts.component_box_counts.size()
+                              << " hull_boxes=" << stab.fractal_counts.hull_complete.box_counts.size()
+                              << " external_hull_boxes=" << stab.fractal_counts.hull_external.box_counts.size()
+                              << std::endl;
+                } else if (!run_fractal_counts) {
+                    std::cout << "[fractions] sample_collected"
+                              << " sample=" << out.collected_samples
+                              << "/" << requested
+                              << " t=" << t
+                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
+                              << " next_anchor_z=" << anchor
+                              << " p_node=" << stab.p_node
+                              << " p_bond=" << stab.p_bond
+                              << " S=" << stab.largest_component
+                              << " E=" << stab.largest_component_edges
+                              << " SP=" << stab.shortest_path_edges
+                              << std::endl;
+                }
                 collected_this_step = true;
 
                 if (out.collected_samples >= requested) {

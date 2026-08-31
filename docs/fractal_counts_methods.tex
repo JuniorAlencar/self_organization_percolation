@@ -1,0 +1,154 @@
+\section{Fractal observables from the largest stabilized network}
+\label{sec:fractal-counts-methods}
+
+The fractal observables were measured on stabilized samples of the
+self-organized percolation process.  For each independent seed, after the
+stabilization time had elapsed, the simulation collected \(M\) independent
+windows separated by a prescribed gap.  Each collected window defines one
+network sample of linear size \(L\).  The standard observables already present
+in the simulation pipeline were kept unchanged.  In addition, for the largest
+systems, namely \(L=16384\) in two dimensions and \(L=1024\) in three
+dimensions, geometric counting observables were computed for each collected
+network.
+
+All measurements described below were performed on the largest connected
+component of each stabilized network.  For node percolation, connectivity is
+defined by nearest-neighbor occupied sites.  For bond percolation, two occupied
+sites are connected only when the bond between them is active.  The transverse
+directions are periodic, while the growth direction is open.  In two
+dimensions this corresponds to periodic boundary conditions along \(x\) and
+open boundary conditions along \(y\).  In three dimensions the \(x\) and \(y\)
+directions are periodic and the \(z\) direction is open.
+
+\subsection{Mass fractal dimension}
+\label{subsec:mass-fractal-dimension}
+
+The mass fractal dimension \(d_f\) was estimated by a box-counting procedure
+applied to the sites of the largest connected component.  For a box size
+\(\epsilon\), the number of boxes intersecting the largest component is denoted
+by \(N_{\mathrm{bulk}}(\epsilon)\).  Several offsets of the box grid were used
+for each value of \(\epsilon\), and the stored count corresponds to the average
+over offsets for that sample.
+
+The expected scaling form is
+\begin{equation}
+    N_{\mathrm{bulk}}(\epsilon)
+    \sim
+    \left(\frac{L}{\epsilon}\right)^{d_f}.
+    \label{eq:df-box-counting}
+\end{equation}
+Thus, \(d_f\) is obtained as the slope of a linear regression of
+\(\log N_{\mathrm{bulk}}\) versus \(\log(L/\epsilon)\).  The processed data
+store, for every network sample, the pair of arrays
+\(\{L/\epsilon, N_{\mathrm{bulk}}(\epsilon)\}\), so that the fit range can be
+chosen at the analysis stage.
+
+\subsection{Hull and external hull dimensions}
+\label{subsec:hull-dimensions}
+
+The complete hull and the external hull were also analyzed by box counting.
+The complete hull contains all boundary elements of the largest connected
+component, including boundaries surrounding internal voids.  The external hull
+contains only the boundary elements that are accessible from the exterior of
+the component.  Therefore, internal cavities do not contribute to the external
+hull.
+
+For a box size \(\epsilon\), let \(N_{\mathrm{hull}}(\epsilon)\) be the number
+of boxes intersecting the complete hull, and let
+\(N_{\mathrm{hull,ext}}(\epsilon)\) be the corresponding number for the
+external hull.  The scaling relations are
+\begin{align}
+    N_{\mathrm{hull}}(\epsilon)
+    &\sim
+    \left(\frac{L}{\epsilon}\right)^{d_{\mathrm{hull}}},
+    \label{eq:dhull-box-counting}
+    \\
+    N_{\mathrm{hull,ext}}(\epsilon)
+    &\sim
+    \left(\frac{L}{\epsilon}\right)^{d_{\mathrm{hull,ext}}}.
+    \label{eq:dhullext-box-counting}
+\end{align}
+As in the mass measurement, the simulation stores the offset-averaged
+box-counting curves for each network sample.  The exponents
+\(d_{\mathrm{hull}}\) and \(d_{\mathrm{hull,ext}}\) are obtained as the slopes
+of the respective log-log plots.
+
+\subsection{Chemical distance exponent}
+\label{subsec:chemical-distance-exponent}
+
+The chemical distance exponent \(d_{\min}\) was measured from shortest paths
+inside the largest connected component.  For each sample, a set of origin sites
+was randomly selected from the largest component.  A breadth-first search was
+then performed from each origin using the same connectivity rule as the
+percolation model.  For every reached site, the algorithm records two
+distances:
+\begin{itemize}
+    \item the Euclidean distance \(r\) from the origin, measured with periodic
+    wrapping in the transverse directions only;
+    \item the chemical distance \(\ell\), defined as the graph distance from
+    the origin along the connected component.
+\end{itemize}
+
+Distances were grouped into logarithmic bins in \(r\).  For each bin, the
+processed data store the minimum chemical distance
+\(\ell_{\min}(r)\), the mean chemical distance \(\ell_{\mathrm{mean}}(r)\),
+the maximum chemical distance \(\ell_{\max}(r)\), the standard deviation, and
+the number of contributing pairs.  The default estimator used for
+\(d_{\min}\) is \(\ell_{\min}(r)\), using all available bins.  The mean and
+maximum values are kept only as diagnostic quantities.
+
+The scaling relation used in the analysis is
+\begin{equation}
+    \ell_{\min}(r) \sim r^{d_{\min}}.
+    \label{eq:dmin-chemical-distance}
+\end{equation}
+Consequently, \(d_{\min}\) is obtained as the slope of a linear regression of
+\(\log \ell_{\min}\) versus \(\log r\).  No rescaling by \(L\) is applied to
+this observable.  The quantity \(L/\epsilon\) is used only for box-counting
+observables.
+
+The breadth-first search may optionally be limited by a maximum chemical
+distance \(\ell_{\max}^{\mathrm{BFS}}\).  The processed files therefore also
+store a boolean flag indicating whether a radial bin reached this cutoff.  This
+flag is not used by default in the fit, but it is useful for diagnosing
+finite-search effects or for testing alternative fitting windows.
+
+\subsection{Processed data format}
+\label{subsec:processed-counts-format}
+
+The raw count files are stored separately from the standard processed
+observables.  The processed fractal-count data are organized by percolation
+type, dimension, system size, threshold parameter, control parameter, and
+density:
+\begin{verbatim}
+SOP_data/published_counts/
+  <type>_percolation/
+    dim_<dim>/
+      L_<L>/
+        fT_<f_T>/
+          c_<c>/
+            rho_<rho>/
+              counts_P0_<P0>_p0_<p0>.json
+\end{verbatim}
+The values of \(P_0\) and \(p_0\) appear in the processed filename.  Each JSON
+file contains a \texttt{meta} section with the simulation parameters and a
+\texttt{samples} list.  Each entry of \texttt{samples} corresponds to one
+collected network and contains the arrays required for the log-log regressions:
+\begin{align*}
+    d_f &: \quad
+    \{L/\epsilon,\; N_{\mathrm{bulk}}(\epsilon)\},
+    \\
+    d_{\mathrm{hull}} &: \quad
+    \{L/\epsilon,\; N_{\mathrm{hull}}(\epsilon)\},
+    \\
+    d_{\mathrm{hull,ext}} &: \quad
+    \{L/\epsilon,\; N_{\mathrm{hull,ext}}(\epsilon)\},
+    \\
+    d_{\min} &: \quad
+    \{r,\; \ell_{\min}(r)\}.
+\end{align*}
+The exponent estimates are not fixed during data processing.  Instead, the
+processed files preserve the scale-dependent curves for each network sample,
+allowing the fitting interval and estimator to be chosen later in the notebook
+analysis.
+

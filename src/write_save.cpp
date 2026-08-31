@@ -888,6 +888,270 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     ofs << "}\n";
 }
 
+namespace {
+
+void write_json_string_array(std::ostream& os, const std::vector<std::string>& v)
+{
+    os << "[";
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        os << "\"" << v[i] << "\"";
+        if (i + 1 < v.size()) os << ", ";
+    }
+    os << "]";
+}
+
+void write_fractal_box_rows(std::ostream& os,
+                            const std::vector<FractalBoxCountRow>& rows,
+                            const int indent)
+{
+    const std::string pad(static_cast<std::size_t>(indent), ' ');
+    os << "[";
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& row = rows[i];
+        os << "\n" << pad << "{";
+        os << "\"epsilon\": " << row.epsilon << ", ";
+        os << "\"offset_id\": " << row.offset_id << ", ";
+        os << "\"offset\": ";
+        write_json_array(os, row.offset);
+        os << ", \"num_boxes\": " << row.num_boxes << "}";
+        if (i + 1 < rows.size()) os << ",";
+    }
+    if (!rows.empty()) os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ');
+    os << "]";
+}
+
+void write_fractal_hull(std::ostream& os,
+                        const FractalHullSummary& hull,
+                        const int indent)
+{
+    const std::string pad(static_cast<std::size_t>(indent), ' ');
+    os << "{\n";
+    os << pad << "\"defined\": " << (hull.defined ? "true" : "false") << ",\n";
+    os << pad << "\"reason_if_undefined\": \"" << hull.reason_if_undefined << "\",\n";
+    os << pad << "\"num_elements\": " << hull.num_elements << ",\n";
+    os << pad << "\"num_elements_by_orientation\": ";
+    write_json_array(os, hull.num_elements_by_orientation);
+    os << ",\n";
+    os << pad << "\"box_counts\": ";
+    write_fractal_box_rows(os, hull.box_counts, indent + 2);
+    os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ') << "}";
+}
+
+void write_fractal_distance_bins(std::ostream& os,
+                                 const std::vector<FractalDistanceBin>& bins,
+                                 const int indent)
+{
+    const std::string pad(static_cast<std::size_t>(indent), ' ');
+    os << "[";
+    for (std::size_t i = 0; i < bins.size(); ++i) {
+        const auto& bin = bins[i];
+        os << "\n" << pad << "{";
+        os << "\"r_lower\": " << std::setprecision(17) << bin.r_lower << ", ";
+        os << "\"r_upper\": " << std::setprecision(17) << bin.r_upper << ", ";
+        os << "\"r_center\": " << std::setprecision(17) << bin.r_center << ", ";
+        os << "\"count\": " << bin.count << ", ";
+        os << "\"sum_r\": " << std::setprecision(17) << bin.sum_r << ", ";
+        os << "\"sum_r2\": " << std::setprecision(17) << bin.sum_r2 << ", ";
+        os << "\"sum_ell\": " << std::setprecision(17) << bin.sum_ell << ", ";
+        os << "\"sum_ell2\": " << std::setprecision(17) << bin.sum_ell2 << ", ";
+        os << "\"sum_r_ell\": " << std::setprecision(17) << bin.sum_r_ell << ", ";
+        os << "\"min_r\": ";
+        if (bin.count > 0) os << std::setprecision(17) << bin.min_r; else os << "null";
+        os << ", \"max_r\": ";
+        if (bin.count > 0) os << std::setprecision(17) << bin.max_r; else os << "null";
+        os << ", \"min_ell\": ";
+        if (bin.count > 0) os << bin.min_ell; else os << "null";
+        os << ", \"r_at_min_ell\": ";
+        if (bin.count > 0 && std::isfinite(bin.r_at_min_ell)) {
+            os << std::setprecision(17) << bin.r_at_min_ell;
+        } else {
+            os << "null";
+        }
+        os << ", \"max_ell\": ";
+        if (bin.count > 0) os << bin.max_ell; else os << "null";
+        os << "}";
+        if (i + 1 < bins.size()) os << ",";
+    }
+    if (!bins.empty()) os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ');
+    os << "]";
+}
+
+void write_fractal_radial_min_path(std::ostream& os,
+                                   const std::vector<FractalOriginDistances>& origins,
+                                   const int max_chemical_distance,
+                                   const int indent)
+{
+    const std::string pad(static_cast<std::size_t>(indent), ' ');
+    std::size_t n_bins = 0;
+    for (const auto& origin : origins) {
+        n_bins = std::max(n_bins, origin.bins.size());
+    }
+
+    os << "[";
+    bool first = true;
+    for (std::size_t bi = 0; bi < n_bins; ++bi) {
+        long long count = 0;
+        double sum_r = 0.0;
+        int min_ell = std::numeric_limits<int>::max();
+        double r_at_min_ell = std::numeric_limits<double>::quiet_NaN();
+        int max_ell = 0;
+        double r_lower = std::numeric_limits<double>::quiet_NaN();
+        double r_upper = std::numeric_limits<double>::quiet_NaN();
+        double r_center = std::numeric_limits<double>::quiet_NaN();
+
+        for (const auto& origin : origins) {
+            if (bi >= origin.bins.size()) continue;
+            const auto& bin = origin.bins[bi];
+            if (bin.count <= 0) continue;
+            if (!std::isfinite(r_lower)) {
+                r_lower = bin.r_lower;
+                r_upper = bin.r_upper;
+                r_center = bin.r_center;
+            }
+            count += bin.count;
+            sum_r += bin.sum_r;
+            max_ell = std::max(max_ell, bin.max_ell);
+            if (bin.min_ell < min_ell ||
+                (bin.min_ell == min_ell &&
+                 std::isfinite(bin.r_at_min_ell) &&
+                 (!std::isfinite(r_at_min_ell) || bin.r_at_min_ell < r_at_min_ell))) {
+                min_ell = bin.min_ell;
+                r_at_min_ell = bin.r_at_min_ell;
+            }
+        }
+
+        if (count <= 0) continue;
+        if (!first) os << ",";
+        first = false;
+        os << "\n" << pad << "{";
+        os << "\"bin_index\": " << bi << ", ";
+        os << "\"r_lower\": ";
+        write_json_nullable_double(os, r_lower);
+        os << ", \"r_upper\": ";
+        write_json_nullable_double(os, r_upper);
+        os << ", \"r_center\": ";
+        write_json_nullable_double(os, r_center);
+        os << ", \"r_mean\": " << std::setprecision(17) << (sum_r / static_cast<double>(count));
+        os << ", \"r_at_min_ell\": ";
+        write_json_nullable_double(os, r_at_min_ell);
+        os << ", \"ell_min\": " << min_ell;
+        os << ", \"ell_max\": " << max_ell;
+        os << ", \"truncated\": "
+           << ((max_chemical_distance > 0 && max_ell >= max_chemical_distance) ? "true" : "false");
+        os << ", \"pairs\": " << count;
+        os << "}";
+    }
+    if (!first) os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ');
+    os << "]";
+}
+
+} // namespace
+
+void save_data::save_fractal_counts_json(const RawFractionsSeries& fractions,
+                                         const std::string& filename_json) const
+{
+    if (fractions.fractal_counts.empty()) return;
+
+    const std::filesystem::path out_path(filename_json);
+    if (!out_path.parent_path().empty()) {
+        std::filesystem::create_directories(out_path.parent_path());
+    }
+
+    std::ofstream ofs(filename_json);
+    if (!ofs) {
+        throw std::runtime_error(
+            std::string("[save_fractal_counts_json] nao abriu: ") + filename_json);
+    }
+
+    ofs << "{\n";
+    ofs << "  \"meta\": {\n";
+    ofs << "    \"mode\": \"fractal_counts\",\n";
+    ofs << "    \"source_mode\": \"raw_fractions\",\n";
+    ofs << "    \"dim\": " << fractions.dim << ",\n";
+    ofs << "    \"L\": " << fractions.L << ",\n";
+    ofs << "    \"seed\": " << fractions.seed << ",\n";
+    ofs << "    \"num_colors\": " << fractions.num_colors << ",\n";
+    ofs << "    \"type_percolation\": \"" << fractions.type_percolation << "\",\n";
+    ofs << "    \"num_samples\": " << fractions.fractal_counts.size() << ",\n";
+    ofs << "    \"exponents_are_not_estimated_in_cpp\": true\n";
+    ofs << "  },\n";
+    ofs << "  \"samples\": [";
+    for (std::size_t si = 0; si < fractions.fractal_counts.size(); ++si) {
+        const auto& sample = fractions.fractal_counts[si];
+        ofs << "\n    {\n";
+        ofs << "      \"eligible\": " << (sample.eligible ? "true" : "false") << ",\n";
+        ofs << "      \"sample_index\": " << sample.sample_index << ",\n";
+        ofs << "      \"dim\": " << sample.dim << ",\n";
+        ofs << "      \"L\": " << sample.L << ",\n";
+        ofs << "      \"anchor_z\": " << sample.anchor_z << ",\n";
+        ofs << "      \"t_stab\": " << sample.t_stab << ",\n";
+        ofs << "      \"type_percolation\": \"" << sample.type_percolation << "\",\n";
+        ofs << "      \"boundary_conditions\": ";
+        write_json_string_array(ofs, sample.boundary_conditions);
+        ofs << ",\n";
+        ofs << "      \"largest_component\": {\n";
+        ofs << "        \"num_sites\": " << sample.largest_component_sites << ",\n";
+        ofs << "        \"num_bonds\": " << sample.largest_component_bonds << ",\n";
+        ofs << "        \"component_seed\": " << sample.largest_component_seed << ",\n";
+        ofs << "        \"total_occupied_sites\": " << sample.total_occupied_sites << ",\n";
+        ofs << "        \"total_active_bonds\": " << sample.total_active_bonds << "\n";
+        ofs << "      },\n";
+        ofs << "      \"chemical_distance\": {\n";
+        ofs << "        \"seed\": " << sample.chemical_seed << ",\n";
+        ofs << "        \"requested_origins\": " << sample.requested_origins << ",\n";
+        ofs << "        \"effective_origins\": " << sample.effective_origins << ",\n";
+        ofs << "        \"max_chemical_distance\": " << sample.max_chemical_distance << ",\n";
+        ofs << "        \"r_min\": " << std::setprecision(17) << sample.r_min << ",\n";
+        ofs << "        \"r_max\": " << std::setprecision(17) << sample.r_max << ",\n";
+        ofs << "        \"num_bins\": " << sample.num_bins << ",\n";
+        ofs << "        \"bin_edges\": ";
+        write_json_array(ofs, sample.bin_edges);
+        ofs << ",\n";
+        ofs << "        \"total_pairs_processed\": " << sample.total_pairs_processed << ",\n";
+        ofs << "        \"pairs_discarded_out_of_range\": " << sample.pairs_discarded_out_of_range << ",\n";
+        ofs << "        \"origins\": [";
+        for (std::size_t oi = 0; oi < sample.origins.size(); ++oi) {
+            const auto& origin = sample.origins[oi];
+            ofs << "\n          {\n";
+            ofs << "            \"site_id\": " << origin.site_id << ",\n";
+            ofs << "            \"coordinates\": ";
+            write_json_array(ofs, origin.coordinates);
+            ofs << ",\n";
+            ofs << "            \"bins\": ";
+            write_fractal_distance_bins(ofs, origin.bins, 14);
+            ofs << "\n          }";
+            if (oi + 1 < sample.origins.size()) ofs << ",";
+        }
+        if (!sample.origins.empty()) ofs << "\n        ";
+        ofs << "],\n";
+        ofs << "        \"radial_min_path\": ";
+        write_fractal_radial_min_path(ofs, sample.origins, sample.max_chemical_distance, 10);
+        ofs << "\n";
+        ofs << "      },\n";
+        ofs << "      \"box_counting_component\": {\n";
+        ofs << "        \"epsilon\": ";
+        write_json_array(ofs, sample.epsilons);
+        ofs << ",\n";
+        ofs << "        \"offset_seed\": " << sample.offset_seed << ",\n";
+        ofs << "        \"counts\": ";
+        write_fractal_box_rows(ofs, sample.component_box_counts, 10);
+        ofs << "\n      },\n";
+        ofs << "      \"hull_complete\": ";
+        write_fractal_hull(ofs, sample.hull_complete, 8);
+        ofs << ",\n";
+        ofs << "      \"hull_external\": ";
+        write_fractal_hull(ofs, sample.hull_external, 8);
+        ofs << ",\n";
+        ofs << "      \"hull_complete_minus_external\": "
+            << sample.hull_complete_minus_external << "\n";
+        ofs << "    }";
+        if (si + 1 < fractions.fractal_counts.size()) ofs << ",";
+    }
+    if (!fractions.fractal_counts.empty()) ofs << "\n  ";
+    ofs << "]\n";
+    ofs << "}\n";
+}
+
 void save_data::save_network_compact_bin(const NetworkCompact& net,
                                         const std::string& filename) const
 {

@@ -167,6 +167,8 @@ def group_raw_fraction_files(raw_root: Path) -> dict[tuple[Path, str, str, str |
     for path in sorted(raw_root.rglob("*.json")):
         if not path.is_file():
             continue
+        if "counts" in path.relative_to(raw_root).parts:
+            continue
         P0, p0, base = parse_filename_tags(path)
         rel_parent = path.parent.relative_to(raw_root)
         groups[(rel_parent, P0, p0, base)].append(path)

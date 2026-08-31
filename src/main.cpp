@@ -291,6 +291,11 @@ int main(int argc, char* argv[]) {
             saver.save_raw_fractions_json(
                 fractions,
                 (fractions_dir / (base_name.str() + ".json")).string());
+            if (!fractions.fractal_counts.empty()) {
+                saver.save_fractal_counts_json(
+                    fractions,
+                    (fractions_dir / "counts" / (base_name.str() + "_counts.json")).string());
+            }
             std::cout << "seed = " << seed << std::endl;
             std::cout << "[INFO] raw_fractions samples collected: "
                       << fractions.collected_samples << "/"

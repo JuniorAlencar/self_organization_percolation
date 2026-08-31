@@ -21,6 +21,9 @@ public:
     void save_raw_fractions_json(const RawFractionsSeries& fractions,
                                  const std::string& filename_json) const;
 
+    void save_fractal_counts_json(const RawFractionsSeries& fractions,
+                                  const std::string& filename_json) const;
+
     void save_reanalysis_json(const ReanalysisResult& result,
                               const std::string& filename_json) const;
 
