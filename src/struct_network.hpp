@@ -158,6 +158,79 @@ struct PercolationSeries {
     
 };
 
+struct FractalDistanceBin {
+    double r_lower = 0.0;
+    double r_upper = 0.0;
+    double r_center = 0.0;
+    long long count = 0;
+    double sum_r = 0.0;
+    double sum_r2 = 0.0;
+    double sum_ell = 0.0;
+    double sum_ell2 = 0.0;
+    double sum_r_ell = 0.0;
+    double min_r = std::numeric_limits<double>::infinity();
+    double max_r = 0.0;
+    int min_ell = std::numeric_limits<int>::max();
+    double r_at_min_ell = std::numeric_limits<double>::quiet_NaN();
+    int max_ell = 0;
+};
+
+struct FractalOriginDistances {
+    std::uint64_t site_id = 0;
+    std::vector<int> coordinates;
+    std::vector<FractalDistanceBin> bins;
+};
+
+struct FractalBoxCountRow {
+    int epsilon = 0;
+    int offset_id = 0;
+    std::vector<int> offset;
+    long long num_boxes = 0;
+};
+
+struct FractalHullSummary {
+    bool defined = true;
+    std::string reason_if_undefined;
+    long long num_elements = 0;
+    std::vector<long long> num_elements_by_orientation;
+    std::vector<FractalBoxCountRow> box_counts;
+};
+
+struct FractalCountsSample {
+    bool eligible = false;
+    int sample_index = -1;
+    int dim = 0;
+    int L = 0;
+    int anchor_z = -1;
+    int t_stab = -1;
+    std::string type_percolation;
+    std::vector<std::string> boundary_conditions;
+    long long total_occupied_sites = 0;
+    long long total_active_bonds = 0;
+    long long largest_component_sites = 0;
+    long long largest_component_bonds = 0;
+    std::uint64_t largest_component_seed = 0;
+
+    int chemical_seed = 0;
+    int requested_origins = 0;
+    int effective_origins = 0;
+    int max_chemical_distance = -1;
+    double r_min = 0.0;
+    double r_max = 0.0;
+    int num_bins = 0;
+    std::vector<double> bin_edges;
+    long long total_pairs_processed = 0;
+    long long pairs_discarded_out_of_range = 0;
+    std::vector<FractalOriginDistances> origins;
+
+    std::vector<int> epsilons;
+    int offset_seed = 0;
+    std::vector<FractalBoxCountRow> component_box_counts;
+    FractalHullSummary hull_complete;
+    FractalHullSummary hull_external;
+    long long hull_complete_minus_external = 0;
+};
+
 struct RawFractionsSeries {
     int dim = 0;
     int L = 0;
@@ -195,6 +268,7 @@ struct RawFractionsSeries {
     std::vector<int> anchor_z;
     std::vector<int> t_inst;
     std::vector<int> t_stab;
+    std::vector<FractalCountsSample> fractal_counts;
 };
 
 // Compact network representation: Structure of Arrays (SoA) + CSR edges

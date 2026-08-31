@@ -31,17 +31,18 @@ csv_limit = None
 
 seed = -1
 dim = 2
-type_perc = "bond"  # "bond" ou "node"
+type_perc = "node"  # "bond" ou "node"
 nc = 1
 rho = None  # None usa [1/nc]
 
-L_lst = [1024, 2048, 4096, 8192, 16384]
-ft_lst = [0.252069, 0.1982759, 0.1536842, 0.1041379, 0.07157895]
-c_lst = [0.01, 0.01, 0.01, 0.01, 0.01]
+L_lst = [16384]
+#ft_base = 0.081375
+ft_lst = [0.081375, 0.081375*1.01, 0.081375*1.02, 0.081375*1.03, 0.081375*1.04, 0.081375*1.05]
+c_lst = [0.01]
 
-num_runs = 11
-fraction_samples_lst = [50, 40, 30, 20, 10]
-fraction_gap_over_L_lst = [0.5, 1.0, 1.5, 2.0]
+num_runs = 5
+fraction_samples_lst = [10]
+fraction_gap_over_L_lst = [1.5]
 
 p0 = 0.8
 P0 = 0.2
@@ -197,6 +198,7 @@ def output_name(args, L, ft, c, fraction_samples, gap_over_L):
     prefix = f"{args.exec_prefix}_" if args.exec_prefix else ""
     return (
         f"{prefix}L_{L}_ft_{ft:.7g}_c_{c}_nc_{args.nc}_dim_{args.dim}"
+        f"_type_{args.type_perc}"
         f"_p0_{args.p0}_P0_{args.P0}{mode_tag}{frac_tag}{layout_tag}.sh"
     )
 
@@ -224,14 +226,14 @@ def iter_parameter_rows(args):
             )
         return
 
-    L_values = [int(v) for v in as_list(args.L)]
-    ft_values = [float(v) for v in as_list(args.ft)]
-    c_values = [float(v) for v in as_list(args.c)]
-    n_rows = len(L_values)
-    if len(ft_values) != n_rows or len(c_values) != n_rows:
-        raise ValueError(
-            "L, ft and c must have the same length; they are paired by position."
-        )
+    raw_L_values = as_list(args.L)
+    raw_ft_values = as_list(args.ft)
+    raw_c_values = as_list(args.c)
+    n_rows = max(len(raw_L_values), len(raw_ft_values), len(raw_c_values))
+
+    L_values = expand_per_row("L", raw_L_values, n_rows, int)
+    ft_values = expand_per_row("ft", raw_ft_values, n_rows, float)
+    c_values = expand_per_row("c", raw_c_values, n_rows, float)
 
     num_runs_values = expand_per_row("num_runs", args.num_runs, n_rows, int)
     fraction_samples_values = expand_per_row(
