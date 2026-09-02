@@ -920,6 +920,45 @@ void write_fractal_box_rows(std::ostream& os,
     os << "]";
 }
 
+void write_fractal_yardstick_rows(std::ostream& os,
+                                  const std::vector<FractalYardstickRow>& rows,
+                                  const int indent)
+{
+    const std::string pad(static_cast<std::size_t>(indent), ' ');
+    os << "[";
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& row = rows[i];
+        os << "\n" << pad << "{";
+        os << "\"R\": " << row.R << ", ";
+        os << "\"num_spheres\": " << row.num_spheres << "}";
+        if (i + 1 < rows.size()) os << ",";
+    }
+    if (!rows.empty()) os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ');
+    os << "]";
+}
+
+void write_fractal_minimum_path_yardstick(std::ostream& os,
+                                          const FractalMinimumPathYardstick& path,
+                                          const int indent)
+{
+    const std::string pad(static_cast<std::size_t>(indent), ' ');
+    os << "{\n";
+    os << pad << "\"defined\": " << (path.defined ? "true" : "false") << ",\n";
+    os << pad << "\"reason_if_undefined\": \"" << path.reason_if_undefined << "\",\n";
+    os << pad << "\"path_length\": " << path.path_length << ",\n";
+    os << pad << "\"base_site\": " << path.base_site << ",\n";
+    os << pad << "\"top_site\": " << path.top_site << ",\n";
+    os << pad << "\"base_coordinates\": ";
+    write_json_array(os, path.base_coordinates);
+    os << ",\n";
+    os << pad << "\"top_coordinates\": ";
+    write_json_array(os, path.top_coordinates);
+    os << ",\n";
+    os << pad << "\"counts\": ";
+    write_fractal_yardstick_rows(os, path.counts, indent + 2);
+    os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ') << "}";
+}
+
 void write_fractal_hull(std::ostream& os,
                         const FractalHullSummary& hull,
                         const int indent)
@@ -1136,6 +1175,9 @@ void save_data::save_fractal_counts_json(const RawFractionsSeries& fractions,
         ofs << "        \"counts\": ";
         write_fractal_box_rows(ofs, sample.component_box_counts, 10);
         ofs << "\n      },\n";
+        ofs << "      \"minimum_path_yardstick\": ";
+        write_fractal_minimum_path_yardstick(ofs, sample.minimum_path_yardstick, 8);
+        ofs << ",\n";
         ofs << "      \"hull_complete\": ";
         write_fractal_hull(ofs, sample.hull_complete, 8);
         ofs << ",\n";

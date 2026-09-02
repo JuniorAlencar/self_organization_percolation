@@ -2352,6 +2352,269 @@ long long count_boxes_abs_keys(const int dim,
     return count;
 }
 
+double path_point_distance_2d(const int L,
+                              const std::uint32_t a,
+                              const std::uint32_t b)
+{
+    const int ax = static_cast<int>(a % static_cast<std::uint32_t>(L));
+    const int ay = static_cast<int>(a / static_cast<std::uint32_t>(L));
+    const int bx = static_cast<int>(b % static_cast<std::uint32_t>(L));
+    const int by = static_cast<int>(b / static_cast<std::uint32_t>(L));
+    const int dx_raw = std::abs(ax - bx);
+    const int dx = std::min(dx_raw, L - dx_raw);
+    const int dy = std::abs(ay - by);
+    return std::sqrt(static_cast<double>(dx * dx + dy * dy));
+}
+
+double path_point_distance_abs(const int dim,
+                               const int L,
+                               const std::uint64_t a,
+                               const std::uint64_t b)
+{
+    int ax = 0, ay = 0, az = 0;
+    int bx = 0, by = 0, bz = 0;
+    decode_abs_site_key(a, ax, ay, az);
+    decode_abs_site_key(b, bx, by, bz);
+    const int dx_raw = std::abs(ax - bx);
+    const int dx = std::min(dx_raw, L - dx_raw);
+    double r2 = static_cast<double>(dx * dx);
+    if (dim == 2) {
+        const int dy = std::abs(ay - by);
+        r2 += static_cast<double>(dy * dy);
+    } else {
+        const int dy_raw = std::abs(ay - by);
+        const int dy = std::min(dy_raw, L - dy_raw);
+        const int dz = std::abs(az - bz);
+        r2 += static_cast<double>(dy * dy + dz * dz);
+    }
+    return std::sqrt(r2);
+}
+
+long long count_yardsticks_2d(const int L,
+                              const std::vector<std::uint32_t>& path,
+                              const int R)
+{
+    if (R <= 0 || path.size() < 2) return 0;
+    long long count = 0;
+    std::size_t pos = 0;
+    while (pos + 1 < path.size()) {
+        std::size_t next = pos + 1;
+        while (next < path.size() &&
+               path_point_distance_2d(L, path[pos], path[next]) < static_cast<double>(R)) {
+            ++next;
+        }
+        ++count;
+        if (next >= path.size()) break;
+        pos = next;
+    }
+    return count;
+}
+
+long long count_yardsticks_abs(const int dim,
+                               const int L,
+                               const std::vector<std::uint64_t>& path,
+                               const int R)
+{
+    if (R <= 0 || path.size() < 2) return 0;
+    long long count = 0;
+    std::size_t pos = 0;
+    while (pos + 1 < path.size()) {
+        std::size_t next = pos + 1;
+        while (next < path.size() &&
+               path_point_distance_abs(dim, L, path[pos], path[next]) < static_cast<double>(R)) {
+            ++next;
+        }
+        ++count;
+        if (next >= path.size()) break;
+        pos = next;
+    }
+    return count;
+}
+
+FractalMinimumPathYardstick compute_minimum_path_yardstick_2d(
+    const int L,
+    const int bottom,
+    const int top,
+    const std::vector<unsigned char>& in_giant,
+    const std::function<bool(int, int, int, int)>& can_traverse,
+    const std::vector<int>& radii)
+{
+    FractalMinimumPathYardstick out;
+    const int h_count = top - bottom + 1;
+    if (h_count != L || in_giant.empty()) {
+        out.reason_if_undefined = "invalid_window_or_empty_component";
+        return out;
+    }
+
+    const std::uint32_t none = std::numeric_limits<std::uint32_t>::max();
+    std::vector<int> dist(in_giant.size(), -1);
+    std::vector<std::uint32_t> parent(in_giant.size(), none);
+    std::vector<std::uint32_t> queue;
+    queue.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
+
+    for (int x = 0; x < L; ++x) {
+        const std::uint32_t idx = static_cast<std::uint32_t>(x);
+        if (!in_giant[idx]) continue;
+        dist[idx] = 0;
+        parent[idx] = idx;
+        queue.push_back(idx);
+    }
+    if (queue.empty()) {
+        out.reason_if_undefined = "largest_component_does_not_touch_base";
+        return out;
+    }
+
+    std::uint32_t target = none;
+    for (std::size_t head = 0; head < queue.size() && target == none; ++head) {
+        const std::uint32_t cur = queue[head];
+        const int cy_local = static_cast<int>(cur / static_cast<std::uint32_t>(L));
+        if (cy_local == h_count - 1) {
+            target = cur;
+            break;
+        }
+        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+        const int cy_abs = bottom + cy_local;
+        const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
+        const int ny_values[4] = {cy_abs, cy_abs, cy_abs - 1, cy_abs + 1};
+        for (int ni = 0; ni < 4; ++ni) {
+            const int ny_abs = ny_values[ni];
+            if (ny_abs < bottom || ny_abs > top) continue;
+            if (!can_traverse(cx, cy_abs, nx_values[ni], ny_abs)) continue;
+            const std::uint32_t nidx = static_cast<std::uint32_t>(
+                (ny_abs - bottom) * L + nx_values[ni]);
+            if (!in_giant[nidx] || dist[nidx] >= 0) continue;
+            dist[nidx] = dist[cur] + 1;
+            parent[nidx] = cur;
+            queue.push_back(nidx);
+        }
+    }
+
+    if (target == none) {
+        out.reason_if_undefined = "largest_component_does_not_touch_top";
+        return out;
+    }
+
+    std::vector<std::uint32_t> path;
+    for (std::uint32_t cur = target; ; cur = parent[cur]) {
+        path.push_back(cur);
+        if (parent[cur] == cur) break;
+    }
+    std::reverse(path.begin(), path.end());
+
+    const std::uint32_t base = path.front();
+    out.defined = true;
+    out.path_length = static_cast<int>(path.size()) - 1;
+    out.base_site = base;
+    out.top_site = target;
+    out.base_coordinates = {
+        static_cast<int>(base % static_cast<std::uint32_t>(L)),
+        bottom + static_cast<int>(base / static_cast<std::uint32_t>(L))
+    };
+    out.top_coordinates = {
+        static_cast<int>(target % static_cast<std::uint32_t>(L)),
+        bottom + static_cast<int>(target / static_cast<std::uint32_t>(L))
+    };
+    out.counts.reserve(radii.size());
+    for (const int R : radii) {
+        out.counts.push_back({R, count_yardsticks_2d(L, path, R)});
+    }
+    return out;
+}
+
+FractalMinimumPathYardstick compute_minimum_path_yardstick_sparse(
+    const int dim,
+    const int L,
+    const int bottom,
+    const int top,
+    const bool is_node,
+    const std::unordered_set<std::uint64_t, AbsSiteKeyHash>& in_giant,
+    const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds,
+    const std::vector<int>& radii)
+{
+    FractalMinimumPathYardstick out;
+    if (top < bottom || in_giant.empty()) {
+        out.reason_if_undefined = "invalid_window_or_empty_component";
+        return out;
+    }
+
+    std::unordered_map<std::uint64_t, int, AbsSiteKeyHash> dist;
+    std::unordered_map<std::uint64_t, std::uint64_t, AbsSiteKeyHash> parent;
+    dist.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
+    parent.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
+    std::vector<std::uint64_t> queue;
+    queue.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
+
+    for (const std::uint64_t key : in_giant) {
+        if (abs_grow_coord_from_key(key, dim) != bottom) continue;
+        dist.emplace(key, 0);
+        parent.emplace(key, key);
+        queue.push_back(key);
+    }
+    if (queue.empty()) {
+        out.reason_if_undefined = "largest_component_does_not_touch_base";
+        return out;
+    }
+
+    std::uint64_t target = 0;
+    bool found = false;
+    std::uint64_t neigh[6];
+    int nneigh = 0;
+    for (std::size_t head = 0; head < queue.size() && !found; ++head) {
+        const std::uint64_t u = queue[head];
+        if (abs_grow_coord_from_key(u, dim) == top) {
+            target = u;
+            found = true;
+            break;
+        }
+        collect_abs_neighbors(dim, L, u, neigh, nneigh);
+        for (int ni = 0; ni < nneigh; ++ni) {
+            const std::uint64_t v = neigh[ni];
+            const int hv = abs_grow_coord_from_key(v, dim);
+            if (hv < bottom || hv > top) continue;
+            if (in_giant.find(v) == in_giant.end()) continue;
+            if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
+                continue;
+            }
+            if (dist.find(v) != dist.end()) continue;
+            dist.emplace(v, dist[u] + 1);
+            parent.emplace(v, u);
+            queue.push_back(v);
+        }
+    }
+
+    if (!found) {
+        out.reason_if_undefined = "largest_component_does_not_touch_top";
+        return out;
+    }
+
+    std::vector<std::uint64_t> path;
+    for (std::uint64_t cur = target; ; cur = parent[cur]) {
+        path.push_back(cur);
+        if (parent[cur] == cur) break;
+    }
+    std::reverse(path.begin(), path.end());
+
+    int bx = 0, by = 0, bz = 0;
+    int tx = 0, ty = 0, tz = 0;
+    decode_abs_site_key(path.front(), bx, by, bz);
+    decode_abs_site_key(target, tx, ty, tz);
+    out.defined = true;
+    out.path_length = static_cast<int>(path.size()) - 1;
+    out.base_site = path.front();
+    out.top_site = target;
+    out.base_coordinates = dim == 2
+        ? std::vector<int>{bx, by}
+        : std::vector<int>{bx, by, bz};
+    out.top_coordinates = dim == 2
+        ? std::vector<int>{tx, ty}
+        : std::vector<int>{tx, ty, tz};
+    out.counts.reserve(radii.size());
+    for (const int R : radii) {
+        out.counts.push_back({R, count_yardsticks_abs(dim, L, path, R)});
+    }
+    return out;
+}
+
 FractalCountsSample compute_fractal_counts_2d(
     const int L,
     const int bottom,
@@ -2477,6 +2740,8 @@ FractalCountsSample compute_fractal_counts_2d(
     }
 
     out.epsilons = default_fractal_epsilons(2);
+    out.minimum_path_yardstick = compute_minimum_path_yardstick_2d(
+        L, bottom, top, in_giant, can_traverse, out.epsilons);
     out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
                                          seed + 2000003 * (sample_index + 1));
     const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);
@@ -2704,6 +2969,8 @@ FractalCountsSample compute_fractal_counts_sparse(
     }
 
     out.epsilons = default_fractal_epsilons(dim);
+    out.minimum_path_yardstick = compute_minimum_path_yardstick_sparse(
+        dim, L, bottom, top, is_node, in_giant, open_bonds, out.epsilons);
     out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
                                          seed + 2000003 * (sample_index + 1));
     const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);

@@ -113,6 +113,32 @@ store a boolean flag indicating whether a radial bin reached this cutoff.  This
 flag is not used by default in the fit, but it is useful for diagnosing
 finite-search effects or for testing alternative fitting windows.
 
+\subsection{Minimum-path yardstick estimator}
+\label{subsec:minimum-path-yardstick}
+
+In addition to the radial chemical-distance estimator, the code also stores a
+yardstick estimator applied directly to one shortest path connecting the bottom
+and top boundaries.  For each post-stabilization sample, a multi-source
+breadth-first search is initialized from all sites of the largest component
+touching the bottom boundary.  The search uses the same node or bond
+connectivity rule as the simulation and stops when the first site on the top
+boundary is reached.  This gives one shortest bottom-to-top path with chemical
+length \(\ell_{\mathrm{bt}}\).
+
+The full path is not stored.  Instead, for each yardstick radius \(R\), the
+algorithm walks along the reconstructed path.  Starting from the current center,
+it advances along the path until the Euclidean distance from the center is at
+least \(R\), counts one yardstick sphere, and uses that path site as the next
+center.  A final partial segment is counted once when the end of the path is
+reached before another full radius \(R\) can be placed.  The stored curve is
+\begin{equation}
+    N(R) \sim \left(\frac{L}{R}\right)^{d_{\min}^{\mathrm{yardstick}}}.
+    \label{eq:dmin-yardstick}
+\end{equation}
+Thus the yardstick estimate is obtained as the slope of
+\(\log N(R)\) versus \(\log(L/R)\).  The output stores only \(R\), \(L/R\),
+\(N(R)\), the path length, and the two path endpoints.
+
 \subsection{Processed data format}
 \label{subsec:processed-counts-format}
 
@@ -151,4 +177,3 @@ The exponent estimates are not fixed during data processing.  Instead, the
 processed files preserve the scale-dependent curves for each network sample,
 allowing the fitting interval and estimator to be chosen later in the notebook
 analysis.
-
