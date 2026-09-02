@@ -37,6 +37,13 @@ OBSERVABLES = {
         "xlabel": r"$r$",
         "ylabel": r"$\ell_{\min}$",
     },
+    "d_min_yardstick": {
+        "x": "L_over_R",
+        "y": "N_R",
+        "axis": "R",
+        "xlabel": r"$L/R$",
+        "ylabel": r"$N(R)$",
+    },
 }
 
 

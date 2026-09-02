@@ -31,13 +31,21 @@ csv_limit = None
 
 seed = -1
 dim = 2
-type_perc = "node"  # "bond" ou "node"
+type_perc = "bond"  # "bond" ou "node"
 nc = 1
 rho = None  # None usa [1/nc]
 
 L_lst = [16384]
 #ft_base = 0.081375
-ft_lst = [0.081375, 0.081375*1.01, 0.081375*1.02, 0.081375*1.03, 0.081375*1.04, 0.081375*1.05]
+if type_perc=='bond':
+    ft = 0.06873726
+elif type_perc=='node':
+    ft = 0.081375
+else:
+    print('please, enter with type_perc valid: bond or node')
+    
+
+ft_lst = [ft*3.25, ft*3.5, ft*4.0, ft*5.0, ft*6.0]
 c_lst = [0.01]
 
 num_runs = 5

@@ -164,19 +164,29 @@ def normalize_existing_processed_sample(sample: dict[str, Any]) -> dict[str, Any
     if not isinstance(properties, dict):
         return sample
     d_min = properties.get("d_min")
-    if not isinstance(d_min, dict):
-        return sample
-    if "ell_min" not in d_min and "ell" in d_min:
-        d_min["ell_mean"] = d_min.get("ell_mean", d_min["ell"])
-        d_min["ell_min"] = d_min["ell"]
-        d_min["legacy_d_min_fallback"] = True
-        d_min["legacy_d_min_fallback_reason"] = (
-            "Processed sample did not contain ell_min and raw counts were not available; "
-            "ell_min was set to the existing ell series for backward compatibility."
-        )
-    d_min["y_name"] = "ell_min"
-    d_min["default_y"] = "ell_min"
-    d_min["ell"] = d_min["ell_min"]
+    if isinstance(d_min, dict):
+        if "ell_min" not in d_min and "ell" in d_min:
+            d_min["ell_mean"] = d_min.get("ell_mean", d_min["ell"])
+            d_min["ell_min"] = d_min["ell"]
+            d_min["legacy_d_min_fallback"] = True
+            d_min["legacy_d_min_fallback_reason"] = (
+                "Processed sample did not contain ell_min and raw counts were not available; "
+                "ell_min was set to the existing ell series for backward compatibility."
+            )
+        d_min["y_name"] = "ell_min"
+        d_min["default_y"] = "ell_min"
+        d_min["ell"] = d_min["ell_min"]
+    if "d_min_yardstick" not in properties:
+        properties["d_min_yardstick"] = {
+            "x_name": "L_over_R",
+            "y_name": "N_R",
+            "defined": False,
+            "reason_if_undefined": "missing_in_existing_processed_sample",
+            "path_length": None,
+            "R": [],
+            "L_over_R": [],
+            "N_R": [],
+        }
     return sample
 
 
@@ -256,6 +266,53 @@ def box_series(curve: list[dict[str, Any]], y_name: str) -> dict[str, Any]:
         "L_over_epsilon": [row["L_over_epsilon"] for row in curve],
         y_name: [row["mean_count"] for row in curve],
         "n_offsets": [row["n_offsets"] for row in curve],
+    }
+
+
+def minimum_path_yardstick_series(sample: dict[str, Any], L: int) -> dict[str, Any]:
+    path = sample.get("minimum_path_yardstick")
+    if not isinstance(path, dict) or not path.get("defined", False):
+        return {
+            "x_name": "L_over_R",
+            "y_name": "N_R",
+            "defined": False,
+            "reason_if_undefined": (
+                path.get("reason_if_undefined", "missing_minimum_path_yardstick")
+                if isinstance(path, dict)
+                else "missing_minimum_path_yardstick"
+            ),
+            "path_length": None,
+            "R": [],
+            "L_over_R": [],
+            "N_R": [],
+        }
+
+    radii: list[int] = []
+    l_over_r: list[float] = []
+    counts: list[int] = []
+    for row in path.get("counts", []):
+        if not isinstance(row, dict):
+            continue
+        radius = finite_float(row.get("R"))
+        num_spheres = finite_float(row.get("num_spheres"))
+        if radius is None or num_spheres is None or radius <= 0 or num_spheres <= 0:
+            continue
+        radii.append(int(radius))
+        l_over_r.append(float(L) / float(radius))
+        counts.append(int(num_spheres))
+
+    return {
+        "x_name": "L_over_R",
+        "y_name": "N_R",
+        "defined": True,
+        "path_length": path.get("path_length"),
+        "base_site": path.get("base_site"),
+        "top_site": path.get("top_site"),
+        "base_coordinates": path.get("base_coordinates", []),
+        "top_coordinates": path.get("top_coordinates", []),
+        "R": radii,
+        "L_over_R": l_over_r,
+        "N_R": counts,
     }
 
 
@@ -446,7 +503,8 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
     raw_root = sop_root / args.raw_dir
     out_root = sop_root / args.out_dir
     count_paths = sorted(raw_root.glob("**/counts/*_counts.json"))
-    remove_legacy_flat_outputs(out_root)
+    if not args.dry_run:
+        remove_legacy_flat_outputs(out_root)
     existing_outputs = discover_existing_outputs(out_root)
 
     files_by_group: dict[tuple[Any, ...], set[str]] = defaultdict(set)
@@ -482,6 +540,7 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
 
             curve = chemical_curve_for_sample(sample, args.chemical_r_min, args.chemical_r_max)
             properties["d_min"] = chemical_series(curve)
+            properties["d_min_yardstick"] = minimum_path_yardstick_series(sample, L)
 
             samples_by_group[gkey].append({
                 "sample_id": sample_id,
@@ -500,8 +559,9 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
             else key_to_params(gkey)
         )
         group_dir = group_output_dir(out_root, params)
-        remove_legacy_group_outputs(group_dir)
-        group_dir.mkdir(parents=True, exist_ok=True)
+        if not args.dry_run:
+            remove_legacy_group_outputs(group_dir)
+            group_dir.mkdir(parents=True, exist_ok=True)
         output_path = group_dir / processed_counts_name(params)
         existing_samples = []
         existing_paths = []
@@ -525,6 +585,11 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
             for sample in merged_samples
             if sample.get("properties", {}).get("d_min", {}).get("legacy_d_min_fallback") is True
         )
+        d_min_yardstick_samples = sum(
+            1
+            for sample in merged_samples
+            if sample.get("properties", {}).get("d_min_yardstick", {}).get("defined") is True
+        )
         output_payload = {
             "meta": {
                 **{col: params.get(col) for col in PARAM_COLUMNS},
@@ -533,6 +598,7 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
                     "d_hull": "N_hull ~ (L_over_epsilon)^d_hull",
                     "d_hull_ext": "N_hull_ext ~ (L_over_epsilon)^d_hull_ext",
                     "d_min": "ell ~ r^d_min",
+                    "d_min_yardstick": "N_R ~ (L_over_R)^d_min_yardstick",
                 },
                 "d_min_note": (
                     "No L rescaling is applied to d_min. The default processed series "
@@ -542,42 +608,48 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
                 "n_count_files": len(merged_source_files),
                 "n_samples": len(merged_samples),
                 "n_legacy_d_min_fallback_samples": legacy_d_min_fallback_samples,
+                "n_d_min_yardstick_samples": d_min_yardstick_samples,
                 "last_run_new_samples": appended_samples,
                 "last_run_updated_samples": updated_samples,
             },
             "samples": merged_samples,
         }
-        output_path.write_text(json.dumps(output_payload, separators=(",", ":")) + "\n")
+        if not args.dry_run:
+            output_path.write_text(json.dumps(output_payload, separators=(",", ":")) + "\n")
         split_outputs.append({
             **params,
             "path": str(output_path),
             "n_count_files": len(merged_source_files),
             "n_samples": len(merged_samples),
             "n_legacy_d_min_fallback_samples": legacy_d_min_fallback_samples,
+            "n_d_min_yardstick_samples": d_min_yardstick_samples,
             "last_run_new_samples": appended_samples,
             "last_run_updated_samples": updated_samples,
             "raw_count_files_this_run": len(files_by_group.get(gkey, set())),
             "existing_processed_files": len(existing_paths),
         })
 
-    write_csv(
-        out_root / "split_outputs.csv",
-        split_outputs,
-        [
-            *PARAM_COLUMNS,
-            "path",
+    if not args.dry_run:
+        write_csv(
+            out_root / "split_outputs.csv",
+            split_outputs,
+            [
+                *PARAM_COLUMNS,
+                "path",
             "n_count_files",
             "n_samples",
             "n_legacy_d_min_fallback_samples",
+            "n_d_min_yardstick_samples",
             "last_run_new_samples",
-            "last_run_updated_samples",
-            "raw_count_files_this_run",
-            "existing_processed_files",
-        ],
-    )
+                "last_run_updated_samples",
+                "raw_count_files_this_run",
+                "existing_processed_files",
+            ],
+        )
 
     manifest = {
         "processing": "counts",
+        "dry_run": args.dry_run,
         "n_raw_count_files_this_run": len(count_paths),
         "n_existing_processed_files": sum(len(items) for items in existing_outputs.values()),
         "n_parameter_sets": len(all_groups),
@@ -588,7 +660,8 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
         ],
         "split_outputs": split_outputs,
     }
-    (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if not args.dry_run:
+        (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return manifest
 
 
@@ -603,6 +676,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--box-epsilon-max", type=float, default=None)
     parser.add_argument("--chemical-r-min", type=float, default=None)
     parser.add_argument("--chemical-r-max", type=float, default=None)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Read and merge counts in memory without writing published_counts outputs.",
+    )
     return parser
 
 
@@ -611,6 +689,7 @@ def main() -> None:
     manifest = process_counts(args)
     print(
         "[process_counts] "
+        f"dry_run={manifest['dry_run']} "
         f"raw_count_files_this_run={manifest['n_raw_count_files_this_run']} "
         f"parameter_sets={manifest['n_parameter_sets']} "
         f"out={args.sop_root.resolve() / args.out_dir}"
