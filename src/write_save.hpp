@@ -18,6 +18,9 @@ public:
                                const std::string& filename_json,
                                bool sort_by_order) const;
 
+    void save_height_timeseries_bin(const TimeSeries& ts,
+                                    const std::string& filename_yts) const;
+
     void save_reanalysis_json(const ReanalysisResult& result,
                               const std::string& filename_json) const;
 

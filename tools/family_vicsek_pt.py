@@ -17,6 +17,7 @@ from scipy.optimize import differential_evolution, minimize
 class Curve:
     path: Path
     L: float
+    control: dict
     t: np.ndarray
     p: np.ndarray
     p_sem: np.ndarray | None
@@ -79,10 +80,24 @@ def iter_bundle_curves(path: Path, p0: float | None, P0: float | None, order: in
                 Curve(
                     path=path,
                     L=L,
+                    control={
+                        "type_perc": meta.get("type_perc"),
+                        "dim": meta.get("dim"),
+                        "f_T": meta.get("f_T"),
+                        "c": meta.get("c"),
+                        "nc": meta.get("nc"),
+                        "rho": meta.get("rho"),
+                        "p0": group_p0,
+                        "P0": group_P0,
+                        "order": block_order,
+                    },
                     t=t,
                     p=p,
                     p_sem=p_sem,
-                    label=f"L={int(L):g}, p0={group_p0:g}, P0={group_P0:g}, order={block_order}",
+                    label=(
+                        f"L={int(L):g}, fT={float(meta.get('f_T', np.nan)):.4g}, "
+                        f"c={float(meta.get('c', np.nan)):.4g}, order={block_order}"
+                    ),
                 )
             )
     return curves
@@ -165,6 +180,63 @@ def estimate_beta(prepared, fit_range: tuple[float, float]) -> list[tuple[float,
     return estimates
 
 
+def fit_loglog_power(xs: list[float], ys: list[float]) -> tuple[float, float, int] | None:
+    x = np.asarray(xs, dtype=float)
+    y = np.asarray(ys, dtype=float)
+    keep = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+    x = x[keep]
+    y = y[keep]
+    if x.size < 2:
+        return None
+    slope, intercept = np.polyfit(np.log(x), np.log(y), 1)
+    yhat = slope * np.log(x) + intercept
+    ss_res = float(np.sum((np.log(y) - yhat) ** 2))
+    ss_tot = float(np.sum((np.log(y) - np.mean(np.log(y))) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    return float(slope), r2, int(x.size)
+
+
+def saturation_and_tstar(
+    prepared,
+    mode: str,
+    tail_fraction: float,
+    tstar_fraction: float,
+) -> list[dict]:
+    rows = []
+    for curve, t, y in prepared:
+        tail_start = max(0, min(y.size - 1, int((1.0 - tail_fraction) * y.size)))
+        y_sat = float(np.nanmean(y[tail_start:]))
+        t_star = np.nan
+
+        if mode == "growth" and np.isfinite(y_sat) and y_sat > 0:
+            target = tstar_fraction * y_sat
+            hit = np.flatnonzero(y >= target)
+            if hit.size:
+                t_star = float(t[hit[0]])
+        elif mode == "relaxation" and y.size and y[0] > 0:
+            target = tstar_fraction * y[0]
+            hit = np.flatnonzero(y <= target)
+            if hit.size:
+                t_star = float(t[hit[0]])
+        elif mode in {"p", "centered"}:
+            y_abs = np.abs(y - y_sat)
+            if y_abs.size and y_abs[0] > 0:
+                target = tstar_fraction * y_abs[0]
+                hit = np.flatnonzero(y_abs <= target)
+                if hit.size:
+                    t_star = float(t[hit[0]])
+
+        rows.append(
+            {
+                "L": float(curve.L),
+                "y_sat": y_sat,
+                "t_star": t_star,
+                "control": curve.control,
+            }
+        )
+    return rows
+
+
 def collapse_score(params: np.ndarray, prepared, n_grid: int) -> float:
     alpha, z = params
     xs = []
@@ -212,7 +284,7 @@ def fit_collapse(prepared, alpha_bounds, z_bounds, n_grid: int, seed: int) -> tu
         lambda x: collapse_score(x, prepared, n_grid),
         result.x,
         bounds=bounds,
-        method="Nelder-Mead",
+        method="L-BFGS-B",
     )
     x = polished.x if polished.fun <= result.fun else result.x
     score = min(float(polished.fun), float(result.fun))
@@ -267,6 +339,12 @@ def parse_args() -> argparse.Namespace:
         help="Observable y(t): p, |p(0)-p(t)|, |p(t)-p_sat|, or p(t)-p_sat.",
     )
     parser.add_argument("--tail-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--tstar-fraction",
+        type=float,
+        default=0.5,
+        help="Fraction used to estimate t*: growth reaches f*y_sat; relaxation reaches f*y_initial.",
+    )
     parser.add_argument("--t-min", type=float, default=None)
     parser.add_argument("--t-max", type=float, default=None)
     parser.add_argument("--max-points", type=int, default=1200)
@@ -313,6 +391,20 @@ def main() -> int:
     summary_path = args.out_dir / f"pt_family_vicsek_{args.mode}_summary.txt"
 
     beta_estimates = estimate_beta(prepared, tuple(args.beta_fit_range))
+    scale_rows = saturation_and_tstar(
+        prepared,
+        mode=args.mode,
+        tail_fraction=args.tail_fraction,
+        tstar_fraction=args.tstar_fraction,
+    )
+    alpha_sat_fit = fit_loglog_power(
+        [row["L"] for row in scale_rows],
+        [abs(row["y_sat"]) for row in scale_rows],
+    )
+    z_tstar_fit = fit_loglog_power(
+        [row["L"] for row in scale_rows],
+        [row["t_star"] for row in scale_rows],
+    )
     alpha, z, score = fit_collapse(
         prepared,
         alpha_bounds=tuple(args.alpha_bounds),
@@ -330,6 +422,31 @@ def main() -> int:
         handle.write(f"z: {z:.12g}\n")
         handle.write(f"collapse_score: {score:.12g}\n")
         handle.write(f"beta_from_alpha_over_z: {alpha / z:.12g}\n")
+        if np.isclose(alpha, args.alpha_bounds[0]) or np.isclose(alpha, args.alpha_bounds[1]):
+            handle.write("warning: alpha is on a search bound; widen/check the window before interpreting it.\n")
+        if np.isclose(z, args.z_bounds[0]) or np.isclose(z, args.z_bounds[1]):
+            handle.write("warning: z is on a search bound; widen/check the window before interpreting it.\n")
+        handle.write("\nFamily-Vicsek analogy used here:\n")
+        handle.write("FV observable w(L,t) -> selected y(t,L)\n")
+        handle.write("system size L -> bundle meta['L']\n")
+        handle.write("time t -> pt time axis\n")
+        handle.write("roughness exponent alpha -> y_sat(L) ~ L^alpha\n")
+        handle.write("growth exponent beta -> early-time y(t,L) ~ t^beta\n")
+        handle.write("dynamic exponent z -> t_star(L) ~ L^z\n")
+        handle.write("FV consistency relation -> beta = alpha / z\n")
+        handle.write("control parameters to keep fixed -> type_perc, dim, f_T, c, nc, rho, p0, P0, order\n")
+        if alpha_sat_fit is not None:
+            a_sat, r2_sat, n_sat = alpha_sat_fit
+            handle.write(f"\nalpha_from_saturation: {a_sat:.12g} r2={r2_sat:.6g} n={n_sat}\n")
+        if z_tstar_fit is not None:
+            z_star, r2_star, n_star = z_tstar_fit
+            handle.write(f"z_from_t_star: {z_star:.12g} r2={r2_star:.6g} n={n_star}\n")
+        handle.write("\nsaturation and crossover estimates:\n")
+        for row in scale_rows:
+            handle.write(
+                f"L={row['L']:g} y_sat={row['y_sat']:.12g} "
+                f"t_star={row['t_star']:.12g}\n"
+            )
         handle.write("\nlog-log beta estimates by L:\n")
         for L, beta, r2 in beta_estimates:
             handle.write(f"L={L:g} beta={beta:.12g} r2={r2:.6g}\n")
@@ -344,6 +461,16 @@ def main() -> int:
     print(f"Saved collapse plot: {collapse_path}")
     print(f"Saved summary: {summary_path}")
     print(f"alpha={alpha:.6g} z={z:.6g} beta=alpha/z={alpha / z:.6g} score={score:.6g}")
+    if np.isclose(alpha, args.alpha_bounds[0]) or np.isclose(alpha, args.alpha_bounds[1]):
+        print("warning: alpha is on a search bound")
+    if np.isclose(z, args.z_bounds[0]) or np.isclose(z, args.z_bounds[1]):
+        print("warning: z is on a search bound")
+    if alpha_sat_fit is not None:
+        a_sat, r2_sat, n_sat = alpha_sat_fit
+        print(f"alpha from saturation: {a_sat:.6g}, r2={r2_sat:.4g}, n={n_sat}")
+    if z_tstar_fit is not None:
+        z_star, r2_star, n_star = z_tstar_fit
+        print(f"z from t*: {z_star:.6g}, r2={r2_star:.4g}, n={n_star}")
     if beta_estimates:
         print("beta log-log estimates:")
         for L, beta, r2 in beta_estimates:

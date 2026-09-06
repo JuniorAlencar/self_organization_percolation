@@ -754,6 +754,106 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
     ofs << "}\n";
 }
 
+void save_data::save_height_timeseries_bin(const TimeSeries& ts,
+                                           const std::string& filename_yts) const
+{
+    if (ts.t.empty() || ts.num_colors <= 0 || ts.y_mean_t.empty()) {
+        return;
+    }
+
+    const std::size_t n_times = ts.t.size();
+    auto validate_double_matrix = [&](const std::vector<std::vector<double>>& rows,
+                                      const char* name) {
+        if (static_cast<int>(rows.size()) != ts.num_colors) {
+            throw std::runtime_error(std::string("[save_height_timeseries_bin] ") +
+                                     name + ".size != num_colors");
+        }
+        for (const auto& row : rows) {
+            if (row.size() != n_times) {
+                throw std::runtime_error(std::string("[save_height_timeseries_bin] ") +
+                                         name + " row size != time size");
+            }
+        }
+    };
+    auto validate_int_matrix = [&](const std::vector<std::vector<int>>& rows,
+                                   const char* name) {
+        if (static_cast<int>(rows.size()) != ts.num_colors) {
+            throw std::runtime_error(std::string("[save_height_timeseries_bin] ") +
+                                     name + ".size != num_colors");
+        }
+        for (const auto& row : rows) {
+            if (row.size() != n_times) {
+                throw std::runtime_error(std::string("[save_height_timeseries_bin] ") +
+                                         name + " row size != time size");
+            }
+        }
+    };
+    auto validate_u32_matrix = [&](const std::vector<std::vector<uint32_t>>& rows,
+                                   const char* name) {
+        if (static_cast<int>(rows.size()) != ts.num_colors) {
+            throw std::runtime_error(std::string("[save_height_timeseries_bin] ") +
+                                     name + ".size != num_colors");
+        }
+        for (const auto& row : rows) {
+            if (row.size() != n_times) {
+                throw std::runtime_error(std::string("[save_height_timeseries_bin] ") +
+                                         name + " row size != time size");
+            }
+        }
+    };
+
+    validate_double_matrix(ts.y_mean_t, "y_mean_t");
+    validate_double_matrix(ts.y_width_t, "y_width_t");
+    validate_int_matrix(ts.y_max_t, "y_max_t");
+    validate_double_matrix(ts.y_front_mean_t, "y_front_mean_t");
+    validate_double_matrix(ts.y_front_width_t, "y_front_width_t");
+    validate_u32_matrix(ts.y_front_count_t, "y_front_count_t");
+
+    const std::filesystem::path out_path(filename_yts);
+    if (!out_path.parent_path().empty()) {
+        std::filesystem::create_directories(out_path.parent_path());
+    }
+
+    std::ofstream out(filename_yts, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error(
+            std::string("[save_height_timeseries_bin] nao abriu: ") + filename_yts);
+    }
+
+    const uint32_t magic = 0x53545059; // 'YPTS' on little-endian files
+    const uint32_t version = 1;
+    const uint32_t num_colors = static_cast<uint32_t>(ts.num_colors);
+    const uint64_t nt = static_cast<uint64_t>(n_times);
+
+    out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    out.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    out.write(reinterpret_cast<const char*>(&num_colors), sizeof(num_colors));
+    out.write(reinterpret_cast<const char*>(&nt), sizeof(nt));
+    out.write(reinterpret_cast<const char*>(ts.t.data()),
+              n_times * sizeof(ts.t.front()));
+
+    for (int c = 0; c < ts.num_colors; ++c) {
+        const std::size_t row = static_cast<std::size_t>(c);
+        out.write(reinterpret_cast<const char*>(ts.y_mean_t[row].data()),
+                  n_times * sizeof(double));
+        out.write(reinterpret_cast<const char*>(ts.y_width_t[row].data()),
+                  n_times * sizeof(double));
+        out.write(reinterpret_cast<const char*>(ts.y_max_t[row].data()),
+                  n_times * sizeof(int));
+        out.write(reinterpret_cast<const char*>(ts.y_front_mean_t[row].data()),
+                  n_times * sizeof(double));
+        out.write(reinterpret_cast<const char*>(ts.y_front_width_t[row].data()),
+                  n_times * sizeof(double));
+        out.write(reinterpret_cast<const char*>(ts.y_front_count_t[row].data()),
+                  n_times * sizeof(uint32_t));
+    }
+
+    if (!out.good()) {
+        throw std::runtime_error(
+            std::string("[save_height_timeseries_bin] falha escrevendo: ") + filename_yts);
+    }
+}
+
 void save_data::save_network_compact_bin(const NetworkCompact& net,
                                         const std::string& filename) const
 {

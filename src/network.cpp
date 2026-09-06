@@ -1911,6 +1911,12 @@ NetworkPattern network::create_network(
 
     std::vector<std::vector<double>> p_series(num_colors);
     std::vector<std::vector<double>> f_series(num_colors);
+    std::vector<std::vector<double>> y_mean_series(num_colors);
+    std::vector<std::vector<double>> y_width_series(num_colors);
+    std::vector<std::vector<int>> y_max_series(num_colors);
+    std::vector<std::vector<double>> y_front_mean_series(num_colors);
+    std::vector<std::vector<double>> y_front_width_series(num_colors);
+    std::vector<std::vector<uint32_t>> y_front_count_series(num_colors);
     std::vector<int>                 t_list;
     t_list.reserve(num_of_samples);
 
@@ -1922,6 +1928,60 @@ NetworkPattern network::create_network(
     std::vector<int>    z_max_at_perc(num_colors, -1);
     std::vector<int>    frontier;
     std::vector<int>    next_frontier;
+
+    const std::size_t lateral_size = static_cast<std::size_t>(base_size);
+    std::vector<std::vector<int>> surface_height(
+        static_cast<std::size_t>(num_colors),
+        std::vector<int>(lateral_size, -1));
+    std::vector<double> surface_sum_height(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<double> surface_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<uint32_t> surface_active_columns(static_cast<std::size_t>(num_colors), 0);
+    std::vector<int> surface_max_height(static_cast<std::size_t>(num_colors), -1);
+    std::vector<double> front_sum_height(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<double> front_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<uint32_t> front_count(static_cast<std::size_t>(num_colors), 0);
+
+    auto lateral_index_of = [&](const int idx) -> std::size_t {
+        if (dim == 2) {
+            return static_cast<std::size_t>(grid.x_of(idx));
+        }
+        return static_cast<std::size_t>(
+            grid.x_of(idx) + grid.SX * grid.y_of(idx));
+    };
+
+    auto reset_front_height_accumulators = [&]() {
+        std::fill(front_sum_height.begin(), front_sum_height.end(), 0.0);
+        std::fill(front_sum_height_sq.begin(), front_sum_height_sq.end(), 0.0);
+        std::fill(front_count.begin(), front_count.end(), 0u);
+    };
+
+    auto record_height_activation = [&](const int color_idx, const int idx) {
+        if (color_idx < 0 || color_idx >= num_colors) return;
+        const std::size_t c = static_cast<std::size_t>(color_idx);
+        const int h = grid.grow_coord(idx);
+        front_sum_height[c] += static_cast<double>(h);
+        front_sum_height_sq[c] += static_cast<double>(h) * static_cast<double>(h);
+        ++front_count[c];
+
+        const std::size_t lateral_idx = lateral_index_of(idx);
+        int& old_h = surface_height[c][lateral_idx];
+        if (h <= old_h) return;
+
+        if (old_h < 0) {
+            ++surface_active_columns[c];
+            surface_sum_height[c] += static_cast<double>(h);
+            surface_sum_height_sq[c] += static_cast<double>(h) * static_cast<double>(h);
+        } else {
+            surface_sum_height[c] += static_cast<double>(h - old_h);
+            surface_sum_height_sq[c] +=
+                static_cast<double>(h) * static_cast<double>(h) -
+                static_cast<double>(old_h) * static_cast<double>(old_h);
+        }
+        old_h = h;
+        if (h > surface_max_height[c]) {
+            surface_max_height[c] = h;
+        }
+    };
     
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
@@ -1939,6 +1999,41 @@ NetworkPattern network::create_network(
         for (int c = 0; c < num_colors; ++c) {
             p_series[c].push_back(p_vec[c]);
             f_series[c].push_back(f_vec[c]);
+
+            const std::size_t row = static_cast<std::size_t>(c);
+            const uint32_t ncols = surface_active_columns[row];
+            if (ncols > 0) {
+                const double mean =
+                    surface_sum_height[row] / static_cast<double>(ncols);
+                const double mean_sq =
+                    surface_sum_height_sq[row] / static_cast<double>(ncols);
+                y_mean_series[row].push_back(mean);
+                y_width_series[row].push_back(
+                    std::sqrt(std::max(0.0, mean_sq - mean * mean)));
+            } else {
+                y_mean_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+                y_width_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+            }
+            y_max_series[row].push_back(surface_max_height[row]);
+
+            const uint32_t nf = front_count[row];
+            if (nf > 0) {
+                const double mean =
+                    front_sum_height[row] / static_cast<double>(nf);
+                const double mean_sq =
+                    front_sum_height_sq[row] / static_cast<double>(nf);
+                y_front_mean_series[row].push_back(mean);
+                y_front_width_series[row].push_back(
+                    std::sqrt(std::max(0.0, mean_sq - mean * mean)));
+            } else {
+                y_front_mean_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+                y_front_width_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+            }
+            y_front_count_series[row].push_back(nf);
         }
     };
 
@@ -1962,6 +2057,7 @@ NetworkPattern network::create_network(
             frontier.push_back(idx);
             ++N_current[c];
             set_activation_time(idx, 0u);
+            record_height_activation(c, idx);
             return true;
         };
 
@@ -2314,6 +2410,7 @@ NetworkPattern network::create_network(
 
         std::fill(N_current.begin(), N_current.end(), 0);
         std::fill(f_current.begin(), f_current.end(), 0.0);
+        reset_front_height_accumulators();
         next_frontier.clear();
         front_candidates.clear();
 
@@ -2365,6 +2462,7 @@ NetworkPattern network::create_network(
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
                 set_activation_time(viz, static_cast<uint32_t>(t));
+                record_height_activation(cor_idx, viz);
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -2502,6 +2600,7 @@ NetworkPattern network::create_network(
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
                 set_activation_time(viz, static_cast<uint32_t>(t));
+                record_height_activation(cor_idx, viz);
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -2885,6 +2984,12 @@ NetworkPattern network::create_network(
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
     ts_out.f_t = std::move(f_series);
+    ts_out.y_mean_t = std::move(y_mean_series);
+    ts_out.y_width_t = std::move(y_width_series);
+    ts_out.y_max_t = std::move(y_max_series);
+    ts_out.y_front_mean_t = std::move(y_front_mean_series);
+    ts_out.y_front_width_t = std::move(y_front_width_series);
+    ts_out.y_front_count_t = std::move(y_front_count_series);
     ts_out.t   = std::move(t_list);
 
     ps_out.rho.clear();
@@ -3298,6 +3403,12 @@ NetworkPattern network::animate_network(
 
     std::vector<std::vector<double>> p_series(num_colors);
     std::vector<std::vector<double>> f_series(num_colors);
+    std::vector<std::vector<double>> y_mean_series(num_colors);
+    std::vector<std::vector<double>> y_width_series(num_colors);
+    std::vector<std::vector<int>> y_max_series(num_colors);
+    std::vector<std::vector<double>> y_front_mean_series(num_colors);
+    std::vector<std::vector<double>> y_front_width_series(num_colors);
+    std::vector<std::vector<uint32_t>> y_front_count_series(num_colors);
     std::vector<int>                 t_list;
     t_list.reserve(num_of_samples);
 
@@ -3309,6 +3420,60 @@ NetworkPattern network::animate_network(
     std::vector<int>    z_max_at_perc(num_colors, -1);
     std::vector<int>    frontier;
     std::vector<int>    next_frontier;
+
+    const std::size_t lateral_size = static_cast<std::size_t>(base_size);
+    std::vector<std::vector<int>> surface_height(
+        static_cast<std::size_t>(num_colors),
+        std::vector<int>(lateral_size, -1));
+    std::vector<double> surface_sum_height(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<double> surface_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<uint32_t> surface_active_columns(static_cast<std::size_t>(num_colors), 0);
+    std::vector<int> surface_max_height(static_cast<std::size_t>(num_colors), -1);
+    std::vector<double> front_sum_height(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<double> front_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
+    std::vector<uint32_t> front_count(static_cast<std::size_t>(num_colors), 0);
+
+    auto lateral_index_of = [&](const int idx) -> std::size_t {
+        if (dim == 2) {
+            return static_cast<std::size_t>(grid.x_of(idx));
+        }
+        return static_cast<std::size_t>(
+            grid.x_of(idx) + grid.SX * grid.y_of(idx));
+    };
+
+    auto reset_front_height_accumulators = [&]() {
+        std::fill(front_sum_height.begin(), front_sum_height.end(), 0.0);
+        std::fill(front_sum_height_sq.begin(), front_sum_height_sq.end(), 0.0);
+        std::fill(front_count.begin(), front_count.end(), 0u);
+    };
+
+    auto record_height_activation = [&](const int color_idx, const int idx) {
+        if (color_idx < 0 || color_idx >= num_colors) return;
+        const std::size_t c = static_cast<std::size_t>(color_idx);
+        const int h = grid.grow_coord(idx);
+        front_sum_height[c] += static_cast<double>(h);
+        front_sum_height_sq[c] += static_cast<double>(h) * static_cast<double>(h);
+        ++front_count[c];
+
+        const std::size_t lateral_idx = lateral_index_of(idx);
+        int& old_h = surface_height[c][lateral_idx];
+        if (h <= old_h) return;
+
+        if (old_h < 0) {
+            ++surface_active_columns[c];
+            surface_sum_height[c] += static_cast<double>(h);
+            surface_sum_height_sq[c] += static_cast<double>(h) * static_cast<double>(h);
+        } else {
+            surface_sum_height[c] += static_cast<double>(h - old_h);
+            surface_sum_height_sq[c] +=
+                static_cast<double>(h) * static_cast<double>(h) -
+                static_cast<double>(old_h) * static_cast<double>(old_h);
+        }
+        old_h = h;
+        if (h > surface_max_height[c]) {
+            surface_max_height[c] = h;
+        }
+    };
 
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
@@ -3326,6 +3491,41 @@ NetworkPattern network::animate_network(
         for (int c = 0; c < num_colors; ++c) {
             p_series[c].push_back(p_vec[c]);
             f_series[c].push_back(f_vec[c]);
+
+            const std::size_t row = static_cast<std::size_t>(c);
+            const uint32_t ncols = surface_active_columns[row];
+            if (ncols > 0) {
+                const double mean =
+                    surface_sum_height[row] / static_cast<double>(ncols);
+                const double mean_sq =
+                    surface_sum_height_sq[row] / static_cast<double>(ncols);
+                y_mean_series[row].push_back(mean);
+                y_width_series[row].push_back(
+                    std::sqrt(std::max(0.0, mean_sq - mean * mean)));
+            } else {
+                y_mean_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+                y_width_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+            }
+            y_max_series[row].push_back(surface_max_height[row]);
+
+            const uint32_t nf = front_count[row];
+            if (nf > 0) {
+                const double mean =
+                    front_sum_height[row] / static_cast<double>(nf);
+                const double mean_sq =
+                    front_sum_height_sq[row] / static_cast<double>(nf);
+                y_front_mean_series[row].push_back(mean);
+                y_front_width_series[row].push_back(
+                    std::sqrt(std::max(0.0, mean_sq - mean * mean)));
+            } else {
+                y_front_mean_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+                y_front_width_series[row].push_back(
+                    std::numeric_limits<double>::quiet_NaN());
+            }
+            y_front_count_series[row].push_back(nf);
         }
     };
 
@@ -3369,6 +3569,7 @@ NetworkPattern network::animate_network(
                 static_cast<NetworkPattern::state_t>(color_mul[c]);
             frontier.push_back(idx);
             ++N_current[c];
+            record_height_activation(c, idx);
             return true;
         };
 
@@ -3797,6 +3998,7 @@ NetworkPattern network::animate_network(
 
         std::fill(N_current.begin(), N_current.end(), 0);
         std::fill(f_current.begin(), f_current.end(), 0.0);
+        reset_front_height_accumulators();
         next_frontier.clear();
         front_candidates.clear();
 
@@ -3849,6 +4051,7 @@ NetworkPattern network::animate_network(
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
+                record_height_activation(cor_idx, viz);
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -3977,6 +4180,7 @@ NetworkPattern network::animate_network(
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
                 ++N_current[cor_idx];
+                record_height_activation(cor_idx, viz);
 
                 const int h = grid.grow_coord(viz);
                 if (h > max_heights[cor_idx]) {
@@ -4262,6 +4466,12 @@ NetworkPattern network::animate_network(
     ts_out.num_colors = num_colors;
     ts_out.p_t = std::move(p_series);
     ts_out.f_t = std::move(f_series);
+    ts_out.y_mean_t = std::move(y_mean_series);
+    ts_out.y_width_t = std::move(y_width_series);
+    ts_out.y_max_t = std::move(y_max_series);
+    ts_out.y_front_mean_t = std::move(y_front_mean_series);
+    ts_out.y_front_width_t = std::move(y_front_width_series);
+    ts_out.y_front_count_t = std::move(y_front_count_series);
     ts_out.t   = std::move(t_list);
 
     if (!global_metrics_finalized) {
