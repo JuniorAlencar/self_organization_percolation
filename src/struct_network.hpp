@@ -103,6 +103,12 @@ struct TimeSeries {
     double t_eq = std::numeric_limits<double>::quiet_NaN();
     std::vector<std::vector<double>> p_t;   // [cor][t]
     std::vector<std::vector<double>> f_t;   // [cor][t], f_i(t) = N_i(t) / L^(dim-1)
+    std::vector<std::vector<double>> y_mean_t;        // mean accumulated interface height, [cor][t]
+    std::vector<std::vector<double>> y_width_t;       // stddev of accumulated interface height, [cor][t]
+    std::vector<std::vector<int>> y_max_t;            // max accumulated interface height, [cor][t]
+    std::vector<std::vector<double>> y_front_mean_t;  // mean height of newly activated sites, [cor][t]
+    std::vector<std::vector<double>> y_front_width_t; // stddev of newly activated site heights, [cor][t]
+    std::vector<std::vector<uint32_t>> y_front_count_t; // newly activated site count, [cor][t]
     std::vector<int> t;                     // [t]
     LateralObservablesSeries lateral_observables;
 };

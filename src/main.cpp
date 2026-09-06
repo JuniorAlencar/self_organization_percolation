@@ -647,6 +647,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        const std::string height_ts_filename = data_dir + "/" + sample_base + ".yts";
+        saver.save_height_timeseries_bin(ts, height_ts_filename);
         saver.save_percolation_json(ps, ts, json_filename, true);
 
         return 0;
