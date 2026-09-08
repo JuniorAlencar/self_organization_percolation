@@ -14,7 +14,7 @@ seed = -1
 dim = 2
 #nc=2
 
-type_perc = 'node'
+type_perc = 'bond'
 L_lst = [1024, 2048, 4096, 8192, 16384]
 num_runs_lst = [500, 400, 200, 100, 50]
 #L_lst = [16384]
@@ -43,7 +43,6 @@ Mode = 'growth_test'  # use 'sop' for the original fixed-height SOP run
 InitialLayout = 'random'  # 'random', 'blocks', or 'alternating'
 p0 = 0.8
 P0 = 0.2
-ft = 0.06873726
 # step = 0.01 * abs(ft)
 
 # left_points = ft - step * np.arange(7, 0, -1)
@@ -58,19 +57,21 @@ df = pd.read_csv(f"../SOP_data/ft_min_max_2D_{type_perc}.csv", sep=',')
 # ft = 0.3178947
 rho = 1/nc
 p0 = 0.8
+
+ft = 0.2394655
 for L in L_lst:
     
-    print(L)
-    df_sub = df[(df["L"]==L) & (df["nc"]==nc) & (df['c']==c)]
+    #print(L)
+    #df_sub = df[(df["L"]==L) & (df["nc"]==nc) & (df['c']==c)]
 
-    ft = df_sub['f_T_min'].values[0]
+    #ft = df_sub['f_T_min'].values[0]
 
     #for ft in ft_lst:
 
     num_runs = num_runs_por_L[L]
     mode_tag = "" if Mode == "sop" else f"_{Mode}"
     layout_tag = "" if InitialLayout == "random" else f"_{InitialLayout}"
-    exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}{layout_tag}.sh"
+    exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}{layout_tag}_type_{type_perc}.sh"
 
     shell_data(L, type_perc, p0, seed, c, ft, dim,
             nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,

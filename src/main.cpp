@@ -215,7 +215,7 @@ int main(int argc, char* argv[]) {
 
     // Allow either zero-argument (use defaults) or full-argument run.
     // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && argc != 12 && argc != 13 && argc != 14 && argc != 15 && argc != 16 && argc != 17) {
+    if (argc != 1 && (argc < 12 || argc > 20)) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -240,8 +240,11 @@ int main(int argc, char* argv[]) {
         std::string initial_layout = "random";
         bool save_surface_observables = false;
         bool save_animation_window_only = false;
+        std::string control_rule_name = "linear";
+        double floor_f0 = 0.0;
+        double log_epsilon = 1.0e-12;
         
-        if (argc == 12 || argc == 13 || argc == 14 || argc == 15 || argc == 16 || argc == 17) {
+        if (argc >= 12) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -270,6 +273,17 @@ int main(int argc, char* argv[]) {
                 save_surface_observables = helpers::parse_bool(argv[15]);
                 save_animation_window_only = helpers::parse_bool(argv[16]);
             }
+            if (argc >= 18) {
+                save_surface_observables = helpers::parse_bool(argv[15]);
+                save_animation_window_only = helpers::parse_bool(argv[16]);
+                control_rule_name = argv[17];
+            }
+            if (argc >= 19) {
+                floor_f0 = std::stod(argv[18]);
+            }
+            if (argc >= 20) {
+                log_epsilon = std::stod(argv[19]);
+            }
         }
 
         const bool teste = (run_mode == "growth_test");
@@ -292,6 +306,39 @@ int main(int argc, char* argv[]) {
         };
         const InitialBaseLayout initial_base_layout =
             parse_initial_layout(initial_layout);
+
+        auto canonical_control_rule_name = [](const std::string& value) {
+            if (value == "linear") return std::string("linear");
+            if (value == "floor_linear" || value == "floor") {
+                return std::string("floor_linear");
+            }
+            if (value == "log" || value == "logarithmic") {
+                return std::string("log");
+            }
+            if (value == "floor_log" || value == "floor_logarithmic") {
+                return std::string("floor_log");
+            }
+            throw std::invalid_argument(
+                "control rule must be 'linear', 'floor_linear', 'log', or 'floor_log'");
+        };
+        control_rule_name = canonical_control_rule_name(control_rule_name);
+
+        auto parse_feedback_control_rule = [](const std::string& value) {
+            if (value == "linear") return FeedbackControlRule::Linear;
+            if (value == "floor_linear" || value == "floor") {
+                return FeedbackControlRule::FloorLinear;
+            }
+            if (value == "log" || value == "logarithmic") {
+                return FeedbackControlRule::Log;
+            }
+            if (value == "floor_log" || value == "floor_logarithmic") {
+                return FeedbackControlRule::FloorLog;
+            }
+            throw std::invalid_argument(
+                "control rule must be 'linear', 'floor_linear', 'log', or 'floor_log'");
+        };
+        const FeedbackControlRule feedback_control_rule =
+            parse_feedback_control_rule(control_rule_name);
 
         const bool return_encoded_network = helpers::parse_bool(equilibration);
 
@@ -326,6 +373,24 @@ int main(int argc, char* argv[]) {
             seed = all_random::generate_random_seed();
         }
 
+        if (floor_f0 < 0.0) {
+            std::cerr << "[ERROR] floor_f0 must be >= 0.\n";
+            helpers::print_help(argv[0]);
+            return 1;
+        }
+        if (log_epsilon < 0.0) {
+            std::cerr << "[ERROR] log_epsilon must be >= 0.\n";
+            helpers::print_help(argv[0]);
+            return 1;
+        }
+        if ((feedback_control_rule == FeedbackControlRule::Log ||
+             feedback_control_rule == FeedbackControlRule::FloorLog) &&
+            log_epsilon <= 0.0) {
+            std::cerr << "[ERROR] log_epsilon must be > 0 for log control rules.\n";
+            helpers::print_help(argv[0]);
+            return 1;
+        }
+
         all_random rng(seed);
 
         TimeSeries ts;
@@ -337,6 +402,9 @@ int main(int argc, char* argv[]) {
         int N_samples = teste ? std::max(100000, 20 * L) : 100000;
         GrowthStopConfig stop_config;
         stop_config.initial_base_layout = initial_base_layout;
+        stop_config.feedback_control_rule = feedback_control_rule;
+        stop_config.floor_f0 = floor_f0;
+        stop_config.log_epsilon = log_epsilon;
         if (teste) {
             stop_config.height_multiplier = HEIGHT_STOP_MULTIPLIER;
             stop_config.dynamic_height = true;
@@ -350,6 +418,11 @@ int main(int argc, char* argv[]) {
         int type_f_T = 0;
         double a = 0.0, alpha = 0.0;
         //double alpha = 0.0;
+        const double base_area =
+            dim == 2
+                ? static_cast<double>(L)
+                : static_cast<double>(L) * static_cast<double>(L);
+        const double floor_N0 = floor_f0 * base_area;
         
         network net_generator(N_samples, num_colors);
 
@@ -394,7 +467,11 @@ int main(int argc, char* argv[]) {
                 teste,
                 stop_config.dynamic_height,
                 stop_config.height_extra_layers,
-                stop_config.dynamics_window_steps
+                stop_config.dynamics_window_steps,
+                control_rule_name,
+                floor_f0,
+                floor_N0,
+                log_epsilon
             );
 
         std::cerr << "[DBG] ps sizes -> "
@@ -410,6 +487,10 @@ int main(int argc, char* argv[]) {
                   << ", f_t=" << ts.f_t.size() << "\n";
 
         std::cout << "seed = " << seed << std::endl;
+        ps.feedback_control_rule = control_rule_name;
+        ps.feedback_floor_N0 = floor_N0;
+        ps.feedback_floor_f0 = floor_f0;
+        ps.feedback_log_epsilon = log_epsilon;
 
         const std::string machine_name = helpers::get_machine_name();
         const std::string timestamp_now = helpers::get_timestamp_now();

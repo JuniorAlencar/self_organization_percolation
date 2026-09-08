@@ -25,12 +25,16 @@ def shell_data(
     mode: str = "sop",
     initial_layout: str = "random",
     surface_observables=False,
+    save_animation_window_only=False,
+    control_rule: str = "linear",
+    floor_f0: float = 0.0,
+    log_epsilon: float = 1.0e-12,
 ):
     """
     Generate a shell script to run SOP multiple times.
 
     New SOP executable signature:
-        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables]
+        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule] [FloorF0] [LogEpsilon]
 
     The old inputs k and N_T were removed. The update rule is now:
         p_i(t+1) = p_i(t) + c * (f_T - f_i(t))
@@ -87,6 +91,32 @@ def shell_data(
     if surface_observables not in ("true", "false"):
         raise ValueError("surface_observables must be true/false")
 
+    if isinstance(save_animation_window_only, bool):
+        save_animation_window_only = "true" if save_animation_window_only else "false"
+    else:
+        save_animation_window_only = str(save_animation_window_only).strip().lower()
+    if save_animation_window_only not in ("true", "false"):
+        raise ValueError("save_animation_window_only must be true/false")
+
+    control_rule = str(control_rule).strip()
+    valid_control_rules = {"linear", "floor_linear", "floor", "log", "logarithmic", "floor_log", "floor_logarithmic"}
+    if control_rule not in valid_control_rules:
+        raise ValueError("control_rule must be 'linear', 'floor_linear', 'log', or 'floor_log'")
+    if control_rule == "floor":
+        control_rule = "floor_linear"
+    elif control_rule == "logarithmic":
+        control_rule = "log"
+    elif control_rule == "floor_logarithmic":
+        control_rule = "floor_log"
+    floor_f0 = float(floor_f0)
+    log_epsilon = float(log_epsilon)
+    if floor_f0 < 0.0:
+        raise ValueError("floor_f0 must be >= 0")
+    if log_epsilon < 0.0:
+        raise ValueError("log_epsilon must be >= 0")
+    if control_rule in {"log", "floor_log"} and log_epsilon <= 0.0:
+        raise ValueError("log_epsilon must be > 0 for log control rules")
+
     initial_layout = str(initial_layout).strip()
     valid_layouts = {"random", "blocks", "quadrants", "quadrantes", "alternating", "alternado"}
     if initial_layout not in valid_layouts:
@@ -122,9 +152,17 @@ Properties={properties}
 Mode="{mode}"
 InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
+SaveAnimationWindowOnly={save_animation_window_only}
+ControlRule="{control_rule}"
+FloorF0={floor_f0}
+LogEpsilon={log_epsilon}
 
 extra_args=()
-if [[ "$SurfaceObservables" != "false" ]]; then
+if [[ "$ControlRule" != "linear" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule" "$FloorF0" "$LogEpsilon")
+elif [[ "$SaveAnimationWindowOnly" != "false" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly")
+elif [[ "$SurfaceObservables" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
 elif [[ "$InitialLayout" != "random" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")
@@ -151,7 +189,7 @@ if ! command -v /usr/bin/time >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout SurfaceObservables
+export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout SurfaceObservables SaveAnimationWindowOnly ControlRule FloorF0 LogEpsilon
 
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 if [[ "$TOTAL" -le 0 ]]; then
@@ -271,7 +309,11 @@ parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
   RUN={{2}}
   extra_args=()
-  if [[ "$SurfaceObservables" != "false" ]]; then
+  if [[ "$ControlRule" != "linear" ]]; then
+    extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule" "$FloorF0" "$LogEpsilon")
+  elif [[ "$SaveAnimationWindowOnly" != "false" ]]; then
+    extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly")
+  elif [[ "$SurfaceObservables" != "false" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
   elif [[ "$InitialLayout" != "random" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout")
@@ -310,9 +352,17 @@ Properties={properties}
 Mode="{mode}"
 InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
+SaveAnimationWindowOnly={save_animation_window_only}
+ControlRule="{control_rule}"
+FloorF0={floor_f0}
+LogEpsilon={log_epsilon}
 
 extra_args=()
-if [[ "$SurfaceObservables" != "false" ]]; then
+if [[ "$ControlRule" != "linear" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule" "$FloorF0" "$LogEpsilon")
+elif [[ "$SaveAnimationWindowOnly" != "false" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly")
+elif [[ "$SurfaceObservables" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
 elif [[ "$InitialLayout" != "random" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")

@@ -9,6 +9,13 @@ enum class InitialBaseLayout {
     Alternating
 };
 
+enum class FeedbackControlRule {
+    Linear,
+    FloorLinear,
+    Log,
+    FloorLog
+};
+
 struct GrowthStopConfig {
     int height_multiplier = HEIGHT_STOP_MULTIPLIER;
     int height_extra_layers = 0;
@@ -28,6 +35,9 @@ struct GrowthStopConfig {
     bool save_lateral_observables = false;
     bool save_surface_observables = false;
     InitialBaseLayout initial_base_layout = InitialBaseLayout::Random;
+    FeedbackControlRule feedback_control_rule = FeedbackControlRule::Linear;
+    double floor_f0 = 0.0;
+    double log_epsilon = 1.0e-12;
 };
 
 #endif // HEIGHT_STOP_CONFIG_HPP

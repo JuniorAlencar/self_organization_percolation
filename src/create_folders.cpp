@@ -21,15 +21,24 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
     bool teste,
     bool dynamic_height,
     int height_extra_layers,
-    int dynamics_window_steps
+    int dynamics_window_steps,
+    std::string control_rule,
+    double floor_f0,
+    double floor_N0,
+    double log_epsilon
     )
 {
     char main_folder[256];
     std::string raw_folder = "raw";
     if (teste) {
-        raw_folder = dynamic_height
-            ? "raw_growth_test_dynamic"
-            : "raw_growth_test_extra_" + std::to_string(height_extra_layers);
+        const bool rescaling_test = (control_rule != "linear");
+        if (rescaling_test) {
+            raw_folder = "tests_data/" + control_rule;
+        } else {
+            raw_folder = dynamic_height
+                ? "raw_growth_test_dynamic"
+                : "raw_growth_test_extra_" + std::to_string(height_extra_layers);
+        }
     }
 
 
@@ -41,18 +50,33 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
 
     if (type_f_T == 0) {
         char sub[512];
-        sprintf(sub, "%s/fT_constant/fT_%.6e/c_%.6e/rho_%.4e",
-                main_folder, f_T, c, rho);
+        sprintf(sub, "%s/fT_constant/fT_%.6e/c_%.6e",
+                main_folder, f_T, c);
         full_path = std::string(sub);
     } else {
         char sub[512];
-        sprintf(sub, "%s/fT_variable/type_%d/a_%.2f/alpha_%.2f/c_%.6e/rho_%.4e",
-                main_folder, type_f_T, a, alpha, c, rho);
+        sprintf(sub, "%s/fT_variable/type_%d/a_%.2f/alpha_%.2f/c_%.6e",
+                main_folder, type_f_T, a, alpha, c);
         full_path = std::string(sub);
     }
 
     if (teste && dynamic_height && dynamics_window_steps > 0) {
         full_path += "/stationary_window_" + std::to_string(dynamics_window_steps);
+    }
+    if (control_rule == "floor_linear" || control_rule == "floor_log") {
+        char sub[256];
+        sprintf(sub, "/f0_%.6e", floor_f0);
+        full_path += std::string(sub);
+    }
+    if (control_rule == "log" || control_rule == "floor_log") {
+        char sub[128];
+        sprintf(sub, "/epsilon_%.6e", log_epsilon);
+        full_path += std::string(sub);
+    }
+    {
+        char sub[128];
+        sprintf(sub, "/rho_%.4e", rho);
+        full_path += std::string(sub);
     }
 
     std::string network_path = full_path + "/network";
