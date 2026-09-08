@@ -35,7 +35,10 @@ public:
           rho(num_colors_, 0.0) {}
 
     double generate_p(int type_f_T, double p_t, int t_i, double f_current,
-                      double c, double f_T, double a, double alpha);
+                      double c, double f_T, double a, double alpha,
+                      FeedbackControlRule control_rule,
+                      double floor_f0,
+                      double log_epsilon);
     double target_fT_create(int type_f_T, int t_i, double f_T,
                           double a, double alpha);
 

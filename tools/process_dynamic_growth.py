@@ -23,7 +23,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 17
+DYNAMIC_PROCESSING_VERSION = 18
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
@@ -40,6 +40,8 @@ PARAM_RE = re.compile(
     /fT_constant
     /fT_(?P<fT>{FLOAT})
     /c_(?P<c>{FLOAT})
+    (?:/f0_(?P<f0>{FLOAT}))?
+    (?:/epsilon_(?P<epsilon>{FLOAT}))?
     /rho_(?P<rho>{FLOAT})
     (?:/stationary_window_(?P<stat_window>\d+))?
     /data$
@@ -52,6 +54,7 @@ RE_p0 = re.compile(rf"(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)")
 
 ALL_DATA_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
+    "f0", "epsilon",
     "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
     "z_stat_median", "z_stat_q75", "z_stat_q90",
@@ -60,16 +63,16 @@ ALL_DATA_COLUMNS = [
 
 ALL_COLORS_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
-    "N_samples", "rho", "nc", "nc_err", "nc_std", "stat_window",
+    "N_samples", "rho", "f0", "epsilon", "nc", "nc_err", "nc_std", "stat_window",
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
 
-ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "stat_window")
-ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "stat_window")
+ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "f0", "epsilon", "stat_window")
+ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "f0", "epsilon", "stat_window")
 DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window"}
 DAT_FLOAT_COLUMNS = {
-    "f_T", "c", "rho", "p0", "P0", "p_mean", "p_err", "f_mean", "f_err",
+    "f_T", "c", "rho", "f0", "epsilon", "p0", "P0", "p_mean", "p_err", "f_mean", "f_err",
     "z_stat_mean", "z_stat_err", "z_stat_median", "z_stat_q75", "z_stat_q90",
     "t_eq_s_prime_threshold", "nc", "nc_err", "nc_std",
     "equilibrium_effective_rel_tol",
@@ -282,6 +285,8 @@ def parse_data_dir(path: Path) -> dict[str, Any] | None:
         "c": float(g["c"]),
         "nc": int(g["nc"]),
         "rho": float(g["rho"]),
+        "f0": float(g["f0"]) if g.get("f0") else math.nan,
+        "epsilon": float(g["epsilon"]) if g.get("epsilon") else math.nan,
         "stat_window": int(g["stat_window"]) if g.get("stat_window") else 0,
     }
 
@@ -822,12 +827,17 @@ def mean_indexed_series(series: list[np.ndarray]) -> dict[str, Any]:
 def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
     series_pt: list[tuple[np.ndarray, np.ndarray]] = []
     series_ft: list[tuple[np.ndarray, np.ndarray]] = []
+    series_flz: list[np.ndarray] = []
     t_eq_vals: list[float] = []
 
     for item in items:
         t_eq = finite_float(item.get("t_eq_species"))
         if t_eq is not None:
             t_eq_vals.append(t_eq)
+
+        flz = clean_numeric_vector(item.get("fL_z"))
+        if flz.size:
+            series_flz.append(flz)
 
         time = item.get("time")
         pt = item.get("pt")
@@ -944,6 +954,42 @@ def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
         out["ft_supported_sem"] = []
         out["ft_supported_N_per_t"] = []
         out["ft_min_support_count"] = 0
+
+    if series_flz:
+        flz_stats = mean_indexed_series(series_flz)
+        out["fL_z_z"] = flz_stats["z"]
+        out["fL_z_mean"] = flz_stats["mean"]
+        out["fL_z_std"] = flz_stats["std"]
+        out["fL_z_sem"] = flz_stats["sem"]
+        out["fL_z_N_per_z"] = flz_stats["N_per_z"]
+        out["n_seeds_fL_z"] = flz_stats["n_seeds"]
+        out["fL_z_common_z"] = flz_stats["common_z"]
+        out["fL_z_common_mean"] = flz_stats["common_mean"]
+        out["fL_z_common_std"] = flz_stats["common_std"]
+        out["fL_z_common_sem"] = flz_stats["common_sem"]
+        out["fL_z_common_N_per_z"] = flz_stats["common_N_per_z"]
+        out["fL_z_supported_z"] = flz_stats["supported_z"]
+        out["fL_z_supported_mean"] = flz_stats["supported_mean"]
+        out["fL_z_supported_std"] = flz_stats["supported_std"]
+        out["fL_z_supported_sem"] = flz_stats["supported_sem"]
+        out["fL_z_supported_N_per_z"] = flz_stats["supported_N_per_z"]
+        out["fL_z_support_policy"] = "union_observed_heights"
+        out["fL_z_common_support_policy"] = "all_samples_present"
+        out["fL_z_supported_support_policy"] = "min_fraction_of_samples_present"
+        out["fL_z_min_support_count"] = flz_stats["min_support_count"]
+    else:
+        out["fL_z_z"] = []
+        out["fL_z_mean"] = []
+        out["fL_z_std"] = []
+        out["fL_z_sem"] = []
+        out["fL_z_N_per_z"] = []
+        out["n_seeds_fL_z"] = 0
+        out["fL_z_supported_z"] = []
+        out["fL_z_supported_mean"] = []
+        out["fL_z_supported_std"] = []
+        out["fL_z_supported_sem"] = []
+        out["fL_z_supported_N_per_z"] = []
+        out["fL_z_min_support_count"] = 0
 
     return out
 
@@ -1084,6 +1130,7 @@ def load_dynamic_sample(
             row["time"] = data.get("time")
             row["pt"] = data.get("pt")
             row["ft"] = data.get("nt")
+        row["fL_z"] = data.get("fL_z")
         out.append(row)
 
     return out
@@ -1112,6 +1159,7 @@ def process_one_sample_file(
             "time": item.get("time"),
             "pt": item.get("pt"),
             "ft": item.get("ft"),
+            "fL_z": item.get("fL_z"),
             "p_sample_mean": item.get("p_sample_mean"),
             "f_sample_mean": item.get("f_sample_mean"),
             "z_stat": item.get("z_stat"),

@@ -1827,10 +1827,32 @@ double network::generate_p(const int type_f_T,
                            const double c,
                            const double f_T,
                            const double a,
-                           const double alpha)
+                           const double alpha,
+                           const FeedbackControlRule control_rule,
+                           const double floor_f0,
+                           const double log_epsilon)
 {
     const double f_target = target_fT_create(type_f_T, t_i, f_T, a, alpha);
-    double p_next = p_t + c * (f_target - f_current);
+    const double f_target_with_floor = f_target + std::max(0.0, floor_f0);
+    const double eps = std::max(0.0, log_epsilon);
+    double delta = 0.0;
+
+    switch (control_rule) {
+        case FeedbackControlRule::Linear:
+            delta = f_target - f_current;
+            break;
+        case FeedbackControlRule::FloorLinear:
+            delta = f_target_with_floor - f_current;
+            break;
+        case FeedbackControlRule::Log:
+            delta = std::log((f_target + eps) / (f_current + eps));
+            break;
+        case FeedbackControlRule::FloorLog:
+            delta = std::log((f_target_with_floor + eps) / (f_current + eps));
+            break;
+    }
+
+    double p_next = p_t + c * delta;
 
     if (p_next > 1.0) p_next = 1.0;
     if (p_next < 0.0) p_next = 0.0;
@@ -1862,6 +1884,7 @@ NetworkPattern network::create_network(
     const bool is_node = (type_percolation == "node");
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
+    const double floor_f0 = std::max(0.0, stop_config.floor_f0);
     const int percolation_height = lenght_network - 1;
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
@@ -2960,7 +2983,12 @@ NetworkPattern network::create_network(
         std::fill(p_next.begin(), p_next.end(), 0.0);
         for (int c = 0; c < num_colors; ++c) {
             p_next[c] = finished[c] ? p_curr[c]
-                                    : generate_p(type_f_T, p_curr[c], t, f_current[c], c_value, f_T, a, alpha);
+                                    : generate_p(
+                                        type_f_T, p_curr[c], t, f_current[c],
+                                        c_value, f_T, a, alpha,
+                                        stop_config.feedback_control_rule,
+                                        floor_f0,
+                                        stop_config.log_epsilon);
         }
 
         frontier.swap(next_frontier);
@@ -3347,6 +3375,7 @@ NetworkPattern network::animate_network(
     const bool is_node = (type_percolation == "node");
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
+    const double floor_f0 = std::max(0.0, stop_config.floor_f0);
     const int percolation_height = lenght_network - 1;
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
@@ -4456,7 +4485,12 @@ NetworkPattern network::animate_network(
         for (int c = 0; c < num_colors; ++c) {
             p_next[c] = finished[c]
                 ? p_curr[c]
-                : generate_p(type_f_T, p_curr[c], t, f_current[c], c_value, f_T, a, alpha);
+                : generate_p(
+                    type_f_T, p_curr[c], t, f_current[c],
+                    c_value, f_T, a, alpha,
+                    stop_config.feedback_control_rule,
+                    floor_f0,
+                    stop_config.log_epsilon);
         }
 
         frontier.swap(next_frontier);
