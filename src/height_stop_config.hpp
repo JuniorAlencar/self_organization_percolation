@@ -11,9 +11,8 @@ enum class InitialBaseLayout {
 
 enum class FeedbackControlRule {
     Linear,
-    FloorLinear,
-    Log,
-    FloorLog
+    LogSaturated,
+    LogAsymmetric
 };
 
 struct GrowthStopConfig {
@@ -36,7 +35,7 @@ struct GrowthStopConfig {
     bool save_surface_observables = false;
     InitialBaseLayout initial_base_layout = InitialBaseLayout::Random;
     FeedbackControlRule feedback_control_rule = FeedbackControlRule::Linear;
-    double floor_f0 = 0.0;
+    double control_param = 0.0;
     double log_epsilon = 1.0e-12;
 };
 

@@ -23,8 +23,7 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
     int height_extra_layers,
     int dynamics_window_steps,
     std::string control_rule,
-    double floor_f0,
-    double floor_N0,
+    double control_param,
     double log_epsilon
     )
 {
@@ -60,15 +59,17 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
         full_path = std::string(sub);
     }
 
-    if (teste && dynamic_height && dynamics_window_steps > 0) {
-        full_path += "/stationary_window_" + std::to_string(dynamics_window_steps);
-    }
-    if (control_rule == "floor_linear" || control_rule == "floor_log") {
+    if (control_rule == "log_saturated") {
         char sub[256];
-        sprintf(sub, "/f0_%.6e", floor_f0);
+        sprintf(sub, "/delta_max_%.6e", control_param);
         full_path += std::string(sub);
     }
-    if (control_rule == "log" || control_rule == "floor_log") {
+    if (control_rule == "log_asymmetric") {
+        char sub[256];
+        sprintf(sub, "/x_%.6e", control_param);
+        full_path += std::string(sub);
+    }
+    if (control_rule == "log_saturated" || control_rule == "log_asymmetric") {
         char sub[128];
         sprintf(sub, "/epsilon_%.6e", log_epsilon);
         full_path += std::string(sub);
@@ -77,6 +78,9 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
         char sub[128];
         sprintf(sub, "/rho_%.4e", rho);
         full_path += std::string(sub);
+    }
+    if (teste && dynamic_height && dynamics_window_steps > 0) {
+        full_path += "/stationary_window_" + std::to_string(dynamics_window_steps);
     }
 
     std::string network_path = full_path + "/network";
