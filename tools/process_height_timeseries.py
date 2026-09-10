@@ -20,9 +20,10 @@ PATH_RE = re.compile(
     r"num_colors_(?P<num_colors>\d+)/dim_(?P<dim>\d+)/"
     r"L_(?P<L>\d+)/fT_constant/fT_(?P<f_T>[0-9.eE+-]+)/"
     r"c_(?P<c>[0-9.eE+-]+)"
-    r"(?:/f0_(?P<f0>[0-9.eE+-]+))?"
+    r"(?:/(?:f0|delta_max|x)_(?P<control_param>[0-9.eE+-]+))?"
     r"(?:/epsilon_(?P<epsilon>[0-9.eE+-]+))?"
-    r"/rho_(?P<rho>[0-9.eE+-]+)/data/"
+    r"/rho_(?P<rho>[0-9.eE+-]+)"
+    r"(?:/stationary_window_\d+)?/data/"
     r"(?P<sample>[^/]+)\.yts$"
 )
 SAMPLE_RE = re.compile(
@@ -41,7 +42,7 @@ MEASURE_FIELDS = [
     "L",
     "f_T",
     "c",
-    "f0",
+    "control_param",
     "epsilon",
     "rho",
     "sample_id",
@@ -78,7 +79,7 @@ SUMMARY_FIELDS = [
     "L",
     "f_T",
     "c",
-    "f0",
+    "control_param",
     "epsilon",
     "rho",
     "color",
@@ -105,7 +106,7 @@ class PathMeta:
     L: int
     f_T: float
     c: float
-    f0: float | None
+    control_param: float | None
     epsilon: float | None
     rho: float
     sample: str
@@ -138,7 +139,7 @@ def parse_path(path: Path) -> PathMeta:
         L=int(meta["L"]),
         f_T=float(meta["f_T"]),
         c=float(meta["c"]),
-        f0=float(meta["f0"]) if meta.get("f0") else None,
+        control_param=float(meta["control_param"]) if meta.get("control_param") else None,
         epsilon=float(meta["epsilon"]) if meta.get("epsilon") else None,
         rho=float(meta["rho"]),
         sample=meta["sample"],
@@ -156,7 +157,7 @@ def group_key(meta: PathMeta) -> tuple:
         meta.L,
         meta.f_T,
         meta.c,
-        meta.f0,
+        meta.control_param,
         meta.epsilon,
         meta.rho,
     )
@@ -298,7 +299,7 @@ def measure_sample(
             "L": meta.L,
             "f_T": f"{meta.f_T:.17g}",
             "c": f"{meta.c:.17g}",
-            "f0": "" if meta.f0 is None else f"{meta.f0:.17g}",
+            "control_param": "" if meta.control_param is None else f"{meta.control_param:.17g}",
             "epsilon": "" if meta.epsilon is None else f"{meta.epsilon:.17g}",
             "rho": f"{meta.rho:.17g}",
             "sample_id": meta.sample,
@@ -404,7 +405,7 @@ def summarize_group(rows: list[dict]) -> dict:
         "L": first["L"],
         "f_T": first["f_T"],
         "c": first["c"],
-        "f0": first["f0"],
+        "control_param": first["control_param"],
         "epsilon": first["epsilon"],
         "rho": first["rho"],
         "color": first["color"],

@@ -422,8 +422,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 << ps.dynamics_window_steps << ",\n";
         }
         ofs << "    \"feedback_control_rule\": \"" << ps.feedback_control_rule << "\",\n";
-        ofs << "    \"feedback_floor_N0\": " << ps.feedback_floor_N0 << ",\n";
-        ofs << "    \"feedback_floor_f0\": " << ps.feedback_floor_f0 << ",\n";
+        ofs << "    \"feedback_control_param\": " << ps.feedback_control_param << ",\n";
         ofs << "    \"feedback_log_epsilon\": " << ps.feedback_log_epsilon << ",\n";
         if (!ps.species_final_status.empty()) {
             ofs << "    \"growth_test_species_final_status_by_color\": ";
@@ -568,14 +567,6 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             }
         }
 
-        const std::vector<double>* fL_z_ptr = nullptr;
-        if (crow >= 0 && crow < static_cast<int>(ps.fL_z_by_species.size())) {
-            const auto& row = ps.fL_z_by_species[static_cast<std::size_t>(crow)];
-            if (!row.empty()) {
-                fL_z_ptr = &row;
-            }
-        }
-
         const std::vector<int>* t_sur_ptr = nullptr;
         if (crow >= 0 && crow < static_cast<int>(ps.t_sur_by_species.size())) {
             const auto& row = ps.t_sur_by_species[static_cast<std::size_t>(crow)];
@@ -680,11 +671,6 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         if (f_sur_ptr != nullptr) {
             ofs << "        \"f_sur\": ";
             write_json_array(ofs, *f_sur_ptr);
-            ofs << ",\n";
-        }
-        if (fL_z_ptr != nullptr) {
-            ofs << "        \"fL_z\": ";
-            write_json_array(ofs, *fL_z_ptr);
             ofs << ",\n";
         }
         if (h_sur_ptr != nullptr) {

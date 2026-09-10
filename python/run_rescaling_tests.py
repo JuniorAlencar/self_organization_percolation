@@ -26,22 +26,18 @@ SaveAnimationWindowOnly = "false"
 
 tests = [
     {
-        "label": "floor_log",
-        "control_rule": "floor_log",
-        "floor_f0": 0.24,
+        "label": "log_saturated",
+        "control_rule": "log_saturated",
+        "control_param": 0.05,
         "log_epsilon": 1.0e-5,
+        "param_label": "dmax",
     },
     {
-        "label": "floor_linear",
-        "control_rule": "floor_linear",
-        "floor_f0": 0.24,
+        "label": "log_asymmetric",
+        "control_rule": "log_asymmetric",
+        "control_param": 5.0,
         "log_epsilon": 1.0e-5,
-    },
-    {
-        "label": "log",
-        "control_rule": "log",
-        "floor_f0": 0.0,
-        "log_epsilon": 1.0e-5,
+        "param_label": "x",
     },
 ]
 
@@ -52,7 +48,7 @@ for test in tests:
                 num_runs = num_runs_por_L[L]
                 exec_name = (
                     f"test_{test['label']}_L_{L}_ft_{ft:.3f}_c_{c}_"
-                    f"f0_{test['floor_f0']:.3f}_eps_{test['log_epsilon']:.0e}_"
+                    f"{test['param_label']}_{test['control_param']:.3f}_eps_{test['log_epsilon']:.0e}_"
                     f"nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}_type_{type_perc}.sh"
                 )
                 shell_data(
@@ -76,6 +72,6 @@ for test in tests:
                     surface_observables=SurfaceObservables,
                     save_animation_window_only=SaveAnimationWindowOnly,
                     control_rule=test["control_rule"],
-                    floor_f0=test["floor_f0"],
+                    control_param=test["control_param"],
                     log_epsilon=test["log_epsilon"],
                 )

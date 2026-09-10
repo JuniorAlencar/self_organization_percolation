@@ -254,7 +254,7 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
 void helpers::print_help(const char* prog) {
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule] [FloorF0] [LogEpsilon]
+  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule] [ControlParam] [LogEpsilon]
 
 Arguments:
   L                : Length of network (int)
@@ -273,12 +273,11 @@ Arguments:
   InitialLayout    : Optional; base seeding layout: 'random' (default), 'blocks', or 'alternating'
   SurfaceObservables: Optional; calculate f_sur/t_sur/f_vol/t_vol/h_sur/w_sur/grad_sur ['true' or 'false']; default false
   SaveAnimationWindowOnly: Optional; in growth_test mode, save only the [z_stab, z_stab + L] window in the compact .bin ['true' or 'false']; default false
-  ControlRule      : Optional; linear, floor_linear, log, or floor_log. default linear
-                     linear       => p(t+1)=p(t)+c*(f_T-f(t))
-                     floor_linear => p(t+1)=p(t)+c*(f_T+f0-f(t)), f0=N0/L^(d-1)
-                     log          => p(t+1)=p(t)+c*log((f_T+epsilon)/(f(t)+epsilon))
-                     floor_log    => p(t+1)=p(t)+c*log((f_T+f0+epsilon)/(f(t)+epsilon))
-  FloorF0          : Optional active-front floor fraction f0. Used by floor_* rules. default 0
+  ControlRule      : Optional; linear, log_saturated, or log_asymmetric. default linear
+                     linear         => p(t+1)=p(t)+c*(f_T-f(t))
+                     log_saturated  => p(t+1)=p(t)+min(c*log((f_T+eps)/(f(t)+eps)), ControlParam) for positive steps
+                     log_asymmetric => p(t+1)=p(t)+c_eff*log((f_T+eps)/(f(t)+eps)), c_eff=X*c if f(t)<f_T else c
+  ControlParam     : Optional. For log_saturated, positive p-step cap. For log_asymmetric, X>1. default 0
   LogEpsilon       : Optional epsilon for log rules. default 1.0e-12
 Examples:
   ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true
@@ -286,7 +285,7 @@ Examples:
   ./SOP  512 1.0 -1 bond 1.0e-02 6.0e-02 3 4 0.25 0.1 false false growth_test
   ./SOP  256 0.6 42 bond 1.0e-02 4.0e-02 3 8 0.125 1.0 true true growth_test blocks false
   ./SOP  512 0.8 44 bond 1.0e-02 4.631579e-01 2 1 1.0 0.2 true true growth_test random false true
-  ./SOP 1024 0.8 -1 bond 1.0e-02 2.4e-01 2 1 1.0 0.2 false false growth_test random false false floor_log 4.8828125e-02 1.0e-06
+  ./SOP 1024 0.8 -1 bond 1.0e-02 1.0e-01 2 1 1.0 0.2 false false growth_test random false false log_asymmetric 5.0 1.0e-06
   ./SOP  256 0.6 42 bond 1.0e-02 4.0e-02 3 8 0.125 1.0 true true growth_test alternating
   ./SOP  500 0.05 42 node 1.0e-01 5.0e-02 3 3 0.25 0.5 false
 

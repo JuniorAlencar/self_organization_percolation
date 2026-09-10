@@ -241,7 +241,7 @@ int main(int argc, char* argv[]) {
         bool save_surface_observables = false;
         bool save_animation_window_only = false;
         std::string control_rule_name = "linear";
-        double floor_f0 = 0.0;
+        double control_param = 0.0;
         double log_epsilon = 1.0e-12;
         
         if (argc >= 12) {
@@ -279,7 +279,7 @@ int main(int argc, char* argv[]) {
                 control_rule_name = argv[17];
             }
             if (argc >= 19) {
-                floor_f0 = std::stod(argv[18]);
+                control_param = std::stod(argv[18]);
             }
             if (argc >= 20) {
                 log_epsilon = std::stod(argv[19]);
@@ -309,33 +309,23 @@ int main(int argc, char* argv[]) {
 
         auto canonical_control_rule_name = [](const std::string& value) {
             if (value == "linear") return std::string("linear");
-            if (value == "floor_linear" || value == "floor") {
-                return std::string("floor_linear");
+            if (value == "log_saturated" || value == "log_sat" || value == "saturated_log") {
+                return std::string("log_saturated");
             }
-            if (value == "log" || value == "logarithmic") {
-                return std::string("log");
-            }
-            if (value == "floor_log" || value == "floor_logarithmic") {
-                return std::string("floor_log");
+            if (value == "log_asymmetric" || value == "log_asym" || value == "asymmetric_log") {
+                return std::string("log_asymmetric");
             }
             throw std::invalid_argument(
-                "control rule must be 'linear', 'floor_linear', 'log', or 'floor_log'");
+                "control rule must be 'linear', 'log_saturated', or 'log_asymmetric'");
         };
         control_rule_name = canonical_control_rule_name(control_rule_name);
 
         auto parse_feedback_control_rule = [](const std::string& value) {
             if (value == "linear") return FeedbackControlRule::Linear;
-            if (value == "floor_linear" || value == "floor") {
-                return FeedbackControlRule::FloorLinear;
-            }
-            if (value == "log" || value == "logarithmic") {
-                return FeedbackControlRule::Log;
-            }
-            if (value == "floor_log" || value == "floor_logarithmic") {
-                return FeedbackControlRule::FloorLog;
-            }
+            if (value == "log_saturated") return FeedbackControlRule::LogSaturated;
+            if (value == "log_asymmetric") return FeedbackControlRule::LogAsymmetric;
             throw std::invalid_argument(
-                "control rule must be 'linear', 'floor_linear', 'log', or 'floor_log'");
+                "control rule must be 'linear', 'log_saturated', or 'log_asymmetric'");
         };
         const FeedbackControlRule feedback_control_rule =
             parse_feedback_control_rule(control_rule_name);
@@ -373,8 +363,8 @@ int main(int argc, char* argv[]) {
             seed = all_random::generate_random_seed();
         }
 
-        if (floor_f0 < 0.0) {
-            std::cerr << "[ERROR] floor_f0 must be >= 0.\n";
+        if (control_param < 0.0) {
+            std::cerr << "[ERROR] control_param must be >= 0.\n";
             helpers::print_help(argv[0]);
             return 1;
         }
@@ -383,10 +373,15 @@ int main(int argc, char* argv[]) {
             helpers::print_help(argv[0]);
             return 1;
         }
-        if ((feedback_control_rule == FeedbackControlRule::Log ||
-             feedback_control_rule == FeedbackControlRule::FloorLog) &&
-            log_epsilon <= 0.0) {
-            std::cerr << "[ERROR] log_epsilon must be > 0 for log control rules.\n";
+        if (feedback_control_rule == FeedbackControlRule::LogSaturated &&
+            control_param <= 0.0) {
+            std::cerr << "[ERROR] control_param must be > 0 for log_saturated (positive p-step cap).\n";
+            helpers::print_help(argv[0]);
+            return 1;
+        }
+        if (feedback_control_rule == FeedbackControlRule::LogAsymmetric &&
+            control_param <= 1.0) {
+            std::cerr << "[ERROR] control_param must be > 1 for log_asymmetric (c_up = control_param * c_down).\n";
             helpers::print_help(argv[0]);
             return 1;
         }
@@ -403,7 +398,7 @@ int main(int argc, char* argv[]) {
         GrowthStopConfig stop_config;
         stop_config.initial_base_layout = initial_base_layout;
         stop_config.feedback_control_rule = feedback_control_rule;
-        stop_config.floor_f0 = floor_f0;
+        stop_config.control_param = control_param;
         stop_config.log_epsilon = log_epsilon;
         if (teste) {
             stop_config.height_multiplier = HEIGHT_STOP_MULTIPLIER;
@@ -418,12 +413,6 @@ int main(int argc, char* argv[]) {
         int type_f_T = 0;
         double a = 0.0, alpha = 0.0;
         //double alpha = 0.0;
-        const double base_area =
-            dim == 2
-                ? static_cast<double>(L)
-                : static_cast<double>(L) * static_cast<double>(L);
-        const double floor_N0 = floor_f0 * base_area;
-        
         network net_generator(N_samples, num_colors);
 
         const bool build_full_network = return_encoded_network;
@@ -469,8 +458,7 @@ int main(int argc, char* argv[]) {
                 stop_config.height_extra_layers,
                 stop_config.dynamics_window_steps,
                 control_rule_name,
-                floor_f0,
-                floor_N0,
+                control_param,
                 log_epsilon
             );
 
@@ -488,8 +476,7 @@ int main(int argc, char* argv[]) {
 
         std::cout << "seed = " << seed << std::endl;
         ps.feedback_control_rule = control_rule_name;
-        ps.feedback_floor_N0 = floor_N0;
-        ps.feedback_floor_f0 = floor_f0;
+        ps.feedback_control_param = control_param;
         ps.feedback_log_epsilon = log_epsilon;
 
         const std::string machine_name = helpers::get_machine_name();

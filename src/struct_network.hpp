@@ -140,7 +140,6 @@ struct PercolationSeries {
     std::vector<std::vector<int>> t_sur_by_species;
     std::vector<std::vector<double>> volume_sur_by_species;
     std::vector<std::vector<int>> t_volume_sur_by_species;
-    std::vector<std::vector<double>> fL_z_by_species;
     std::vector<std::vector<std::vector<int>>> h_sur_by_species;
     std::vector<std::vector<double>> w_sur_by_species;
     std::vector<std::vector<double>> grad_sur_by_species;
@@ -160,8 +159,7 @@ struct PercolationSeries {
     int dynamic_max_stop_height = -1;
     double equilibrium_rel_tol = std::numeric_limits<double>::quiet_NaN();
     std::string feedback_control_rule = "linear";
-    double feedback_floor_N0 = 0.0;
-    double feedback_floor_f0 = 0.0;
+    double feedback_control_param = 0.0;
     double feedback_log_epsilon = 0.0;
     double equilibrium_abs_tol = std::numeric_limits<double>::quiet_NaN();
     std::string initial_base_layout;

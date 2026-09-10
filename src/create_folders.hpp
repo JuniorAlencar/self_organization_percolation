@@ -31,8 +31,7 @@ class FolderCreator {
             int height_extra_layers = 0,
             int dynamics_window_steps = -1,
             std::string control_rule = "linear",
-            double floor_f0 = 0.0,
-            double floor_N0 = 0.0,
+            double control_param = 0.0,
             double log_epsilon = 0.0
         );
 
