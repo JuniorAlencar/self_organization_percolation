@@ -254,40 +254,35 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
 void helpers::print_help(const char* prog) {
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule] [ControlParam] [LogEpsilon]
+  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule]
 
 Arguments:
   L                : Length of network (int)
   p0               : Initial Density (double)
   seed             : -1 to random seed (int)
   type_percolation : bond or node (string)
-  c                : Feedback gain in p_i(t+1) = p_i(t) + c * (f_T - f_i(t)) (double)
+  c                : Feedback gain (double)
   f_T              : Target active-front fraction f_i(t) (double)
   dim              : Dimension of Network (2 or 3)
   num_colors       : Number of colors in network >= 1 (int)
   rho_val          : Density for each color (double)  [IMPORTANT => num_colors * rho_val <= 1.0]
-  P0               : Fraction of active nodes in base [0 < P0 <= 1.0]
   Equilibration    : Return network with encoded time activation ['true' or 'false']
   Properties       : Optional; calculate shortest paths, largest components, surfaces/networks ['true' or 'false']; default false
   Mode             : Optional; 'sop' (default) or 'growth_test'
-  InitialLayout    : Optional; base seeding layout: 'random' (default), 'blocks', or 'alternating'
+  InitialLayout    : Optional; base seeding layout: 'clustered' (default), 'random', 'blocks', or 'alternating'
   SurfaceObservables: Optional; calculate f_sur/t_sur/f_vol/t_vol/h_sur/w_sur/grad_sur ['true' or 'false']; default false
   SaveAnimationWindowOnly: Optional; in growth_test mode, save only the [z_stab, z_stab + L] window in the compact .bin ['true' or 'false']; default false
-  ControlRule      : Optional; linear, log_saturated, or log_asymmetric. default linear
-                     linear         => p(t+1)=p(t)+c*(f_T-f(t))
-                     log_saturated  => p(t+1)=p(t)+min(c*log((f_T+eps)/(f(t)+eps)), ControlParam) for positive steps
-                     log_asymmetric => p(t+1)=p(t)+c_eff*log((f_T+eps)/(f(t)+eps)), c_eff=X*c if f(t)<f_T else c
-  ControlParam     : Optional. For log_saturated, positive p-step cap. For log_asymmetric, X>1. default 0
-  LogEpsilon       : Optional epsilon for log rules. default 1.0e-12
+  ControlRule      : Optional; 'relative' (default) or 'linear'
+                     relative => p(t+1) = p(t) + c * (1 - f(t)/f_T), clamped with delta_p >= -c
+                     linear   => p(t+1) = p(t) + c * (f_T - f(t))
+
+Notes:
+  - Base seeding fraction P0 is automatically set to min(1.0, 1.2 * f_T).
 Examples:
-  ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true
-  ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 0.1 true true
-  ./SOP  512 1.0 -1 bond 1.0e-02 6.0e-02 3 4 0.25 0.1 false false growth_test
-  ./SOP  256 0.6 42 bond 1.0e-02 4.0e-02 3 8 0.125 1.0 true true growth_test blocks false
-  ./SOP  512 0.8 44 bond 1.0e-02 4.631579e-01 2 1 1.0 0.2 true true growth_test random false true
-  ./SOP 1024 0.8 -1 bond 1.0e-02 1.0e-01 2 1 1.0 0.2 false false growth_test random false false log_asymmetric 5.0 1.0e-06
-  ./SOP  256 0.6 42 bond 1.0e-02 4.0e-02 3 8 0.125 1.0 true true growth_test alternating
-  ./SOP  500 0.05 42 node 1.0e-01 5.0e-02 3 3 0.25 0.5 false
+  ./SOP 1024 0.8 -1 bond 1.0e-02 1.0e-01 2 1 1.0 false false growth_test clustered false false relative
+  ./SOP 1024 0.8 42 bond 1.0e-01 1.0e-01 2 1 1.0 false false growth_test
+  ./SOP  512 1.0 -1 bond 1.0e-02 6.0e-02 3 4 0.25 false false growth_test
+  ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 true
 
 Tips:
   - Use seed = -1 to auto-generate a random seed.

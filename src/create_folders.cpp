@@ -16,23 +16,19 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
     double alpha,
     std::string type_percolation,
     double /* p0 */,
-    double /* P0 */,
     double rho,
     bool teste,
     bool dynamic_height,
     int height_extra_layers,
     int dynamics_window_steps,
-    std::string control_rule,
-    double control_param,
-    double log_epsilon
+    std::string control_rule
     )
 {
     char main_folder[256];
     std::string raw_folder = "raw";
     if (teste) {
-        const bool rescaling_test = (control_rule != "linear");
-        if (rescaling_test) {
-            raw_folder = "tests_data/" + control_rule;
+        if (control_rule == "linear") {
+            raw_folder = "tests_data/linear";
         } else {
             raw_folder = dynamic_height
                 ? "raw_growth_test_dynamic"
@@ -59,21 +55,6 @@ std::tuple<std::string, std::string, std::string, std::string, std::string> Fold
         full_path = std::string(sub);
     }
 
-    if (control_rule == "log_saturated") {
-        char sub[256];
-        sprintf(sub, "/delta_max_%.6e", control_param);
-        full_path += std::string(sub);
-    }
-    if (control_rule == "log_asymmetric") {
-        char sub[256];
-        sprintf(sub, "/x_%.6e", control_param);
-        full_path += std::string(sub);
-    }
-    if (control_rule == "log_saturated" || control_rule == "log_asymmetric") {
-        char sub[128];
-        sprintf(sub, "/epsilon_%.6e", log_epsilon);
-        full_path += std::string(sub);
-    }
     {
         char sub[128];
         sprintf(sub, "/rho_%.4e", rho);

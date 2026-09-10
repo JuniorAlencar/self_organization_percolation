@@ -36,9 +36,7 @@ public:
 
     double generate_p(int type_f_T, double p_t, int t_i, double f_current,
                       double c, double f_T, double a, double alpha,
-                      FeedbackControlRule control_rule,
-                      double control_param,
-                      double log_epsilon);
+                      FeedbackControlRule control_rule);
     double target_fT_create(int type_f_T, int t_i, double f_T,
                           double a, double alpha);
 

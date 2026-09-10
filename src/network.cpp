@@ -284,9 +284,107 @@ int activate_deterministic_base_sites(const GridRegular& grid,
     return activated;
 }
 
+template <typename ActivateSite>
+int activate_clustered_base_sites(const GridRegular& grid,
+                                  const int num_colors,
+                                  const int color_idx,
+                                  const int quota,
+                                  all_random& rng,
+                                  ActivateSite activate_site)
+{
+    if (quota <= 0) return 0;
+    int activated = 0;
+
+    if (grid.dim == 2) {
+        int x_center = 0;
+        if (num_colors == 1) {
+            x_center = rng.uniform_int(0, grid.SX - 1);
+        } else {
+            const int sector_w = grid.SX / num_colors;
+            const int sector_start = color_idx * sector_w;
+            x_center = sector_start + sector_w / 2;
+        }
+
+        int dx = 0;
+        int step = 0;
+        int tries = 0;
+        const int max_tries = grid.SX * 2;
+        while (activated < quota && tries < max_tries) {
+            int x = 0;
+            if (step == 0) {
+                x = x_center;
+            } else if (step % 2 == 1) {
+                dx = (step + 1) / 2;
+                x = (x_center + dx) % grid.SX;
+                if (x < 0) x += grid.SX;
+            } else {
+                dx = step / 2;
+                x = (x_center - dx) % grid.SX;
+                if (x < 0) x += grid.SX;
+            }
+            ++step;
+            ++tries;
+            const int idx = grid.lin_index(x, 0, 0);
+            if (activate_site(idx)) {
+                ++activated;
+            }
+        }
+    } else {
+        int x_center = 0;
+        int y_center = 0;
+        if (num_colors == 1) {
+            x_center = rng.uniform_int(0, grid.SX - 1);
+            y_center = rng.uniform_int(0, grid.SY - 1);
+        } else {
+            int nx = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(num_colors))));
+            while (nx < num_colors && (num_colors % nx) != 0) ++nx;
+            const int ny = (num_colors + nx - 1) / nx;
+            const int tx = color_idx % nx;
+            const int ty = color_idx / nx;
+            x_center = (tx * grid.SX) / nx + grid.SX / (2 * nx);
+            y_center = (ty * grid.SY) / ny + grid.SY / (2 * ny);
+        }
+
+        std::vector<char> visited(static_cast<std::size_t>(grid.SX * grid.SY), 0);
+        std::deque<std::pair<int, int>> queue;
+        queue.push_back({x_center, y_center});
+        visited[static_cast<std::size_t>(x_center + grid.SX * y_center)] = 1;
+
+        int tries = 0;
+        const int max_tries = grid.SX * grid.SY * 2;
+        while (!queue.empty() && activated < quota && tries < max_tries) {
+            const auto [cx, cy] = queue.front();
+            queue.pop_front();
+            ++tries;
+
+            const int idx = grid.lin_index(cx, cy, 0);
+            if (activate_site(idx)) {
+                ++activated;
+            }
+
+            const int dxs[4] = {1, -1, 0, 0};
+            const int dys[4] = {0, 0, 1, -1};
+            for (int dir = 0; dir < 4; ++dir) {
+                int nx = (cx + dxs[dir]) % grid.SX;
+                if (nx < 0) nx += grid.SX;
+                int ny = (cy + dys[dir]) % grid.SY;
+                if (ny < 0) ny += grid.SY;
+                const std::size_t v_idx = static_cast<std::size_t>(nx + grid.SX * ny);
+                if (!visited[v_idx]) {
+                    visited[v_idx] = 1;
+                    queue.push_back({nx, ny});
+                }
+            }
+        }
+    }
+    return activated;
+}
+
 const char* initial_base_layout_name(const InitialBaseLayout layout)
 {
     switch (layout) {
+        case InitialBaseLayout::Clustered:
+            return "clustered";
         case InitialBaseLayout::Blocks:
             return "blocks";
         case InitialBaseLayout::Alternating:
@@ -1828,48 +1926,30 @@ double network::generate_p(const int type_f_T,
                            const double f_T,
                            const double a,
                            const double alpha,
-                           const FeedbackControlRule control_rule,
-                           const double control_param,
-                           const double log_epsilon)
+                           const FeedbackControlRule control_rule)
 {
     const double f_target = target_fT_create(type_f_T, t_i, f_T, a, alpha);
-    const double eps = std::max(0.0, log_epsilon);
     double p_step = 0.0;
 
     switch (control_rule) {
+        case FeedbackControlRule::RelativeError: {
+            if (f_target > 0.0) {
+                p_step = c * ((f_target - f_current) / f_target);
+            } else {
+                p_step = c * (f_target - f_current);
+            }
+            // Symmetrical protection against excessive downward plunge:
+            // When f_current drops to 0, p_step reaches +c.
+            // Clamping negative step at -c prevents sudden population spikes
+            // from dragging p(t) deeply into the subcritical regime in one step.
+            if (p_step < -c) {
+                p_step = -c;
+            }
+            break;
+        }
         case FeedbackControlRule::Linear:
             p_step = c * (f_target - f_current);
             break;
-        case FeedbackControlRule::LogSaturated: {
-            const double numerator = f_target + eps;
-            const double denominator = f_current + eps;
-            const double log_delta = std::log(numerator / denominator);
-            p_step = c * log_delta;
-            const double max_positive_step = std::max(0.0, control_param);
-            if (max_positive_step > 0.0 && p_step > max_positive_step) {
-                p_step = max_positive_step;
-            }
-            if (!std::isfinite(p_step)) {
-                p_step = (numerator >= denominator)
-                    ? std::numeric_limits<double>::infinity()
-                    : -std::numeric_limits<double>::infinity();
-            }
-            break;
-        }
-        case FeedbackControlRule::LogAsymmetric: {
-            const double numerator = f_target + eps;
-            const double denominator = f_current + eps;
-            const double log_delta = std::log(numerator / denominator);
-            const double gain_ratio = std::max(1.0, control_param);
-            const double gain = (f_current < f_target) ? (c * gain_ratio) : c;
-            p_step = gain * log_delta;
-            if (!std::isfinite(p_step)) {
-                p_step = (numerator >= denominator)
-                    ? std::numeric_limits<double>::infinity()
-                    : -std::numeric_limits<double>::infinity();
-            }
-            break;
-        }
     }
 
     double p_next = p_t + p_step;
@@ -1904,7 +1984,6 @@ NetworkPattern network::create_network(
     const bool is_node = (type_percolation == "node");
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
-    const double control_param = std::max(0.0, stop_config.control_param);
     const int percolation_height = lenght_network - 1;
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
@@ -2104,7 +2183,15 @@ NetworkPattern network::create_network(
             return true;
         };
 
-        if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
+        if (stop_config.initial_base_layout == InitialBaseLayout::Clustered) {
+            activate_clustered_base_sites(
+                grid,
+                num_colors,
+                c,
+                seeds_quota[static_cast<std::size_t>(c)],
+                rng,
+                activate_base_site);
+        } else if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
             int activated = 0;
             int tries = 0;
             const int max_tries = static_cast<int>(base_size) * 20;
@@ -3006,9 +3093,7 @@ NetworkPattern network::create_network(
                                     : generate_p(
                                         type_f_T, p_curr[c], t, f_current[c],
                                         c_value, f_T, a, alpha,
-                                        stop_config.feedback_control_rule,
-                                        control_param,
-                                        stop_config.log_epsilon);
+                                        stop_config.feedback_control_rule);
         }
 
         frontier.swap(next_frontier);
@@ -3395,7 +3480,6 @@ NetworkPattern network::animate_network(
     const bool is_node = (type_percolation == "node");
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
-    const double control_param = std::max(0.0, stop_config.control_param);
     const int percolation_height = lenght_network - 1;
     const int hard_max_steps = stop_config.hard_max_steps > 0
         ? std::min(num_of_samples - 1, stop_config.hard_max_steps)
@@ -3622,7 +3706,15 @@ NetworkPattern network::animate_network(
             return true;
         };
 
-        if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
+        if (stop_config.initial_base_layout == InitialBaseLayout::Clustered) {
+            activate_clustered_base_sites(
+                grid,
+                num_colors,
+                c,
+                seeds_quota[static_cast<std::size_t>(c)],
+                rng,
+                activate_base_site);
+        } else if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
             int activated = 0;
             int tries = 0;
             const int max_tries = static_cast<int>(base_size) * 20;
@@ -4508,9 +4600,7 @@ NetworkPattern network::animate_network(
                 : generate_p(
                     type_f_T, p_curr[c], t, f_current[c],
                     c_value, f_T, a, alpha,
-                    stop_config.feedback_control_rule,
-                    control_param,
-                    stop_config.log_epsilon);
+                    stop_config.feedback_control_rule);
         }
 
         frontier.swap(next_frontier);

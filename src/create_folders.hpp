@@ -24,15 +24,12 @@ class FolderCreator {
             double alpha,
             std::string type_percolation,
             double p0,
-            double P0,
             double rho,
             bool teste = false,
             bool dynamic_height = false,
             int height_extra_layers = 0,
             int dynamics_window_steps = -1,
-            std::string control_rule = "linear",
-            double control_param = 0.0,
-            double log_epsilon = 0.0
+            std::string control_rule = "relative"
         );
 
     private:
