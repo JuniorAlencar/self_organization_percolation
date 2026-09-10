@@ -215,7 +215,7 @@ int main(int argc, char* argv[]) {
 
     // Allow either zero-argument (use defaults) or full-argument run.
     // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && (argc < 12 || argc > 20)) {
+    if (argc != 1 && (argc < 11 || argc > 17)) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -223,7 +223,7 @@ int main(int argc, char* argv[]) {
 
     try {
         // If no arguments provided, use a set of reasonable defaults you can
-        // edit here. If full argv are provided (11), parse them.
+        // edit here. If full argv are provided (10+), parse them.
         int L = 128; 
         double pp0 = 1.0;
         int seed = 12345;
@@ -233,18 +233,15 @@ int main(int argc, char* argv[]) {
         int dim = 3;
         int num_colors = 1;
         double rho_val = 1.0;
-        double P0 = 0.1;
         std::string equilibration = "false";
         bool calculate_detailed_properties = false;
         std::string run_mode = "growth_test";
-        std::string initial_layout = "random";
+        std::string initial_layout = "clustered";
         bool save_surface_observables = false;
         bool save_animation_window_only = false;
-        std::string control_rule_name = "linear";
-        double control_param = 0.0;
-        double log_epsilon = 1.0e-12;
+        std::string control_rule_name = "relative";
         
-        if (argc >= 12) {
+        if (argc >= 11) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
             seed = std::stoi(argv[3]);
@@ -254,37 +251,28 @@ int main(int argc, char* argv[]) {
             dim = std::stoi(argv[7]);
             num_colors = std::stoi(argv[8]);
             rho_val = std::stod(argv[9]);
-            P0 = std::stod(argv[10]);
-            equilibration = argv[11];
-            if (argc >= 13) {
-                calculate_detailed_properties = helpers::parse_bool(argv[12]);
+            equilibration = argv[10];
+            if (argc >= 12) {
+                calculate_detailed_properties = helpers::parse_bool(argv[11]);
             }
-            if (argc == 14) {
-                run_mode = argv[13];
+            if (argc >= 13) {
+                run_mode = argv[12];
+            }
+            if (argc >= 14) {
+                initial_layout = argv[13];
             }
             if (argc >= 15) {
-                run_mode = argv[13];
-                initial_layout = argv[14];
+                save_surface_observables = helpers::parse_bool(argv[14]);
             }
-            if (argc == 16) {
-                save_surface_observables = helpers::parse_bool(argv[15]);
+            if (argc >= 16) {
+                save_animation_window_only = helpers::parse_bool(argv[15]);
             }
-            if (argc == 17) {
-                save_surface_observables = helpers::parse_bool(argv[15]);
-                save_animation_window_only = helpers::parse_bool(argv[16]);
-            }
-            if (argc >= 18) {
-                save_surface_observables = helpers::parse_bool(argv[15]);
-                save_animation_window_only = helpers::parse_bool(argv[16]);
-                control_rule_name = argv[17];
-            }
-            if (argc >= 19) {
-                control_param = std::stod(argv[18]);
-            }
-            if (argc >= 20) {
-                log_epsilon = std::stod(argv[19]);
+            if (argc >= 17) {
+                control_rule_name = argv[16];
             }
         }
+
+        const double P0 = std::min(1.0, 1.2 * f_T);
 
         const bool teste = (run_mode == "growth_test");
         if (run_mode != "sop" && run_mode != "growth_test") {
@@ -294,6 +282,9 @@ int main(int argc, char* argv[]) {
         }
 
         auto parse_initial_layout = [](const std::string& value) {
+            if (value == "clustered" || value == "cluster" || value == "aglomerada") {
+                return InitialBaseLayout::Clustered;
+            }
             if (value == "random") return InitialBaseLayout::Random;
             if (value == "blocks" || value == "quadrants" || value == "quadrantes") {
                 return InitialBaseLayout::Blocks;
@@ -302,30 +293,26 @@ int main(int argc, char* argv[]) {
                 return InitialBaseLayout::Alternating;
             }
             throw std::invalid_argument(
-                "initial layout must be 'random', 'blocks', or 'alternating'");
+                "initial layout must be 'clustered', 'random', 'blocks', or 'alternating'");
         };
         const InitialBaseLayout initial_base_layout =
             parse_initial_layout(initial_layout);
 
         auto canonical_control_rule_name = [](const std::string& value) {
+            if (value == "relative" || value == "relative_error" || value == "erro_relativo") {
+                return std::string("relative");
+            }
             if (value == "linear") return std::string("linear");
-            if (value == "log_saturated" || value == "log_sat" || value == "saturated_log") {
-                return std::string("log_saturated");
-            }
-            if (value == "log_asymmetric" || value == "log_asym" || value == "asymmetric_log") {
-                return std::string("log_asymmetric");
-            }
             throw std::invalid_argument(
-                "control rule must be 'linear', 'log_saturated', or 'log_asymmetric'");
+                "control rule must be 'relative' or 'linear'");
         };
         control_rule_name = canonical_control_rule_name(control_rule_name);
 
         auto parse_feedback_control_rule = [](const std::string& value) {
+            if (value == "relative") return FeedbackControlRule::RelativeError;
             if (value == "linear") return FeedbackControlRule::Linear;
-            if (value == "log_saturated") return FeedbackControlRule::LogSaturated;
-            if (value == "log_asymmetric") return FeedbackControlRule::LogAsymmetric;
             throw std::invalid_argument(
-                "control rule must be 'linear', 'log_saturated', or 'log_asymmetric'");
+                "control rule must be 'relative' or 'linear'");
         };
         const FeedbackControlRule feedback_control_rule =
             parse_feedback_control_rule(control_rule_name);
@@ -363,29 +350,6 @@ int main(int argc, char* argv[]) {
             seed = all_random::generate_random_seed();
         }
 
-        if (control_param < 0.0) {
-            std::cerr << "[ERROR] control_param must be >= 0.\n";
-            helpers::print_help(argv[0]);
-            return 1;
-        }
-        if (log_epsilon < 0.0) {
-            std::cerr << "[ERROR] log_epsilon must be >= 0.\n";
-            helpers::print_help(argv[0]);
-            return 1;
-        }
-        if (feedback_control_rule == FeedbackControlRule::LogSaturated &&
-            control_param <= 0.0) {
-            std::cerr << "[ERROR] control_param must be > 0 for log_saturated (positive p-step cap).\n";
-            helpers::print_help(argv[0]);
-            return 1;
-        }
-        if (feedback_control_rule == FeedbackControlRule::LogAsymmetric &&
-            control_param <= 1.0) {
-            std::cerr << "[ERROR] control_param must be > 1 for log_asymmetric (c_up = control_param * c_down).\n";
-            helpers::print_help(argv[0]);
-            return 1;
-        }
-
         all_random rng(seed);
 
         TimeSeries ts;
@@ -398,8 +362,6 @@ int main(int argc, char* argv[]) {
         GrowthStopConfig stop_config;
         stop_config.initial_base_layout = initial_base_layout;
         stop_config.feedback_control_rule = feedback_control_rule;
-        stop_config.control_param = control_param;
-        stop_config.log_epsilon = log_epsilon;
         if (teste) {
             stop_config.height_multiplier = HEIGHT_STOP_MULTIPLIER;
             stop_config.dynamic_height = true;
@@ -451,15 +413,12 @@ int main(int argc, char* argv[]) {
                 alpha,
                 type_percolation,
                 pp0,
-                P0,
                 rho_val,
                 teste,
                 stop_config.dynamic_height,
                 stop_config.height_extra_layers,
                 stop_config.dynamics_window_steps,
-                control_rule_name,
-                control_param,
-                log_epsilon
+                control_rule_name
             );
 
         std::cerr << "[DBG] ps sizes -> "
@@ -476,8 +435,8 @@ int main(int argc, char* argv[]) {
 
         std::cout << "seed = " << seed << std::endl;
         ps.feedback_control_rule = control_rule_name;
-        ps.feedback_control_param = control_param;
-        ps.feedback_log_epsilon = log_epsilon;
+        ps.feedback_control_param = 0.0;
+        ps.feedback_log_epsilon = 0.0;
 
         const std::string machine_name = helpers::get_machine_name();
         const std::string timestamp_now = helpers::get_timestamp_now();

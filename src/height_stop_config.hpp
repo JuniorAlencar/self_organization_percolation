@@ -4,15 +4,15 @@
 constexpr int HEIGHT_STOP_MULTIPLIER = 1;
 
 enum class InitialBaseLayout {
+    Clustered,
     Random,
     Blocks,
     Alternating
 };
 
 enum class FeedbackControlRule {
-    Linear,
-    LogSaturated,
-    LogAsymmetric
+    RelativeError,
+    Linear
 };
 
 struct GrowthStopConfig {
@@ -33,10 +33,8 @@ struct GrowthStopConfig {
     double derivative_sign_change_fraction = 0.35;
     bool save_lateral_observables = false;
     bool save_surface_observables = false;
-    InitialBaseLayout initial_base_layout = InitialBaseLayout::Random;
-    FeedbackControlRule feedback_control_rule = FeedbackControlRule::Linear;
-    double control_param = 0.0;
-    double log_epsilon = 1.0e-12;
+    InitialBaseLayout initial_base_layout = InitialBaseLayout::Clustered;
+    FeedbackControlRule feedback_control_rule = FeedbackControlRule::RelativeError;
 };
 
 #endif // HEIGHT_STOP_CONFIG_HPP
