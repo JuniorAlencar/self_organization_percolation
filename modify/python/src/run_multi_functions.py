@@ -40,6 +40,8 @@ def create_folder(folder_path: Path):
 def _module_project_root() -> Path:
     module_dir = Path(__file__).resolve().parent
     if module_dir.name == "src":
+        if module_dir.parent.name == "python":
+            return module_dir.parent.parent
         return module_dir.parent
     return module_dir
 
@@ -98,8 +100,10 @@ def _raw_folder_for_mode(run_mode: str) -> str:
 
 
 def _data_folder_for_mode_and_control(run_mode: str, control_rule: str) -> str:
-    if run_mode == "growth_test" and control_rule != "linear":
-        return f"tests_data/{control_rule}"
+    if run_mode == "growth_test":
+        if control_rule == "linear":
+            return "tests_data/linear"
+        return "raw_growth_test_dynamic"
     return _raw_folder_for_mode(run_mode)
 
 
@@ -112,10 +116,9 @@ def _sample_data_dir(
     num_colors,
     rho,
     run_mode,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
     data_root=DATA_ROOT,
+    **kwargs,
 ) -> Path:
     control_rule = _normalize_control_rule(control_rule)
     path = (
@@ -128,16 +131,8 @@ def _sample_data_dir(
         / "fT_constant"
         / f"fT_{float(f_T):.6e}"
         / f"c_{float(c):.6e}"
+        / f"rho_{float(rho):.4e}"
     )
-
-    if control_rule == "log_saturated":
-        path = path / f"delta_max_{float(control_param):.6e}"
-    if control_rule == "log_asymmetric":
-        path = path / f"x_{float(control_param):.6e}"
-    if control_rule in {"log_saturated", "log_asymmetric"}:
-        path = path / f"epsilon_{float(log_epsilon):.6e}"
-
-    path = path / f"rho_{float(rho):.4e}"
 
     if run_mode == "growth_test":
         path = path / f"stationary_window_{GROWTH_TEST_DYNAMICS_WINDOW_STEPS}"
@@ -154,9 +149,8 @@ def _sample_data_dirs(
     num_colors,
     rho,
     run_mode,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
+    **kwargs,
 ) -> list[Path]:
     data_dirs = [
         _sample_data_dir(
@@ -169,8 +163,6 @@ def _sample_data_dirs(
             rho=rho,
             run_mode=run_mode,
             control_rule=control_rule,
-            control_param=control_param,
-            log_epsilon=log_epsilon,
             data_root=data_root,
         )
         for data_root in READ_DATA_ROOTS
@@ -182,6 +174,23 @@ def _sample_data_dirs(
             if data_dir.parent.name.startswith("stationary_window_")
         ]
         data_dirs.extend(legacy_dirs)
+        for data_root in READ_DATA_ROOTS:
+            test_dir = (
+                Path(data_root)
+                / f"tests_data/{control_rule}"
+                / f"{type_perc}_percolation"
+                / f"num_colors_{int(num_colors)}"
+                / f"dim_{int(dim)}"
+                / f"L_{int(L)}"
+                / "fT_constant"
+                / f"fT_{float(f_T):.6e}"
+                / f"c_{float(c):.6e}"
+                / f"rho_{float(rho):.4e}"
+                / f"stationary_window_{GROWTH_TEST_DYNAMICS_WINDOW_STEPS}"
+                / "data"
+            )
+            data_dirs.append(test_dir)
+            data_dirs.append(test_dir.parent.parent / "data")
     return _unique_paths(data_dirs)
 
 
@@ -189,12 +198,29 @@ def _count_existing_samples(data_dir: Path, P0, p0) -> int:
     if not data_dir.is_dir():
         return 0
 
-    token = f"_P0_{float(P0):.2f}_p0_{float(p0):.2f}"
-    return sum(
-        1
-        for path in data_dir.glob("*.json")
-        if path.is_file() and token in path.stem
-    )
+    p0_val = float(p0)
+    p0_token = f"_p0_{p0_val:.2f}"
+    count = 0
+    for path in data_dir.glob("*.json"):
+        if not path.is_file():
+            continue
+        stem = path.stem
+        if p0_token not in stem and f"_p0_{p0_val}" not in stem:
+            m = re.search(r"_p0_([0-9.eE+-]+)", stem)
+            if not m or not math.isclose(float(m.group(1)), p0_val, abs_tol=1e-3):
+                continue
+        if P0 is not None:
+            P0_val = float(P0)
+            P0_token = f"_P0_{P0_val:.2f}"
+            if P0_token not in stem:
+                m = re.search(r"_P0_([0-9.eE+-]+)", stem)
+                if not m:
+                    continue
+                extracted_P0 = float(m.group(1))
+                if not (math.isclose(extracted_P0, P0_val, abs_tol=0.02) or math.isclose(extracted_P0, P0_val, rel_tol=0.05)):
+                    continue
+        count += 1
+    return count
 
 
 def _parameter_key(
@@ -207,13 +233,14 @@ def _parameter_key(
     dim,
     num_colors,
     rho,
-    P0,
-    run_mode,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    run_mode="growth_test",
+    control_rule="relative",
+    **kwargs,
 ) -> str:
     control_rule = _normalize_control_rule(control_rule)
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
     payload = {
         "L": int(L),
         "p0": f"{float(p0):.2f}",
@@ -227,9 +254,6 @@ def _parameter_key(
         "run_mode": str(run_mode),
         "control_rule": control_rule,
     }
-    if control_rule in {"log_saturated", "log_asymmetric"}:
-        payload["control_param"] = f"{float(control_param):.6e}"
-        payload["log_epsilon"] = f"{float(log_epsilon):.6e}"
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
@@ -278,12 +302,29 @@ def _sample_json_paths(data_dir: Path, P0, p0) -> list[Path]:
     if not data_dir.is_dir():
         return []
 
-    token = f"_P0_{float(P0):.2f}_p0_{float(p0):.2f}"
-    return sorted(
-        path
-        for path in data_dir.glob("*.json")
-        if path.is_file() and token in path.stem
-    )
+    p0_val = float(p0)
+    p0_token = f"_p0_{p0_val:.2f}"
+    matched = []
+    for path in data_dir.glob("*.json"):
+        if not path.is_file():
+            continue
+        stem = path.stem
+        if p0_token not in stem and f"_p0_{p0_val}" not in stem:
+            m = re.search(r"_p0_([0-9.eE+-]+)", stem)
+            if not m or not math.isclose(float(m.group(1)), p0_val, abs_tol=1e-3):
+                continue
+        if P0 is not None:
+            P0_val = float(P0)
+            P0_token = f"_P0_{P0_val:.2f}"
+            if P0_token not in stem:
+                m = re.search(r"_P0_([0-9.eE+-]+)", stem)
+                if not m:
+                    continue
+                extracted_P0 = float(m.group(1))
+                if not (math.isclose(extracted_P0, P0_val, abs_tol=0.02) or math.isclose(extracted_P0, P0_val, rel_tol=0.05)):
+                    continue
+        matched.append(path)
+    return sorted(matched)
 
 
 def _sample_id_from_json_path(path: Path) -> str:
@@ -337,28 +378,28 @@ def snapshot_existing_outputs_for_parameters(
     num_colors,
     rho,
     N_samples,
-    P0,
     Equilibration=None,
     equilibration=True,
     properties=False,
-    run_mode="sop",
-    initial_layout="random",
+    run_mode="growth_test",
+    initial_layout="clustered",
     surface_observables=False,
     save_animation_window_only=False,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
     max_concurrent=3,
     shell_name="run_jobs_array.sh",
+    **kwargs,
 ) -> list[dict]:
     """Lê o estado atual do disco/historico sem escrever nada."""
     del seed, N_samples, Equilibration, equilibration, properties, initial_layout
     del surface_observables, save_animation_window_only, max_concurrent, shell_name
 
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
+
     run_mode_arg = _normalize_run_mode(run_mode)
     control_rule_arg = _normalize_control_rule(control_rule)
-    control_param_arg = _normalize_control_param(control_param, control_rule_arg)
-    log_epsilon_arg = _normalize_log_epsilon(log_epsilon, control_rule_arg)
     snapshots = []
     for rho_value in _rho_values(rho):
         data_dir = _sample_data_dir(
@@ -371,8 +412,6 @@ def snapshot_existing_outputs_for_parameters(
             rho=rho_value,
             run_mode=run_mode_arg,
             control_rule=control_rule_arg,
-            control_param=control_param_arg,
-            log_epsilon=log_epsilon_arg,
         )
         data_dirs = _sample_data_dirs(
             L=L,
@@ -384,8 +423,6 @@ def snapshot_existing_outputs_for_parameters(
             rho=rho_value,
             run_mode=run_mode_arg,
             control_rule=control_rule_arg,
-            control_param=control_param_arg,
-            log_epsilon=log_epsilon_arg,
         )
         parameter_key = _parameter_key(
             L=L,
@@ -399,8 +436,6 @@ def snapshot_existing_outputs_for_parameters(
             P0=P0,
             run_mode=run_mode_arg,
             control_rule=control_rule_arg,
-            control_param=control_param_arg,
-            log_epsilon=log_epsilon_arg,
         )
         disk_sample_ids = {
             _sample_id_from_json_path(path)
@@ -427,8 +462,6 @@ def snapshot_existing_outputs_for_parameters(
                 "P0": P0,
                 "run_mode": run_mode_arg,
                 "control_rule": control_rule_arg,
-                "control_param": control_param_arg,
-                "log_epsilon": log_epsilon_arg,
             },
         })
     return snapshots
@@ -476,20 +509,19 @@ def record_completed_parameter_set(
     dim,
     num_colors,
     rho,
-    P0,
-    run_mode="sop",
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    run_mode="growth_test",
+    control_rule="relative",
     target_samples=None,
+    **kwargs,
 ) -> dict:
     """Registra que um conjunto de parametros terminou com sucesso no SLURM."""
     if target_samples is None:
         raise ValueError("target_samples e obrigatorio para registrar conclusao.")
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
     run_mode_arg = _normalize_run_mode(run_mode)
     control_rule_arg = _normalize_control_rule(control_rule)
-    control_param_arg = _normalize_control_param(control_param, control_rule_arg)
-    log_epsilon_arg = _normalize_log_epsilon(log_epsilon, control_rule_arg)
     parameter_key = _parameter_key(
         L=L,
         p0=p0,
@@ -502,8 +534,6 @@ def record_completed_parameter_set(
         P0=P0,
         run_mode=run_mode_arg,
         control_rule=control_rule_arg,
-        control_param=control_param_arg,
-        log_epsilon=log_epsilon_arg,
     )
     data_dir = _sample_data_dir(
         L=L,
@@ -515,8 +545,6 @@ def record_completed_parameter_set(
         rho=rho,
         run_mode=run_mode_arg,
         control_rule=control_rule_arg,
-        control_param=control_param_arg,
-        log_epsilon=log_epsilon_arg,
     )
     disk_count = sum(
         len(_sample_json_paths(candidate_dir, P0=P0, p0=p0))
@@ -530,8 +558,6 @@ def record_completed_parameter_set(
             rho=rho,
             run_mode=run_mode_arg,
             control_rule=control_rule_arg,
-            control_param=control_param_arg,
-            log_epsilon=log_epsilon_arg,
         )
     )
     known_count_after = max(_history_known_count(parameter_key), int(target_samples), disk_count)
@@ -556,8 +582,6 @@ def record_completed_parameter_set(
             "P0": float(P0),
             "run_mode": run_mode_arg,
             "control_rule": control_rule_arg,
-            "control_param": control_param_arg,
-            "log_epsilon": log_epsilon_arg,
         },
     }
     _append_history_record(record)
@@ -580,28 +604,28 @@ def log_existing_samples_for_parameters(
     num_colors,
     rho,
     N_samples,
-    P0,
     Equilibration=None,
     equilibration=True,
     properties=False,
     run_mode="sop",
-    initial_layout="random",
+    initial_layout="clustered",
     surface_observables=False,
     save_animation_window_only=False,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
     max_concurrent=3,
     shell_name="run_jobs_array.sh",
+    **kwargs,
 ) -> dict:
     """Registra no historico os samples existentes no disco para estes parametros."""
     del seed, N_samples, Equilibration, equilibration, properties, initial_layout
     del surface_observables, save_animation_window_only, max_concurrent, shell_name
 
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
+
     run_mode_arg = _normalize_run_mode(run_mode)
     control_rule_arg = _normalize_control_rule(control_rule)
-    control_param_arg = _normalize_control_param(control_param, control_rule_arg)
-    log_epsilon_arg = _normalize_log_epsilon(log_epsilon, control_rule_arg)
     _, rho_data = _normalize_rho_input(rho)
     rho_values = rho_data if _is_sequence_but_not_string(rho_data) else [rho_data]
 
@@ -621,8 +645,6 @@ def log_existing_samples_for_parameters(
                 rho=rho_value,
                 run_mode=run_mode_arg,
                 control_rule=control_rule_arg,
-                control_param=control_param_arg,
-                log_epsilon=log_epsilon_arg,
             )
             data_dirs = _sample_data_dirs(
                 L=L,
@@ -634,8 +656,6 @@ def log_existing_samples_for_parameters(
                 rho=rho_value,
                 run_mode=run_mode_arg,
                 control_rule=control_rule_arg,
-                control_param=control_param_arg,
-                log_epsilon=log_epsilon_arg,
             )
             parameter_key = _parameter_key(
                 L=L,
@@ -649,8 +669,6 @@ def log_existing_samples_for_parameters(
                 P0=P0,
                 run_mode=run_mode_arg,
                 control_rule=control_rule_arg,
-                control_param=control_param_arg,
-                log_epsilon=log_epsilon_arg,
             )
             history_ids, history_count = _history_state(parameter_key)
             new_sample_records = 0
@@ -682,8 +700,6 @@ def log_existing_samples_for_parameters(
                             "P0": P0,
                             "run_mode": run_mode_arg,
                             "control_rule": control_rule_arg,
-                            "control_param": control_param_arg,
-                            "log_epsilon": log_epsilon_arg,
                         },
                     }
                     fh.write(json.dumps(record, sort_keys=True) + "\n")
@@ -711,8 +727,6 @@ def log_existing_samples_for_parameters(
                         "P0": P0,
                         "run_mode": run_mode_arg,
                         "control_rule": control_rule_arg,
-                        "control_param": control_param_arg,
-                        "log_epsilon": log_epsilon_arg,
                     },
                 }
                 fh.write(json.dumps(summary, sort_keys=True) + "\n")
@@ -736,28 +750,28 @@ def cleanup_logged_output_for_parameters(
     num_colors,
     rho,
     N_samples,
-    P0,
     Equilibration=None,
     equilibration=True,
     properties=False,
-    run_mode="sop",
-    initial_layout="random",
+    run_mode="growth_test",
+    initial_layout="clustered",
     surface_observables=False,
     save_animation_window_only=False,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
     max_concurrent=3,
     shell_name="run_jobs_array.sh",
+    **kwargs,
 ) -> list[str]:
     """Apaga as pastas de saida destes parametros depois que os samples foram logados."""
     del seed, N_samples, Equilibration, equilibration, properties, initial_layout
     del surface_observables, save_animation_window_only, max_concurrent, shell_name
 
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
+
     run_mode_arg = _normalize_run_mode(run_mode)
     control_rule_arg = _normalize_control_rule(control_rule)
-    control_param_arg = _normalize_control_param(control_param, control_rule_arg)
-    log_epsilon_arg = _normalize_log_epsilon(log_epsilon, control_rule_arg)
     _, rho_data = _normalize_rho_input(rho)
     rho_values = rho_data if _is_sequence_but_not_string(rho_data) else [rho_data]
     deleted = []
@@ -774,8 +788,6 @@ def cleanup_logged_output_for_parameters(
             rho=rho_value,
             run_mode=run_mode_arg,
             control_rule=control_rule_arg,
-            control_param=control_param_arg,
-            log_epsilon=log_epsilon_arg,
         )
         for data_dir in data_dirs:
             output_dir = data_dir.parent
@@ -810,12 +822,13 @@ def _remaining_samples_for_rho(
     num_colors,
     rho,
     N_samples,
-    P0,
     run_mode,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
+    **kwargs,
 ) -> tuple[int, int, Path]:
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
     data_dir = _sample_data_dir(
         L=L,
         type_perc=type_perc,
@@ -826,8 +839,6 @@ def _remaining_samples_for_rho(
         rho=rho,
         run_mode=run_mode,
         control_rule=control_rule,
-        control_param=control_param,
-        log_epsilon=log_epsilon,
     )
     parameter_key = _parameter_key(
         L=L,
@@ -838,11 +849,9 @@ def _remaining_samples_for_rho(
         dim=dim,
         num_colors=num_colors,
         rho=rho,
-        P0=P0,
         run_mode=run_mode,
         control_rule=control_rule,
-        control_param=control_param,
-        log_epsilon=log_epsilon,
+        P0=P0,
     )
     existing = _count_known_samples(data_dir, P0=P0, p0=p0, parameter_key=parameter_key)
     remaining = max(0, int(N_samples) - existing)
@@ -865,26 +874,26 @@ def create_cluster_cli_shell(exec_name: str = "run_jobs_array.sh"):
 
 # Modos:
 # 1) fixed:
-#    sbatch run_jobs_array.sh fixed L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES rho P0 EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]
+#    sbatch run_jobs_array.sh fixed L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES rho EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]
 #
 # 2) array:
-#    sbatch --array=0-(N_RHO-1)%MAX_CONCURRENT run_jobs_array.sh array L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES P0 EQUILIBRATION RHO_FILE [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]
+#    sbatch --array=0-(N_RHO-1)%MAX_CONCURRENT run_jobs_array.sh array L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES EQUILIBRATION RHO_FILE [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]
 #
 # Chamada do executável SOP:
-#    ./SOP L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS rho P0 EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]
+#    ./SOP L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS rho EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]
 
 if [[ "$#" -lt 1 ]]; then
   echo "Uso:"
-  echo "  fixed: $0 fixed L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES rho P0 EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]"
-  echo "  array: $0 array L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES P0 EQUILIBRATION RHO_FILE [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]"
+  echo "  fixed: $0 fixed L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES rho EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]"
+  echo "  array: $0 array L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES EQUILIBRATION RHO_FILE [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]"
   exit 1
 fi
 
 MODE="$1"
 
 if [[ "$MODE" == "fixed" ]]; then
-  if [[ "$#" -lt 14 || "$#" -gt 22 ]]; then
-    echo "Uso: $0 fixed L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES rho P0 EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]"
+  if [[ "$#" -lt 13 || "$#" -gt 19 ]]; then
+    echo "Uso: $0 fixed L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES rho EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]"
     exit 1
   fi
 
@@ -899,20 +908,17 @@ if [[ "$MODE" == "fixed" ]]; then
   NUM_SAMPLES="${{10}}"
   TARGET_SAMPLES="${{11}}"
   RHO="${{12}}"
-  P0="${{13}}"
-  EQUILIBRATION="${{14}}"
-  PROPERTIES="${{15:-}}"
-  RUN_MODE="${{16:-}}"
-  INITIAL_LAYOUT="${{17:-random}}"
-  SURFACE_OBSERVABLES="${{18:-false}}"
-  SAVE_ANIMATION_WINDOW_ONLY="${{19:-false}}"
-  CONTROL_RULE="${{20:-linear}}"
-  CONTROL_PARAM="${{21:-0}}"
-  LOG_EPSILON="${{22:-1.0e-12}}"
+  EQUILIBRATION="${{13}}"
+  PROPERTIES="${{14:-}}"
+  RUN_MODE="${{15:-}}"
+  INITIAL_LAYOUT="${{16:-clustered}}"
+  SURFACE_OBSERVABLES="${{17:-false}}"
+  SAVE_ANIMATION_WINDOW_ONLY="${{18:-false}}"
+  CONTROL_RULE="${{19:-relative}}"
 
 elif [[ "$MODE" == "array" ]]; then
-  if [[ "$#" -lt 14 || "$#" -gt 22 ]]; then
-    echo "Uso: $0 array L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES P0 EQUILIBRATION RHO_FILE [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]"
+  if [[ "$#" -lt 13 || "$#" -gt 19 ]]; then
+    echo "Uso: $0 array L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS NUM_SAMPLES TARGET_SAMPLES EQUILIBRATION RHO_FILE [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]"
     exit 1
   fi
 
@@ -926,17 +932,14 @@ elif [[ "$MODE" == "array" ]]; then
   NUM_COLORS="$9"
   NUM_SAMPLES="${{10}}"
   TARGET_SAMPLES="${{11}}"
-  P0="${{12}}"
-  EQUILIBRATION="${{13}}"
-  RHO_FILE="${{14}}"
-  PROPERTIES="${{15:-}}"
-  RUN_MODE="${{16:-}}"
-  INITIAL_LAYOUT="${{17:-random}}"
-  SURFACE_OBSERVABLES="${{18:-false}}"
-  SAVE_ANIMATION_WINDOW_ONLY="${{19:-false}}"
-  CONTROL_RULE="${{20:-linear}}"
-  CONTROL_PARAM="${{21:-0}}"
-  LOG_EPSILON="${{22:-1.0e-12}}"
+  EQUILIBRATION="${{12}}"
+  RHO_FILE="${{13}}"
+  PROPERTIES="${{14:-}}"
+  RUN_MODE="${{15:-}}"
+  INITIAL_LAYOUT="${{16:-clustered}}"
+  SURFACE_OBSERVABLES="${{17:-false}}"
+  SAVE_ANIMATION_WINDOW_ONLY="${{18:-false}}"
+  CONTROL_RULE="${{19:-relative}}"
 
   if [[ -z "${{SLURM_ARRAY_TASK_ID:-}}" ]]; then
     echo "[ERROR] MODE=array exige SLURM_ARRAY_TASK_ID."
@@ -973,22 +976,27 @@ if [[ -n "${{PROPERTIES:-}}" && -z "${{RUN_MODE:-}}" ]]; then
 fi
 
 EXTRA_ARGS=()
-if [[ "${{CONTROL_RULE:-linear}}" != "linear" ]]; then
-  EXTRA_ARGS=("${{PROPERTIES:-false}}" "${{RUN_MODE:-sop}}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES" "$SAVE_ANIMATION_WINDOW_ONLY" "$CONTROL_RULE" "$CONTROL_PARAM" "$LOG_EPSILON")
+if [[ "${{CONTROL_RULE:-relative}}" != "relative" ]]; then
+  EXTRA_ARGS=("${{PROPERTIES:-false}}" "${{RUN_MODE:-sop}}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES" "$SAVE_ANIMATION_WINDOW_ONLY" "$CONTROL_RULE")
 elif [[ "${{SAVE_ANIMATION_WINDOW_ONLY:-false}}" != "false" ]]; then
   EXTRA_ARGS=("${{PROPERTIES:-false}}" "${{RUN_MODE:-sop}}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES" "$SAVE_ANIMATION_WINDOW_ONLY")
 elif [[ "${{SURFACE_OBSERVABLES:-false}}" != "false" ]]; then
   EXTRA_ARGS=("${{PROPERTIES:-false}}" "${{RUN_MODE:-sop}}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES")
-elif [[ "${{INITIAL_LAYOUT:-random}}" != "random" ]]; then
+elif [[ "${{INITIAL_LAYOUT:-clustered}}" != "clustered" ]]; then
   EXTRA_ARGS=("${{PROPERTIES:-false}}" "${{RUN_MODE:-sop}}" "$INITIAL_LAYOUT")
-elif [[ -n "${{RUN_MODE:-}}" ]]; then
+elif [[ -n "${{RUN_MODE:-}}" && "$RUN_MODE" != "sop" ]]; then
   EXTRA_ARGS=("${{PROPERTIES:-false}}" "$RUN_MODE")
-elif [[ -n "${{PROPERTIES:-}}" ]]; then
+elif [[ -n "${{PROPERTIES:-}}" && "$PROPERTIES" != "false" ]]; then
   EXTRA_ARGS=("$PROPERTIES")
 fi
 
-EXEC="{BUILD_DIR}/SOP"
-WORKDIR="{ACTIVE_ROOT}"
+if [[ -d "/home/junioralencar/codes/SOP" ]]; then
+  WORKDIR="/home/junioralencar/codes/SOP"
+  EXEC="/home/junioralencar/codes/SOP/build/SOP"
+else
+  EXEC="{BUILD_DIR}/SOP"
+  WORKDIR="{ACTIVE_ROOT}"
+fi
 
 echo "=== SOP job ==="
 echo "MODE=$MODE"
@@ -999,8 +1007,8 @@ fi
 echo "rho=$RHO"
 echo "L=$L p0=$p0 SEED=$SEED TYPE=$TYPE_PERC"
 echo "C=$C F_T=$F_T DIM=$DIM NC=$NUM_COLORS"
-echo "NSAMPLES=$NUM_SAMPLES TARGET_SAMPLES=$TARGET_SAMPLES P0=$P0 EQUILIBRATION=$EQUILIBRATION"
-echo "CONTROL_RULE=$CONTROL_RULE CONTROL_PARAM=$CONTROL_PARAM LOG_EPSILON=$LOG_EPSILON"
+echo "NSAMPLES=$NUM_SAMPLES TARGET_SAMPLES=$TARGET_SAMPLES EQUILIBRATION=$EQUILIBRATION"
+echo "CONTROL_RULE=$CONTROL_RULE"
 echo "EXTRA_ARGS=${{EXTRA_ARGS[*]:-}}"
 echo "EXEC=$EXEC"
 echo "WORKDIR=$WORKDIR"
@@ -1010,13 +1018,13 @@ cd "$WORKDIR"
 
 i=1
 while [[ "$i" -le "$NUM_SAMPLES" ]]; do
-  srun "$EXEC" "$L" "$p0" "$SEED" "$TYPE_PERC" "$C" "$F_T" "$DIM" "$NUM_COLORS" "$RHO" "$P0" "$EQUILIBRATION" "${{EXTRA_ARGS[@]}}"
+  srun "$EXEC" "$L" "$p0" "$SEED" "$TYPE_PERC" "$C" "$F_T" "$DIM" "$NUM_COLORS" "$RHO" "$EQUILIBRATION" "${{EXTRA_ARGS[@]}}"
   i=$((i + 1))
 done
 
 PYTHON_BIN="${{PYTHON_BIN:-python3}}"
 export PYTHONPATH="$WORKDIR/python/src:$WORKDIR:${{PYTHONPATH:-}}"
-"$PYTHON_BIN" - "$L" "$p0" "$TYPE_PERC" "$C" "$F_T" "$DIM" "$NUM_COLORS" "$RHO" "$P0" "${{RUN_MODE:-sop}}" "$TARGET_SAMPLES" "$CONTROL_RULE" "$CONTROL_PARAM" "$LOG_EPSILON" <<'PY'
+"$PYTHON_BIN" - "$L" "$p0" "$TYPE_PERC" "$C" "$F_T" "$DIM" "$NUM_COLORS" "$RHO" "${{RUN_MODE:-growth_test}}" "$TARGET_SAMPLES" "$CONTROL_RULE" <<'PY'
 import sys
 from run_multi_functions import record_completed_parameter_set
 
@@ -1029,12 +1037,9 @@ from run_multi_functions import record_completed_parameter_set
     dim,
     num_colors,
     rho,
-    P0,
     run_mode,
     target_samples,
     control_rule,
-    control_param,
-    log_epsilon,
 ) = sys.argv[1:]
 
 info = record_completed_parameter_set(
@@ -1046,11 +1051,8 @@ info = record_completed_parameter_set(
     dim=int(dim),
     num_colors=int(num_colors),
     rho=float(rho),
-    P0=float(P0),
-    run_mode=run_mode or "sop",
-    control_rule=control_rule or "linear",
-    control_param=float(control_param),
-    log_epsilon=float(log_epsilon),
+    run_mode=run_mode or "growth_test",
+    control_rule=control_rule or "relative",
     target_samples=int(target_samples),
 )
 print(f"Historico atualizado: {{info['history_path']}} known_count_after={{info['known_count_after']}}")
@@ -1144,33 +1146,21 @@ def _normalize_run_mode(value) -> str:
 def _normalize_control_rule(value) -> str:
     rule = str(value).strip().lower()
     aliases = {
-        "log_sat": "log_saturated",
-        "saturated_log": "log_saturated",
-        "log_asym": "log_asymmetric",
-        "asymmetric_log": "log_asymmetric",
+        "rel": "relative",
+        "relative_error": "relative",
     }
     rule = aliases.get(rule, rule)
-    if rule not in {"linear", "log_saturated", "log_asymmetric"}:
-        raise ValueError("control_rule deve ser 'linear', 'log_saturated' ou 'log_asymmetric'")
+    if rule not in {"relative", "linear"}:
+        raise ValueError("control_rule deve ser 'relative' ou 'linear'")
     return rule
 
 
-def _normalize_control_param(value, control_rule: str | None = None) -> float:
-    control_param = float(value)
-    if control_param < 0.0:
-        raise ValueError("control_param deve ser >= 0")
-    if control_rule == "log_saturated" and control_param <= 0.0:
-        raise ValueError("control_param deve ser > 0 para log_saturated")
-    if control_rule == "log_asymmetric" and control_param <= 1.0:
-        raise ValueError("control_param deve ser > 1 para log_asymmetric")
-    return control_param
+def _normalize_control_param(value=0.0, control_rule: str | None = None, **kwargs) -> float:
+    return 0.0
 
 
-def _normalize_log_epsilon(value, control_rule: str) -> float:
-    log_epsilon = float(value)
-    if log_epsilon < 0.0:
-        raise ValueError("log_epsilon deve ser >= 0")
-    return log_epsilon
+def _normalize_log_epsilon(value=1.0e-12, control_rule: str | None = None, **kwargs) -> float:
+    return 1.0e-12
 
 
 def _optional_submit_args(
@@ -1181,10 +1171,9 @@ def _optional_submit_args(
     surface_observables_arg: str,
     save_animation_window_only_arg: str,
     control_rule_arg: str,
-    control_param_arg: float,
-    log_epsilon_arg: float,
+    **kwargs,
 ) -> list[str]:
-    if control_rule_arg != "linear":
+    if control_rule_arg != "relative":
         return [
             properties_arg,
             run_mode_arg,
@@ -1192,8 +1181,6 @@ def _optional_submit_args(
             surface_observables_arg,
             save_animation_window_only_arg,
             control_rule_arg,
-            str(control_param_arg),
-            str(log_epsilon_arg),
         ]
     if save_animation_window_only_arg != "false":
         return [
@@ -1205,7 +1192,7 @@ def _optional_submit_args(
         ]
     if surface_observables_arg != "false":
         return [properties_arg, run_mode_arg, initial_layout_arg, surface_observables_arg]
-    if initial_layout_arg != "random":
+    if initial_layout_arg != "clustered":
         return [properties_arg, run_mode_arg, initial_layout_arg]
     if run_mode_arg != "sop" or properties_arg == "true":
         return [properties_arg, run_mode_arg]
@@ -1224,19 +1211,18 @@ def get_missing_run_parameters(
     num_colors,
     rho,
     N_samples,
-    P0,
+    P0=None,
     Equilibration=None,
     equilibration=True,
     properties=False,
-    run_mode="sop",
-    initial_layout="random",
+    run_mode="growth_test",
+    initial_layout="clustered",
     surface_observables=False,
     save_animation_window_only=False,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
     max_concurrent=3,
     shell_name="run_jobs_array.sh",
+    **kwargs,
 ):
     """Retorna os parametros que ainda faltam rodar, sem submeter jobs.
 
@@ -1247,6 +1233,10 @@ def get_missing_run_parameters(
     if Equilibration is not None:
         equilibration = Equilibration
 
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
+
     run_mode_arg = _normalize_run_mode(run_mode)
     properties_arg = _normalize_bool_input(properties, "properties")
     initial_layout_arg = str(initial_layout).strip()
@@ -1256,8 +1246,6 @@ def get_missing_run_parameters(
         "save_animation_window_only",
     )
     control_rule_arg = _normalize_control_rule(control_rule)
-    control_param_arg = _normalize_control_param(control_param, control_rule_arg)
-    log_epsilon_arg = _normalize_log_epsilon(log_epsilon, control_rule_arg)
     if run_mode_arg == "growth_test" and properties_arg == "true":
         raise ValueError("growth_test deve ser executado com properties=False")
 
@@ -1276,11 +1264,9 @@ def get_missing_run_parameters(
             num_colors=num_colors,
             rho=rho_value,
             N_samples=N_samples,
-            P0=P0,
             run_mode=run_mode_arg,
             control_rule=control_rule_arg,
-            control_param=control_param_arg,
-            log_epsilon=log_epsilon_arg,
+            P0=P0,
         )
         if remaining <= 0:
             continue
@@ -1296,7 +1282,6 @@ def get_missing_run_parameters(
             "num_colors": num_colors,
             "rho": rho_value,
             "N_samples": remaining,
-            "P0": P0,
             "equilibration": equilibration,
             "properties": properties,
             "run_mode": run_mode_arg,
@@ -1304,8 +1289,6 @@ def get_missing_run_parameters(
             "surface_observables": surface_observables_arg,
             "save_animation_window_only": save_animation_window_only_arg,
             "control_rule": control_rule_arg,
-            "control_param": control_param_arg,
-            "log_epsilon": log_epsilon_arg,
             "max_concurrent": max_concurrent,
             "shell_name": shell_name,
             "force_submit_exact": True,
@@ -1326,44 +1309,44 @@ def run_multi_rho_array(
     num_colors,
     rho,              # pode ser float ou lista
     N_samples,
-    P0,
     Equilibration=None,
     equilibration=True,
     properties=False,
-    run_mode="sop",
-    initial_layout="random",
+    run_mode="growth_test",
+    initial_layout="clustered",
     surface_observables=False,
     save_animation_window_only=False,
-    control_rule="linear",
-    control_param=0.0,
-    log_epsilon=1.0e-12,
+    control_rule="relative",
     max_concurrent=3,
     shell_name="run_jobs_array.sh",
     force_submit_exact=False,
     target_samples=None,
+    **kwargs,
 ):
     """
     Submete jobs SOP no cluster usando os parâmetros reescalados do modelo:
 
-        p_i(t+1) = p_i(t) + c * [f_T - f_i(t)]
+        p_i(t+1) = p_i(t) + c * (1 - f_i(t)/f_T)
 
     O executável é chamado como:
 
-        SOP L p0 seed type_perc c f_T dim num_colors rho P0 equilibration [properties] [run_mode]
+        SOP L p0 seed type_perc c f_T dim num_colors rho equilibration [properties] [run_mode]
 
     Se rho for escalar, submete um job fixed.
     Se rho for lista/array, cria um arquivo de rho e submete um SLURM array.
 
-    equilibration controla o último argumento do executável SOP. Use:
+    equilibration controla o último argumento posicional obrigatório do SOP. Use:
         equilibration=True   para gerar cortes/partições de equilíbrio;
         equilibration=False  para desativar essa etapa.
 
     Equilibration é mantido apenas como alias retrocompatível.
     """
-    # Compatibilidade: chamadas antigas podem usar Equilibration=0/1.
-    # Chamadas novas devem preferir equilibration=False/True.
     if Equilibration is not None:
         equilibration = Equilibration
+
+    P0 = kwargs.get("P0")
+    if P0 is None:
+        P0 = min(1.0, 1.2 * float(f_T))
 
     equilibration_arg = _normalize_equilibration_input(equilibration)
     properties_arg = _normalize_bool_input(properties, "properties")
@@ -1375,8 +1358,6 @@ def run_multi_rho_array(
         "save_animation_window_only",
     )
     control_rule_arg = _normalize_control_rule(control_rule)
-    control_param_arg = _normalize_control_param(control_param, control_rule_arg)
-    log_epsilon_arg = _normalize_log_epsilon(log_epsilon, control_rule_arg)
 
     if run_mode_arg == "growth_test" and properties_arg == "true":
         raise ValueError("growth_test deve ser executado com properties=False")
@@ -1388,8 +1369,6 @@ def run_multi_rho_array(
         surface_observables_arg=surface_observables_arg,
         save_animation_window_only_arg=save_animation_window_only_arg,
         control_rule_arg=control_rule_arg,
-        control_param_arg=control_param_arg,
-        log_epsilon_arg=log_epsilon_arg,
     )
 
     shell_script = SHELLS_DIR / shell_name
@@ -1414,8 +1393,6 @@ def run_multi_rho_array(
                 rho=rho_data,
                 run_mode=run_mode_arg,
                 control_rule=control_rule_arg,
-                control_param=control_param_arg,
-                log_epsilon=log_epsilon_arg,
             )
         else:
             existing, remaining, data_dir = _remaining_samples_for_rho(
@@ -1431,8 +1408,6 @@ def run_multi_rho_array(
                 P0=P0,
                 run_mode=run_mode_arg,
                 control_rule=control_rule_arg,
-                control_param=control_param_arg,
-                log_epsilon=log_epsilon_arg,
             )
         print(
             "📦 Amostras:",
@@ -1465,7 +1440,6 @@ def run_multi_rho_array(
             str(remaining),
             str(target_samples),
             str(rho_data),
-            str(P0),
             equilibration_arg,
             *extra_submit_args,
         ]
@@ -1491,11 +1465,9 @@ def run_multi_rho_array(
                 num_colors=num_colors,
                 rho=rho_value,
                 N_samples=N_samples,
-                P0=P0,
                 run_mode=run_mode_arg,
                 control_rule=control_rule_arg,
-                control_param=control_param_arg,
-                log_epsilon=log_epsilon_arg,
+                P0=P0,
             )
             print(
                 "📦 Amostras:",
@@ -1525,14 +1497,10 @@ def run_multi_rho_array(
     for remaining, rho_group in sorted(remaining_by_count.items(), reverse=True):
         control_tag = ""
         if control_rule_arg != "linear":
-            control_tag = (
-                f"_ctrl{control_rule_arg}"
-                f"_control_param{_float_tag(control_param_arg)}"
-                f"_eps{_float_tag(log_epsilon_arg)}"
-            )
+            control_tag = f"_ctrl{control_rule_arg}"
         rho_file = SHELLS_DIR / (
             f"rho_L{L}_c{_float_tag(c)}_fT{_float_tag(f_T)}_dim{dim}_nc{num_colors}_"
-            f"p0{p0}_P0{P0}_seed{seed}{control_tag}_remaining{remaining}.txt"
+            f"p0{p0}_seed{seed}{control_tag}_remaining{remaining}.txt"
         )
         rho_file.write_text("\n".join(map(str, rho_group)) + "\n")
 
@@ -1557,7 +1525,6 @@ def run_multi_rho_array(
             str(num_colors),
             str(remaining),
             str(target_samples),
-            str(P0),
             equilibration_arg,
             str(rho_file),
             *extra_submit_args,

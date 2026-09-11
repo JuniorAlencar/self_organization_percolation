@@ -7,18 +7,17 @@
 usage() {
   cat <<USAGE
 Uso:
-  run_jobs.sh L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS RHO NUM_SAMPLES P0 EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE] [CONTROL_PARAM] [LOG_EPSILON]
+  run_jobs.sh L p0 SEED TYPE_PERC C F_T DIM NUM_COLORS RHO NUM_SAMPLES EQUILIBRATION [PROPERTIES] [MODE] [INITIAL_LAYOUT] [SURFACE_OBSERVABLES] [SAVE_ANIMATION_WINDOW_ONLY] [CONTROL_RULE]
 
 Exemplo:
-  run_jobs.sh 512 0.7 123 bond 0.03 0.06 3 1 0.001 5 0.1 false
-  run_jobs.sh 512 0.7 123 bond 0.03 0.06 3 1 0.001 5 0.1 false false growth_test
-  run_jobs.sh 512 0.8 -1 bond 0.01 0.1 2 1 1.0 5 0.2 false false growth_test random false false log_asymmetric 5.0 1e-6
+  run_jobs.sh 512 0.7 123 bond 0.03 0.06 3 1 0.001 5 false
+  run_jobs.sh 512 0.7 123 bond 0.03 0.06 3 1 0.001 5 false false growth_test
+  run_jobs.sh 512 0.8 -1 bond 0.01 0.1 2 1 1.0 5 false false growth_test clustered false false relative
 
 Notas:
   - TYPE_PERC: "bond" ou "node"
   - MODE opcional: "sop" ou "growth_test"
-  - CONTROL_RULE opcional: "linear", "log_saturated" ou "log_asymmetric"
-  - CONTROL_PARAM: teto positivo em log_saturated; fator X em log_asymmetric
+  - CONTROL_RULE opcional: "relative" ou "linear"
 USAGE
 }
 
@@ -28,7 +27,7 @@ fi
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   usage; exit 0
 fi
-if [[ "$#" -lt 12 || "$#" -gt 20 ]]; then
+if [[ "$#" -lt 11 || "$#" -gt 17 ]]; then
   echo "[ERROR] Número inválido de argumentos ($#)."; usage; exit 2
 fi
 
@@ -43,16 +42,13 @@ DIM="$7"
 NUM_COLORS="$8"
 RHO="$9"
 NUM_SAMPLES="${10}"
-P0="${11}"
-EQUILIBRATION="${12}"
-PROPERTIES="${13:-}"
-RUN_MODE="${14:-}"
-INITIAL_LAYOUT="${15:-random}"
-SURFACE_OBSERVABLES="${16:-false}"
-SAVE_ANIMATION_WINDOW_ONLY="${17:-false}"
-CONTROL_RULE="${18:-linear}"
-CONTROL_PARAM="${19:-0}"
-LOG_EPSILON="${20:-1.0e-12}"
+EQUILIBRATION="${11}"
+PROPERTIES="${12:-}"
+RUN_MODE="${13:-}"
+INITIAL_LAYOUT="${14:-clustered}"
+SURFACE_OBSERVABLES="${15:-false}"
+SAVE_ANIMATION_WINDOW_ONLY="${16:-false}"
+CONTROL_RULE="${17:-relative}"
 
 if [[ -n "$PROPERTIES" && -z "$RUN_MODE" ]]; then
   case "$PROPERTIES" in
@@ -64,17 +60,17 @@ if [[ -n "$PROPERTIES" && -z "$RUN_MODE" ]]; then
 fi
 
 EXTRA_ARGS=()
-if [[ "$CONTROL_RULE" != "linear" ]]; then
-  EXTRA_ARGS=("${PROPERTIES:-false}" "${RUN_MODE:-sop}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES" "$SAVE_ANIMATION_WINDOW_ONLY" "$CONTROL_RULE" "$CONTROL_PARAM" "$LOG_EPSILON")
+if [[ "$CONTROL_RULE" != "relative" ]]; then
+  EXTRA_ARGS=("${PROPERTIES:-false}" "${RUN_MODE:-sop}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES" "$SAVE_ANIMATION_WINDOW_ONLY" "$CONTROL_RULE")
 elif [[ "$SAVE_ANIMATION_WINDOW_ONLY" != "false" ]]; then
   EXTRA_ARGS=("${PROPERTIES:-false}" "${RUN_MODE:-sop}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES" "$SAVE_ANIMATION_WINDOW_ONLY")
 elif [[ "$SURFACE_OBSERVABLES" != "false" ]]; then
   EXTRA_ARGS=("${PROPERTIES:-false}" "${RUN_MODE:-sop}" "$INITIAL_LAYOUT" "$SURFACE_OBSERVABLES")
-elif [[ "$INITIAL_LAYOUT" != "random" ]]; then
+elif [[ "$INITIAL_LAYOUT" != "clustered" ]]; then
   EXTRA_ARGS=("${PROPERTIES:-false}" "${RUN_MODE:-sop}" "$INITIAL_LAYOUT")
-elif [[ -n "$RUN_MODE" ]]; then
+elif [[ -n "$RUN_MODE" && "$RUN_MODE" != "sop" ]]; then
   EXTRA_ARGS=("${PROPERTIES:-false}" "$RUN_MODE")
-elif [[ -n "$PROPERTIES" ]]; then
+elif [[ -n "$PROPERTIES" && "$PROPERTIES" != "false" ]]; then
   EXTRA_ARGS=("$PROPERTIES")
 fi
 
@@ -86,14 +82,14 @@ EXEC=./build/SOP
 echo "=== Received Parameters ==="
 echo "L=$L  p0=$p0  SEED=$SEED  TYPE_PERC=$TYPE_PERC"
 echo "C=$C  F_T=$F_T  DIM=$DIM  NUM_COLORS=$NUM_COLORS"
-echo "RHO=$RHO  NUM_SAMPLES=$NUM_SAMPLES  P0=$P0  EQUILIBRATION=$EQUILIBRATION"
-echo "CONTROL_RULE=$CONTROL_RULE  CONTROL_PARAM=$CONTROL_PARAM  LOG_EPSILON=$LOG_EPSILON"
+echo "RHO=$RHO  NUM_SAMPLES=$NUM_SAMPLES  EQUILIBRATION=$EQUILIBRATION"
+echo "CONTROL_RULE=$CONTROL_RULE"
 echo "EXTRA_ARGS=${EXTRA_ARGS[*]:-}"
 echo "============================"
 
 i=1
 while [[ "$i" -le "$NUM_SAMPLES" ]]; do
-  srun "$EXEC" "$L" "$p0" "$SEED" "$TYPE_PERC" "$C" "$F_T" "$DIM" "$NUM_COLORS" "$RHO" "$P0" "$EQUILIBRATION" "${EXTRA_ARGS[@]}"
+  srun "$EXEC" "$L" "$p0" "$SEED" "$TYPE_PERC" "$C" "$F_T" "$DIM" "$NUM_COLORS" "$RHO" "$EQUILIBRATION" "${EXTRA_ARGS[@]}"
   i=$(( i + 1 ))
 done
 

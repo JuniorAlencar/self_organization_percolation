@@ -33,9 +33,9 @@ def custom_range(start, stop, n_points, ndigits = 8):
     xs[-1] = round(stop, ndigits)
     return xs.tolist()
 
-def rho_interval(L, dim, P0, nc):
+def rho_interval(L, dim, f_T, nc):
     base_size = L**(dim - 1)
-
+    P0 = min(1.0, 1.2 * float(f_T))
     rho_min = 1.0 / (P0 * base_size)
     rho_max = 1.0 / nc
 
@@ -87,7 +87,7 @@ seed = -1
 #N_samples_list = [300]
 L_lst = [512, 1024, 2048, 4096, 8192, 16384]
 num_runs_lst = [700, 500, 400, 200, 100, 50]
-ft_min = [0.3178947, 0.2001948, 0.1475368, 0.1238368, 0.1047474, 0.08565789]
+#ft_min = [0.3178947, 0.2001948, 0.1475368, 0.1238368, 0.1047474, 0.08565789]
 #L_lst = [8192, 16384]
 #N_samples_list = [100, 50]
 #max_jobs = [20, 20, 20, 20, 20]
@@ -99,7 +99,6 @@ num_runs_por_L = dict(zip(L_lst, num_runs_lst))
 #max_jobs = [20, 20]
 # P0 = 0.2
 # p0 = 0.8
-P0 = 0.2
 p0 = 0.8
 nc = 1
 #c_lst = [0.01, 0.05, 0.1, 0.15, 0.2]
@@ -112,12 +111,10 @@ nc = 1
 equilibration = False
 properties = False
 run_mode = "growth_test"
-initial_layout = "random"
+initial_layout = "clustered"
 surface_observables = False
 save_animation_window_only = False
-control_rule = "linear"
-control_param = 0.0
-log_epsilon = 1.0e-12
+control_rule = "relative"
 # =========================
 # Submit jobs
 # =========================
@@ -134,8 +131,10 @@ deleted_dirs = []
 #df = pd.read_csv("../SOP_data/ft_min_max_2D.csv")
 rho = 1/nc
 c = 0.01
+ft_lst = np.linspace(0.01, 0.3, 30)
+
 for idx, L in enumerate(L_lst):
-	
+	'''
 	step = 0.01 * abs(ft_min[idx])
 
 	left_points = ft_min[idx] - step * np.arange(7, 0, -1)
@@ -146,6 +145,7 @@ for idx, L in enumerate(L_lst):
 		right_points
 	])
 	ft_lst
+	'''
 	N_samples = num_runs_por_L[L]
 	for ft in ft_lst:
 		params = dict(
@@ -159,7 +159,6 @@ for idx, L in enumerate(L_lst):
 			num_colors=nc,
 			rho=rho,
 			N_samples=N_samples,
-			P0=P0,
 			equilibration=equilibration,
 			properties=properties,
 			run_mode=run_mode,
@@ -167,8 +166,6 @@ for idx, L in enumerate(L_lst):
 			surface_observables=surface_observables,
 			save_animation_window_only=save_animation_window_only,
 			control_rule=control_rule,
-			control_param=control_param,
-			log_epsilon=log_epsilon,
 			max_concurrent=max_jobs,
 		)
 		parameter_sets.append(params)

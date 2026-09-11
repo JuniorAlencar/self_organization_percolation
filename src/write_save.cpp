@@ -493,11 +493,11 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             ofs << "    \"growth_test_equilibrium_rel_tol\": "
                 << ps.equilibrium_rel_tol << ",\n";
             const double effective_rel_tol =
-                ps.equilibrium_rel_tol * 0.01;
+                ps.equilibrium_rel_tol;
             ofs << "    \"growth_test_equilibrium_effective_rel_tol\": "
                 << effective_rel_tol << ",\n";
             ofs << "    \"growth_test_equilibrium_rel_tol_scaling\": "
-                << "\"fixed_base_tol_times_0p01\",\n";
+                << "\"fixed_base_tol\",\n";
         }
         if (std::isfinite(ps.equilibrium_abs_tol)) {
             ofs << "    \"growth_test_equilibrium_abs_tol\": "

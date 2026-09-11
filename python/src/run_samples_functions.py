@@ -18,46 +18,41 @@ def shell_data(
     num_runs: int,
     rho: list,
     exec_name: str,
-    P0: float,
-    equlibration,
+    equlibration="false",
     multi: bool = False,
     properties=False,
     mode: str = "sop",
-    initial_layout: str = "random",
+    initial_layout: str = "clustered",
     surface_observables=False,
     save_animation_window_only=False,
-    control_rule: str = "linear",
-    control_param: float = 0.0,
-    log_epsilon: float = 1.0e-12,
+    control_rule: str = "relative",
+    **kwargs,
 ):
     """
     Generate a shell script to run SOP multiple times.
 
     New SOP executable signature:
-        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <P0> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule] [ControlParam] [LogEpsilon]
+        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule]
 
-    The old inputs k and N_T were removed. The update rule is now:
-        p_i(t+1) = p_i(t) + c * (f_T - f_i(t))
+    The update rule is:
+        relative (default): p_i(t+1) = p_i(t) + c * (1 - f_i(t)/f_T) with headroom damping
+        linear:             p_i(t+1) = p_i(t) + c * (f_T - f_i(t))
+    
+    Base seeding layout:
+        clustered (default): natural contiguous seed cluster on base
+        random, blocks, alternating
 
-    If multi=True, the generated shell script:
-      1. Runs a single benchmark simulation.
-      2. Measures peak RAM with /usr/bin/time.
-      3. Chooses GNU parallel jobs automatically based on:
-         - current available RAM,
-         - total machine RAM,
-         - total CPU threads,
-         - configurable safety margins.
-
-    Runtime knobs (environment variables in the generated shell):
-      - MEMORY_SAFETY_FRACTION (default: 0.85)
-      - RAM_MULTIPLIER         (default: 1.20)
-      - RESERVE_THREADS        (default: 1)
-      - MAX_THREADS            (optional hard cap)
-
-    Important:
-    - CPU clock limiting is NOT handled here.
-    - It should be handled centrally by run_all.sh.
+    P0 is calculated internally as min(1.0, 1.2 * f_T).
     """
+    # Backward compatibility: if caller passed legacy positional P0 as 12th argument
+    if isinstance(equlibration, (float, int)):
+        if "Equilibration" in kwargs:
+            equlibration = kwargs["Equilibration"]
+        elif isinstance(multi, str):
+            equlibration = multi
+            multi = False
+        else:
+            equlibration = "false"
 
     if dim not in (2, 3):
         return "please, enter with dim = 2 or 3"
@@ -98,29 +93,15 @@ def shell_data(
     if save_animation_window_only not in ("true", "false"):
         raise ValueError("save_animation_window_only must be true/false")
 
-    control_rule = str(control_rule).strip()
-    valid_control_rules = {"linear", "log_saturated", "log_sat", "saturated_log", "log_asymmetric", "log_asym", "asymmetric_log"}
+    control_rule = str(control_rule).strip().lower()
+    valid_control_rules = {"relative", "linear"}
     if control_rule not in valid_control_rules:
-        raise ValueError("control_rule must be 'linear', 'log_saturated', or 'log_asymmetric'")
-    if control_rule in {"log_sat", "saturated_log"}:
-        control_rule = "log_saturated"
-    elif control_rule in {"log_asym", "asymmetric_log"}:
-        control_rule = "log_asymmetric"
-    control_param = float(control_param)
-    log_epsilon = float(log_epsilon)
-    if control_param < 0.0:
-        raise ValueError("control_param must be >= 0")
-    if control_rule == "log_saturated" and control_param <= 0.0:
-        raise ValueError("control_param must be > 0 for log_saturated")
-    if log_epsilon < 0.0:
-        raise ValueError("log_epsilon must be >= 0")
-    if control_rule == "log_asymmetric" and control_param <= 1.0:
-        raise ValueError("control_param must be > 1 for log_asymmetric")
+        raise ValueError("control_rule must be 'relative' or 'linear'")
 
-    initial_layout = str(initial_layout).strip()
-    valid_layouts = {"random", "blocks", "quadrants", "quadrantes", "alternating", "alternado"}
+    initial_layout = str(initial_layout).strip().lower()
+    valid_layouts = {"clustered", "cluster", "aglomerada", "random", "blocks", "quadrants", "quadrantes", "alternating", "alternado"}
     if initial_layout not in valid_layouts:
-        raise ValueError("initial_layout must be 'random', 'blocks', or 'alternating'")
+        raise ValueError("initial_layout must be 'clustered', 'random', 'blocks', or 'alternating'")
 
     os.makedirs("../shells", exist_ok=True)
     print("Creating shell script file in ../shells/")
@@ -146,7 +127,6 @@ c={c}
 f_T={f_T}
 dim={dim}
 num_colors={num_colors}
-P0={P0}
 Equilibration={equlibration}
 Properties={properties}
 Mode="{mode}"
@@ -154,17 +134,15 @@ InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
 SaveAnimationWindowOnly={save_animation_window_only}
 ControlRule="{control_rule}"
-ControlParam={control_param}
-LogEpsilon={log_epsilon}
 
 extra_args=()
-if [[ "$ControlRule" != "linear" ]]; then
-  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule" "$ControlParam" "$LogEpsilon")
+if [[ "$ControlRule" != "relative" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule")
 elif [[ "$SaveAnimationWindowOnly" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly")
 elif [[ "$SurfaceObservables" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
-elif [[ "$InitialLayout" != "random" ]]; then
+elif [[ "$InitialLayout" != "clustered" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")
 elif [[ "$Mode" != "sop" ]]; then
   extra_args=("$Properties" "$Mode")
@@ -189,7 +167,7 @@ if ! command -v /usr/bin/time >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type c f_T dim num_colors P0 Equilibration Properties Mode InitialLayout SurfaceObservables SaveAnimationWindowOnly ControlRule ControlParam LogEpsilon
+export L p0 seed type c f_T dim num_colors Equilibration Properties Mode InitialLayout SurfaceObservables SaveAnimationWindowOnly ControlRule
 
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 if [[ "$TOTAL" -le 0 ]]; then
@@ -221,10 +199,10 @@ BENCH_RHO=${{rho[0]}}
 BENCH_LOG=$(mktemp)
 
 echo "[INFO] Running RAM benchmark for this parameter set..."
-echo "[INFO] Benchmark command: ./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $P0 $Equilibration ${{extra_args[*]}}"
+echo "[INFO] Benchmark command: ./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $Equilibration ${{extra_args[*]}}"
 
 /usr/bin/time -f "%M" -o "$BENCH_LOG" \
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$P0" "$Equilibration" "${{extra_args[@]}}" >/dev/null
+  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
 
 PEAK_RAM_KB=$(tr -dc '0-9' < "$BENCH_LOG")
 rm -f "$BENCH_LOG"
@@ -309,20 +287,20 @@ parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
   RUN={{2}}
   extra_args=()
-  if [[ "$ControlRule" != "linear" ]]; then
-    extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule" "$ControlParam" "$LogEpsilon")
+  if [[ "$ControlRule" != "relative" ]]; then
+    extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule")
   elif [[ "$SaveAnimationWindowOnly" != "false" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly")
   elif [[ "$SurfaceObservables" != "false" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
-  elif [[ "$InitialLayout" != "random" ]]; then
+  elif [[ "$InitialLayout" != "clustered" ]]; then
     extra_args=("$Properties" "$Mode" "$InitialLayout")
   elif [[ "$Mode" != "sop" ]]; then
     extra_args=("$Properties" "$Mode")
   elif [[ "$Properties" == "true" ]]; then
     extra_args=("$Properties")
   fi
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" "${{extra_args[@]}}"
+  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}"
 ' :::: "$TASK_FILE"
 
 echo "All runs completed."
@@ -347,24 +325,21 @@ f_T={f_T}
 dim={dim}
 num_colors={num_colors}
 Equilibration={equlibration}
-P0={P0}
 Properties={properties}
 Mode="{mode}"
 InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
 SaveAnimationWindowOnly={save_animation_window_only}
 ControlRule="{control_rule}"
-ControlParam={control_param}
-LogEpsilon={log_epsilon}
 
 extra_args=()
-if [[ "$ControlRule" != "linear" ]]; then
-  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule" "$ControlParam" "$LogEpsilon")
+if [[ "$ControlRule" != "relative" ]]; then
+  extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly" "$ControlRule")
 elif [[ "$SaveAnimationWindowOnly" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables" "$SaveAnimationWindowOnly")
 elif [[ "$SurfaceObservables" != "false" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout" "$SurfaceObservables")
-elif [[ "$InitialLayout" != "random" ]]; then
+elif [[ "$InitialLayout" != "clustered" ]]; then
   extra_args=("$Properties" "$Mode" "$InitialLayout")
 elif [[ "$Mode" != "sop" ]]; then
   extra_args=("$Properties" "$Mode")
@@ -399,10 +374,10 @@ for ((run=1; run<=num_runs; run++)); do
 
     if [[ "$VERBOSE" -eq 1 ]]; then
       echo
-      echo "./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $RHO $P0 $Equilibration ${{extra_args[*]}}"
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" "${{extra_args[@]}}"
+      echo "./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $RHO $Equilibration ${{extra_args[*]}}"
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}"
     else
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$P0" "$Equilibration" "${{extra_args[@]}}" >/dev/null
+      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
     fi
   done
 done

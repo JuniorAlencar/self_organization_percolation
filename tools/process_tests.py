@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 
-DEFAULT_TESTS = ("log_saturated", "log_asymmetric")
+DEFAULT_TESTS = ("relative",)
 
 
 def run_command(cmd: list[str], *, cwd: Path) -> None:
