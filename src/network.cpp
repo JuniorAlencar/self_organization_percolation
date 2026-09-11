@@ -1425,7 +1425,7 @@ inline double growth_test_effective_rel_tol(const double base_rel_tol,
                                             const int num_colors)
 {
     (void) num_colors;
-    return base_rel_tol * 0.01;
+    return base_rel_tol;
 }
 
 inline int growth_test_global_min_stable_steps(const int configured_steps,
@@ -1944,6 +1944,22 @@ double network::generate_p(const int type_f_T,
             // from dragging p(t) deeply into the subcritical regime in one step.
             if (p_step < -c) {
                 p_step = -c;
+            }
+            if (p_step > c) {
+                p_step = c;
+            }
+            // Headroom damping for positive p_step:
+            // Prevents p from shooting abruptly to 1.0 when the front is starved or narrowed.
+            // Full gain is maintained for p_t <= 0.60.
+            // Smoothly tapers to 0 as p_t reaches 0.75 (maximum supercritical operating ceiling).
+            if (p_step > 0.0) {
+                constexpr double p_max_effective = 0.75;
+                if (p_t >= p_max_effective) {
+                    p_step = 0.0;
+                } else if (p_t > 0.60) {
+                    const double damp = (p_max_effective - p_t) / (p_max_effective - 0.60);
+                    p_step *= damp;
+                }
             }
             break;
         }

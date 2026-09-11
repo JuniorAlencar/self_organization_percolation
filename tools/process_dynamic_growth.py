@@ -28,6 +28,7 @@ LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
 SUMMARY_FILE_FINGERPRINT_KEY = "summary_file_fingerprint"
+DATA_DIR_FINGERPRINT_KEY = "data_dir_fingerprint"
 
 FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
@@ -54,7 +55,6 @@ RE_p0 = re.compile(rf"(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)")
 
 ALL_DATA_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
-    "control_param", "epsilon",
     "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
     "z_stat_median", "z_stat_q75", "z_stat_q90",
@@ -63,13 +63,28 @@ ALL_DATA_COLUMNS = [
 
 ALL_COLORS_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
-    "N_samples", "rho", "control_param", "epsilon", "nc", "nc_err", "nc_std", "stat_window",
+    "N_samples", "rho", "nc", "nc_err", "nc_std", "stat_window",
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
 
-ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "control_param", "epsilon", "stat_window")
-ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "control_param", "epsilon", "stat_window")
+ALL_DATA_LEGACY_COLUMNS = [
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
+    "control_param", "epsilon",
+    "order", "N_samples", "N_samples_perc",
+    "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
+    "z_stat_median", "z_stat_q75", "z_stat_q90",
+    "t_eq_validation", "t_eq_s_prime_threshold",
+]
+
+ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "stat_window")
+ALL_COLORS_LEGACY_COLUMNS = [
+    "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
+    "N_samples", "rho", "control_param", "epsilon", "nc", "nc_err", "nc_std", "stat_window",
+    "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
+    "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
+]
+ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "stat_window")
 DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window"}
 DAT_FLOAT_COLUMNS = {
     "f_T", "c", "rho", "control_param", "epsilon", "p0", "P0", "p_mean", "p_err", "f_mean", "f_err",
@@ -245,6 +260,11 @@ def file_stat_fingerprint(path: Path) -> str:
     return f"stat:{stat.st_size}:{stat.st_mtime_ns}"
 
 
+def directory_stat_fingerprint(path: Path) -> str:
+    stat = path.stat()
+    return f"dir:{stat.st_size}:{stat.st_mtime_ns}"
+
+
 def file_fingerprint_for_mode(path: Path, mode: str) -> str:
     if mode == "hash":
         return file_fingerprint(path)
@@ -267,9 +287,18 @@ def parse_sample_name(path: Path) -> tuple[float, float] | None:
     name = path.name
     m_p0 = RE_p0.search(name)
     m_P0 = RE_P0.search(name)
-    if not m_p0 or not m_P0:
+    if not m_p0:
         return None
-    return float(m_P0.group("P0")), float(m_p0.group("p0"))
+    p0_val = float(m_p0.group("p0"))
+    if m_P0:
+        P0_val = float(m_P0.group("P0"))
+    else:
+        data_params = parse_data_dir(path.parent)
+        if data_params and not math.isnan(data_params.get("f_T", math.nan)):
+            P0_val = min(1.0, 1.2 * float(data_params["f_T"]))
+        else:
+            return None
+    return P0_val, p0_val
 
 
 def parse_data_dir(path: Path) -> dict[str, Any] | None:
@@ -362,7 +391,12 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
         header = handle.readline().split()
         if not header:
             return []
-        if header != expected_columns:
+        accepted_headers = [expected_columns]
+        if expected_columns == ALL_DATA_COLUMNS:
+            accepted_headers.append(ALL_DATA_LEGACY_COLUMNS)
+        if expected_columns == ALL_COLORS_COLUMNS:
+            accepted_headers.append(ALL_COLORS_LEGACY_COLUMNS)
+        if header not in accepted_headers:
             raise ValueError(f"Unexpected header in {path}: {' '.join(header)}")
         rows: list[dict[str, Any]] = []
         for line in handle:
@@ -429,6 +463,8 @@ def dynamic_criterion_metadata_from_meta(meta: dict[str, Any]) -> dict[str, Any]
         "equilibrium_effective_rel_tol": finite_float(meta.get("growth_test_equilibrium_effective_rel_tol")),
         "post_equilibrium_extra_steps": meta.get("growth_test_post_equilibrium_extra_steps"),
         "equilibrium_rel_tol_scaling": meta.get("growth_test_equilibrium_rel_tol_scaling"),
+        "feedback_control_rule": meta.get("feedback_control_rule"),
+        "initial_base_layout": meta.get("initial_base_layout"),
     }
 
 
@@ -440,6 +476,8 @@ def common_dynamic_criterion_metadata(rows: list[dict[str, Any]]) -> dict[str, A
         "equilibrium_effective_rel_tol",
         "post_equilibrium_extra_steps",
         "equilibrium_rel_tol_scaling",
+        "feedback_control_rule",
+        "initial_base_layout",
     ]
     out: dict[str, Any] = {}
     for key in keys:
@@ -1203,8 +1241,9 @@ def process_sample_files(
     """Process a list of dynamic sample JSON files and return parsed rows plus per-file stabilization counts."""
     rows: list[dict[str, Any]] = []
     stabilized_counts: list[float] = []
+    effective_jobs = 1 if include_time_series else jobs
 
-    if jobs <= 1 or len(sample_paths) < 8:
+    if effective_jobs <= 1 or len(sample_paths) < 8:
         results = (
             process_one_sample_file_cached(
                 (
@@ -1222,7 +1261,7 @@ def process_sample_files(
             stabilized_counts.append(stabilized_count)
             rows.extend(sample_rows)
     else:
-        workers = min(jobs, len(sample_paths))
+        workers = min(effective_jobs, len(sample_paths))
         chunksize = max(1, min(32, len(sample_paths) // max(1, workers * 4)))
         with ProcessPoolExecutor(max_workers=workers) as executor:
             results = executor.map(
@@ -1727,10 +1766,11 @@ def discover_data_dirs(raw_root: Path) -> list[Path]:
     )
 
 
-def collect_group_json_files(data_dir: Path) -> list[Path]:
+def collect_group_json_files(data_dir: Path, known_names: set[str] | None = None) -> list[Path]:
+    known_names = known_names or set()
     return sorted(
         path for path in data_dir.glob("*.json")
-        if path.is_file() and parse_sample_name(path) is not None
+        if path.is_file() and (path.name in known_names or parse_sample_name(path) is not None)
     )
 
 
@@ -1750,6 +1790,8 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
         "t_eq_s_prime_threshold": meta.get("t_eq_s_prime_threshold"),
         "equilibrium_effective_rel_tol": meta.get("equilibrium_effective_rel_tol"),
         "post_equilibrium_extra_steps": meta.get("post_equilibrium_extra_steps"),
+        "feedback_control_rule": meta.get("feedback_control_rule"),
+        "initial_base_layout": meta.get("initial_base_layout"),
     }
 
     all_rows: list[dict[str, Any]] = []
@@ -3003,19 +3045,6 @@ def process_group(
     ensure_dir(out_dir)
     out_path = existing_dynamic_bundle_path(out_dir) or dynamic_bundle_path(out_dir)
 
-    json_files = collect_group_json_files(data_dir)
-    current_json_files = sorted({fp.name for fp in json_files})
-    files_by_name = {fp.name: fp for fp in json_files}
-    surface_out_path = process_surface_observables_bundle(
-        params,
-        rel_group,
-        json_files,
-        out_dir,
-        pretty_json=pretty_json,
-    )
-    if surface_out_path is not None:
-        print(f"[surface] ensured {surface_out_path}")
-
     manifest = load_manifest(manifests_root, rel_group)
     manifest_files = set(map(str, manifest.get("processed_json_files", [])))
     manifest_fingerprints_raw = manifest.get("processed_json_file_fingerprints", {})
@@ -3027,6 +3056,47 @@ def process_group(
     manifest_version = int(manifest.get("dynamic_processing_version", 0) or 0)
     manifest_series_mode = str(manifest.get("series_mode", "full") or "full")
     include_laterals = False
+    current_data_dir_fingerprint = directory_stat_fingerprint(data_dir)
+    summary_fingerprint = file_stat_fingerprint(out_path) if out_path.exists() else None
+
+    can_fast_skip_raw_scan = (
+        not clear
+        and not detect_replaced_files
+        and out_path.exists()
+        and manifest_version == DYNAMIC_PROCESSING_VERSION
+        and manifest_series_mode == series_mode
+        and manifest.get(DATA_DIR_FINGERPRINT_KEY) == current_data_dir_fingerprint
+        and manifest.get(SUMMARY_FILE_FINGERPRINT_KEY) == summary_fingerprint
+    )
+    if can_fast_skip_raw_scan:
+        if migrate_published:
+            migrated_out_path = ensure_dynamic_bundle_compressed(out_dir)
+            if migrated_out_path is not None:
+                out_path = migrated_out_path
+                summary_fingerprint = file_stat_fingerprint(out_path)
+        cached_rows = None if skip_unchanged_rows else (rows_from_manifest_cache(manifest, series_mode) if collect_rows else None)
+        if not collect_rows or skip_unchanged_rows:
+            all_rows, all_color_rows = [], []
+        elif cached_rows is not None:
+            all_rows, all_color_rows = cached_rows
+        else:
+            all_rows, all_color_rows = rows_from_existing_bundle(out_path)
+            manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
+        manifest.update({
+            "summary_file": out_path.as_posix(),
+            SUMMARY_FILE_FINGERPRINT_KEY: summary_fingerprint,
+            DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
+            "last_update": datetime.now(timezone.utc).isoformat(),
+        })
+        save_manifest(manifests_root, rel_group, manifest)
+        print(f"[skip-fast] {out_path} ({len(all_rows)} rows)")
+        if return_changed:
+            return out_path, all_rows, all_color_rows, False
+        return out_path, all_rows, all_color_rows
+
+    json_files = collect_group_json_files(data_dir, known_names=manifest_files)
+    current_json_files = sorted({fp.name for fp in json_files})
+    files_by_name = {fp.name: fp for fp in json_files}
     names_new_to_manifest = sorted(set(current_json_files) - manifest_files)
     current_file_fingerprints: dict[str, str] = {}
     if manifest_fingerprints:
@@ -3128,6 +3198,7 @@ def process_group(
                 "summary_file": out_path.as_posix(),
                 "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
                 "series_mode": series_mode,
+                DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
                 "last_update": datetime.now(timezone.utc).isoformat(),
             })
             if summary_fingerprint:
@@ -3144,6 +3215,16 @@ def process_group(
         preview = ", ".join(new_sample_files[:5])
         suffix = "" if len(new_sample_files) <= 5 else f", ... (+{len(new_sample_files) - 5} more)"
         print(f"[update] detected {len(new_sample_files)} new sample files for {rel_group}: {preview}{suffix}")
+
+    surface_out_path = process_surface_observables_bundle(
+        params,
+        rel_group,
+        json_files,
+        out_dir,
+        pretty_json=pretty_json,
+    )
+    if surface_out_path is not None:
+        print(f"[surface] ensured {surface_out_path}")
 
     existing_bundle: dict[str, Any] | None = existing_bundle_for_validation
     if out_path.exists() and not clear:
@@ -3245,6 +3326,7 @@ def process_group(
         "fingerprint_mode": fingerprint_mode,
         "summary_file": out_path.as_posix(),
         SUMMARY_FILE_FINGERPRINT_KEY: summary_fingerprint,
+        DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
         "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
         "series_mode": series_mode,
         "last_update": datetime.now(timezone.utc).isoformat(),

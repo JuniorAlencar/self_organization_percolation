@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import json
 import math
 import re
 import struct
+from datetime import datetime, timezone
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,9 +28,22 @@ PATH_RE = re.compile(
     r"(?:/stationary_window_\d+)?/data/"
     r"(?P<sample>[^/]+)\.yts$"
 )
+DATA_DIR_RE = re.compile(
+    r"(?P<type_perc>bond|node)_percolation/"
+    r"num_colors_(?P<num_colors>\d+)/dim_(?P<dim>\d+)/"
+    r"L_(?P<L>\d+)/fT_constant/fT_(?P<f_T>[0-9.eE+-]+)/"
+    r"c_(?P<c>[0-9.eE+-]+)"
+    r"(?:/(?:f0|delta_max|x)_(?P<control_param>[0-9.eE+-]+))?"
+    r"(?:/epsilon_(?P<epsilon>[0-9.eE+-]+))?"
+    r"/rho_(?P<rho>[0-9.eE+-]+)"
+    r"(?:/stationary_window_\d+)?/data$"
+)
 SAMPLE_RE = re.compile(
     r"seed_(?P<seed>\d+)_ts_(?P<ts>[^_]+)_P0_(?P<P0>[0-9.eE+-]+)_p0_(?P<p0>[0-9.eE+-]+)"
 )
+SAMPLE_SEED_RE = re.compile(r"(?:^|_)seed_(?P<seed>\d+)")
+SAMPLE_P0_RE = re.compile(r"(?:^|_)P0_(?P<P0>[0-9.eE+-]+)")
+SAMPLE_p0_RE = re.compile(r"(?:^|_)p0_(?P<p0>[0-9.eE+-]+)")
 
 MAGIC_YTS = 0x53545059
 VERSION_YTS = 1
@@ -97,6 +112,11 @@ SUMMARY_FIELDS = [
     "nt_max",
 ]
 
+HEIGHT_SAMPLE_PROCESSING_VERSION = 1
+HEIGHT_SAMPLE_MANIFEST = "height_sample_manifest.json"
+HEIGHT_SAMPLE_FILE = "height_sample_measures.csv.gz"
+DATA_DIR_FINGERPRINT_KEY = "data_dir_fingerprint"
+
 
 @dataclass(frozen=True)
 class PathMeta:
@@ -132,6 +152,42 @@ def parse_path(path: Path) -> PathMeta:
         raise ValueError(f"could not parse parameters from path: {path}")
     meta = match.groupdict()
     sample_match = SAMPLE_RE.search(meta["sample"])
+    seed_m = SAMPLE_SEED_RE.search(meta["sample"])
+    P0_m = SAMPLE_P0_RE.search(meta["sample"])
+    p0_m = SAMPLE_p0_RE.search(meta["sample"])
+    f_T_val = float(meta["f_T"])
+
+    seed = int(seed_m.group("seed")) if seed_m else (int(sample_match.group("seed")) if sample_match else None)
+    p0 = float(p0_m.group("p0")) if p0_m else (float(sample_match.group("p0")) if sample_match else None)
+    if P0_m:
+        P0 = float(P0_m.group("P0"))
+    elif sample_match and sample_match.group("P0"):
+        P0 = float(sample_match.group("P0"))
+    else:
+        P0 = min(1.0, 1.2 * f_T_val)
+
+    return PathMeta(
+        type_perc=meta["type_perc"],
+        num_colors=int(meta["num_colors"]),
+        dim=int(meta["dim"]),
+        L=int(meta["L"]),
+        f_T=f_T_val,
+        c=float(meta["c"]),
+        control_param=float(meta["control_param"]) if meta.get("control_param") else None,
+        epsilon=float(meta["epsilon"]) if meta.get("epsilon") else None,
+        rho=float(meta["rho"]),
+        sample=meta["sample"],
+        seed=seed,
+        P0=P0,
+        p0=p0,
+    )
+
+
+def parse_data_dir(path: Path) -> PathMeta:
+    match = DATA_DIR_RE.search(str(path))
+    if not match:
+        raise ValueError(f"could not parse parameters from data dir: {path}")
+    meta = match.groupdict()
     return PathMeta(
         type_perc=meta["type_perc"],
         num_colors=int(meta["num_colors"]),
@@ -142,10 +198,10 @@ def parse_path(path: Path) -> PathMeta:
         control_param=float(meta["control_param"]) if meta.get("control_param") else None,
         epsilon=float(meta["epsilon"]) if meta.get("epsilon") else None,
         rho=float(meta["rho"]),
-        sample=meta["sample"],
-        seed=int(sample_match.group("seed")) if sample_match else None,
-        P0=float(sample_match.group("P0")) if sample_match else None,
-        p0=float(sample_match.group("p0")) if sample_match else None,
+        sample="",
+        seed=None,
+        P0=None,
+        p0=None,
     )
 
 
@@ -164,8 +220,19 @@ def group_key(meta: PathMeta) -> tuple:
 
 
 def read_yts(path: Path, colors: Iterable[int] | None = None) -> YtsData:
+    def read_exact(handle, n_bytes: int, label: str) -> bytes:
+        data = handle.read(n_bytes)
+        if len(data) != n_bytes:
+            raise ValueError(
+                f"truncated .yts {label} in {path}: expected {n_bytes} bytes, got {len(data)}"
+            )
+        return data
+
     with path.open("rb") as handle:
-        magic, version, num_colors, nt = struct.unpack("<IIIQ", handle.read(HEADER_BYTES))
+        magic, version, num_colors, nt = struct.unpack(
+            "<IIIQ",
+            read_exact(handle, HEADER_BYTES, "header"),
+        )
         if magic != MAGIC_YTS:
             raise ValueError(f"invalid .yts magic in {path}: {hex(magic)}")
         if version != VERSION_YTS:
@@ -175,19 +242,19 @@ def read_yts(path: Path, colors: Iterable[int] | None = None) -> YtsData:
         if bad_colors:
             raise ValueError(f"colors outside [0,{num_colors}) for {path}: {bad_colors}")
 
-        time = np.frombuffer(handle.read(4 * nt), dtype="<i4").astype(np.float64)
+        time = np.frombuffer(read_exact(handle, 4 * nt, "time"), dtype="<i4").astype(np.float64)
         row_bytes = int(nt) * PER_COLOR_BYTES
         arrays: dict[int, tuple[np.ndarray, ...]] = {}
         for color in range(num_colors):
             if color not in selected:
                 handle.seek(row_bytes, 1)
                 continue
-            y_mean = np.frombuffer(handle.read(8 * nt), dtype="<f8").copy()
-            y_width = np.frombuffer(handle.read(8 * nt), dtype="<f8").copy()
-            y_max = np.frombuffer(handle.read(4 * nt), dtype="<i4").astype(np.float64)
-            y_front_mean = np.frombuffer(handle.read(8 * nt), dtype="<f8").copy()
-            y_front_width = np.frombuffer(handle.read(8 * nt), dtype="<f8").copy()
-            y_front_count = np.frombuffer(handle.read(4 * nt), dtype="<u4").astype(np.float64)
+            y_mean = np.frombuffer(read_exact(handle, 8 * nt, f"color {color} y_mean"), dtype="<f8").copy()
+            y_width = np.frombuffer(read_exact(handle, 8 * nt, f"color {color} y_width"), dtype="<f8").copy()
+            y_max = np.frombuffer(read_exact(handle, 4 * nt, f"color {color} y_max"), dtype="<i4").astype(np.float64)
+            y_front_mean = np.frombuffer(read_exact(handle, 8 * nt, f"color {color} y_front_mean"), dtype="<f8").copy()
+            y_front_width = np.frombuffer(read_exact(handle, 8 * nt, f"color {color} y_front_width"), dtype="<f8").copy()
+            y_front_count = np.frombuffer(read_exact(handle, 4 * nt, f"color {color} y_front_count"), dtype="<u4").astype(np.float64)
             arrays[color] = (y_mean, y_width, y_max, y_front_mean, y_front_width, y_front_count)
 
     return YtsData(
@@ -340,6 +407,39 @@ def write_rows_csv_gz(path: Path, rows: list[dict], fields: list[str]) -> None:
         writer.writerows(rows)
 
 
+def read_rows_csv_gz(path: Path, fields: list[str]) -> list[dict]:
+    if not path.exists():
+        return []
+    with gzip.open(path, "rt", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames != fields:
+            raise ValueError(f"unexpected header in {path}: {reader.fieldnames}")
+        return [dict(row) for row in reader]
+
+
+def load_manifest(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_manifest(path: Path, manifest: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def directory_stat_fingerprint(path: Path) -> str:
+    stat = path.stat()
+    return f"dir:{stat.st_size}:{stat.st_mtime_ns}"
+
+
 def output_group_dir(raw_root: Path, output_root: Path, first_path: Path) -> Path:
     group_dir = first_path.parent.parent
     try:
@@ -347,6 +447,34 @@ def output_group_dir(raw_root: Path, output_root: Path, first_path: Path) -> Pat
     except ValueError:
         rel = Path(*[part for part in group_dir.parts if part not in {"", "/"}][-8:])
     return output_root / rel
+
+
+def output_group_dir_from_data_dir(raw_root: Path, output_root: Path, data_dir: Path) -> Path:
+    group_dir = data_dir.parent
+    try:
+        rel = group_dir.relative_to(raw_root)
+    except ValueError:
+        rel = Path(*[part for part in group_dir.parts if part not in {"", "/"}][-8:])
+    return output_root / rel
+
+
+def collect_data_dirs(root: Path, args: argparse.Namespace) -> list[tuple[PathMeta, Path]]:
+    data_dirs: list[tuple[PathMeta, Path]] = []
+    for path in sorted(root.rglob("data")):
+        if not path.is_dir():
+            continue
+        try:
+            meta = parse_data_dir(path)
+        except ValueError:
+            continue
+        if args.type_perc and meta.type_perc != args.type_perc:
+            continue
+        if args.lengths and meta.L not in args.lengths:
+            continue
+        if args.f_T and not any(math.isclose(meta.f_T, value, rel_tol=1e-12, abs_tol=1e-12) for value in args.f_T):
+            continue
+        data_dirs.append((meta, path))
+    return data_dirs
 
 
 def collect_files(root: Path, args: argparse.Namespace) -> dict[tuple, list[tuple[PathMeta, Path]]]:
@@ -444,47 +572,175 @@ def main() -> int:
     if not 0 <= args.fit_frac_range[0] < args.fit_frac_range[1] <= 1:
         raise SystemExit("--fit-frac-range must satisfy 0 <= lo < hi <= 1.")
 
-    groups = collect_files(args.root, args)
-    if not groups:
-        raise SystemExit("No .yts files selected.")
+    data_dirs = collect_data_dirs(args.root, args)
+    existing_group_paths = sorted(args.out_root.rglob(HEIGHT_SAMPLE_FILE))
+    if not data_dirs and not existing_group_paths:
+        print(f"[info] No .yts files selected in {args.root}.")
+        return 0
 
     summary_rows: list[dict] = []
-    all_sample_rows: list[dict] = []
     total_samples = 0
-    for key, items in sorted(groups.items()):
-        group_rows: list[dict] = []
-        for meta, path in items:
-            group_rows.extend(
-                measure_sample(
-                    path,
-                    meta,
-                    args.colors,
-                    tuple(args.fit_frac_range),
-                    args.tail_fraction,
-                )
+    total_rows = 0
+    all_samples_path = args.out_root / "height_sample_measures_all.csv.gz"
+    all_samples_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with gzip.open(all_samples_path, "wt", newline="") as all_handle:
+        all_writer = csv.DictWriter(all_handle, fieldnames=MEASURE_FIELDS)
+        all_writer.writeheader()
+        seen_group_paths: set[Path] = set()
+
+        for dir_meta, data_dir in data_dirs:
+            key = group_key(dir_meta)
+            out_dir = output_group_dir_from_data_dir(args.root, args.out_root, data_dir)
+            group_path = out_dir / HEIGHT_SAMPLE_FILE
+            seen_group_paths.add(group_path.resolve())
+            manifest_path = out_dir / HEIGHT_SAMPLE_MANIFEST
+            manifest = load_manifest(manifest_path)
+            manifest_ok = (
+                int(manifest.get("height_sample_processing_version", 0) or 0)
+                == HEIGHT_SAMPLE_PROCESSING_VERSION
             )
-        if not group_rows:
-            print(f"[warn] {key}: no rows written; check --colors.")
-            continue
-        by_color: dict[int, list[dict]] = defaultdict(list)
-        for row in group_rows:
-            by_color[int(row["color"])].append(row)
-        for rows in by_color.values():
-            summary_rows.append(summarize_group(rows))
+            processed_files = set(map(str, manifest.get("processed_yts_files", []))) if manifest_ok else set()
+            current_data_dir_fingerprint = directory_stat_fingerprint(data_dir)
 
-        out_dir = output_group_dir(args.root, args.out_root, items[0][1])
-        write_rows_csv_gz(out_dir / "height_sample_measures.csv.gz", group_rows, MEASURE_FIELDS)
-        all_sample_rows.extend(group_rows)
-        total_samples += len(items)
-        print(f"[ok] {key}: {len(items)} samples -> {out_dir / 'height_sample_measures.csv.gz'}")
+            if (
+                manifest_ok
+                and group_path.exists()
+                and manifest.get(DATA_DIR_FINGERPRINT_KEY) == current_data_dir_fingerprint
+            ):
+                try:
+                    group_rows = read_rows_csv_gz(group_path, MEASURE_FIELDS)
+                except Exception as exc:
+                    print(f"[warn] Could not fast-skip unreadable published height measures ({exc}): {group_path}")
+                else:
+                    if group_rows:
+                        by_color: dict[int, list[dict]] = defaultdict(list)
+                        for row in group_rows:
+                            by_color[int(row["color"])].append(row)
+                        for rows in by_color.values():
+                            summary_rows.append(summarize_group(rows))
+                        all_writer.writerows(group_rows)
+                        total_rows += len(group_rows)
+                        total_samples += len({str(row.get("sample_id", "")) for row in group_rows if row.get("sample_id")})
+                        print(f"[skip-fast] {key}: {len(processed_files)} samples already in {group_path}")
+                        continue
 
-    if not all_sample_rows:
-        raise SystemExit("No sample rows were produced.")
+            items: list[tuple[PathMeta, Path]] = []
+            for path in sorted(data_dir.glob("*.yts")):
+                try:
+                    meta = parse_path(path)
+                except ValueError:
+                    continue
+                items.append((meta, path))
+            if args.max_samples_per_group:
+                items = items[: args.max_samples_per_group]
+            if not items:
+                continue
+            existing_rows = read_rows_csv_gz(group_path, MEASURE_FIELDS)
 
-    write_rows_csv_gz(args.out_root / "height_sample_measures_all.csv.gz", all_sample_rows, MEASURE_FIELDS)
+            rows_by_sample: dict[str, list[dict]] = defaultdict(list)
+            for row in existing_rows:
+                sample_id = str(row.get("sample_id", ""))
+                if sample_id:
+                    rows_by_sample[sample_id].append(row)
+
+            new_items = [(meta, path) for meta, path in items if path.name not in processed_files]
+            if (
+                not new_items
+                and existing_rows
+                and int(manifest.get("height_sample_processing_version", 0) or 0) == HEIGHT_SAMPLE_PROCESSING_VERSION
+            ):
+                group_rows = existing_rows
+                manifest[DATA_DIR_FINGERPRINT_KEY] = current_data_dir_fingerprint
+                save_manifest(manifest_path, manifest)
+                print(f"[skip] {key}: {len(processed_files)} samples already in {group_path}")
+            else:
+                group_rows = list(existing_rows)
+
+            valid_samples_count = 0
+            processed_new_files: list[str] = []
+            for meta, path in new_items:
+                try:
+                    sample_rows = measure_sample(
+                        path,
+                        meta,
+                        args.colors,
+                        tuple(args.fit_frac_range),
+                        args.tail_fraction,
+                    )
+                except Exception as exc:
+                    print(f"[warn] Skipping corrupt/unreadable .yts ({exc}): {path}")
+                    continue
+                if sample_rows:
+                    previous_rows = rows_by_sample.get(meta.sample, [])
+                    if previous_rows:
+                        previous_ids = {id(row) for row in previous_rows}
+                        group_rows = [row for row in group_rows if id(row) not in previous_ids]
+                    rows_by_sample[meta.sample] = sample_rows
+                    valid_samples_count += 1
+                    group_rows.extend(sample_rows)
+                    processed_new_files.append(path.name)
+            if not group_rows:
+                print(f"[warn] {key}: no rows written; check --colors or corrupt .yts files.")
+                continue
+
+            if new_items:
+                write_rows_csv_gz(group_path, group_rows, MEASURE_FIELDS)
+                processed_files.update(processed_new_files)
+                manifest.update({
+                    "height_sample_processing_version": HEIGHT_SAMPLE_PROCESSING_VERSION,
+                    "processed_yts_files": sorted(processed_files),
+                    "n_processed_yts_files": len(processed_files),
+                    DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
+                    "last_update": datetime.now(timezone.utc).isoformat(),
+                })
+                save_manifest(manifest_path, manifest)
+
+            by_color: dict[int, list[dict]] = defaultdict(list)
+            for row in group_rows:
+                by_color[int(row["color"])].append(row)
+            for rows in by_color.values():
+                summary_rows.append(summarize_group(rows))
+
+            all_writer.writerows(group_rows)
+            total_rows += len(group_rows)
+            total_samples += len({str(row.get("sample_id", "")) for row in group_rows if row.get("sample_id")})
+            if new_items:
+                print(f"[ok] {key}: +{valid_samples_count}/{len(new_items)} new samples, {len(processed_files)} total -> {group_path}")
+
+            del group_rows
+
+        for group_path in existing_group_paths:
+            if group_path.resolve() in seen_group_paths:
+                continue
+            try:
+                group_rows = read_rows_csv_gz(group_path, MEASURE_FIELDS)
+            except Exception as exc:
+                print(f"[warn] Skipping unreadable published height measures ({exc}): {group_path}")
+                continue
+            if not group_rows:
+                continue
+            by_color: dict[int, list[dict]] = defaultdict(list)
+            for row in group_rows:
+                by_color[int(row["color"])].append(row)
+            for rows in by_color.values():
+                summary_rows.append(summarize_group(rows))
+            all_writer.writerows(group_rows)
+            total_rows += len(group_rows)
+            total_samples += len({str(row.get("sample_id", "")) for row in group_rows if row.get("sample_id")})
+            print(f"[keep] published-only group -> {group_path}")
+
+    if total_rows == 0:
+        try:
+            all_samples_path.unlink()
+        except FileNotFoundError:
+            pass
+        print(f"[info] No sample rows were produced in {args.root}.")
+        return 0
+
     write_rows_csv_gz(args.out_root / "height_group_summary.csv.gz", summary_rows, SUMMARY_FIELDS)
-    print(f"[done] processed {total_samples} samples in {len(groups)} groups")
-    print(f"[done] samples -> {args.out_root / 'height_sample_measures_all.csv.gz'}")
+    print(f"[done] processed {total_samples} samples in {len(data_dirs)} groups")
+    print(f"[done] samples -> {all_samples_path}")
     print(f"[done] summary -> {args.out_root / 'height_group_summary.csv.gz'}")
     return 0
 

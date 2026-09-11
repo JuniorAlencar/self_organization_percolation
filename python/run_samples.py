@@ -35,14 +35,14 @@ nc = 1
 #c_lst = [0.01, 0.05, 0.1, 0.15, 0.2]
 #c_lst = [0.02, 0.03, 0.04, 0.06, 0.07, 0.8, 0.9]
 #c_lst = np.round(np.arange(0.01, 0.21, 0.01), 2)
-c = 0.01
+c = 0.05
 multi=True
 Equilibration = 'false'
 Properties = 'false'
 Mode = 'growth_test'  # use 'sop' for the original fixed-height SOP run
-InitialLayout = 'random'  # 'random', 'blocks', or 'alternating'
-p0 = 0.8
-P0 = 0.2
+InitialLayout = 'clustered'  # 'clustered', 'random', 'blocks', or 'alternating'
+ControlRule = 'relative'     # 'relative' or 'linear'
+
 # step = 0.01 * abs(ft)
 
 # left_points = ft - step * np.arange(7, 0, -1)
@@ -58,7 +58,8 @@ df = pd.read_csv(f"../SOP_data/ft_min_max_2D_{type_perc}.csv", sep=',')
 rho = 1/nc
 p0 = 0.8
 
-ft = 0.2394655
+#ft = 0.2394655
+ft_lst = np.linspace(0.01, 0.3, 20)
 for L in L_lst:
     
     #print(L)
@@ -67,31 +68,33 @@ for L in L_lst:
     #ft = df_sub['f_T_min'].values[0]
 
     #for ft in ft_lst:
+    for ft in ft_lst:
+        P0 = min(1.0, 1.2 * ft)
+        num_runs = num_runs_por_L[L]
+        mode_tag = "" if Mode == "sop" else f"_{Mode}"
+        layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"
+        exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0:.3f}{mode_tag}{layout_tag}_type_{type_perc}.sh"
 
-    num_runs = num_runs_por_L[L]
-    mode_tag = "" if Mode == "sop" else f"_{Mode}"
-    layout_tag = "" if InitialLayout == "random" else f"_{InitialLayout}"
-    exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}{layout_tag}_type_{type_perc}.sh"
-
-    shell_data(L, type_perc, p0, seed, c, ft, dim,
-            nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
-            properties=Properties, mode=Mode,
-            initial_layout=InitialLayout)   
+        shell_data(L, type_perc, p0, seed, c, ft, dim,
+                nc, num_runs, [1/nc], exec_name, Equilibration, multi,
+                properties=Properties, mode=Mode,
+                initial_layout=InitialLayout, control_rule=ControlRule)   
 
 # for L in L_lst:
 # #    ft_lst = np.linspace(0.4, 0.6, 20)
-
+#
 #     for ft in ft_lst:
+#         P0 = min(1.0, 1.2 * ft)
 #         rho = 1/nc
 #         num_runs = num_runs_por_L[L]
 #         mode_tag = "" if Mode == "sop" else f"_{Mode}"
-#         layout_tag = "" if InitialLayout == "random" else f"_{InitialLayout}"
-#         exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0}{mode_tag}{layout_tag}.sh"
-
+#         layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"
+#         exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0:.3f}{mode_tag}{layout_tag}.sh"
+#
 #         shell_data(L, type_perc, p0, seed, c, ft, dim,
 #                 nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
 #                 properties=Properties, mode=Mode,
-#                 initial_layout=InitialLayout)    
+#                 initial_layout=InitialLayout, control_rule=ControlRule)    
 
 
 #for idx, L in enumerate(L_lst):
