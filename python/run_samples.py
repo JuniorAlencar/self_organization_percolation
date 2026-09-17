@@ -14,9 +14,14 @@ seed = -1
 dim = 2
 #nc=2
 
-type_perc = 'bond'
-L_lst = [1024, 2048, 4096, 8192, 16384]
-num_runs_lst = [500, 400, 200, 100, 50]
+type_perc = 'node'
+type_lst = ['node','bond']
+# L_lst = [512, 1024, 2048, 4096, 8192, 16384]
+# num_runs_lst = [700, 500, 400, 200, 100, 50]
+L_lst = [1024]
+num_runs_lst = [500]
+#L_lst = [8192, 16384]
+#num_runs_lst = [100, 50]
 #L_lst = [16384]
 #num_runs_lst = [50]
 
@@ -35,7 +40,8 @@ nc = 1
 #c_lst = [0.01, 0.05, 0.1, 0.15, 0.2]
 #c_lst = [0.02, 0.03, 0.04, 0.06, 0.07, 0.8, 0.9]
 #c_lst = np.round(np.arange(0.01, 0.21, 0.01), 2)
-c = 0.05
+c = 0.1
+#P0 = 0.2
 multi=True
 Equilibration = 'false'
 Properties = 'false'
@@ -53,13 +59,16 @@ ControlRule = 'relative'     # 'relative' or 'linear'
 #     right_points
 # ])
 
-df = pd.read_csv(f"../SOP_data/ft_min_max_2D_{type_perc}.csv", sep=',')
+#df = pd.read_csv(f"../SOP_data/ft_min_max_2D_{type_perc}.csv", sep=',')
 # ft = 0.3178947
 rho = 1/nc
-p0 = 0.8
+#p0 = 0.8
 
 #ft = 0.2394655
 ft_lst = np.linspace(0.01, 0.3, 20)
+p0 = 0.4
+P0_lst = [round(i,2) for i in np.arange(0.1, 1.1, 0.1) if round(i,2) != 0.2]
+#P0_lst = [0.8]
 for L in L_lst:
     
     #print(L)
@@ -68,17 +77,19 @@ for L in L_lst:
     #ft = df_sub['f_T_min'].values[0]
 
     #for ft in ft_lst:
-    for ft in ft_lst:
-        P0 = min(1.0, 1.2 * ft)
-        num_runs = num_runs_por_L[L]
-        mode_tag = "" if Mode == "sop" else f"_{Mode}"
-        layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"
-        exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0:.3f}{mode_tag}{layout_tag}_type_{type_perc}.sh"
+    for type_perc in type_lst:
+        for P0 in P0_lst:
+            for ft in ft_lst:
+                #P0 = min(1.0, 1.2 * ft)
+                num_runs = num_runs_por_L[L]
+                mode_tag = "" if Mode == "sop" else f"_{Mode}"
+                layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"
+                exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0:.3f}{mode_tag}{layout_tag}_type_{type_perc}.sh"
 
-        shell_data(L, type_perc, p0, seed, c, ft, dim,
-                nc, num_runs, [1/nc], exec_name, Equilibration, multi,
-                properties=Properties, mode=Mode,
-                initial_layout=InitialLayout, control_rule=ControlRule)   
+                shell_data(L, type_perc, p0, seed, c, ft, dim,
+                        nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
+                        properties=Properties, mode=Mode,
+                        initial_layout=InitialLayout, control_rule=ControlRule)   
 
 # for L in L_lst:
 # #    ft_lst = np.linspace(0.4, 0.6, 20)

@@ -223,13 +223,14 @@ int main(int argc, char* argv[]) {
 
     try {
         // If no arguments provided, use a set of reasonable defaults you can
-        // edit here. If full argv are provided (10+), parse them.
+        // edit here. If full argv are provided (11+), parse them.
         int L = 128; 
         double pp0 = 1.0;
         int seed = 12345;
         std::string type_percolation = "site";
         double c = 0.01;
         double f_T = 0.06;
+        double P0 = std::min(1.0, 1.2 * f_T);
         int dim = 3;
         int num_colors = 1;
         double rho_val = 1.0;
@@ -241,38 +242,37 @@ int main(int argc, char* argv[]) {
         bool save_animation_window_only = false;
         std::string control_rule_name = "relative";
         
-        if (argc >= 11) {
+        if (argc >= 12) {
             L = std::stoi(argv[1]);
             pp0 = std::stod(argv[2]);
-            seed = std::stoi(argv[3]);
-            type_percolation = argv[4];
-            c = std::stod(argv[5]);
-            f_T = std::stod(argv[6]);
-            dim = std::stoi(argv[7]);
-            num_colors = std::stoi(argv[8]);
-            rho_val = std::stod(argv[9]);
-            equilibration = argv[10];
-            if (argc >= 12) {
-                calculate_detailed_properties = helpers::parse_bool(argv[11]);
-            }
+            P0 = std::stod(argv[3]);
+            seed = std::stoi(argv[4]);
+            type_percolation = argv[5];
+            c = std::stod(argv[6]);
+            f_T = std::stod(argv[7]);
+            dim = std::stoi(argv[8]);
+            num_colors = std::stoi(argv[9]);
+            rho_val = std::stod(argv[10]);
+            equilibration = argv[11];
             if (argc >= 13) {
-                run_mode = argv[12];
+                calculate_detailed_properties = helpers::parse_bool(argv[12]);
             }
             if (argc >= 14) {
-                initial_layout = argv[13];
+                run_mode = argv[13];
             }
             if (argc >= 15) {
-                save_surface_observables = helpers::parse_bool(argv[14]);
+                initial_layout = argv[14];
             }
             if (argc >= 16) {
-                save_animation_window_only = helpers::parse_bool(argv[15]);
+                save_surface_observables = helpers::parse_bool(argv[15]);
             }
             if (argc >= 17) {
-                control_rule_name = argv[16];
+                save_animation_window_only = helpers::parse_bool(argv[16]);
+            }
+            if (argc >= 18) {
+                control_rule_name = argv[17];
             }
         }
-
-        const double P0 = std::min(1.0, 1.2 * f_T);
 
         const bool teste = (run_mode == "growth_test");
         if (run_mode != "sop" && run_mode != "growth_test") {
@@ -333,6 +333,12 @@ int main(int argc, char* argv[]) {
 
         if (num_colors < 1) {
             std::cerr << "[ERROR] num_colors must be >= 1.\n";
+            helpers::print_help(argv[0]);
+            return 1;
+        }
+
+        if (P0 < 0.0 || P0 > 1.0) {
+            std::cerr << "[ERROR] P0 must be between 0 and 1.\n";
             helpers::print_help(argv[0]);
             return 1;
         }

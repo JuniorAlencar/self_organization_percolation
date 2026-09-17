@@ -23,7 +23,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 19
+DYNAMIC_PROCESSING_VERSION = 21
 LATERAL_PROCESSING_VERSION = 4
 SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
@@ -77,14 +77,14 @@ ALL_DATA_LEGACY_COLUMNS = [
     "t_eq_validation", "t_eq_s_prime_threshold",
 ]
 
-ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "stat_window")
+ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "stat_window")
 ALL_COLORS_LEGACY_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
     "N_samples", "rho", "control_param", "epsilon", "nc", "nc_err", "nc_std", "stat_window",
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
-ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "stat_window")
+ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "p0", "P0", "stat_window")
 DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window"}
 DAT_FLOAT_COLUMNS = {
     "f_T", "c", "rho", "control_param", "epsilon", "p0", "P0", "p_mean", "p_err", "f_mean", "f_err",
@@ -92,6 +92,10 @@ DAT_FLOAT_COLUMNS = {
     "t_eq_s_prime_threshold", "nc", "nc_err", "nc_std",
     "equilibrium_effective_rel_tol",
 }
+
+
+def estimate_legacy_P0_from_f_T(f_T: Any) -> float:
+    return min(1.0, 1.2 * float(f_T))
 
 
 def ensure_dir(path: Path) -> None:
@@ -411,6 +415,71 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
                 row["stat_window"] = 0
             rows.append(row)
     return rows
+
+
+def dat_header(path: Path) -> list[str]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return handle.readline().split()
+    except FileNotFoundError:
+        return []
+
+
+def migrate_missing_P0_from_f_T_once(path: Path, *, insert_after: str) -> bool:
+    """One-time .dat migration: add P0=min(1, 1.2*f_T) when legacy files lack P0."""
+    if not path.exists():
+        return False
+
+    with path.open("r", encoding="utf-8") as handle:
+        lines = handle.readlines()
+    if not lines:
+        return False
+
+    header = lines[0].split()
+    if not header or "P0" in header:
+        return False
+    if "f_T" not in header:
+        raise ValueError(f"Cannot estimate missing P0 in {path}: f_T column is absent")
+    if insert_after not in header:
+        raise ValueError(f"Cannot insert missing P0 in {path}: {insert_after} column is absent")
+
+    insert_idx = header.index(insert_after) + 1
+    migrated_header = header[:insert_idx] + ["P0"] + header[insert_idx:]
+    f_T_idx = header.index("f_T")
+
+    migrated_lines = [" ".join(migrated_header) + "\n"]
+    for line in lines[1:]:
+        parts = line.split()
+        if not parts:
+            continue
+        if f_T_idx >= len(parts):
+            raise ValueError(f"Cannot estimate missing P0 in {path}: malformed row")
+        P0 = estimate_legacy_P0_from_f_T(parts[f_T_idx])
+        migrated_parts = parts[:insert_idx] + [dat_value(P0)] + parts[insert_idx:]
+        migrated_lines.append(" ".join(migrated_parts) + "\n")
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        handle.writelines(migrated_lines)
+    tmp_path.replace(path)
+    return True
+
+
+def migrate_dynamic_dat_files_missing_P0_once(all_data_path: Path, all_colors_path: Path) -> None:
+    migrated = []
+    if migrate_missing_P0_from_f_T_once(all_data_path, insert_after="p0"):
+        migrated.append(all_data_path)
+    if migrate_missing_P0_from_f_T_once(all_colors_path, insert_after="num_colors"):
+        migrated.append(all_colors_path)
+    for path in migrated:
+        print(f"[migrate] added legacy P0 column from f_T in {path}")
+
+
+def dat_has_current_headers(all_data_path: Path, all_colors_path: Path) -> bool:
+    return (
+        dat_header(all_data_path) == ALL_DATA_COLUMNS
+        and dat_header(all_colors_path) == ALL_COLORS_COLUMNS
+    )
 
 
 def normalized_group_value(value: Any) -> Any:
@@ -1774,6 +1843,32 @@ def collect_group_json_files(data_dir: Path, known_names: set[str] | None = None
     )
 
 
+def delete_processed_raw_json_files(data_dir: Path, processed_names: set[str]) -> tuple[int, int]:
+    deleted = 0
+    bytes_deleted = 0
+    for name in sorted(processed_names):
+        path = data_dir / name
+        if path.suffix != ".json" or not path.is_file():
+            continue
+        try:
+            size = path.stat().st_size
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        deleted += 1
+        bytes_deleted += size
+    return deleted, bytes_deleted
+
+
+def format_bytes(num_bytes: int) -> str:
+    value = float(num_bytes)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024.0 or unit == "TiB":
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    return f"{num_bytes} B"
+
+
 def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     meta = bundle.get("meta", {}) if isinstance(bundle.get("meta", {}), dict) else {}
     params = {
@@ -3032,6 +3127,7 @@ def process_group(
     migrate_published: bool = True,
     skip_unchanged_rows: bool = False,
     return_changed: bool = False,
+    delete_processed_raw_json: bool = False,
 ) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]] | tuple[Path, list[dict[str, Any]], list[dict[str, Any]], bool]:
     if series_mode not in ("full", "profiles", "scalars"):
         raise ValueError(f"Unknown series_mode: {series_mode}")
@@ -3067,6 +3163,7 @@ def process_group(
         and manifest_series_mode == series_mode
         and manifest.get(DATA_DIR_FINGERPRINT_KEY) == current_data_dir_fingerprint
         and manifest.get(SUMMARY_FILE_FINGERPRINT_KEY) == summary_fingerprint
+        and not delete_processed_raw_json
     )
     if can_fast_skip_raw_scan:
         if migrate_published:
@@ -3206,6 +3303,16 @@ def process_group(
             if collect_rows and not skip_unchanged_rows:
                 manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
             save_manifest(manifests_root, rel_group, manifest)
+        if delete_processed_raw_json and current_json_files:
+            deleted, bytes_deleted = delete_processed_raw_json_files(data_dir, set(current_json_files))
+            if deleted:
+                manifest[DATA_DIR_FINGERPRINT_KEY] = directory_stat_fingerprint(data_dir)
+                manifest["last_raw_json_delete"] = datetime.now(timezone.utc).isoformat()
+                save_manifest(manifests_root, rel_group, manifest)
+                print(
+                    f"[cleanup] deleted {deleted} processed raw JSON files "
+                    f"from {data_dir} ({format_bytes(bytes_deleted)})"
+                )
         print(f"[skip] {out_path} ({len(all_rows)} rows)")
         if return_changed:
             return out_path, all_rows, all_color_rows, False
@@ -3334,6 +3441,16 @@ def process_group(
     if collect_rows:
         manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
     save_manifest(manifests_root, rel_group, manifest)
+    if delete_processed_raw_json and current_json_files:
+        deleted, bytes_deleted = delete_processed_raw_json_files(data_dir, set(current_json_files))
+        if deleted:
+            manifest[DATA_DIR_FINGERPRINT_KEY] = directory_stat_fingerprint(data_dir)
+            manifest["last_raw_json_delete"] = datetime.now(timezone.utc).isoformat()
+            save_manifest(manifests_root, rel_group, manifest)
+            print(
+                f"[cleanup] deleted {deleted} processed raw JSON files "
+                f"from {data_dir} ({format_bytes(bytes_deleted)})"
+            )
 
     if return_changed:
         return out_path, all_rows, all_color_rows, True
@@ -3488,6 +3605,15 @@ def main() -> int:
         action="store_false",
         help="Skip rebuilding all_data_dynamic.dat/all_colors_dynamic.dat. Faster for incremental updates.",
     )
+    parser.add_argument(
+        "--delete-processed-raw-json",
+        "--delete-processed-raw",
+        action="store_true",
+        help=(
+            "After a dynamic group is safely published and recorded in its manifest, "
+            "delete processed raw .json sample files. Leaves .yts files untouched."
+        ),
+    )
     parser.add_argument("--clear", action="store_true", help="Ignore manifest cache and rebuild dynamic bundles.")
     parser.add_argument(
         "-j",
@@ -3580,6 +3706,8 @@ def main() -> int:
 
     all_data_path = sop_root / args.all_data_name
     all_colors_path = sop_root / args.all_colors_name
+    if args.write_all_data_outputs:
+        migrate_dynamic_dat_files_missing_P0_once(all_data_path, all_colors_path)
     incremental_all_data = (
         args.write_all_data_outputs
         and not args.clear
@@ -3610,6 +3738,7 @@ def main() -> int:
             migrate_published=args.migrate_published,
             skip_unchanged_rows=incremental_all_data,
             return_changed=incremental_all_data,
+            delete_processed_raw_json=args.delete_processed_raw_json,
         )
         if incremental_all_data:
             out_path, rows, color_rows, group_changed = result
@@ -3620,59 +3749,99 @@ def main() -> int:
         all_rows.extend(rows)
         all_color_rows.extend(color_rows)
         if group_changed:
-            params = parse_data_dir(data_dir)
-            if params is not None:
-                changed_all_data_groups.add(all_data_group_key_from_params(params))
-                changed_all_colors_groups.add(all_colors_group_key_from_params(params))
+            if rows:
+                changed_all_data_groups.update(
+                    group_key(row, ALL_DATA_GROUP_COLUMNS) for row in rows
+                )
+            if color_rows:
+                changed_all_colors_groups.update(
+                    group_key(row, ALL_COLORS_GROUP_COLUMNS) for row in color_rows
+                )
+            if not rows or not color_rows:
+                params = parse_data_dir(data_dir)
+                if params is not None:
+                    if not rows:
+                        changed_all_data_groups.add(all_data_group_key_from_params(params))
+                    if not color_rows:
+                        changed_all_colors_groups.add(all_colors_group_key_from_params(params))
         print(f"[published] ensured {out_path}")
 
     if args.write_all_data_outputs:
         if incremental_all_data:
             if not changed_all_data_groups and not changed_all_colors_groups:
-                print("[dynamic] all-data unchanged; kept existing all_data/all_colors files")
-                return 0
-            try:
-                existing_rows = read_dat_rows(all_data_path, ALL_DATA_COLUMNS)
-                existing_color_rows = read_dat_rows(all_colors_path, ALL_COLORS_COLUMNS)
-                all_rows = replace_changed_groups(
-                    existing_rows,
-                    all_rows,
-                    ALL_DATA_GROUP_COLUMNS,
-                    changed_all_data_groups,
-                )
-                all_color_rows = replace_changed_groups(
-                    existing_color_rows,
-                    all_color_rows,
-                    ALL_COLORS_GROUP_COLUMNS,
-                    changed_all_colors_groups,
-                )
-                print(
-                    f"[dynamic] incremental all-data update: "
-                    f"{len(changed_all_data_groups)} changed groups, no published bundle import"
-                )
-            except Exception as exc:
-                print(f"[warn] incremental all-data update failed ({exc}); rebuilding from published bundles")
-                all_rows = []
-                all_color_rows = []
-                bundle_paths = sorted(
-                    set(published_root.rglob("properties_dynamic_bundle.json.xz"))
-                    | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
-                    | set(published_root.rglob("properties_dynamic_bundle.json"))
-                )
-                for bundle_path in bundle_paths:
-                    try:
-                        rows, color_rows, from_cache = rows_from_published_bundle_cached(
-                            bundle_path,
-                            published_root,
-                            manifests_root,
-                            args.series_mode,
-                        )
-                        all_rows.extend(rows)
-                        all_color_rows.extend(color_rows)
-                        action = "cache" if from_cache else "import"
-                        print(f"[{action}] {bundle_path} ({len(rows)} rows)")
-                    except Exception as import_exc:
-                        print(f"[warn] failed to import {bundle_path}: {import_exc}")
+                if dat_has_current_headers(all_data_path, all_colors_path):
+                    print("[dynamic] all-data unchanged; kept existing all_data/all_colors files")
+                    return 0
+                try:
+                    all_rows = read_dat_rows(all_data_path, ALL_DATA_COLUMNS)
+                    all_color_rows = read_dat_rows(all_colors_path, ALL_COLORS_COLUMNS)
+                    print("[dynamic] all-data schema changed; rewriting all_data/all_colors headers")
+                except Exception as exc:
+                    print(f"[warn] all-data schema migration failed ({exc}); rebuilding from published bundles")
+                    all_rows = []
+                    all_color_rows = []
+                    bundle_paths = sorted(
+                        set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+                        | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+                        | set(published_root.rglob("properties_dynamic_bundle.json"))
+                    )
+                    for bundle_path in bundle_paths:
+                        try:
+                            rows, color_rows, from_cache = rows_from_published_bundle_cached(
+                                bundle_path,
+                                published_root,
+                                manifests_root,
+                                args.series_mode,
+                            )
+                            all_rows.extend(rows)
+                            all_color_rows.extend(color_rows)
+                            action = "cache" if from_cache else "import"
+                            print(f"[{action}] {bundle_path} ({len(rows)} rows)")
+                        except Exception as import_exc:
+                            print(f"[warn] failed to import {bundle_path}: {import_exc}")
+            else:
+                try:
+                    existing_rows = read_dat_rows(all_data_path, ALL_DATA_COLUMNS)
+                    existing_color_rows = read_dat_rows(all_colors_path, ALL_COLORS_COLUMNS)
+                    all_rows = replace_changed_groups(
+                        existing_rows,
+                        all_rows,
+                        ALL_DATA_GROUP_COLUMNS,
+                        changed_all_data_groups,
+                    )
+                    all_color_rows = replace_changed_groups(
+                        existing_color_rows,
+                        all_color_rows,
+                        ALL_COLORS_GROUP_COLUMNS,
+                        changed_all_colors_groups,
+                    )
+                    print(
+                        f"[dynamic] incremental all-data update: "
+                        f"{len(changed_all_data_groups)} changed groups, no published bundle import"
+                    )
+                except Exception as exc:
+                    print(f"[warn] incremental all-data update failed ({exc}); rebuilding from published bundles")
+                    all_rows = []
+                    all_color_rows = []
+                    bundle_paths = sorted(
+                        set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+                        | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+                        | set(published_root.rglob("properties_dynamic_bundle.json"))
+                    )
+                    for bundle_path in bundle_paths:
+                        try:
+                            rows, color_rows, from_cache = rows_from_published_bundle_cached(
+                                bundle_path,
+                                published_root,
+                                manifests_root,
+                                args.series_mode,
+                            )
+                            all_rows.extend(rows)
+                            all_color_rows.extend(color_rows)
+                            action = "cache" if from_cache else "import"
+                            print(f"[{action}] {bundle_path} ({len(rows)} rows)")
+                        except Exception as import_exc:
+                            print(f"[warn] failed to import {bundle_path}: {import_exc}")
         else:
             # Full rebuild path: needed for first run, --clear, or missing .dat files.
             bundle_paths = sorted(

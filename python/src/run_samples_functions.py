@@ -18,6 +18,7 @@ def shell_data(
     num_runs: int,
     rho: list,
     exec_name: str,
+    P0: float | None = None,
     equlibration="false",
     multi: bool = False,
     properties=False,
@@ -32,7 +33,7 @@ def shell_data(
     Generate a shell script to run SOP multiple times.
 
     New SOP executable signature:
-        ./build/SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule]
+        ./build/SOP <L> <p0> <P0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule]
 
     The update rule is:
         relative (default): p_i(t+1) = p_i(t) + c * (1 - f_i(t)/f_T) with headroom damping
@@ -42,10 +43,21 @@ def shell_data(
         clustered (default): natural contiguous seed cluster on base
         random, blocks, alternating
 
-    P0 is calculated internally as min(1.0, 1.2 * f_T).
+    If P0 is omitted, it defaults to min(1.0, 1.2 * f_T).
     """
-    # Backward compatibility: if caller passed legacy positional P0 as 12th argument
-    if isinstance(equlibration, (float, int)):
+    # Backward compatibility for calls that predate the explicit P0 argument:
+    # shell_data(..., exec_name, Equilibration, multi, ...)
+    if isinstance(P0, (str, bool)):
+        old_equilibration = P0
+        old_multi = equlibration
+        P0 = None
+        equlibration = old_equilibration
+        if isinstance(old_multi, bool):
+            multi = old_multi
+
+    # Backward compatibility for older calls:
+    # shell_data(..., exec_name, P0, num_threads, multi, ...)
+    if isinstance(equlibration, (float, int)) and not isinstance(equlibration, bool):
         if "Equilibration" in kwargs:
             equlibration = kwargs["Equilibration"]
         elif isinstance(multi, str):
@@ -53,6 +65,9 @@ def shell_data(
             multi = False
         else:
             equlibration = "false"
+
+    if P0 is None:
+        P0 = min(1.0, 1.2 * f_T)
 
     if dim not in (2, 3):
         return "please, enter with dim = 2 or 3"
@@ -121,6 +136,7 @@ num_runs={num_runs}
 rho=({rho_list})
 L={L}
 p0={p0}
+P0={P0}
 seed={seed}
 type="{type_perc}"
 c={c}
@@ -167,7 +183,7 @@ if ! command -v /usr/bin/time >/dev/null 2>&1; then
   exit 1
 fi
 
-export L p0 seed type c f_T dim num_colors Equilibration Properties Mode InitialLayout SurfaceObservables SaveAnimationWindowOnly ControlRule
+export L p0 P0 seed type c f_T dim num_colors Equilibration Properties Mode InitialLayout SurfaceObservables SaveAnimationWindowOnly ControlRule
 
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 if [[ "$TOTAL" -le 0 ]]; then
@@ -199,10 +215,10 @@ BENCH_RHO=${{rho[0]}}
 BENCH_LOG=$(mktemp)
 
 echo "[INFO] Running RAM benchmark for this parameter set..."
-echo "[INFO] Benchmark command: ./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $Equilibration ${{extra_args[*]}}"
+echo "[INFO] Benchmark command: ./build/SOP $L $p0 $P0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $Equilibration ${{extra_args[*]}}"
 
 /usr/bin/time -f "%M" -o "$BENCH_LOG" \
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
+  ./build/SOP "$L" "$p0" "$P0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
 
 PEAK_RAM_KB=$(tr -dc '0-9' < "$BENCH_LOG")
 rm -f "$BENCH_LOG"
@@ -300,7 +316,7 @@ parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   elif [[ "$Properties" == "true" ]]; then
     extra_args=("$Properties")
   fi
-  ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}"
+  ./build/SOP "$L" "$p0" "$P0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}"
 ' :::: "$TASK_FILE"
 
 echo "All runs completed."
@@ -318,6 +334,7 @@ num_runs={num_runs}
 rho=({rho_list})
 L={L}
 p0={p0}
+P0={P0}
 seed={seed}
 type="{type_perc}"
 c={c}
@@ -374,10 +391,10 @@ for ((run=1; run<=num_runs; run++)); do
 
     if [[ "$VERBOSE" -eq 1 ]]; then
       echo
-      echo "./build/SOP $L $p0 $seed $type $c $f_T $dim $num_colors $RHO $Equilibration ${{extra_args[*]}}"
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}"
+      echo "./build/SOP $L $p0 $P0 $seed $type $c $f_T $dim $num_colors $RHO $Equilibration ${{extra_args[*]}}"
+      ./build/SOP "$L" "$p0" "$P0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}"
     else
-      ./build/SOP "$L" "$p0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
+      ./build/SOP "$L" "$p0" "$P0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
     fi
   done
 done

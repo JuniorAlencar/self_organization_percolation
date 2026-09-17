@@ -84,6 +84,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --only-height           Run only height processing"
       echo "  --height-min-count N    Min sample count threshold for ensemble (default: 1)"
       echo "  --height-max-samples N  Cap samples processed per parameter group"
+      echo "  --delete-processed-raw-json"
+      echo "                         Delete processed raw .json samples after publishing; keeps .yts files"
       echo ""
       echo "All other options are forwarded directly to process_dynamic_growth.py."
       exit 0

@@ -53,6 +53,7 @@ FIELDS = [
 HEIGHT_ENSEMBLE_PROCESSING_VERSION = 1
 HEIGHT_ENSEMBLE_MANIFEST = "height_ensemble_manifest.json"
 HEIGHT_ENSEMBLE_FILE = "height_ensemble_timeseries.csv.gz"
+HEIGHT_ENSEMBLE_ROW_COUNT_KEY = "height_ensemble_row_count"
 
 
 class RunningSeries:
@@ -249,6 +250,20 @@ def write_csv_gz(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def append_csv_gz_body(path: Path, out_handle) -> int:
+    expected_header = ",".join(FIELDS)
+    rows_written = 0
+    with gzip.open(path, "rt", newline="") as handle:
+        header = handle.readline().rstrip("\r\n")
+        if header != expected_header:
+            raise ValueError(f"unexpected header in {path}: {header!r}")
+        for line in handle:
+            out_handle.write(line)
+            if line.strip():
+                rows_written += 1
+    return rows_written
+
+
 def read_csv_gz(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -370,15 +385,16 @@ def main() -> int:
                 and manifest.get(DATA_DIR_FINGERPRINT_KEY) == current_data_dir_fingerprint
             ):
                 try:
-                    group_rows = read_csv_gz(group_path)
+                    rows_written = append_csv_gz_body(group_path, all_handle)
                 except Exception as exc:
-                    print(f"[warn] Could not fast-skip unreadable published height ensemble ({exc}): {group_path}")
+                    print(f"[warn] Could not fast-skip published height ensemble ({exc}): {group_path}")
                 else:
-                    if group_rows:
-                        all_writer.writerows(group_rows)
-                        total_samples += len(processed_files)
-                        print(f"[skip-fast] {key}: {len(processed_files)} samples already in {group_path}")
-                        continue
+                    if int(manifest.get(HEIGHT_ENSEMBLE_ROW_COUNT_KEY, -1) or -1) != rows_written:
+                        manifest[HEIGHT_ENSEMBLE_ROW_COUNT_KEY] = rows_written
+                        save_manifest(manifest_path, manifest)
+                    total_samples += len(processed_files)
+                    print(f"[skip-fast] {key}: {len(processed_files)} samples already in {group_path}")
+                    continue
 
             items = []
             for path in sorted(data_dir.glob("*.yts")):
@@ -435,6 +451,7 @@ def main() -> int:
                 "height_ensemble_processing_version": HEIGHT_ENSEMBLE_PROCESSING_VERSION,
                 "processed_yts_files": sorted(processed_files),
                 "n_processed_yts_files": len(processed_files),
+                HEIGHT_ENSEMBLE_ROW_COUNT_KEY: len(group_rows),
                 DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
                 "last_update": datetime.now(timezone.utc).isoformat(),
             })
@@ -447,6 +464,15 @@ def main() -> int:
 
         for group_path in existing_group_paths:
             if group_path.resolve() in seen_group_paths:
+                continue
+            try:
+                append_csv_gz_body(group_path, all_handle)
+            except Exception as exc:
+                print(f"[warn] Could not fast-keep published height ensemble ({exc}): {group_path}")
+            else:
+                manifest = load_manifest(group_path.parent / HEIGHT_ENSEMBLE_MANIFEST)
+                total_samples += int(manifest.get("n_processed_yts_files", 0) or 0)
+                print(f"[keep-fast] published-only group -> {group_path}")
                 continue
             try:
                 group_rows = read_csv_gz(group_path)
