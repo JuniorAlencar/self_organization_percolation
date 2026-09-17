@@ -254,11 +254,12 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
 void helpers::print_help(const char* prog) {
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule]
+  ./SOP <L> <p0> <P0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule]
 
 Arguments:
   L                : Length of network (int)
   p0               : Initial Density (double)
+  P0               : Base seeding fraction (double)
   seed             : -1 to random seed (int)
   type_percolation : bond or node (string)
   c                : Feedback gain (double)
@@ -276,13 +277,11 @@ Arguments:
                      relative => p(t+1) = p(t) + c * (1 - f(t)/f_T), clamped with delta_p >= -c
                      linear   => p(t+1) = p(t) + c * (f_T - f(t))
 
-Notes:
-  - Base seeding fraction P0 is automatically set to min(1.0, 1.2 * f_T).
 Examples:
-  ./SOP 1024 0.8 -1 bond 1.0e-02 1.0e-01 2 1 1.0 false false growth_test clustered false false relative
-  ./SOP 1024 0.8 42 bond 1.0e-01 1.0e-01 2 1 1.0 false false growth_test
-  ./SOP  512 1.0 -1 bond 1.0e-02 6.0e-02 3 4 0.25 false false growth_test
-  ./SOP 2000 1.0 -1 bond 1.0e-02 1.0e-02 2 1 1.0 true
+  ./SOP 1024 0.8 0.12 -1 bond 1.0e-02 1.0e-01 2 1 1.0 false false growth_test clustered false false relative
+  ./SOP 1024 0.8 0.12 42 bond 1.0e-01 1.0e-01 2 1 1.0 false false growth_test
+  ./SOP  512 1.0 0.07 -1 bond 1.0e-02 6.0e-02 3 4 0.25 false false growth_test
+  ./SOP 2000 1.0 0.01 -1 bond 1.0e-02 1.0e-02 2 1 1.0 true
 
 Tips:
   - Use seed = -1 to auto-generate a random seed.

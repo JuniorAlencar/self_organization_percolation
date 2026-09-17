@@ -116,6 +116,8 @@ HEIGHT_SAMPLE_PROCESSING_VERSION = 1
 HEIGHT_SAMPLE_MANIFEST = "height_sample_manifest.json"
 HEIGHT_SAMPLE_FILE = "height_sample_measures.csv.gz"
 DATA_DIR_FINGERPRINT_KEY = "data_dir_fingerprint"
+HEIGHT_SAMPLE_SUMMARY_CACHE_KEY = "height_sample_summary_rows"
+HEIGHT_SAMPLE_ROW_COUNT_KEY = "height_sample_row_count"
 
 
 @dataclass(frozen=True)
@@ -407,6 +409,20 @@ def write_rows_csv_gz(path: Path, rows: list[dict], fields: list[str]) -> None:
         writer.writerows(rows)
 
 
+def append_csv_gz_body(path: Path, out_handle, fields: list[str]) -> int:
+    expected_header = ",".join(fields)
+    rows_written = 0
+    with gzip.open(path, "rt", newline="") as handle:
+        header = handle.readline().rstrip("\r\n")
+        if header != expected_header:
+            raise ValueError(f"unexpected header in {path}: {header!r}")
+        for line in handle:
+            out_handle.write(line)
+            if line.strip():
+                rows_written += 1
+    return rows_written
+
+
 def read_rows_csv_gz(path: Path, fields: list[str]) -> list[dict]:
     if not path.exists():
         return []
@@ -433,6 +449,13 @@ def save_manifest(path: Path, manifest: dict) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
+
+
+def summary_cache_from_manifest(manifest: dict) -> list[dict] | None:
+    rows = manifest.get(HEIGHT_SAMPLE_SUMMARY_CACHE_KEY)
+    if not isinstance(rows, list):
+        return None
+    return [dict(row) for row in rows if isinstance(row, dict)]
 
 
 def directory_stat_fingerprint(path: Path) -> str:
@@ -608,22 +631,30 @@ def main() -> int:
                 and group_path.exists()
                 and manifest.get(DATA_DIR_FINGERPRINT_KEY) == current_data_dir_fingerprint
             ):
+                cached_summary_rows = summary_cache_from_manifest(manifest)
                 try:
-                    group_rows = read_rows_csv_gz(group_path, MEASURE_FIELDS)
-                except Exception as exc:
-                    print(f"[warn] Could not fast-skip unreadable published height measures ({exc}): {group_path}")
-                else:
-                    if group_rows:
+                    if cached_summary_rows is None:
+                        group_rows = read_rows_csv_gz(group_path, MEASURE_FIELDS)
+                        if not group_rows:
+                            continue
                         by_color: dict[int, list[dict]] = defaultdict(list)
                         for row in group_rows:
                             by_color[int(row["color"])].append(row)
-                        for rows in by_color.values():
-                            summary_rows.append(summarize_group(rows))
+                        cached_summary_rows = [summarize_group(rows) for rows in by_color.values()]
+                        manifest[HEIGHT_SAMPLE_SUMMARY_CACHE_KEY] = cached_summary_rows
+                        manifest[HEIGHT_SAMPLE_ROW_COUNT_KEY] = len(group_rows)
+                        save_manifest(manifest_path, manifest)
                         all_writer.writerows(group_rows)
-                        total_rows += len(group_rows)
-                        total_samples += len({str(row.get("sample_id", "")) for row in group_rows if row.get("sample_id")})
-                        print(f"[skip-fast] {key}: {len(processed_files)} samples already in {group_path}")
-                        continue
+                        rows_written = len(group_rows)
+                    else:
+                        rows_written = append_csv_gz_body(group_path, all_handle, MEASURE_FIELDS)
+                    summary_rows.extend(cached_summary_rows)
+                    total_rows += rows_written
+                    total_samples += len(processed_files)
+                    print(f"[skip-fast] {key}: {len(processed_files)} samples already in {group_path}")
+                    continue
+                except Exception as exc:
+                    print(f"[warn] Could not fast-skip published height measures ({exc}): {group_path}")
 
             items: list[tuple[PathMeta, Path]] = []
             for path in sorted(data_dir.glob("*.yts")):
@@ -699,13 +730,16 @@ def main() -> int:
             by_color: dict[int, list[dict]] = defaultdict(list)
             for row in group_rows:
                 by_color[int(row["color"])].append(row)
-            for rows in by_color.values():
-                summary_rows.append(summarize_group(rows))
+            group_summary_rows = [summarize_group(rows) for rows in by_color.values()]
+            summary_rows.extend(group_summary_rows)
 
             all_writer.writerows(group_rows)
             total_rows += len(group_rows)
             total_samples += len({str(row.get("sample_id", "")) for row in group_rows if row.get("sample_id")})
             if new_items:
+                manifest[HEIGHT_SAMPLE_SUMMARY_CACHE_KEY] = group_summary_rows
+                manifest[HEIGHT_SAMPLE_ROW_COUNT_KEY] = len(group_rows)
+                save_manifest(manifest_path, manifest)
                 print(f"[ok] {key}: +{valid_samples_count}/{len(new_items)} new samples, {len(processed_files)} total -> {group_path}")
 
             del group_rows
@@ -713,6 +747,20 @@ def main() -> int:
         for group_path in existing_group_paths:
             if group_path.resolve() in seen_group_paths:
                 continue
+            manifest_path = group_path.parent / HEIGHT_SAMPLE_MANIFEST
+            manifest = load_manifest(manifest_path)
+            cached_summary_rows = summary_cache_from_manifest(manifest)
+            if cached_summary_rows is not None:
+                try:
+                    rows_written = append_csv_gz_body(group_path, all_handle, MEASURE_FIELDS)
+                except Exception as exc:
+                    print(f"[warn] Could not fast-keep published height measures ({exc}): {group_path}")
+                else:
+                    summary_rows.extend(cached_summary_rows)
+                    total_rows += rows_written
+                    total_samples += int(manifest.get("n_processed_yts_files", 0) or 0)
+                    print(f"[keep-fast] published-only group -> {group_path}")
+                    continue
             try:
                 group_rows = read_rows_csv_gz(group_path, MEASURE_FIELDS)
             except Exception as exc:
@@ -723,8 +771,12 @@ def main() -> int:
             by_color: dict[int, list[dict]] = defaultdict(list)
             for row in group_rows:
                 by_color[int(row["color"])].append(row)
-            for rows in by_color.values():
-                summary_rows.append(summarize_group(rows))
+            group_summary_rows = [summarize_group(rows) for rows in by_color.values()]
+            summary_rows.extend(group_summary_rows)
+            if int(manifest.get("height_sample_processing_version", 0) or 0) == HEIGHT_SAMPLE_PROCESSING_VERSION:
+                manifest[HEIGHT_SAMPLE_SUMMARY_CACHE_KEY] = group_summary_rows
+                manifest[HEIGHT_SAMPLE_ROW_COUNT_KEY] = len(group_rows)
+                save_manifest(manifest_path, manifest)
             all_writer.writerows(group_rows)
             total_rows += len(group_rows)
             total_samples += len({str(row.get("sample_id", "")) for row in group_rows if row.get("sample_id")})

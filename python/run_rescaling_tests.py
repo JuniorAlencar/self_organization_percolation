@@ -53,6 +53,7 @@ for test in tests:
                     num_runs,
                     [rho],
                     exec_name,
+                    P0,
                     Equilibration,
                     multi,
                     properties=Properties,
