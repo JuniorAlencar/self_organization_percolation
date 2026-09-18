@@ -66,7 +66,7 @@ rho = 1/nc
 
 #ft = 0.2394655
 ft_lst = np.linspace(0.01, 0.3, 20)
-p0 = 0.4
+p0 = 1.0
 P0_lst = [round(i,2) for i in np.arange(0.1, 1.1, 0.1) if round(i,2) != 0.2]
 #P0_lst = [0.8]
 for L in L_lst:
