@@ -7,7 +7,7 @@ RUN_SAMPLES="${PROJECT_ROOT}/python/run_samples.py"
 SHELLS_DIR="${PROJECT_ROOT}/shells"
 SOP_ROOT="${SOP_ROOT:-${PROJECT_ROOT}/SOP_data}"
 
-P_ZERO_VALUES=(0.5 0.6 0.7 0.9 1.0)
+P_ZERO_VALUES=(1.0)
 P_CAP_VALUES_EXPR="[round(i,2) for i in np.arange(0.1, 1.1, 0.1) if round(i,2) != 0.2]"
 SHELL_GLOB="L_1024_*.sh"
 
