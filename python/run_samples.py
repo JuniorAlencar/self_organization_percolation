@@ -66,8 +66,9 @@ rho = 1/nc
 
 #ft = 0.2394655
 ft_lst = np.linspace(0.01, 0.3, 20)
-p0 = 1.0
-P0_lst = [round(i,2) for i in np.arange(0.1, 1.1, 0.1) if round(i,2) != 0.2]
+#p0 = 0.4
+
+combs = [(0.3,1.0)]
 #P0_lst = [0.8]
 for L in L_lst:
     
@@ -78,7 +79,7 @@ for L in L_lst:
 
     #for ft in ft_lst:
     for type_perc in type_lst:
-        for P0 in P0_lst:
+        for p0, P0 in combs:
             for ft in ft_lst:
                 #P0 = min(1.0, 1.2 * ft)
                 num_runs = num_runs_por_L[L]

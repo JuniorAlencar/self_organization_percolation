@@ -24,7 +24,12 @@ BASE_COLUMNS = {
     "p_mean",
 }
 
-HEATMAP_METRICS = ("f_T_min", "f_T_max", "delta_f_T", "p_star_min")
+HEATMAP_METRICS = (
+    "p_star_at_f_T_min",
+    "p_star_at_one_third",
+    "p_star_at_two_thirds",
+    "p_star_at_f_T_max",
+)
 
 
 def _require_columns(df: pd.DataFrame, columns: Iterable[str]) -> None:
@@ -78,6 +83,30 @@ def get_initial_condition_combinations(
     return list(pairs.itertuples(index=False, name=None))
 
 
+def get_missing_initial_condition_combinations(
+    df: pd.DataFrame,
+    L: int,
+    all_combinations: Iterable[tuple[float, float]],
+    **filter_kwargs,
+) -> list[tuple[float, float]]:
+    """Return possible pairs that have no row at all in the selected setup.
+
+    A pair counts as executed as soon as it is present in the dataframe. Sample
+    quality is deliberately ignored here: an executed pair with fewer than 95%
+    percolating samples is not reported as missing.
+    """
+    executed = get_initial_condition_combinations(df, L, **filter_kwargs)
+    executed_keys = {(round(float(p0), 12), round(float(P0), 12)) for p0, P0 in executed}
+
+    missing = []
+    for p0, P0 in all_combinations:
+        pair = (float(p0), float(P0))
+        key = (round(pair[0], 12), round(pair[1], 12))
+        if key not in executed_keys:
+            missing.append(pair)
+    return missing
+
+
 def prepare_initial_condition_maps(
     df: pd.DataFrame,
     L: int,
@@ -89,29 +118,34 @@ def prepare_initial_condition_maps(
     order: int = 0,
     types: tuple[str, ...] = ("node", "bond"),
     min_percolating_samples: int = 5,
-    require_all_samples: bool = True,
+    min_percolating_fraction: float = 0.95,
     p_star_min: float = 0.0,
     p_star_max: float = 0.9,
     f_T_max: float | None = 0.4,
 ) -> dict[str, dict[str, object]]:
     """Prepare curve summaries and heatmap matrices for each percolation type.
 
-    The four heatmap observables are ``f_T_min``, ``f_T_max``, ``delta_f_T``
-    and ``p_star_min``. Missing initial-condition pairs remain NaN in the
-    matrices. The validity defaults reproduce the cuts used in the exploratory
-    plots in ``1Color_2D.ipynb``.
+    Every heatmap contains p-star. The four maps sample each valid f_T interval
+    at normalized positions 0, 1/3, 2/3 and 1. Linear interpolation is used at
+    the two internal positions. Missing initial-condition pairs remain NaN.
+    By default, a point is valid when at least 95% of its samples percolate.
     """
     selected = filter_initial_condition_data(
         df, L, dim=dim, c=c, nc=nc, rho=rho, order=order
     )
     selected = selected[selected["type_perc"].isin(types)].copy()
 
+    if not 0.0 <= min_percolating_fraction <= 1.0:
+        raise ValueError("min_percolating_fraction must be between 0 and 1")
+
     valid = (
         selected["p_mean"].between(p_star_min, p_star_max, inclusive="left")
         & (selected["N_samples_perc"] >= min_percolating_samples)
+        & (
+            selected["N_samples_perc"]
+            >= min_percolating_fraction * selected["N_samples"]
+        )
     )
-    if require_all_samples:
-        valid &= selected["N_samples_perc"] >= selected["N_samples"]
     if f_T_max is not None:
         valid &= selected["f_T"] <= f_T_max
 
@@ -124,15 +158,28 @@ def prepare_initial_condition_maps(
 
         for (p0, P0), curve in curves.groupby(["p0", "P0"], sort=True):
             curve = curve.sort_values("f_T")
+            f_values = curve["f_T"].to_numpy(dtype=float)
+            p_values = curve["p_mean"].to_numpy(dtype=float)
+            f_min = f_values[0]
+            f_max = f_values[-1]
+            delta_f = f_max - f_min
+            f_one_third = f_min + delta_f / 3.0
+            f_two_thirds = f_min + 2.0 * delta_f / 3.0
             min_row = curve.loc[curve["p_mean"].idxmin()]
             rows.append(
                 {
                     "type_perc": type_perc,
                     "p0": p0,
                     "P0": P0,
-                    "f_T_min": curve["f_T"].min(),
-                    "f_T_max": curve["f_T"].max(),
-                    "delta_f_T": curve["f_T"].max() - curve["f_T"].min(),
+                    "f_T_min": f_min,
+                    "f_T_one_third": f_one_third,
+                    "f_T_two_thirds": f_two_thirds,
+                    "f_T_max": f_max,
+                    "delta_f_T": delta_f,
+                    "p_star_at_f_T_min": p_values[0],
+                    "p_star_at_one_third": np.interp(f_one_third, f_values, p_values),
+                    "p_star_at_two_thirds": np.interp(f_two_thirds, f_values, p_values),
+                    "p_star_at_f_T_max": p_values[-1],
                     "p_star_min": min_row["p_mean"],
                     "f_T_at_p_star_min": min_row["f_T"],
                     "p_star_min_err": min_row.get("p_err", np.nan),
