@@ -51,6 +51,7 @@ def filter_initial_condition_data(
     nc: int = 1,
     rho: float = 1.0,
     order: int = 0,
+    rule_update: str = "relative",
     type_perc: str | None = None,
 ) -> pd.DataFrame:
     """Select one model setup while retaining every available ``(p0, P0)`` pair."""
@@ -63,6 +64,7 @@ def filter_initial_condition_data(
         & (df["order"] == order)
         & _close(df["c"], c)
         & _close(df["rho"], rho)
+        & (df["control_rule"] == rule_update)
     )
     if type_perc is not None:
         mask &= df["type_perc"].eq(type_perc)
@@ -122,6 +124,7 @@ def prepare_initial_condition_maps(
     p_star_min: float = 0.0,
     p_star_max: float = 0.9,
     f_T_max: float | None = 0.4,
+    rule_update: str = "relative",
 ) -> dict[str, dict[str, object]]:
     """Prepare curve summaries and heatmap matrices for each percolation type.
 
@@ -131,7 +134,7 @@ def prepare_initial_condition_maps(
     By default, a point is valid when at least 95% of its samples percolate.
     """
     selected = filter_initial_condition_data(
-        df, L, dim=dim, c=c, nc=nc, rho=rho, order=order
+        df, L, dim=dim, c=c, nc=nc, rho=rho, order=order, rule_update=rule_update,
     )
     selected = selected[selected["type_perc"].isin(types)].copy()
 
@@ -197,6 +200,7 @@ def prepare_initial_condition_maps(
             rho=rho,
             order=order,
             type_perc=type_perc,
+            rule_update=rule_update
         )
         p0_values = sorted({pair[0] for pair in all_pairs})
         P0_values = sorted({pair[1] for pair in all_pairs})

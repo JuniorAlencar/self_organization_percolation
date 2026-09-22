@@ -936,3 +936,86 @@ def plot_pmean_series_grid(
         plt.savefig(savepath, bbox_inches='tight')
 
     return fig, axes, parms, ft_bounds
+
+
+def get_ft_min_max(
+    df_series, L_lst, c_lst, type_perc_lst, p0, order, nc, rho, dim, P0,
+    control_rule="relative",
+):
+
+
+    for idx_type, type_perc in enumerate(type_perc_lst):
+
+        # No DataFrame, percolação por sítio está armazenada como "node"
+        type_perc_df = type_perc
+
+        if type_perc == 'site':
+            type_perc_df = 'node'
+
+        data = {"L":[], "c":[], "type_perc":[],
+                    "f0":[], "p0":[], "nc":[], "rho":[],"f_T_min":[],"f_T_max":[]}
+
+        name = f"ft_min_max_2D_{type_perc_df}.csv"
+
+        for idx_c, c in enumerate(c_lst):
+            for idx_L, L in enumerate(L_lst):
+                df_SUB = df_series[
+                    (df_series['type_perc'] == type_perc_df)
+                    & np.isclose(df_series['p0'].astype(float), float(p0))
+                    & (df_series['order'] == order)
+                    & (df_series['nc'] == nc)
+                    & (df_series['L'] == L)
+                    & np.isclose(df_series['c'].astype(float), float(c))
+                    & (df_series['dim'] == dim)
+                    & np.isclose(df_series['P0'].astype(float), float(P0))
+                ].sort_values(
+                    by='f_T'
+                ).reset_index(drop=True)
+
+                if 'control_rule' in df_SUB.columns:
+                    df_SUB = df_SUB[df_SUB['control_rule'] == control_rule].copy()
+
+                df_filter = df_SUB[
+                    (1.0 * df_SUB['N_samples'])
+                    <= df_SUB['N_samples_perc']
+                ]
+
+                df_plot = df_filter.sort_values('f_T').copy()
+
+                df_plot = df_plot[
+                    (df_plot['p_mean'] >= 0)
+                    & (df_plot['p_mean'] <= 1)
+                ]
+
+                df_plot = df_plot[
+                    df_plot['N_samples_perc'] >= 5
+                ]
+
+                # Remove o regime saturado
+                df_plot = df_plot[
+                    df_plot['p_mean'] < 0.90
+                ]
+
+                df_trunc = df_plot[
+                    df_plot['f_T'] <= 0.4
+                ].copy()
+
+                x = df_trunc['f_T']
+                y = df_trunc['p_mean']
+                ft_min = min(x) if len(x) > 0 else None
+                ft_max = max(x) if len(x) > 0 else None
+
+                data["L"].append(L)
+                data["c"].append(c)
+                data["type_perc"].append(type_perc)
+                data["f0"].append(P0)
+                data["p0"].append(p0)
+                data["nc"].append(nc)
+                data["rho"].append(rho)
+                data["f_T_min"].append(ft_min)
+                data["f_T_max"].append(ft_max)
+
+        df = pd.DataFrame(data=data)
+        df.to_csv(f"../SOP_data/{name}", index=False)
+
+    return df
