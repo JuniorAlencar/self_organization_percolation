@@ -42,7 +42,7 @@ PARAM_RE = re.compile(
     (?:/epsilon_(?P<epsilon>{FLOAT}))?
     /rho_(?P<rho>{FLOAT})
     (?:/stationary_window_(?P<stat_window>\d+))?
-    /data$
+    (?:/data)?$
     """,
     re.X,
 )
@@ -1385,11 +1385,43 @@ def process_sample_files(
     return rows, stabilized_counts
 
 
-def discover_data_dirs(raw_root: Path) -> list[Path]:
-    return sorted(
-        p for p in raw_root.rglob("data")
-        if p.is_dir() and parse_data_dir(p) is not None
-    )
+def canonical_rel_group(data_dir: Path) -> Path:
+    target = data_dir.parent if data_dir.name == "data" else data_dir
+    m = PARAM_RE.search(target.as_posix())
+    if not m:
+        m = PARAM_RE.search(data_dir.as_posix())
+    if not m:
+        raise ValueError(f"Could not parse dynamic parameter group from: {data_dir}")
+    matched = m.group(0)
+    if matched.endswith("/data"):
+        matched = matched[:-5]
+    return Path(matched)
+
+
+def discover_data_dirs(raw_roots: list[Path] | Path) -> list[Path]:
+    if isinstance(raw_roots, Path):
+        raw_roots = [raw_roots]
+    data_dirs: list[Path] = []
+    seen = set()
+    for root in raw_roots:
+        if not root.exists():
+            continue
+        for p in root.rglob("data"):
+            if p.is_dir() and parse_data_dir(p) is not None and p.resolve() not in seen:
+                seen.add(p.resolve())
+                data_dirs.append(p)
+    return sorted(data_dirs)
+
+
+def group_data_dirs_by_canonical_rel_group(data_dirs: list[Path]) -> dict[Path, list[Path]]:
+    grouped: dict[Path, list[Path]] = defaultdict(list)
+    for d in data_dirs:
+        try:
+            rel = canonical_rel_group(d)
+            grouped[rel].append(d)
+        except ValueError as exc:
+            print(f"[warn] {exc}")
+    return dict(sorted(grouped.items(), key=lambda item: item[0].as_posix()))
 
 
 def collect_group_json_files(data_dir: Path, known_names: set[str] | None = None) -> list[Path]:
@@ -2811,10 +2843,10 @@ def process_surface_observables_bundle(
 
 
 def process_group(
-    data_dir: Path,
-    raw_root: Path,
-    published_root: Path,
-    manifests_root: Path,
+    group_target: Path,
+    data_source: Path | list[Path] | None = None,
+    published_root: Path | None = None,
+    manifests_root: Path | None = None,
     clear: bool = False,
     jobs: int = 1,
     fingerprint_mode: str = "stat",
@@ -2827,13 +2859,58 @@ def process_group(
     return_changed: bool = False,
     delete_processed_raw_json: bool = False,
 ) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]] | tuple[Path, list[dict[str, Any]], list[dict[str, Any]], bool]:
+    if isinstance(data_source, (list, tuple, set)):
+        rel_group = group_target
+        data_dirs = [Path(p) for p in data_source]
+    elif isinstance(group_target, Path) and group_target.name == "data":
+        # Legacy call: data_dir, raw_root
+        data_dirs = [group_target]
+        rel_group = canonical_rel_group(group_target)
+    elif isinstance(data_source, Path):
+        if data_source.is_dir() and data_source.name == "data":
+            data_dirs = [data_source]
+            rel_group = group_target
+        elif (data_source / group_target / "data").exists():
+            data_dirs = [data_source / group_target / "data"]
+            rel_group = group_target
+        else:
+            data_dirs = [data_source] if data_source.is_dir() else []
+            rel_group = group_target
+    else:
+        rel_group = group_target
+        data_dirs = []
+
+    data_dirs = [d for d in data_dirs if d.is_dir()]
+
     if series_mode not in ("full", "profiles", "scalars"):
         raise ValueError(f"Unknown series_mode: {series_mode}")
-    params = parse_data_dir(data_dir)
-    if params is None:
-        raise ValueError(f"Could not parse dynamic data dir: {data_dir}")
 
-    rel_group = data_dir.parent.relative_to(raw_root)
+    params = None
+    for d in data_dirs:
+        params = parse_data_dir(d)
+        if params is not None:
+            break
+    if params is None and published_root is not None:
+        params = parse_data_dir(published_root / rel_group)
+    if params is None:
+        m = PARAM_RE.search(rel_group.as_posix())
+        if m:
+            g = m.groupdict()
+            params = {
+                "type_perc": g["type"],
+                "dim": int(g["dim"]),
+                "L": int(g["L"]),
+                "f_T": float(g["fT"]),
+                "c": float(g["c"]),
+                "nc": int(g["nc"]),
+                "rho": float(g["rho"]),
+                "control_param": float(g["control_param"]) if g.get("control_param") else math.nan,
+                "epsilon": float(g["epsilon"]) if g.get("epsilon") else math.nan,
+                "stat_window": int(g["stat_window"]) if g.get("stat_window") else 0,
+            }
+        else:
+            raise ValueError(f"Could not parse dynamic parameters for: {rel_group}")
+
     out_dir = published_root / rel_group
     sample_cache_dir = manifests_root / rel_group / "sample_cache" / series_mode
     ensure_dir(out_dir)
@@ -2849,8 +2926,25 @@ def process_group(
     )
     manifest_version = int(manifest.get("dynamic_processing_version", 0) or 0)
     manifest_series_mode = str(manifest.get("series_mode", "full") or "full")
-    current_data_dir_fingerprint = directory_stat_fingerprint(data_dir)
+    current_data_dir_fingerprints = {
+        d.resolve().as_posix(): directory_stat_fingerprint(d)
+        for d in data_dirs if d.exists()
+    }
     summary_fingerprint = file_stat_fingerprint(out_path) if out_path.exists() else None
+
+    manifest_dir_fingerprints = manifest.get("data_dir_fingerprints")
+    if isinstance(manifest_dir_fingerprints, dict):
+        dirs_match = (
+            set(manifest_dir_fingerprints.keys()) == set(current_data_dir_fingerprints.keys())
+            and all(manifest_dir_fingerprints.get(k) == v for k, v in current_data_dir_fingerprints.items())
+        )
+    else:
+        legacy_fp = manifest.get(DATA_DIR_FINGERPRINT_KEY)
+        dirs_match = (
+            bool(data_dirs)
+            and len(data_dirs) == 1
+            and legacy_fp == current_data_dir_fingerprints.get(data_dirs[0].resolve().as_posix())
+        )
 
     can_fast_skip_raw_scan = (
         not clear
@@ -2858,7 +2952,7 @@ def process_group(
         and out_path.exists()
         and manifest_version == DYNAMIC_PROCESSING_VERSION
         and manifest_series_mode == series_mode
-        and manifest.get(DATA_DIR_FINGERPRINT_KEY) == current_data_dir_fingerprint
+        and dirs_match
         and manifest.get(SUMMARY_FILE_FINGERPRINT_KEY) == summary_fingerprint
         and not delete_processed_raw_json
     )
@@ -2879,7 +2973,9 @@ def process_group(
         manifest.update({
             "summary_file": out_path.as_posix(),
             SUMMARY_FILE_FINGERPRINT_KEY: summary_fingerprint,
-            DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
+            "data_dirs": list(current_data_dir_fingerprints.keys()),
+            "data_dir_fingerprints": current_data_dir_fingerprints,
+            DATA_DIR_FINGERPRINT_KEY: ":".join(sorted(current_data_dir_fingerprints.values())),
             "last_update": datetime.now(timezone.utc).isoformat(),
         })
         save_manifest(manifests_root, rel_group, manifest)
@@ -2888,7 +2984,13 @@ def process_group(
             return out_path, all_rows, all_color_rows, False
         return out_path, all_rows, all_color_rows
 
-    json_files = collect_group_json_files(data_dir, known_names=manifest_files)
+    json_files = []
+    files_by_dir: dict[Path, list[Path]] = defaultdict(list)
+    for d in data_dirs:
+        d_files = collect_group_json_files(d, known_names=manifest_files)
+        files_by_dir[d].extend(d_files)
+        json_files.extend(d_files)
+
     current_json_files = sorted({fp.name for fp in json_files})
     files_by_name = {fp.name: fp for fp in json_files}
     names_new_to_manifest = sorted(set(current_json_files) - manifest_files)
@@ -2918,7 +3020,7 @@ def process_group(
     else:
         missing_manifest_files = bool(manifest_files - set(current_json_files))
         if missing_manifest_files and out_path.exists() and not clear:
-            new_sample_files = current_json_files
+            new_sample_files = names_new_to_manifest if names_new_to_manifest else current_json_files
         else:
             new_sample_files = names_new_to_manifest
         current_file_fingerprints = {
@@ -2984,7 +3086,9 @@ def process_group(
             )
             manifest.update({
                 "group_relpath": rel_group.as_posix(),
-                "data_dir": data_dir.as_posix(),
+                "data_dirs": list(current_data_dir_fingerprints.keys()),
+                "data_dir_fingerprints": current_data_dir_fingerprints,
+                "data_dir": data_dirs[0].as_posix() if data_dirs else "",
                 "processed_json_files": sorted(set(manifest_files) | set(current_json_files)),
                 "n_processed_json_files": len(set(manifest_files) | set(current_json_files)),
                 "processed_json_file_fingerprints": dict(sorted(fingerprints_out.items())),
@@ -2992,7 +3096,7 @@ def process_group(
                 "summary_file": out_path.as_posix(),
                 "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
                 "series_mode": series_mode,
-                DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
+                DATA_DIR_FINGERPRINT_KEY: ":".join(sorted(current_data_dir_fingerprints.values())),
                 "last_update": datetime.now(timezone.utc).isoformat(),
             })
             if summary_fingerprint:
@@ -3001,15 +3105,28 @@ def process_group(
                 manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
             save_manifest(manifests_root, rel_group, manifest)
         if delete_processed_raw_json and current_json_files:
-            deleted, bytes_deleted = delete_processed_raw_json_files(data_dir, set(current_json_files))
-            if deleted:
-                manifest[DATA_DIR_FINGERPRINT_KEY] = directory_stat_fingerprint(data_dir)
+            deleted_total = 0
+            bytes_deleted_total = 0
+            for d in data_dirs:
+                d_files = [fp.name for fp in files_by_dir.get(d, [])]
+                if d_files:
+                    deleted, bytes_deleted = delete_processed_raw_json_files(d, set(d_files))
+                    deleted_total += deleted
+                    bytes_deleted_total += bytes_deleted
+                    if deleted:
+                        print(
+                            f"[cleanup] deleted {deleted} processed raw JSON files "
+                            f"from {d} ({format_bytes(bytes_deleted)})"
+                        )
+            if deleted_total:
+                current_data_dir_fingerprints = {
+                    d.resolve().as_posix(): directory_stat_fingerprint(d)
+                    for d in data_dirs
+                }
+                manifest["data_dir_fingerprints"] = current_data_dir_fingerprints
+                manifest[DATA_DIR_FINGERPRINT_KEY] = ":".join(sorted(current_data_dir_fingerprints.values()))
                 manifest["last_raw_json_delete"] = datetime.now(timezone.utc).isoformat()
                 save_manifest(manifests_root, rel_group, manifest)
-                print(
-                    f"[cleanup] deleted {deleted} processed raw JSON files "
-                    f"from {data_dir} ({format_bytes(bytes_deleted)})"
-                )
         print(f"[skip] {out_path} ({len(all_rows)} rows)")
         if return_changed:
             return out_path, all_rows, all_color_rows, False
@@ -3042,7 +3159,7 @@ def process_group(
         batch_bundle, _, _ = build_bundle_for_files(
             params,
             rel_group,
-            [path for path in json_files if path.name in set(new_sample_files)],
+            [files_by_name[name] for name in new_sample_files if name in files_by_name],
             jobs=jobs,
             series_mode=series_mode,
             sample_cache_dir=sample_cache_dir,
@@ -3086,8 +3203,8 @@ def process_group(
                     batch_bundle.get("meta", {}).get(key) is not None
                 },
                 "raw_group": rel_group.as_posix(),
-                "num_json_files": len(json_files),
-                "num_parseable_json_files": len(current_json_files),
+                "num_json_files": len(manifest_files | set(current_json_files)),
+                "num_parseable_json_files": len(set(manifest_files) | set(current_json_files)),
                 "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
                 "series_mode": series_mode,
                 "feedback_control_rule": merged_rules[0] if len(merged_rules) == 1 else merged_rules,
@@ -3105,6 +3222,17 @@ def process_group(
             sample_cache_dir=sample_cache_dir,
             fingerprint_mode=fingerprint_mode,
         )
+        if existing_bundle and isinstance(existing_bundle, dict):
+            current_rules = {g.get("feedback_control_rule") for g in bundle.get("p0_groups", [])}
+            preserved_groups = []
+            for eg in existing_bundle.get("p0_groups", []):
+                if isinstance(eg, dict) and eg.get("feedback_control_rule") not in current_rules:
+                    preserved_groups.append(eg)
+            if preserved_groups:
+                bundle["p0_groups"].extend(preserved_groups)
+                bundle["p0_groups"].sort(key=p0_group_key)
+                all_rules = sorted({g["feedback_control_rule"] for g in bundle["p0_groups"]})
+                bundle["meta"]["feedback_control_rule"] = all_rules[0] if len(all_rules) == 1 else all_rules
 
     all_rows, all_color_rows = rows_from_bundle(bundle) if collect_rows else ([], [])
 
@@ -3129,14 +3257,16 @@ def process_group(
 
     manifest.update({
         "group_relpath": rel_group.as_posix(),
-        "data_dir": data_dir.as_posix(),
+        "data_dirs": list(current_data_dir_fingerprints.keys()),
+        "data_dir_fingerprints": current_data_dir_fingerprints,
+        "data_dir": data_dirs[0].as_posix() if data_dirs else "",
         "processed_json_files": sorted(processed_files_out),
         "n_processed_json_files": len(processed_files_out),
         "processed_json_file_fingerprints": dict(sorted(fingerprints_out.items())),
         "fingerprint_mode": fingerprint_mode,
         "summary_file": out_path.as_posix(),
         SUMMARY_FILE_FINGERPRINT_KEY: summary_fingerprint,
-        DATA_DIR_FINGERPRINT_KEY: current_data_dir_fingerprint,
+        DATA_DIR_FINGERPRINT_KEY: ":".join(sorted(current_data_dir_fingerprints.values())),
         "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
         "series_mode": series_mode,
         "last_update": datetime.now(timezone.utc).isoformat(),
@@ -3145,15 +3275,28 @@ def process_group(
         manifest.update(manifest_rows_cache_payload(all_rows, all_color_rows))
     save_manifest(manifests_root, rel_group, manifest)
     if delete_processed_raw_json and current_json_files:
-        deleted, bytes_deleted = delete_processed_raw_json_files(data_dir, set(current_json_files))
-        if deleted:
-            manifest[DATA_DIR_FINGERPRINT_KEY] = directory_stat_fingerprint(data_dir)
+        deleted_total = 0
+        bytes_deleted_total = 0
+        for d in data_dirs:
+            d_files = [fp.name for fp in files_by_dir.get(d, [])]
+            if d_files:
+                deleted, bytes_deleted = delete_processed_raw_json_files(d, set(d_files))
+                deleted_total += deleted
+                bytes_deleted_total += bytes_deleted
+                if deleted:
+                    print(
+                        f"[cleanup] deleted {deleted} processed raw JSON files "
+                        f"from {d} ({format_bytes(bytes_deleted)})"
+                    )
+        if deleted_total:
+            current_data_dir_fingerprints = {
+                d.resolve().as_posix(): directory_stat_fingerprint(d)
+                for d in data_dirs
+            }
+            manifest["data_dir_fingerprints"] = current_data_dir_fingerprints
+            manifest[DATA_DIR_FINGERPRINT_KEY] = ":".join(sorted(current_data_dir_fingerprints.values()))
             manifest["last_raw_json_delete"] = datetime.now(timezone.utc).isoformat()
             save_manifest(manifests_root, rel_group, manifest)
-            print(
-                f"[cleanup] deleted {deleted} processed raw JSON files "
-                f"from {data_dir} ({format_bytes(bytes_deleted)})"
-            )
 
     if return_changed:
         return out_path, all_rows, all_color_rows, True
@@ -3276,7 +3419,17 @@ def main() -> int:
         description="Process raw_growth_test_dynamic into published_dynamic and all_data_dynamic.dat."
     )
     parser.add_argument("--sop-root", default=str(Path(__file__).resolve().parents[1] / "SOP_data"))
-    parser.add_argument("--raw-dir", default="raw_growth_test_dynamic")
+    parser.add_argument(
+        "--raw-dirs",
+        "--raw-dir",
+        dest="raw_dirs",
+        nargs="+",
+        default=["raw_growth_test_dynamic", "tests_data"],
+        help=(
+            "One or more raw directory paths containing dynamic growth data "
+            "(relative to --sop-root or absolute). Defaults to raw_growth_test_dynamic tests_data."
+        ),
+    )
     parser.add_argument("--published-dir", default="published_dynamic")
     parser.add_argument("--manifests-dir", default="manifests_dynamic")
     parser.add_argument("--all-data-name", default="all_data_dynamic.dat")
@@ -3384,7 +3537,22 @@ def main() -> int:
 
     sop_root = Path(args.sop_root).expanduser().resolve()
     jobs = max(1, int(args.jobs))
-    raw_root = sop_root / args.raw_dir
+    raw_dirs_input = args.raw_dirs
+    if isinstance(raw_dirs_input, (list, tuple)):
+        raw_dirs_candidates: list[str] = []
+        for item in raw_dirs_input:
+            raw_dirs_candidates.extend(str(item).split())
+    else:
+        raw_dirs_candidates = str(raw_dirs_input).split()
+
+    raw_roots: list[Path] = []
+    for d in raw_dirs_candidates:
+        d_path = Path(d).expanduser()
+        if d_path.is_absolute():
+            raw_roots.append(d_path.resolve())
+        else:
+            raw_roots.append((sop_root / d_path).resolve())
+
     published_root = sop_root / args.published_dir
     manifests_root = sop_root / args.manifests_dir
     ensure_dir(published_root)
@@ -3413,8 +3581,13 @@ def main() -> int:
         )
         return 0
 
-    data_dirs = discover_data_dirs(raw_root)
-    print(f"[dynamic] data dirs found: {len(data_dirs)}")
+    data_dirs = discover_data_dirs(raw_roots)
+    grouped_data_dirs = group_data_dirs_by_canonical_rel_group(data_dirs)
+    print(
+        f"[dynamic] data dirs found: {len(data_dirs)} "
+        f"across {len(grouped_data_dirs)} canonical parameter groups "
+        f"from raw roots: {', '.join(str(r) for r in raw_roots)}"
+    )
 
     all_data_path = sop_root / args.all_data_name
     all_colors_path = sop_root / args.all_colors_name
@@ -3433,12 +3606,12 @@ def main() -> int:
     changed_all_colors_groups: set[tuple[Any, ...]] = set()
     processed_bundle_paths: set[Path] = set()
     # First, ensure all raw data groups are processed and published bundles are up-to-date.
-    for data_dir in data_dirs:
+    for rel_group, group_dirs in grouped_data_dirs.items():
         result = process_group(
-            data_dir,
-            raw_root,
-            published_root,
-            manifests_root,
+            rel_group,
+            group_dirs,
+            published_root=published_root,
+            manifests_root=manifests_root,
             clear=args.clear,
             jobs=jobs,
             fingerprint_mode=args.fingerprint_mode,
@@ -3469,7 +3642,13 @@ def main() -> int:
                     group_key(row, ALL_COLORS_GROUP_COLUMNS) for row in color_rows
                 )
             if not rows or not color_rows:
-                params = parse_data_dir(data_dir)
+                params = None
+                for d in group_dirs:
+                    params = parse_data_dir(d)
+                    if params is not None:
+                        break
+                if params is None:
+                    params = parse_data_dir(published_root / rel_group)
                 if params is not None:
                     if not rows:
                         changed_all_data_groups.add(all_data_group_key_from_params(params))

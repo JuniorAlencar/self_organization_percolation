@@ -15,6 +15,7 @@ if [[ -z "${DYNAMIC_JOBS:-}" ]]; then
   fi
 fi
 
+DYNAMIC_RAW_DIRS="${DYNAMIC_RAW_DIRS:-raw_growth_test_dynamic tests_data}"
 DYNAMIC_FINGERPRINT_MODE="${DYNAMIC_FINGERPRINT_MODE:-stat}"
 DYNAMIC_DETECT_REPLACED_FILES="${DYNAMIC_DETECT_REPLACED_FILES:-0}"
 # Keep averaged pt/ft time series in published bundles by default. The lighter
@@ -32,9 +33,24 @@ HEIGHT_MIN_COUNT="${HEIGHT_MIN_COUNT:-1}"
 HEIGHT_MAX_SAMPLES="${HEIGHT_MAX_SAMPLES:-}"
 
 PASSTHROUGH_ARGS=()
+RAW_DIRS_SPECIFIED=0
+USER_RAW_DIRS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --raw-dir)
+      RAW_DIRS_SPECIFIED=1
+      USER_RAW_DIRS+=("$2")
+      shift 2
+      ;;
+    --raw-dirs)
+      RAW_DIRS_SPECIFIED=1
+      shift
+      while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
+        USER_RAW_DIRS+=("$1")
+        shift
+      done
+      ;;
     --skip-dynamic)
       SKIP_DYNAMIC=1
       shift
@@ -78,6 +94,8 @@ while [[ $# -gt 0 ]]; do
       echo "  3) process_height_ensemble_series.py  (.yts -> height ensemble timeseries)"
       echo ""
       echo "Pipeline control:"
+      echo "  --raw-dir DIR           Raw data directory (default: raw_growth_test_dynamic tests_data)"
+      echo "  --raw-dirs DIRS...      One or more raw data directories"
       echo "  --skip-dynamic          Skip dynamic growth JSON processing"
       echo "  --skip-height           Skip both height timeseries steps"
       echo "  --skip-height-samples   Skip individual .yts sample measurements"
@@ -99,6 +117,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if (( RAW_DIRS_SPECIFIED > 0 )); then
+  RAW_DIRS_ARRAY=()
+  for entry in "${USER_RAW_DIRS[@]}"; do
+    for sub in $entry; do
+      RAW_DIRS_ARRAY+=("$sub")
+    done
+  done
+else
+  RAW_DIRS_ARRAY=()
+  for sub in $DYNAMIC_RAW_DIRS; do
+    RAW_DIRS_ARRAY+=("$sub")
+  done
+fi
+
 if [[ "${SKIP_HEIGHT}" == "1" || "${SKIP_HEIGHT}" == "true" ]]; then
   SKIP_HEIGHT_SAMPLES=1
   SKIP_HEIGHT_ENSEMBLE=1
@@ -106,6 +138,7 @@ fi
 
 mkdir -p \
   "${SOP_ROOT}/raw_growth_test_dynamic" \
+  "${SOP_ROOT}/tests_data" \
   "${SOP_ROOT}/published_dynamic" \
   "${SOP_ROOT}/manifests_dynamic" \
   "${SOP_ROOT}/processed_height_timeseries" \
@@ -113,6 +146,7 @@ mkdir -p \
   "${SOP_ROOT}/tmp"
 
 EXTRA_ARGS=(
+  --raw-dirs "${RAW_DIRS_ARRAY[@]}"
   --fingerprint-mode "${DYNAMIC_FINGERPRINT_MODE}"
   --series-mode "${DYNAMIC_SERIES_MODE}"
 )
@@ -146,7 +180,7 @@ else
 fi
 
 echo "[update_dynamic] SOP_ROOT=${SOP_ROOT}"
-echo "[update_dynamic] Config: jobs=${DYNAMIC_JOBS} series_mode=${DYNAMIC_SERIES_MODE} all_data=${DYNAMIC_WRITE_ALL_DATA} migrate=${DYNAMIC_MIGRATE_PUBLISHED} migrate_control_rules=${DYNAMIC_MIGRATE_CONTROL_RULES}"
+echo "[update_dynamic] Config: raw_dirs=${RAW_DIRS_ARRAY[*]} jobs=${DYNAMIC_JOBS} series_mode=${DYNAMIC_SERIES_MODE} all_data=${DYNAMIC_WRITE_ALL_DATA} migrate=${DYNAMIC_MIGRATE_PUBLISHED} migrate_control_rules=${DYNAMIC_MIGRATE_CONTROL_RULES}"
 echo "[update_dynamic] Stages: dynamic_growth=$(( 1 - SKIP_DYNAMIC )) height_samples=$(( 1 - SKIP_HEIGHT_SAMPLES )) height_ensemble=$(( 1 - SKIP_HEIGHT_ENSEMBLE ))"
 
 if [[ "${SKIP_DYNAMIC}" == "0" || "${SKIP_DYNAMIC}" == "false" ]]; then
@@ -165,19 +199,27 @@ fi
 
 if [[ "${SKIP_HEIGHT_SAMPLES}" == "0" || "${SKIP_HEIGHT_SAMPLES}" == "false" ]]; then
   echo "[update_dynamic] [2/3] Processing height timeseries (.yts -> sample measures)..."
-  python3 "${SCRIPT_DIR}/process_height_timeseries.py" \
-    --root "${SOP_ROOT}/raw_growth_test_dynamic" \
-    --out-root "${SOP_ROOT}/processed_height_timeseries" \
-    "${HEIGHT_CLI_ARGS[@]}"
+  for raw_dir_name in "${RAW_DIRS_ARRAY[@]}"; do
+    raw_path="${SOP_ROOT}/${raw_dir_name}"
+    [[ -d "${raw_path}" ]] || continue
+    python3 "${SCRIPT_DIR}/process_height_timeseries.py" \
+      --root "${raw_path}" \
+      --out-root "${SOP_ROOT}/processed_height_timeseries" \
+      "${HEIGHT_CLI_ARGS[@]}"
+  done
 fi
 
 if [[ "${SKIP_HEIGHT_ENSEMBLE}" == "0" || "${SKIP_HEIGHT_ENSEMBLE}" == "false" ]]; then
   echo "[update_dynamic] [3/3] Processing height ensemble timeseries (.yts -> ensemble averages)..."
-  python3 "${SCRIPT_DIR}/process_height_ensemble_series.py" \
-    --root "${SOP_ROOT}/raw_growth_test_dynamic" \
-    --out-root "${SOP_ROOT}/processed_height_timeseries" \
-    --min-count "${HEIGHT_MIN_COUNT}" \
-    "${HEIGHT_CLI_ARGS[@]}"
+  for raw_dir_name in "${RAW_DIRS_ARRAY[@]}"; do
+    raw_path="${SOP_ROOT}/${raw_dir_name}"
+    [[ -d "${raw_path}" ]] || continue
+    python3 "${SCRIPT_DIR}/process_height_ensemble_series.py" \
+      --root "${raw_path}" \
+      --out-root "${SOP_ROOT}/processed_height_timeseries" \
+      --min-count "${HEIGHT_MIN_COUNT}" \
+      "${HEIGHT_CLI_ARGS[@]}"
+  done
 fi
 
 echo "[update_dynamic] All tasks finished successfully."
