@@ -375,6 +375,10 @@ def read_dynamic_bundle(bundle_path):
     for p0_group in bundle.get("p0_groups", []):
         P0 = p0_group.get("P0_value")
         p0 = p0_group.get("p0_value")
+        control_rule = p0_group.get(
+            "feedback_control_rule",
+            meta.get("feedback_control_rule", "relative"),
+        )
         N_samples = p0_group.get("num_samples_total")
 
         colors = p0_group.get("colors", {})
@@ -398,6 +402,7 @@ def read_dynamic_bundle(bundle_path):
                 "rho": meta.get("rho"),
                 "stat_window": meta.get("stat_window"),
                 "series_mode": meta.get("series_mode", "full"),
+                "control_rule": control_rule,
 
                 "P0": P0,
                 "p0": p0,
@@ -509,3 +514,83 @@ def read_dynamic_bundle(bundle_path):
             })
 
     return pd.DataFrame(rows)
+
+
+def select_dynamic_bundle_row(
+    bundle_df, p0=None, P0=None, order=None, control_rule="relative", tol=1e-12,
+    rule_update=None,
+):
+    """
+    Select one row from a dynamic properties bundle dataframe.
+
+    Float parameters are compared with np.isclose because values loaded from
+    CSVs and JSON paths can differ in the last decimal places.
+    """
+    if rule_update is not None:
+        control_rule = rule_update
+
+    data = bundle_df
+    if control_rule is not None and "control_rule" in data.columns:
+        data = data[data["control_rule"] == control_rule]
+    if p0 is not None:
+        data = data[np.isclose(data["p0"].astype(float), float(p0), atol=tol, rtol=tol)]
+    if P0 is not None:
+        data = data[np.isclose(data["P0"].astype(float), float(P0), atol=tol, rtol=tol)]
+    if order is not None:
+        data = data[data["order"].astype(int) == int(order)]
+    if data.empty:
+        details = []
+        if p0 is not None:
+            details.append(f"p0={p0}")
+        if P0 is not None:
+            details.append(f"P0={P0}")
+        if order is not None:
+            details.append(f"order={order}")
+        if control_rule is not None:
+            details.append(f"control_rule={control_rule!r}")
+        raise ValueError("No dynamic bundle row found for " + ", ".join(details))
+    return data.iloc[0]
+
+
+def dynamic_series_from_row(row, observable="pt", prefer=("supported", "common", "full")):
+    """
+    Return (time, mean, source) for a time series stored in a bundle row.
+
+    Newer bundles may contain full union, common-support, and supported-support
+    series. This helper picks the first non-empty representation requested in
+    `prefer`. If the bundle was generated with series_mode='profiles' or
+    'scalars', the time series is intentionally absent and a clear ValueError
+    is raised.
+    """
+    candidates = {
+        "pt": {
+            "supported": ("pt_supported_time", "pt_supported_mean"),
+            "common": ("pt_common_time", "pt_common_mean"),
+            "full": ("time", "pt_mean"),
+        },
+        "ft": {
+            "supported": ("ft_supported_time", "ft_supported_mean"),
+            "common": ("ft_common_time", "ft_common_mean"),
+            "full": ("ft_time", "ft_mean"),
+        },
+    }
+    if observable not in candidates:
+        raise ValueError(f"Unknown observable: {observable!r}")
+
+    for source in prefer:
+        if source not in candidates[observable]:
+            continue
+        t_key, y_key = candidates[observable][source]
+        t = np.asarray(row.get(t_key, []), dtype=float)
+        y = np.asarray(row.get(y_key, []), dtype=float)
+        n = min(t.size, y.size)
+        if n > 0:
+            return t[:n], y[:n], source
+
+    series_mode = row.get("series_mode", "unknown")
+    raise ValueError(
+        f"No {observable}(t) series stored for L={row.get('L')}, "
+        f"f_T={row.get('f_T')}, p0={row.get('p0')}, P0={row.get('P0')}. "
+        f"Bundle series_mode={series_mode!r}; regenerate/read a bundle with "
+        "series_mode='full' to plot time series."
+    )

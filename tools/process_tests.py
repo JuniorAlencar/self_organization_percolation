@@ -24,7 +24,6 @@ def process_dynamic_test(
     fingerprint_mode: str,
     series_mode: str,
     detect_replaced_files: bool,
-    include_laterals: bool,
     write_all_data: bool,
     migrate_published: bool,
     clear: bool,
@@ -53,7 +52,6 @@ def process_dynamic_test(
         str(jobs),
     ]
     cmd.append("--detect-replaced-files" if detect_replaced_files else "--no-detect-replaced-files")
-    cmd.append("--include-laterals" if include_laterals else "--no-laterals")
     cmd.append("--write-all-data" if write_all_data else "--skip-all-data")
     cmd.append("--migrate-published" if migrate_published else "--no-migrate-published")
     if clear:
@@ -117,7 +115,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fingerprint-mode", choices=("stat", "hash"), default="stat")
     parser.add_argument("--series-mode", choices=("full", "profiles", "scalars"), default="full")
     parser.add_argument("--detect-replaced-files", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--laterals", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--write-all-data", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--migrate-published", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--clear", action="store_true")
@@ -154,7 +151,6 @@ def main() -> int:
                 fingerprint_mode=args.fingerprint_mode,
                 series_mode=args.series_mode,
                 detect_replaced_files=args.detect_replaced_files,
-                include_laterals=args.laterals,
                 write_all_data=args.write_all_data,
                 migrate_published=args.migrate_published,
                 clear=args.clear,

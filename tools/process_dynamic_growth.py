@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from datetime import datetime, timezone
 import gzip
 import hashlib
@@ -24,8 +23,6 @@ XZ_BIN = shutil.which("xz")
 
 
 DYNAMIC_PROCESSING_VERSION = 21
-LATERAL_PROCESSING_VERSION = 4
-SERIES_ENCODING_KEY = "__encoding__"
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
 SUMMARY_FILE_FINGERPRINT_KEY = "summary_file_fingerprint"
 DATA_DIR_FINGERPRINT_KEY = "data_dir_fingerprint"
@@ -54,7 +51,7 @@ RE_P0 = re.compile(rf"(?:^|_)P0_(?P<P0>{FLOAT})(?:_|\.json$)")
 RE_p0 = re.compile(rf"(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)")
 
 ALL_DATA_COLUMNS = [
-    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule",
     "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
     "z_stat_median", "z_stat_q75", "z_stat_q90",
@@ -62,7 +59,7 @@ ALL_DATA_COLUMNS = [
 ]
 
 ALL_COLORS_COLUMNS = [
-    "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
+    "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0", "control_rule",
     "N_samples", "rho", "nc", "nc_err", "nc_std", "stat_window",
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
@@ -77,14 +74,24 @@ ALL_DATA_LEGACY_COLUMNS = [
     "t_eq_validation", "t_eq_s_prime_threshold",
 ]
 
-ALL_DATA_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "stat_window")
+ALL_DATA_PRE_CONTROL_RULE_COLUMNS = [
+    column for column in ALL_DATA_COLUMNS if column != "control_rule"
+]
+ALL_DATA_GROUP_COLUMNS = (
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "stat_window"
+)
 ALL_COLORS_LEGACY_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
     "N_samples", "rho", "control_param", "epsilon", "nc", "nc_err", "nc_std", "stat_window",
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
-ALL_COLORS_GROUP_COLUMNS = ("type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "p0", "P0", "stat_window")
+ALL_COLORS_PRE_CONTROL_RULE_COLUMNS = [
+    column for column in ALL_COLORS_COLUMNS if column != "control_rule"
+]
+ALL_COLORS_GROUP_COLUMNS = (
+    "type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "p0", "P0", "control_rule", "stat_window"
+)
 DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window"}
 DAT_FLOAT_COLUMNS = {
     "f_T", "c", "rho", "control_param", "epsilon", "p0", "P0", "p_mean", "p_err", "f_mean", "f_err",
@@ -305,6 +312,27 @@ def parse_sample_name(path: Path) -> tuple[float, float] | None:
     return P0_val, p0_val
 
 
+def normalize_control_rule(value: Any, default: str = "relative") -> str:
+    rule = str(value if value is not None else default).strip().lower()
+    if rule not in {"relative", "linear"}:
+        raise ValueError(f"Unknown feedback_control_rule: {value!r}")
+    return rule
+
+
+def sample_control_rule(path: Path) -> str:
+    """Read only the sample metadata needed to separate aggregation rules."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            sample = json.load(handle)
+    except Exception as exc:
+        print(f"[warn] could not read control rule from {path}: {exc}")
+        return "relative"
+    meta = sample.get("meta", {}) if isinstance(sample, dict) else {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return normalize_control_rule(meta.get("feedback_control_rule"))
+
+
 def parse_data_dir(path: Path) -> dict[str, Any] | None:
     m = PARAM_RE.search(path.as_posix())
     if not m:
@@ -397,9 +425,9 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
             return []
         accepted_headers = [expected_columns]
         if expected_columns == ALL_DATA_COLUMNS:
-            accepted_headers.append(ALL_DATA_LEGACY_COLUMNS)
+            accepted_headers.extend((ALL_DATA_PRE_CONTROL_RULE_COLUMNS, ALL_DATA_LEGACY_COLUMNS))
         if expected_columns == ALL_COLORS_COLUMNS:
-            accepted_headers.append(ALL_COLORS_LEGACY_COLUMNS)
+            accepted_headers.extend((ALL_COLORS_PRE_CONTROL_RULE_COLUMNS, ALL_COLORS_LEGACY_COLUMNS))
         if header not in accepted_headers:
             raise ValueError(f"Unexpected header in {path}: {' '.join(header)}")
         rows: list[dict[str, Any]] = []
@@ -413,6 +441,8 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
             }
             if "stat_window" not in row:
                 row["stat_window"] = 0
+            if "control_rule" not in row:
+                row["control_rule"] = "relative"
             rows.append(row)
     return rows
 
@@ -532,7 +562,7 @@ def dynamic_criterion_metadata_from_meta(meta: dict[str, Any]) -> dict[str, Any]
         "equilibrium_effective_rel_tol": finite_float(meta.get("growth_test_equilibrium_effective_rel_tol")),
         "post_equilibrium_extra_steps": meta.get("growth_test_post_equilibrium_extra_steps"),
         "equilibrium_rel_tol_scaling": meta.get("growth_test_equilibrium_rel_tol_scaling"),
-        "feedback_control_rule": meta.get("feedback_control_rule"),
+        "feedback_control_rule": normalize_control_rule(meta.get("feedback_control_rule")),
         "initial_base_layout": meta.get("initial_base_layout"),
     }
 
@@ -1355,479 +1385,6 @@ def process_sample_files(
     return rows, stabilized_counts
 
 
-def compact_series_column(key: str, values: list[Any]) -> Any:
-    if not values:
-        return []
-    first = values[0]
-    if all(value == first for value in values):
-        return first
-    if key == "t" and len(values) > 1:
-        numeric = all(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in values)
-        if numeric:
-            step = float(values[1]) - float(values[0])
-            if all(
-                math.isclose(float(values[idx]) - float(values[idx - 1]), step, rel_tol=0.0, abs_tol=1e-12)
-                for idx in range(1, len(values))
-            ):
-                return {
-                    SERIES_ENCODING_KEY: "range",
-                    "start": float(values[0]),
-                    "step": step,
-                    "n": len(values),
-                }
-    return values
-
-
-def compact_series_columns(columns: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: compact_series_column(key, values) if isinstance(values, list) else values
-        for key, values in columns.items()
-    }
-
-
-def encoded_series_column_length(values: Any) -> int:
-    if isinstance(values, list):
-        return len(values)
-    if isinstance(values, dict) and values.get(SERIES_ENCODING_KEY) == "range":
-        return int(values.get("n", 0) or 0)
-    return 0
-
-
-def expand_series_column(values: Any, n_rows: int) -> list[Any]:
-    if isinstance(values, list):
-        if len(values) >= n_rows:
-            return values[:n_rows]
-        return values + [None] * (n_rows - len(values))
-    if isinstance(values, dict) and values.get(SERIES_ENCODING_KEY) == "range":
-        start = float(values.get("start", 0.0) or 0.0)
-        step = float(values.get("step", 0.0) or 0.0)
-        n = min(n_rows, int(values.get("n", 0) or 0))
-        out = [start + step * idx for idx in range(n)]
-        return out + [None] * (n_rows - n)
-    return [values] * n_rows
-
-
-def infer_series_length(series: Any) -> int:
-    if isinstance(series, list):
-        return len([row for row in series if isinstance(row, dict)])
-    if isinstance(series, dict):
-        return max((encoded_series_column_length(values) for values in series.values()), default=0)
-    return 0
-
-
-def series_to_columns(series: Any, series_length: int | None = None) -> dict[str, list[Any]]:
-    if isinstance(series, list):
-        rows = [row for row in series if isinstance(row, dict)]
-        keys: list[str] = []
-        seen: set[str] = set()
-        for row in rows:
-            for key in row:
-                if key not in seen:
-                    keys.append(key)
-                    seen.add(key)
-        return {key: [row.get(key) for row in rows] for key in keys}
-    if not isinstance(series, dict):
-        return {}
-    n_rows = int(series_length or 0) or infer_series_length(series)
-    return {key: expand_series_column(values, n_rows) for key, values in series.items()}
-
-
-def series_rows_to_columns(series: list[dict[str, Any]]) -> dict[str, Any]:
-    """Store a time series as aligned property lists instead of per-time dicts."""
-    keys: list[str] = []
-    seen: set[str] = set()
-    for row in series:
-        for key in row:
-            if key not in seen:
-                keys.append(key)
-                seen.add(key)
-    return compact_series_columns({key: [row.get(key) for row in series] for key in keys})
-
-
-def lateral_group_key(sample: dict[str, Any]) -> tuple[Any, ...]:
-    return (
-        sample.get("obs_type"),
-        sample.get("P0"),
-        sample.get("p0"),
-        sample.get("c"),
-        sample.get("f_T"),
-        sample.get("t_stat"),
-    )
-
-
-def weighted_mean(values: list[tuple[Any, float]]) -> float | None:
-    total_weight = 0.0
-    total = 0.0
-    for value, weight in values:
-        value_float = finite_float(value)
-        if value_float is None or weight <= 0:
-            continue
-        total += value_float * weight
-        total_weight += weight
-    return total / total_weight if total_weight > 0 else None
-
-
-def aggregate_lateral_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
-    for sample in samples:
-        if isinstance(sample, dict):
-            groups[lateral_group_key(sample)].append(sample)
-
-    aggregated: list[dict[str, Any]] = []
-    for key in sorted(groups, key=lambda x: tuple("" if v is None else str(v) for v in x)):
-        items = groups[key]
-        expanded_items: list[tuple[dict[str, Any], dict[str, list[Any]], int, float]] = []
-        for item in items:
-            n_samples = int(item.get("N_samples", item.get("n_samples", 1)) or 1)
-            columns = series_to_columns(item.get("series"), item.get("series_length"))
-            n_rows = infer_series_length(columns)
-            if columns and n_rows > 0 and n_samples > 0:
-                expanded_items.append((item, columns, n_rows, float(n_samples)))
-        if not expanded_items:
-            continue
-
-        common_len = min(n_rows for _, _, n_rows, _ in expanded_items)
-        series_keys: list[str] = []
-        seen: set[str] = set()
-        for _, columns, _, _ in expanded_items:
-            for series_key in columns:
-                if series_key not in seen:
-                    series_keys.append(series_key)
-                    seen.add(series_key)
-
-        averaged_columns: dict[str, list[Any]] = {}
-        for series_key in series_keys:
-            if series_key == "t":
-                averaged_columns[series_key] = expanded_items[0][1].get(series_key, [])[:common_len]
-                continue
-            values_out: list[Any] = []
-            for idx in range(common_len):
-                values_out.append(weighted_mean([
-                    (columns.get(series_key, [None] * common_len)[idx], weight)
-                    for _, columns, _, weight in expanded_items
-                    if idx < len(columns.get(series_key, []))
-                ]))
-            averaged_columns[series_key] = values_out
-
-        first = expanded_items[0][0]
-        n_samples_total = int(sum(weight for _, _, _, weight in expanded_items))
-        n_rows_total = int(sum(int(item.get("n_rows", 0) or 0) for item, _, _, _ in expanded_items))
-        obs_type = first.get("obs_type")
-        aggregated_sample = {
-            "obs_type": obs_type,
-            "P0": first.get("P0"),
-            "p0": first.get("p0"),
-            "c": first.get("c"),
-            "f_T": first.get("f_T"),
-            "t_stat": first.get("t_stat"),
-            "N_samples": n_samples_total,
-            "n_rows": n_rows_total,
-            "series": compact_series_columns(averaged_columns),
-            "series_length": common_len,
-            "series_kind": f"{obs_type}_mean" if obs_type else "lateral_mean",
-        }
-        if n_samples_total == 1:
-            for meta_key in ("filename", "sample_id", "seed"):
-                if first.get(meta_key) is not None:
-                    aggregated_sample[meta_key] = first.get(meta_key)
-        aggregated.append(aggregated_sample)
-    return aggregated
-
-
-def merge_lateral_bundles(existing_bundle: dict[str, Any] | None, new_samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    existing_samples: list[dict[str, Any]] = []
-    if isinstance(existing_bundle, dict):
-        raw_samples = existing_bundle.get("samples", [])
-        if isinstance(raw_samples, list):
-            existing_samples = [sample for sample in raw_samples if isinstance(sample, dict)]
-    return aggregate_lateral_samples(existing_samples + new_samples)
-
-
-def convert_lateral_bundle_to_columnar(bundle: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    changed = False
-    samples = bundle.get("samples", [])
-    if isinstance(samples, list):
-        for sample in samples:
-            if not isinstance(sample, dict):
-                continue
-            series = sample.get("series")
-            if isinstance(series, list):
-                series_rows = [
-                    row for row in series if isinstance(row, dict)
-                ]
-                sample["series"] = series_rows_to_columns(series_rows)
-                if sample.get("series_length") != len(series_rows):
-                    sample["series_length"] = len(series_rows)
-                changed = True
-            elif isinstance(series, dict):
-                compacted = compact_series_columns(series)
-                if compacted != series:
-                    sample["series"] = compacted
-                    changed = True
-            inferred_length = infer_series_length(sample.get("series"))
-            if inferred_length and sample.get("series_length") != inferred_length:
-                sample["series_length"] = inferred_length
-                changed = True
-        aggregated_samples = aggregate_lateral_samples([
-            sample for sample in samples if isinstance(sample, dict)
-        ])
-        if aggregated_samples and aggregated_samples != samples:
-            bundle["samples"] = aggregated_samples
-            changed = True
-    meta = bundle.setdefault("meta", {})
-    if isinstance(meta, dict) and meta.get("format") != "compact_summary_columnar":
-        meta["format"] = "compact_summary_columnar"
-        changed = True
-    if isinstance(meta, dict) and meta.get("aggregation") != "mean_by_parameter":
-        meta["aggregation"] = "mean_by_parameter"
-        changed = True
-    if isinstance(meta, dict) and meta.get("lateral_processing_version") != LATERAL_PROCESSING_VERSION:
-        meta["lateral_processing_version"] = LATERAL_PROCESSING_VERSION
-        changed = True
-    return bundle, changed
-
-
-def process_correlation_files(sample_paths: list[Path]) -> tuple[list[dict[str, Any]], list[float]]:
-    """Process CSV files from a correlations/ directory into compact summaries for analysis."""
-    rows: list[dict[str, Any]] = []
-    counts: list[float] = []
-
-    for sample_path in sample_paths:
-        try:
-            with sample_path.open("r", encoding="utf-8", newline="") as handle:
-                reader = csv.DictReader(handle)
-                records = list(reader)
-        except Exception as exc:
-            print(f"[warn] ignorando CSV inválido {sample_path}: {exc}")
-            continue
-
-        if not records:
-            continue
-
-        obs_type = "correlation" if "lateral_correlation_time" in sample_path.name else "susceptibility"
-        counts.append(float(len(records)))
-
-        summary: dict[str, Any] = {
-            "filename": sample_path.name,
-            "obs_type": obs_type,
-            "n_rows": len(records),
-            "sample_id": None,
-            "t_stat": None,
-            "p0": None,
-            "P0": None,
-            "c": None,
-            "f_T": None,
-            "seed": None,
-        }
-
-        by_t: dict[float, list[dict[str, Any]]] = defaultdict(list)
-        for item in records:
-            sample_id = item.get("sample_id")
-            if summary["sample_id"] is None and sample_id:
-                summary["sample_id"] = sample_id
-            if summary["t_stat"] is None:
-                summary["t_stat"] = finite_float(item.get("t_stat"))
-            if summary["p0"] is None:
-                summary["p0"] = finite_float(item.get("p0"))
-            if summary["P0"] is None:
-                summary["P0"] = finite_float(item.get("P0"))
-            if summary["c"] is None:
-                summary["c"] = finite_float(item.get("c"))
-            if summary["f_T"] is None:
-                summary["f_T"] = finite_float(item.get("f_T"))
-            if summary["seed"] is None:
-                summary["seed"] = finite_float(item.get("seed"))
-
-            t_value = finite_float(item.get("t"))
-            if t_value is None:
-                continue
-            by_t[t_value].append(item)
-
-        if obs_type == "correlation":
-            series: list[dict[str, Any]] = []
-            if records and "C_norm_mean" in records[0]:
-                for item in records:
-                    t_value = finite_float(item.get("t"))
-                    if t_value is None:
-                        continue
-                    series.append({
-                        "t": float(t_value),
-                        "n_rows": int(finite_float(item.get("n_rows")) or 0),
-                        "C_norm_mean": finite_float(item.get("C_norm_mean")),
-                        "C_norm_std": finite_float(item.get("C_norm_std")),
-                        "C_norm_absmax": finite_float(item.get("C_norm_absmax")),
-                        "r_at_absmax": finite_float(item.get("r_at_absmax")),
-                        "valid_norm_mean": finite_float(item.get("valid_norm_mean")),
-                        "pair_count_mean": finite_float(item.get("pair_count_mean")),
-                    })
-            else:
-                for t_value in sorted(by_t):
-                    chunk = by_t[t_value]
-                    c_values = [finite_float(x.get("C_norm")) for x in chunk]
-                    c_values = [v for v in c_values if v is not None]
-                    r_values = [finite_float(x.get("r")) for x in chunk]
-                    r_values = [v for v in r_values if v is not None]
-                    valid_values = [finite_float(x.get("valid_norm")) for x in chunk]
-                    valid_values = [v for v in valid_values if v is not None]
-                    pair_values = [finite_float(x.get("pair_count")) for x in chunk]
-                    pair_values = [v for v in pair_values if v is not None]
-                    if not c_values:
-                        continue
-                    abs_vals = [abs(v) for v in c_values]
-                    best_idx = int(np.argmax(abs_vals)) if abs_vals else 0
-                    series.append({
-                        "t": float(t_value),
-                        "n_rows": len(chunk),
-                        "C_norm_mean": float(np.mean(c_values)) if c_values else None,
-                        "C_norm_std": float(np.std(c_values, ddof=1)) if len(c_values) > 1 else 0.0,
-                        "C_norm_absmax": float(np.max(abs_vals)) if abs_vals else None,
-                        "r_at_absmax": float(r_values[best_idx]) if best_idx < len(r_values) else None,
-                        "valid_norm_mean": float(np.mean(valid_values)) if valid_values else None,
-                        "pair_count_mean": float(np.mean(pair_values)) if pair_values else None,
-                    })
-            summary["series"] = series_rows_to_columns(series)
-            summary["series_length"] = len(series)
-            summary["series_kind"] = "correlation_summary"
-        else:
-            series: list[dict[str, Any]] = []
-            for t_value in sorted(by_t):
-                chunk = by_t[t_value]
-                chi_incl = [finite_float(x.get("chi_norm_incl0")) for x in chunk]
-                chi_incl = [v for v in chi_incl if v is not None]
-                chi_excl = [finite_float(x.get("chi_norm_excl0")) for x in chunk]
-                chi_excl = [v for v in chi_excl if v is not None]
-                r_values = [finite_float(x.get("r_max")) for x in chunk]
-                r_values = [v for v in r_values if v is not None]
-                valid_values = [finite_float(x.get("n_valid_norm")) for x in chunk]
-                valid_values = [v for v in valid_values if v is not None]
-                series.append({
-                    "t": float(t_value),
-                    "n_rows": len(chunk),
-                    "chi_norm_incl0_mean": float(np.mean(chi_incl)) if chi_incl else None,
-                    "chi_norm_excl0_mean": float(np.mean(chi_excl)) if chi_excl else None,
-                    "r_max_mean": float(np.mean(r_values)) if r_values else None,
-                    "n_valid_norm_mean": float(np.mean(valid_values)) if valid_values else None,
-                })
-            summary["series"] = series_rows_to_columns(series)
-            summary["series_length"] = len(series)
-            summary["series_kind"] = "susceptibility_summary"
-
-        rows.append(summary)
-
-    return rows, counts
-
-
-def process_lateral_correlations(
-    data_dir: Path,
-    out_dir: Path,
-    sample_paths: list[Path] | None = None,
-    existing_bundle: dict[str, Any] | None = None,
-) -> Path | None:
-    """Disabled: lateral correlation/susceptibility processing is no longer used."""
-    del data_dir, out_dir, sample_paths, existing_bundle
-    return None
-
-
-def lateral_correlations_dir(data_dir: Path) -> Path:
-    return data_dir.parent / "correlations"
-
-
-def lateral_bundle_path(out_dir: Path) -> Path:
-    return out_dir / "lateral_correlations_bundle.json.xz"
-
-
-def gzip_lateral_bundle_path(out_dir: Path) -> Path:
-    return out_dir / "lateral_correlations_bundle.json.gz"
-
-
-def legacy_lateral_bundle_path(out_dir: Path) -> Path:
-    return out_dir / "lateral_correlations_bundle.json"
-
-
-def existing_lateral_bundle_path(out_dir: Path) -> Path | None:
-    compressed_path = lateral_bundle_path(out_dir)
-    if compressed_path.exists():
-        return compressed_path
-    gzip_path = gzip_lateral_bundle_path(out_dir)
-    if gzip_path.exists():
-        return gzip_path
-    legacy_path = legacy_lateral_bundle_path(out_dir)
-    if legacy_path.exists():
-        return legacy_path
-    return None
-
-
-def remove_legacy_lateral_bundles(out_dir: Path, keep: Path) -> None:
-    for path in (gzip_lateral_bundle_path(out_dir), legacy_lateral_bundle_path(out_dir)):
-        if path != keep and path.exists():
-            path.unlink()
-
-
-def ensure_lateral_bundle_compressed(
-    out_dir: Path,
-    *,
-    compresslevel: int = 6,
-    threads: int = 1,
-) -> Path | None:
-    compressed_path = lateral_bundle_path(out_dir)
-    if compressed_path.exists():
-        return compressed_path
-    source_path = gzip_lateral_bundle_path(out_dir)
-    if not source_path.exists():
-        source_path = legacy_lateral_bundle_path(out_dir)
-    if not source_path.exists():
-        return None
-    compress_json_to_xz(source_path, compressed_path, compresslevel=compresslevel, threads=threads)
-    remove_legacy_lateral_bundles(out_dir, keep=compressed_path)
-    return compressed_path
-
-
-def load_lateral_bundle_file(path: Path) -> dict[str, Any] | None:
-    try:
-        data = load_json_bundle(path)
-    except Exception as exc:
-        print(f"[warn] não consegui ler bundle lateral {path}: {exc}")
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def write_lateral_bundle_file(bundle: dict[str, Any], out_dir: Path) -> Path:
-    compressed_path = lateral_bundle_path(out_dir)
-    with open_text_auto(compressed_path, "wt", compresslevel=6) as handle:
-        json.dump(json_safe(bundle), handle, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        handle.write("\n")
-    remove_legacy_lateral_bundles(out_dir, keep=compressed_path)
-    return compressed_path
-
-
-def ensure_lateral_bundle_columnar(out_dir: Path) -> tuple[Path | None, bool]:
-    bundle_path = ensure_lateral_bundle_compressed(out_dir) or existing_lateral_bundle_path(out_dir)
-    if bundle_path is None or not bundle_path.exists():
-        return bundle_path, False
-    bundle = load_lateral_bundle_file(bundle_path)
-    if bundle is None:
-        return bundle_path, False
-    bundle, changed = convert_lateral_bundle_to_columnar(bundle)
-    if changed or bundle_path.suffix != ".gz":
-        return write_lateral_bundle_file(bundle, out_dir), changed
-    return bundle_path, False
-
-
-def collect_lateral_correlation_files(data_dir: Path) -> list[Path]:
-    correlations_dir = lateral_correlations_dir(data_dir)
-    if not correlations_dir.is_dir():
-        return []
-    return sorted(path for path in correlations_dir.glob("*.csv") if path.is_file())
-
-
-def lateral_csv_fingerprints(data_dir: Path) -> dict[str, str]:
-    correlations_dir = lateral_correlations_dir(data_dir)
-    out: dict[str, str] = {}
-    for path in collect_lateral_correlation_files(data_dir):
-        out[path.relative_to(correlations_dir).as_posix()] = file_stat_fingerprint(path)
-    return dict(sorted(out.items()))
-
-
 def discover_data_dirs(raw_root: Path) -> list[Path]:
     return sorted(
         p for p in raw_root.rglob("data")
@@ -1871,6 +1428,9 @@ def format_bytes(num_bytes: int) -> str:
 
 def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     meta = bundle.get("meta", {}) if isinstance(bundle.get("meta", {}), dict) else {}
+    meta_rule = meta.get("feedback_control_rule", "relative")
+    if isinstance(meta_rule, list):
+        meta_rule = "relative"
     params = {
         "type_perc": meta.get("type_perc"),
         "dim": meta.get("dim"),
@@ -1896,6 +1456,9 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
             continue
         P0 = p0_group.get("P0_value")
         p0 = p0_group.get("p0_value")
+        control_rule = normalize_control_rule(
+            p0_group.get("feedback_control_rule", meta_rule)
+        )
         processed = p0_group.get("num_samples_total", 0)
         colors = p0_group.get("colors", {})
         if not isinstance(colors, dict):
@@ -1906,6 +1469,7 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
             "num_colors": params["nc"],
             "p0": p0,
             "P0": P0,
+            "control_rule": control_rule,
             "N_samples": processed,
             "nc": colors.get("nc"),
             "nc_err": colors.get("nc_err"),
@@ -1929,6 +1493,7 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
                 **params,
                 "p0": p0,
                 "P0": P0,
+                "control_rule": control_rule,
                 "order": order_block.get("order"),
                 "N_samples": order_block.get("N_samples", processed),
                 "N_samples_perc": order_block.get("N_samples_perc"),
@@ -2103,6 +1668,62 @@ def update_dynamic_bundle_zstat_quantiles(bundle: dict[str, Any]) -> bool:
         if isinstance(meta, dict):
             meta["dynamic_processing_version"] = DYNAMIC_PROCESSING_VERSION
     return changed
+
+
+def update_dynamic_bundle_control_rules(bundle: dict[str, Any]) -> bool:
+    """Add the relative-rule default to bundles created before rule grouping."""
+    changed = False
+    meta = bundle.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        bundle["meta"] = meta
+        changed = True
+
+    meta_rule = meta.get("feedback_control_rule")
+    if meta_rule is None:
+        meta_rule = "relative"
+        meta["feedback_control_rule"] = meta_rule
+        changed = True
+
+    default_rule = meta_rule if not isinstance(meta_rule, list) else "relative"
+    for p0_group in bundle.get("p0_groups", []):
+        if not isinstance(p0_group, dict):
+            continue
+        if p0_group.get("feedback_control_rule") is None:
+            p0_group["feedback_control_rule"] = normalize_control_rule(default_rule)
+            changed = True
+    return changed
+
+
+def migrate_published_control_rules_once(
+    published_root: Path,
+    manifests_root: Path,
+    *,
+    force: bool = False,
+) -> int:
+    marker = manifests_root / ".feedback_control_rule_schema_v1"
+    if marker.exists() and not force:
+        return 0
+
+    bundle_paths = sorted(
+        set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+        | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+        | set(published_root.rglob("properties_dynamic_bundle.json"))
+    )
+    updated = 0
+    for bundle_path in bundle_paths:
+        bundle = load_json_bundle(bundle_path)
+        if update_dynamic_bundle_control_rules(bundle):
+            write_json_bundle_atomic(bundle_path, bundle)
+            updated += 1
+
+    ensure_dir(marker.parent)
+    marker.write_text(
+        f"migrated={updated}\ncompleted={datetime.now(timezone.utc).isoformat()}\n",
+        encoding="utf-8",
+    )
+    print(f"[migrate] feedback_control_rule: updated {updated}/{len(bundle_paths)} bundles")
+    return updated
 
 
 def bundle_has_missing_dynamic_series(bundle: dict[str, Any]) -> bool:
@@ -2376,6 +1997,67 @@ def combine_series_arrays(
     return combined_mean, combined_std, combined_sem, combined_counts
 
 
+def combine_time_series_arrays(
+    old_axis: Any,
+    old_mean: list[float] | None,
+    old_std: list[float] | None,
+    old_counts: list[int] | None,
+    old_n: int,
+    new_axis: Any,
+    new_mean: list[float] | None,
+    new_std: list[float] | None,
+    new_counts: list[int] | None,
+    new_n: int,
+) -> tuple[list[float], list[float], list[float], list[float], list[int]]:
+    """Combine two aggregate series after aligning observations by time."""
+    accum: dict[float, list[float]] = {}
+    for axis, means_raw, stds_raw, counts_raw, fallback_n in (
+        (old_axis, old_mean, old_std, old_counts, old_n),
+        (new_axis, new_mean, new_std, new_counts, new_n),
+    ):
+        means = list(means_raw or [])
+        stds = list(stds_raw or [])
+        axis_values = list(axis or [])
+        counts = series_counts(counts_raw, fallback_n, len(means))
+        for idx, mean_raw in enumerate(means):
+            if idx >= len(axis_values) or idx >= len(counts):
+                continue
+            time_value = finite_float(axis_values[idx])
+            mean_value = finite_float(mean_raw)
+            count = int(counts[idx])
+            if time_value is None or mean_value is None or count <= 0:
+                continue
+            std_value = finite_float(stds[idx]) if idx < len(stds) else 0.0
+            std_value = 0.0 if std_value is None else std_value
+            stats = accum.setdefault(float(time_value), [0.0, 0.0, 0.0])
+            stats[0] += count
+            stats[1] += count * mean_value
+            stats[2] += count * mean_value * mean_value
+            if count > 1:
+                stats[2] += (count - 1) * std_value * std_value
+
+    time = sorted(accum)
+    mean: list[float] = []
+    std: list[float] = []
+    sem: list[float] = []
+    counts: list[int] = []
+    for time_value in time:
+        count = int(accum[time_value][0])
+        total = accum[time_value][1]
+        sumsq = accum[time_value][2]
+        combined_mean = total / count
+        combined_std = (
+            math.sqrt(max((sumsq - total * total / count) / (count - 1), 0.0))
+            if count > 1
+            else 0.0
+        )
+        mean.append(float(combined_mean))
+        std.append(float(combined_std))
+        sem.append(float(combined_std / math.sqrt(count)) if count > 1 else 0.0)
+        counts.append(count)
+    return time, mean, std, sem, counts
+
+
 def choose_axis(old_axis: Any, new_axis: Any, length: int) -> list[Any]:
     old_list = list(old_axis or [])
     new_list = list(new_axis or [])
@@ -2427,17 +2109,18 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
 
     old_n_pt = int(existing_data.get("n_seeds_pt", 0) or 0)
     new_n_pt = int(new_data.get("n_seeds_pt", 0) or 0)
-    pt_mean, pt_std, pt_sem, pt_counts = combine_series_arrays(
+    time, pt_mean, pt_std, pt_sem, pt_counts = combine_time_series_arrays(
+        existing_data.get("time"),
         existing_data.get("pt_mean"),
         existing_data.get("pt_std"),
         existing_data.get("pt_N_per_t"),
         old_n_pt,
+        new_data.get("time"),
         new_data.get("pt_mean"),
         new_data.get("pt_std"),
         new_data.get("pt_N_per_t"),
         new_n_pt,
     )
-    time = choose_axis(existing_data.get("time"), new_data.get("time"), len(pt_mean))
     merged_data["pt_mean"] = pt_mean
     merged_data["pt_std"] = pt_std
     merged_data["pt_sem"] = pt_sem
@@ -2469,19 +2152,18 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     old_n_ft = int(existing_data.get("n_seeds_ft", 0) or 0)
     new_n_ft = int(new_data.get("n_seeds_ft", 0) or 0)
     if old_n_ft > 0 or new_n_ft > 0:
-        ft_mean, ft_std, ft_sem, ft_counts = combine_series_arrays(
+        ft_time, ft_mean, ft_std, ft_sem, ft_counts = combine_time_series_arrays(
+            existing_data.get("ft_time") or existing_data.get("time"),
             existing_data.get("ft_mean"),
             existing_data.get("ft_std"),
             existing_data.get("ft_N_per_t"),
             old_n_ft,
+            new_data.get("ft_time") or new_data.get("time"),
             new_data.get("ft_mean"),
             new_data.get("ft_std"),
             new_data.get("ft_N_per_t"),
             new_n_ft,
         )
-        ft_time = choose_axis(existing_data.get("ft_time") or existing_data.get("time"),
-                              new_data.get("ft_time") or new_data.get("time"),
-                              len(ft_mean))
         common_time, common_mean, common_std, common_sem, common_counts = series_common_fields(
             ft_time, ft_mean, ft_std, ft_sem, ft_counts, old_n_ft + new_n_ft
         )
@@ -2603,6 +2285,14 @@ def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) ->
     return merged
 
 
+def p0_group_key(group: dict[str, Any], default_rule: Any = "relative") -> tuple[str, float, float]:
+    return (
+        normalize_control_rule(group.get("feedback_control_rule", default_rule)),
+        float(group.get("P0_value", 0.0) or 0.0),
+        float(group.get("p0_value", 0.0) or 0.0),
+    )
+
+
 def build_bundle_for_files(
     params: dict[str, Any],
     rel_group: Path,
@@ -2613,12 +2303,13 @@ def build_bundle_for_files(
     fingerprint_mode: str = "stat",
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     include_time_series = series_mode == "full"
-    groups: dict[tuple[float, float], list[Path]] = defaultdict(list)
+    groups: dict[tuple[str, float, float], list[Path]] = defaultdict(list)
     for fp in files:
         parsed_name = parse_sample_name(fp)
         if parsed_name is None:
             continue
-        groups[parsed_name].append(fp)
+        P0, p0 = parsed_name
+        groups[(sample_control_rule(fp), P0, p0)].append(fp)
 
     bundle: dict[str, Any] = {
         "meta": {
@@ -2635,7 +2326,9 @@ def build_bundle_for_files(
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
 
-    for (P0, p0), group_files in sorted(groups.items(), key=lambda x: (x[0][0], x[0][1])):
+    for (control_rule, P0, p0), group_files in sorted(
+        groups.items(), key=lambda x: (x[0][0], x[0][1], x[0][2])
+    ):
         by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
         sample_rows, stabilized_counts = process_sample_files(
             group_files,
@@ -2655,6 +2348,7 @@ def build_bundle_for_files(
         nc_std = nc_summary["std"]
 
         p0_group = {
+            "feedback_control_rule": control_rule,
             "P0_value": P0,
             "p0_value": p0,
             "num_samples_total": processed,
@@ -2664,6 +2358,7 @@ def build_bundle_for_files(
 
         all_color_rows.append({
             **params,
+            "control_rule": control_rule,
             "num_colors": params["nc"],
             "p0": p0,
             "P0": P0,
@@ -2743,6 +2438,7 @@ def build_bundle_for_files(
 
             all_rows.append({
                 **params,
+                "control_rule": control_rule,
                 "p0": p0,
                 "P0": P0,
                 "order": order,
@@ -2760,6 +2456,9 @@ def build_bundle_for_files(
             })
 
         bundle["p0_groups"].append(p0_group)
+
+    rules = sorted({group["feedback_control_rule"] for group in bundle["p0_groups"]})
+    bundle["meta"]["feedback_control_rule"] = rules[0] if len(rules) == 1 else rules
 
     return bundle, all_rows, all_color_rows
 
@@ -3117,7 +2816,6 @@ def process_group(
     published_root: Path,
     manifests_root: Path,
     clear: bool = False,
-    include_laterals: bool = False,
     jobs: int = 1,
     fingerprint_mode: str = "stat",
     detect_replaced_files: bool = False,
@@ -3151,7 +2849,6 @@ def process_group(
     )
     manifest_version = int(manifest.get("dynamic_processing_version", 0) or 0)
     manifest_series_mode = str(manifest.get("series_mode", "full") or "full")
-    include_laterals = False
     current_data_dir_fingerprint = directory_stat_fingerprint(data_dir)
     summary_fingerprint = file_stat_fingerprint(out_path) if out_path.exists() else None
 
@@ -3351,22 +3048,27 @@ def process_group(
             sample_cache_dir=sample_cache_dir,
             fingerprint_mode=fingerprint_mode,
         )
-        merged_p0_groups: dict[tuple[float, float], dict[str, Any]] = {}
+        merged_p0_groups: dict[tuple[str, float, float], dict[str, Any]] = {}
+        existing_meta_rule = existing_bundle.get("meta", {}).get("feedback_control_rule", "relative")
+        if isinstance(existing_meta_rule, list):
+            existing_meta_rule = "relative"
         for p0_group in existing_bundle.get("p0_groups", []) if isinstance(existing_bundle.get("p0_groups", []), list) else []:
             if not isinstance(p0_group, dict):
                 continue
-            key = (float(p0_group.get("P0_value", 0.0) or 0.0), float(p0_group.get("p0_value", 0.0) or 0.0))
+            key = p0_group_key(p0_group, existing_meta_rule)
+            p0_group.setdefault("feedback_control_rule", key[0])
             merged_p0_groups[key] = dict(p0_group)
 
         for p0_group in batch_bundle.get("p0_groups", []) if isinstance(batch_bundle.get("p0_groups", []), list) else []:
             if not isinstance(p0_group, dict):
                 continue
-            key = (float(p0_group.get("P0_value", 0.0) or 0.0), float(p0_group.get("p0_value", 0.0) or 0.0))
+            key = p0_group_key(p0_group)
             if key in merged_p0_groups:
                 merged_p0_groups[key] = merge_p0_group(merged_p0_groups[key], p0_group)
             else:
                 merged_p0_groups[key] = dict(p0_group)
 
+        merged_rules = sorted({key[0] for key in merged_p0_groups})
         merged_bundle = {
             "meta": {
                 **params,
@@ -3388,6 +3090,7 @@ def process_group(
                 "num_parseable_json_files": len(current_json_files),
                 "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
                 "series_mode": series_mode,
+                "feedback_control_rule": merged_rules[0] if len(merged_rules) == 1 else merged_rules,
             },
             "p0_groups": [merged_p0_groups[key] for key in sorted(merged_p0_groups)],
         }
@@ -3459,11 +3162,15 @@ def process_group(
 
 def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
     ensure_dir(output_path.parent)
+    rows = [
+        {**row, "control_rule": row.get("control_rule") or "relative"}
+        for row in rows
+    ]
     rows = sorted(
         rows,
         key=lambda r: (
             r["type_perc"], r["dim"], r["nc"], r["rho"], r["c"], r["f_T"],
-            r["L"], r["P0"], r["p0"], r["stat_window"], r["order"],
+            r["L"], r["P0"], r["p0"], r["control_rule"], r["stat_window"], r["order"],
         ),
     )
     with output_path.open("w", encoding="utf-8") as f:
@@ -3474,11 +3181,15 @@ def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
 
 def write_all_colors(rows: list[dict[str, Any]], output_path: Path) -> None:
     ensure_dir(output_path.parent)
+    rows = [
+        {**row, "control_rule": row.get("control_rule") or "relative"}
+        for row in rows
+    ]
     rows = sorted(
         rows,
         key=lambda r: (
             r["type_perc"], r["dim"], r["num_colors"], r["rho"], r["c"],
-            r["f_T"], r["L"], r["P0"], r["p0"], r["stat_window"],
+            r["f_T"], r["L"], r["P0"], r["p0"], r["control_rule"], r["stat_window"],
         ),
     )
     with output_path.open("w", encoding="utf-8") as f:
@@ -3496,7 +3207,7 @@ def compress_published_only(
     compresslevel: int = 1,
     threads: int = 0,
     rebuild_all_data: bool = False,
-) -> tuple[int, int, int]:
+) -> tuple[int, int]:
     ensure_dir(published_root)
     dynamic_converted = 0
     skipped = 0
@@ -3522,9 +3233,10 @@ def compress_published_only(
             try:
                 bundle = load_json_bundle(after_dynamic)
                 schema_updated = update_dynamic_bundle_zstat_quantiles(bundle)
+                schema_updated = update_dynamic_bundle_control_rules(bundle) or schema_updated
                 if schema_updated:
                     write_json_bundle_atomic(after_dynamic, bundle, compresslevel=compresslevel)
-                    print(f"[update] z_stat q90 -> {after_dynamic}")
+                    print(f"[update] dynamic schema -> {after_dynamic}")
             except Exception as exc:
                 print(f"[warn] failed to update z_stat q90 in {after_dynamic}: {exc}")
             if converted:
@@ -3556,7 +3268,7 @@ def compress_published_only(
             write_all_colors(all_color_rows, all_colors_path)
             print(f"[write] {all_colors_path} ({len(all_color_rows)} rows)")
 
-    return dynamic_converted, 0, skipped
+    return dynamic_converted, skipped
 
 
 def main() -> int:
@@ -3573,7 +3285,7 @@ def main() -> int:
         "--compress-published-only",
         "-compress-published-only",
         action="store_true",
-        help="Only convert existing published dynamic/lateral bundles to .json.xz; does not require raw files.",
+        help="Only convert existing published dynamic bundles to .json.xz; does not require raw files.",
     )
     parser.add_argument(
         "--compress-level",
@@ -3655,25 +3367,18 @@ def main() -> int:
     parser.add_argument(
         "--series-mode",
         choices=("full", "profiles", "scalars"),
-        default="profiles",
+        default="full",
         help=(
-            "full stores aggregated pt/ft time series in the main dynamic bundle; "
+            "full (default) stores aggregated pt/ft time series in the main dynamic bundle; "
             "profiles skips pt/ft time-series aggregation; "
             "scalars stores only scalar summaries. profiles is much faster for large datasets."
         ),
     )
     parser.add_argument(
-        "--include-laterals",
-        dest="include_laterals",
-        action="store_true",
-        default=False,
-        help="Deprecated; lateral correlation/susceptibility processing is disabled.",
-    )
-    parser.add_argument(
-        "--no-laterals",
-        dest="include_laterals",
-        action="store_false",
-        help="Deprecated; lateral correlation/susceptibility processing is always skipped.",
+        "--migrate-control-rules",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Add feedback_control_rule='relative' to legacy published bundles once.",
     )
     args = parser.parse_args()
 
@@ -3685,8 +3390,15 @@ def main() -> int:
     ensure_dir(published_root)
     ensure_dir(manifests_root)
 
+    if args.migrate_control_rules:
+        migrate_published_control_rules_once(
+            published_root,
+            manifests_root,
+            force=args.clear,
+        )
+
     if args.compress_published_only:
-        dynamic_n, lateral_n, skipped_n = compress_published_only(
+        dynamic_n, skipped_n = compress_published_only(
             published_root,
             sop_root,
             args.all_data_name,
@@ -3696,7 +3408,7 @@ def main() -> int:
             rebuild_all_data=args.rebuild_all_data,
         )
         print(
-            f"[compress] done: dynamic={dynamic_n}, lateral={lateral_n}, "
+            f"[compress] done: dynamic={dynamic_n}, "
             f"already_xz_or_missing={skipped_n}"
         )
         return 0
@@ -3728,7 +3440,6 @@ def main() -> int:
             published_root,
             manifests_root,
             clear=args.clear,
-            include_laterals=args.include_laterals,
             jobs=jobs,
             fingerprint_mode=args.fingerprint_mode,
             detect_replaced_files=args.detect_replaced_files,

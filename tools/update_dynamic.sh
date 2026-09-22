@@ -17,10 +17,12 @@ fi
 
 DYNAMIC_FINGERPRINT_MODE="${DYNAMIC_FINGERPRINT_MODE:-stat}"
 DYNAMIC_DETECT_REPLACED_FILES="${DYNAMIC_DETECT_REPLACED_FILES:-0}"
-DYNAMIC_SERIES_MODE="${DYNAMIC_SERIES_MODE:-profiles}"
-DYNAMIC_INCLUDE_LATERALS="${DYNAMIC_INCLUDE_LATERALS:-0}"
+# Keep averaged pt/ft time series in published bundles by default. The lighter
+# profiles/scalars modes remain available through DYNAMIC_SERIES_MODE.
+DYNAMIC_SERIES_MODE="${DYNAMIC_SERIES_MODE:-full}"
 DYNAMIC_WRITE_ALL_DATA="${DYNAMIC_WRITE_ALL_DATA:-1}"
 DYNAMIC_MIGRATE_PUBLISHED="${DYNAMIC_MIGRATE_PUBLISHED:-0}"
+DYNAMIC_MIGRATE_CONTROL_RULES="${DYNAMIC_MIGRATE_CONTROL_RULES:-1}"
 
 SKIP_DYNAMIC="${DYNAMIC_SKIP_DYNAMIC_GROWTH:-${SKIP_DYNAMIC:-0}}"
 SKIP_HEIGHT_SAMPLES="${DYNAMIC_SKIP_HEIGHT_SAMPLES:-${SKIP_HEIGHT_SAMPLES:-0}}"
@@ -125,12 +127,6 @@ else
   EXTRA_ARGS+=(--detect-replaced-files)
 fi
 
-if [[ "${DYNAMIC_INCLUDE_LATERALS}" == "0" || "${DYNAMIC_INCLUDE_LATERALS}" == "false" ]]; then
-  EXTRA_ARGS+=(--no-laterals)
-else
-  EXTRA_ARGS+=(--include-laterals)
-fi
-
 if [[ "${DYNAMIC_WRITE_ALL_DATA}" == "0" || "${DYNAMIC_WRITE_ALL_DATA}" == "false" ]]; then
   EXTRA_ARGS+=(--skip-all-data)
 else
@@ -143,8 +139,14 @@ else
   EXTRA_ARGS+=(--migrate-published)
 fi
 
+if [[ "${DYNAMIC_MIGRATE_CONTROL_RULES}" == "0" || "${DYNAMIC_MIGRATE_CONTROL_RULES}" == "false" ]]; then
+  EXTRA_ARGS+=(--no-migrate-control-rules)
+else
+  EXTRA_ARGS+=(--migrate-control-rules)
+fi
+
 echo "[update_dynamic] SOP_ROOT=${SOP_ROOT}"
-echo "[update_dynamic] Config: jobs=${DYNAMIC_JOBS} series_mode=${DYNAMIC_SERIES_MODE} all_data=${DYNAMIC_WRITE_ALL_DATA} migrate=${DYNAMIC_MIGRATE_PUBLISHED}"
+echo "[update_dynamic] Config: jobs=${DYNAMIC_JOBS} series_mode=${DYNAMIC_SERIES_MODE} all_data=${DYNAMIC_WRITE_ALL_DATA} migrate=${DYNAMIC_MIGRATE_PUBLISHED} migrate_control_rules=${DYNAMIC_MIGRATE_CONTROL_RULES}"
 echo "[update_dynamic] Stages: dynamic_growth=$(( 1 - SKIP_DYNAMIC )) height_samples=$(( 1 - SKIP_HEIGHT_SAMPLES )) height_ensemble=$(( 1 - SKIP_HEIGHT_ENSEMBLE ))"
 
 if [[ "${SKIP_DYNAMIC}" == "0" || "${SKIP_DYNAMIC}" == "false" ]]; then

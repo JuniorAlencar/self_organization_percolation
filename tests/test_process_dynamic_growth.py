@@ -502,6 +502,52 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
         self.assertEqual(merged["data"]["pt_mean"], [0.2, 0.4, 0.6])
         self.assertEqual(merged["data"]["ft_mean"], [0.1, 0.2, 0.3])
 
+    def test_merge_aligns_incremental_series_by_time_and_sample_count(self) -> None:
+        old = {
+            "order": 0,
+            "N_samples": 2,
+            "N_samples_perc": 2,
+            "data": {
+                "time": [1.0, 2.0],
+                "pt_mean": [2.0, 4.0],
+                "pt_std": [1.0, 2.0],
+                "pt_N_per_t": [2, 2],
+                "n_seeds_pt": 2,
+                "n_seeds_ft": 0,
+            },
+            "p": {"mean": 3.0, "err": 0.0, "n": 2},
+            "f": {"mean": None, "err": None, "n": 0},
+            "t_eq_species": {"mean": 1.0, "err": 0.0, "n": 2},
+            "z_stat": {"mean": 1.0, "err": 0.0, "n": 2},
+            "samples": [],
+        }
+        new = {
+            "order": 0,
+            "N_samples": 1,
+            "N_samples_perc": 1,
+            "data": {
+                "time": [2.0, 3.0],
+                "pt_mean": [10.0, 20.0],
+                "pt_std": [0.0, 0.0],
+                "pt_N_per_t": [1, 1],
+                "n_seeds_pt": 1,
+                "n_seeds_ft": 0,
+            },
+            "p": {"mean": 15.0, "err": 0.0, "n": 1},
+            "f": {"mean": None, "err": None, "n": 0},
+            "t_eq_species": {"mean": 1.0, "err": 0.0, "n": 1},
+            "z_stat": {"mean": 1.0, "err": 0.0, "n": 1},
+            "samples": [],
+        }
+
+        data = PROCESS_DYNAMIC_GROWTH.merge_order_block(old, new)["data"]
+
+        self.assertEqual(data["time"], [1.0, 2.0, 3.0])
+        self.assertEqual(data["pt_N_per_t"], [2, 3, 1])
+        self.assertEqual(data["pt_mean"], [2.0, 6.0, 20.0])
+        self.assertAlmostEqual(data["pt_std"][1], 14.0 ** 0.5)
+        self.assertEqual(data["pt_common_time"], [2.0])
+
     def test_average_dynamic_time_series_keeps_longer_runs(self) -> None:
         stats = PROCESS_DYNAMIC_GROWTH.average_dynamic_time_series([
             {
@@ -711,6 +757,59 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(data["fL_z_mean"], [0.25, 0.5])
             self.assertAlmostEqual(data["p_tail_mean"], 0.4)
 
+    def test_incremental_processing_separates_feedback_control_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "relative_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            out_path, _, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=1,
+            )
+
+            linear_path = self._write_sample(
+                data_dir,
+                "linear_P0_0.7_p0_0.2.json",
+                [0.6, 0.8, 1.0],
+            )
+            linear_sample = json.loads(linear_path.read_text(encoding="utf-8"))
+            linear_sample["meta"]["feedback_control_rule"] = "linear"
+            linear_path.write_text(json.dumps(linear_sample), encoding="utf-8")
+
+            out_path, rows, color_rows = PROCESS_DYNAMIC_GROWTH.process_group(
+                data_dir,
+                raw_root,
+                published_root,
+                manifests_root,
+                jobs=1,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            groups = bundle["p0_groups"]
+            self.assertEqual(bundle["meta"]["feedback_control_rule"], ["linear", "relative"])
+            self.assertEqual(
+                {group["feedback_control_rule"] for group in groups},
+                {"linear", "relative"},
+            )
+            self.assertTrue(all(group["num_samples_total"] == 1 for group in groups))
+            self.assertEqual({row["control_rule"] for row in rows}, {"linear", "relative"})
+            self.assertEqual({row["control_rule"] for row in color_rows}, {"linear", "relative"})
+
+    def test_legacy_bundle_control_rule_defaults_to_relative(self) -> None:
+        bundle = {
+            "meta": {"series_mode": "full"},
+            "p0_groups": [{"P0_value": 0.2, "p0_value": 0.8, "orders": []}],
+        }
+
+        changed = PROCESS_DYNAMIC_GROWTH.update_dynamic_bundle_control_rules(bundle)
+
+        self.assertTrue(changed)
+        self.assertEqual(bundle["meta"]["feedback_control_rule"], "relative")
+        self.assertEqual(bundle["p0_groups"][0]["feedback_control_rule"], "relative")
+
     def test_read_dynamic_bundle_exposes_series_profiles_and_heights(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle_path = Path(tmpdir) / "properties_dynamic_bundle.json"
@@ -799,13 +898,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            legacy_lateral = group_dir / "lateral_correlations_bundle.json"
-            legacy_lateral.write_text(
-                json.dumps({"meta": {"format": "compact_summary_columnar"}, "samples": []}),
-                encoding="utf-8",
-            )
-
-            dynamic_n, lateral_n, _ = PROCESS_DYNAMIC_GROWTH.compress_published_only(
+            dynamic_n, _ = PROCESS_DYNAMIC_GROWTH.compress_published_only(
                 published_root,
                 root / "SOP_data",
                 "all_data_dynamic.dat",
@@ -815,11 +908,8 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             )
 
             self.assertEqual(dynamic_n, 1)
-            self.assertEqual(lateral_n, 1)
             self.assertFalse(legacy_dynamic.exists())
-            self.assertFalse(legacy_lateral.exists())
             self.assertTrue((group_dir / "properties_dynamic_bundle.json.xz").exists())
-            self.assertTrue((group_dir / "lateral_correlations_bundle.json.xz").exists())
             bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(group_dir / "properties_dynamic_bundle.json.xz")
             self.assertEqual(bundle["meta"]["L"], 8)
 
@@ -865,7 +955,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            dynamic_n, _, _ = PROCESS_DYNAMIC_GROWTH.compress_published_only(
+            dynamic_n, _ = PROCESS_DYNAMIC_GROWTH.compress_published_only(
                 published_root,
                 root / "SOP_data",
                 "all_data_dynamic.dat",
@@ -902,146 +992,6 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
 
             self.assertEqual(stabilized_counts, [1.0, 1.0])
             self.assertEqual(len(rows), 2)
-
-    def test_process_lateral_compact_correlation_csv(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            csv_path = root / "sample_lateral_correlation_time.csv"
-            csv_path.write_text(
-                "\n".join(
-                    [
-                        "sample_id,dim,L,t,f_t,r_max,n_rows,C_norm_mean,C_norm_std,C_norm_absmax,r_at_absmax,valid_norm_mean,pair_count_mean,boundary_mode",
-                        "sample,3,8,10,0.2,4,5,0.1,0.02,0.5,2,1,128,periodic",
-                        "sample,3,8,11,0.3,4,5,0.2,0.03,0.6,3,1,128,periodic",
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-
-            rows, counts = PROCESS_DYNAMIC_GROWTH.process_correlation_files([csv_path])
-
-            self.assertEqual(counts, [2.0])
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["series_kind"], "correlation_summary")
-            self.assertEqual(rows[0]["series"]["C_norm_mean"][0], 0.1)
-            self.assertEqual(rows[0]["series"]["r_at_absmax"][1], 3.0)
-            self.assertEqual(rows[0]["series"]["t"]["__encoding__"], "range")
-            self.assertEqual(rows[0]["series"]["t"]["start"], 10.0)
-            self.assertEqual(rows[0]["series"]["t"]["n"], 2)
-            self.assertEqual(rows[0]["series"]["n_rows"], 5)
-
-    def test_lateral_bundle_is_written_compressed(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            _, _, _, data_dir = self._make_data_dir(root)
-            correlations_dir = data_dir.parent / "correlations"
-            correlations_dir.mkdir(parents=True, exist_ok=True)
-            (correlations_dir / "sample_lateral_correlation_time.csv").write_text(
-                "\n".join(
-                    [
-                        "sample_id,dim,L,t,f_t,r_max,n_rows,C_norm_mean,C_norm_std,C_norm_absmax,r_at_absmax,valid_norm_mean,pair_count_mean,boundary_mode",
-                        "sample,3,8,10,0.2,4,5,0.1,0.02,0.5,2,1,128,periodic",
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-
-            out_dir = root / "published"
-            out_dir.mkdir()
-            out_path = PROCESS_DYNAMIC_GROWTH.process_lateral_correlations(data_dir, out_dir)
-
-            self.assertEqual(out_path.name, "lateral_correlations_bundle.json.xz")
-            self.assertTrue(out_path.exists())
-            bundle = PROCESS_DYNAMIC_GROWTH.load_lateral_bundle_file(out_path)
-            self.assertEqual(bundle["meta"]["format"], "compact_summary_columnar")
-            self.assertIsInstance(bundle["samples"][0]["series"], dict)
-
-            loaded_by_file = TIME_SERIES_ANALYSIS.load_lateral_correlations_bundle(out_path)
-            loaded_by_dir = TIME_SERIES_ANALYSIS.load_lateral_correlations_bundle(out_dir)
-            self.assertEqual(loaded_by_file["meta"]["format"], "compact_summary_columnar")
-            self.assertEqual(loaded_by_dir["meta"]["format"], "compact_summary_columnar")
-
-            rows = TIME_SERIES_ANALYSIS.iter_lateral_series_rows(out_path, obs_type="correlation")
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["sample_id"], "sample")
-            self.assertEqual(rows[0]["t"], 10.0)
-            self.assertEqual(rows[0]["C_norm_mean"], 0.1)
-
-    def test_lateral_bundle_merges_new_samples_into_published_mean(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            _, _, _, data_dir = self._make_data_dir(root)
-            correlations_dir = data_dir.parent / "correlations"
-            correlations_dir.mkdir(parents=True, exist_ok=True)
-            first = correlations_dir / "first_lateral_correlation_time.csv"
-            second = correlations_dir / "second_lateral_correlation_time.csv"
-            header = "sample_id,dim,L,t,f_t,r_max,n_rows,C_norm_mean,C_norm_std,C_norm_absmax,r_at_absmax,valid_norm_mean,pair_count_mean,boundary_mode"
-            first.write_text(
-                "\n".join([header, "first,3,8,10,0.2,4,5,0.1,0.02,0.5,2,1,128,periodic"]) + "\n",
-                encoding="utf-8",
-            )
-            second.write_text(
-                "\n".join([header, "second,3,8,10,0.2,4,5,0.3,0.04,0.7,4,1,128,periodic"]) + "\n",
-                encoding="utf-8",
-            )
-
-            out_dir = root / "published"
-            out_dir.mkdir()
-            out_path = PROCESS_DYNAMIC_GROWTH.process_lateral_correlations(
-                data_dir,
-                out_dir,
-                sample_paths=[first],
-            )
-            existing_bundle = PROCESS_DYNAMIC_GROWTH.load_lateral_bundle_file(out_path)
-            out_path = PROCESS_DYNAMIC_GROWTH.process_lateral_correlations(
-                data_dir,
-                out_dir,
-                sample_paths=[second],
-                existing_bundle=existing_bundle,
-            )
-
-            bundle = PROCESS_DYNAMIC_GROWTH.load_lateral_bundle_file(out_path)
-
-            self.assertEqual(bundle["meta"]["aggregation"], "mean_by_parameter")
-            self.assertEqual(len(bundle["samples"]), 1)
-            self.assertEqual(bundle["samples"][0]["N_samples"], 2)
-            rows = TIME_SERIES_ANALYSIS.iter_lateral_series_rows(out_path, obs_type="correlation")
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["N_samples"], 2)
-            self.assertAlmostEqual(rows[0]["C_norm_mean"], 0.2)
-            self.assertAlmostEqual(rows[0]["C_norm_std"], 0.03)
-
-            blocks = TIME_SERIES_ANALYSIS.iter_lateral_series_blocks(out_path, obs_type="correlation")
-            self.assertEqual(len(blocks), 1)
-            self.assertEqual(blocks[0]["N_samples"], 2)
-            self.assertEqual(blocks[0]["series"]["t"], [10.0])
-            self.assertAlmostEqual(blocks[0]["series"]["C_norm_mean"][0], 0.2)
-
-            frame = TIME_SERIES_ANALYSIS.load_lateral_correlations_dataframe(out_path, obs_type="correlation")
-            self.assertEqual(len(frame), 1)
-            self.assertEqual(frame.iloc[0]["N_samples"], 2)
-            self.assertAlmostEqual(frame.iloc[0]["C_norm_mean"], 0.2)
-
-    def test_lateral_reader_accepts_legacy_row_series(self) -> None:
-        bundle = {
-            "samples": [
-                {
-                    "filename": "sample.csv",
-                    "sample_id": "sample",
-                    "obs_type": "correlation",
-                    "series": [{"t": 1.0, "C_norm_mean": 0.2}],
-                }
-            ]
-        }
-
-        rows = TIME_SERIES_ANALYSIS.iter_lateral_series_rows(bundle, obs_type="correlation")
-
-        self.assertEqual(rows[0]["sample_id"], "sample")
-        self.assertEqual(rows[0]["t"], 1.0)
-        self.assertEqual(rows[0]["C_norm_mean"], 0.2)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -213,9 +213,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Allow either zero-argument (use defaults) or full-argument run.
-    // Optional final flag enables expensive geometric/network properties.
-    if (argc != 1 && (argc < 11 || argc > 17)) {
+    // Allow either zero-argument (use defaults) or a parameterized run with
+    // optional arguments through ControlRule (17 arguments after argv[0]).
+    if (argc != 1 && (argc < 11 || argc > 18)) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;

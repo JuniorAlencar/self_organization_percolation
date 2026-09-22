@@ -14,12 +14,12 @@ seed = -1
 dim = 2
 #nc=2
 
-type_perc = 'node'
-type_lst = ['node','bond']
-# L_lst = [512, 1024, 2048, 4096, 8192, 16384]
-# num_runs_lst = [700, 500, 400, 200, 100, 50]
-L_lst = [1024]
-num_runs_lst = [500]
+#type_perc = 'node'
+type_lst = ['node', 'bond']
+L_lst = [512, 1024, 2048, 4096, 8192, 16384]
+num_runs_lst = [700, 500, 400, 200, 100, 50]
+#L_lst = [16384]
+#um_runs_lst = []
 #L_lst = [8192, 16384]
 #num_runs_lst = [100, 50]
 #L_lst = [16384]
@@ -47,7 +47,7 @@ Equilibration = 'false'
 Properties = 'false'
 Mode = 'growth_test'  # use 'sop' for the original fixed-height SOP run
 InitialLayout = 'clustered'  # 'clustered', 'random', 'blocks', or 'alternating'
-ControlRule = 'relative'     # 'relative' or 'linear'
+ControlRule = 'linear'     # 'relative' or 'linear'
 
 # step = 0.01 * abs(ft)
 
@@ -62,13 +62,13 @@ ControlRule = 'relative'     # 'relative' or 'linear'
 #df = pd.read_csv(f"../SOP_data/ft_min_max_2D_{type_perc}.csv", sep=',')
 # ft = 0.3178947
 rho = 1/nc
-#p0 = 0.8
-
+p0 = 0.8
+P0 = 0.2
 #ft = 0.2394655
 ft_lst = np.linspace(0.01, 0.3, 20)
 #p0 = 0.4
 
-combs = [(0.3,1.0)]
+
 #P0_lst = [0.8]
 for L in L_lst:
     
@@ -79,18 +79,24 @@ for L in L_lst:
 
     #for ft in ft_lst:
     for type_perc in type_lst:
-        for p0, P0 in combs:
-            for ft in ft_lst:
-                #P0 = min(1.0, 1.2 * ft)
-                num_runs = num_runs_por_L[L]
-                mode_tag = "" if Mode == "sop" else f"_{Mode}"
-                layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"
-                exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0:.3f}{mode_tag}{layout_tag}_type_{type_perc}.sh"
 
-                shell_data(L, type_perc, p0, seed, c, ft, dim,
-                        nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
-                        properties=Properties, mode=Mode,
-                        initial_layout=InitialLayout, control_rule=ControlRule)   
+        # df = pd.read_csv(f"../SOP_data/ft_min_max_2D_{type_perc}.csv", sep=',')
+        # ftmin = df[(df["L"]==L) & (df["nc"]==nc) & (df['c']==c)]['f_T_min'].values[0]
+        # ftmax = df[(df["L"]==L) & (df["nc"]==nc) & (df['c']==c)]['f_T_max'].values[0]
+        # ft_lst = [ftmin, ftmax]
+        for ft in ft_lst:
+            #P0 = min(1.0, 1.2 * ft)
+        #    for ft in ft_lst:
+                #P0 = min(1.0, 1.2 * ft)
+            num_runs = num_runs_por_L[L]
+            mode_tag = "" if Mode == "sop" else f"_{Mode}"
+            layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"
+            exec_name = f"L_{L}_ft_{ft:.3f}_c_{c}_nc_{nc}_dim_{dim}_p0_{p0}_P0_{P0:.3f}{mode_tag}{layout_tag}_type_{type_perc}.sh"
+
+            shell_data(L, type_perc, p0, seed, c, ft, dim,
+                    nc, num_runs, [1/nc], exec_name, P0, Equilibration, multi,
+                    properties=Properties, mode=Mode,
+                    initial_layout=InitialLayout, control_rule=ControlRule)   
 
 # for L in L_lst:
 # #    ft_lst = np.linspace(0.4, 0.6, 20)
