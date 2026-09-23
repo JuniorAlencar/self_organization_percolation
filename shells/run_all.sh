@@ -56,10 +56,10 @@ RAM_LOG_DIR="${RAM_LOG_DIR:-.run_all_ram_logs}"
 # after the first successful job. Set to 0 if your GNU parallel version rejects it.
 RUN_ALL_PROBE_ONE_PARALLEL_JOB="${RUN_ALL_PROBE_ONE_PARALLEL_JOB:-1}"
 
-# The new raw_fractions scripts can be long-running and may already contain their
-# own RAM benchmark when generated with multi=True. By default, run_all executes
-# them directly instead of doing a full extra probe first.
-RUN_ALL_AUTO_RAM_FRACTIONS="${RUN_ALL_AUTO_RAM_FRACTIONS:-0}"
+# Topological fractions shells can be long-running and may already benchmark
+# their own memory when generated with multi=True. Skip the extra probe by default.
+# RUN_ALL_AUTO_RAM_FRACTIONS remains as a backwards-compatible alias.
+RUN_ALL_AUTO_RAM_TOPOLOGY="${RUN_ALL_AUTO_RAM_TOPOLOGY:-${RUN_ALL_AUTO_RAM_FRACTIONS:-0}}"
 
 # Optional timeout for the probe, e.g. RAM_PROBE_TIMEOUT=20m. Use 0 to disable.
 RAM_PROBE_TIMEOUT="${RAM_PROBE_TIMEOUT:-0}"
@@ -339,8 +339,11 @@ is_excluded_script() {
   return 1
 }
 
-is_fractions_script() {
+is_topological_script() {
   local script="$1"
+  local base
+  base="$(basename "$script")"
+  [[ "$base" == *topolog* ]] && return 0
   grep -Eq '^[[:space:]]*Mode="?((raw_)?fractions)"?' "$script" 2>/dev/null
 }
 
@@ -547,13 +550,13 @@ for f in "${scripts[@]}"; do
   log "------------------------------------------------------------"
 
   if [[ "$AUTO_RAM_JOBS" -eq 1 ]] &&
-     { ! is_fractions_script "$f" || [[ "$RUN_ALL_AUTO_RAM_FRACTIONS" -eq 1 ]]; }; then
+     { ! is_topological_script "$f" || [[ "$RUN_ALL_AUTO_RAM_TOPOLOGY" -eq 1 ]]; }; then
     if ! run_with_auto_ram_jobs "$f" "$base"; then
       failed_any=1
     fi
   else
-    if [[ "$AUTO_RAM_JOBS" -eq 1 ]] && is_fractions_script "$f"; then
-      log "Detected fractions script; skipping run_all RAM probe. Set RUN_ALL_AUTO_RAM_FRACTIONS=1 to force probing."
+    if [[ "$AUTO_RAM_JOBS" -eq 1 ]] && is_topological_script "$f"; then
+      log "Detected topological shell; skipping run_all RAM probe. Set RUN_ALL_AUTO_RAM_TOPOLOGY=1 to force probing."
     fi
     if ! run_without_auto_ram_jobs "$f" "$base"; then
       failed_any=1
@@ -563,7 +566,8 @@ done
 
 if [[ "$ran_any" -eq 0 ]]; then
   log "No runnable scripts found."
-  log "Generate job scripts first with: cd .. && python3 python/run_samples.py"
+  log "Generate standard jobs with: cd .. && python3 python/run_samples.py"
+  log "Generate topological jobs with: cd .. && python3 python/run_samples_topological.py"
   log "Then run this script again from shells/: ./run_all.sh"
 fi
 

@@ -29,6 +29,7 @@ def shell_data(
     control_rule: str = "relative",
     fraction_samples: int | None = None,
     fraction_gap_over_L: float = 1.0,
+    force_topological_counts: bool = False,
     **kwargs,
 ):
     """
@@ -95,6 +96,12 @@ def shell_data(
     fraction_gap_over_L = float(fraction_gap_over_L)
     if fraction_gap_over_L < 0:
         raise ValueError("fraction_gap_over_L must be non-negative")
+    if isinstance(force_topological_counts, bool):
+        force_topological_counts = "true" if force_topological_counts else "false"
+    else:
+        force_topological_counts = str(force_topological_counts).strip().lower()
+    if force_topological_counts not in ("true", "false"):
+        raise ValueError("force_topological_counts must be true/false")
 
     if isinstance(properties, bool):
         properties = "true" if properties else "false"
@@ -164,6 +171,10 @@ FractionSamples={fraction_samples if fraction_samples is not None else 30}
 FractionGapOverL={fraction_gap_over_L}
 export SOP_FRACTION_SAMPLES="$FractionSamples"
 export SOP_FRACTION_GAP_OVER_L="$FractionGapOverL"
+ForceTopologicalCounts={force_topological_counts}
+if [[ "$ForceTopologicalCounts" == "true" ]]; then
+  export SOP_FRACTAL_FORCE_COUNTS=1
+fi
 
 extra_args=()
 if [[ "$ControlRule" != "relative" ]]; then
@@ -366,6 +377,10 @@ FractionSamples={fraction_samples if fraction_samples is not None else 30}
 FractionGapOverL={fraction_gap_over_L}
 export SOP_FRACTION_SAMPLES="$FractionSamples"
 export SOP_FRACTION_GAP_OVER_L="$FractionGapOverL"
+ForceTopologicalCounts={force_topological_counts}
+if [[ "$ForceTopologicalCounts" == "true" ]]; then
+  export SOP_FRACTAL_FORCE_COUNTS=1
+fi
 
 extra_args=()
 if [[ "$ControlRule" != "relative" ]]; then
