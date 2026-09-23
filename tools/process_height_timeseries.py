@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import hashlib
 import json
 import math
 import re
@@ -463,6 +464,46 @@ def directory_stat_fingerprint(path: Path) -> str:
     return f"dir:{stat.st_size}:{stat.st_mtime_ns}"
 
 
+def height_run_state_path(output_root: Path, raw_root: Path, kind: str) -> Path:
+    root_id = hashlib.sha1(raw_root.resolve().as_posix().encode("utf-8")).hexdigest()[:16]
+    return output_root / f".{kind}_state_{root_id}.json"
+
+
+def build_height_run_state(
+    data_dirs: list[tuple[PathMeta, Path]],
+    processing_version: int,
+    config: dict,
+) -> dict:
+    return {
+        "processing_version": processing_version,
+        "config": config,
+        "data_dirs": {
+            path.resolve().as_posix(): directory_stat_fingerprint(path)
+            for _, path in data_dirs
+        },
+    }
+
+
+def load_height_run_state(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_height_run_state(path: Path, state: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(state, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+    tmp_path.replace(path)
+
+
 def output_group_dir(raw_root: Path, output_root: Path, first_path: Path) -> Path:
     group_dir = first_path.parent.parent
     try:
@@ -605,7 +646,55 @@ def main() -> int:
     total_samples = 0
     total_rows = 0
     all_samples_path = args.out_root / "height_sample_measures_all.csv.gz"
+    group_summary_path = args.out_root / "height_group_summary.csv.gz"
     all_samples_path.parent.mkdir(parents=True, exist_ok=True)
+
+    run_config = {
+        "type_perc": args.type_perc,
+        "lengths": args.lengths,
+        "f_T": args.f_T,
+        "colors": args.colors,
+        "fit_frac_range": list(args.fit_frac_range),
+        "tail_fraction": args.tail_fraction,
+        "max_samples_per_group": args.max_samples_per_group,
+    }
+    run_state_path = height_run_state_path(args.out_root, args.root, "height_samples")
+    current_run_state = build_height_run_state(
+        data_dirs,
+        HEIGHT_SAMPLE_PROCESSING_VERSION,
+        run_config,
+    )
+    aggregate_outputs_exist = all_samples_path.exists() and group_summary_path.exists()
+    if aggregate_outputs_exist and load_height_run_state(run_state_path) == current_run_state:
+        print(f"[skip-all] No .yts directory changes under {args.root}; kept height sample outputs.")
+        return 0
+
+    if aggregate_outputs_exist and not run_state_path.exists() and data_dirs:
+        can_adopt_existing = run_config == {
+            "type_perc": None,
+            "lengths": None,
+            "f_T": None,
+            "colors": None,
+            "fit_frac_range": [0.08, 0.55],
+            "tail_fraction": 0.20,
+            "max_samples_per_group": None,
+        }
+        for _, data_dir in data_dirs:
+            out_dir = output_group_dir_from_data_dir(args.root, args.out_root, data_dir)
+            manifest = load_manifest(out_dir / HEIGHT_SAMPLE_MANIFEST)
+            if (
+                int(manifest.get("height_sample_processing_version", 0) or 0)
+                != HEIGHT_SAMPLE_PROCESSING_VERSION
+                or not (out_dir / HEIGHT_SAMPLE_FILE).exists()
+                or manifest.get(DATA_DIR_FINGERPRINT_KEY) != directory_stat_fingerprint(data_dir)
+                or summary_cache_from_manifest(manifest) is None
+            ):
+                can_adopt_existing = False
+                break
+        if can_adopt_existing:
+            save_height_run_state(run_state_path, current_run_state)
+            print(f"[skip-all] Adopted unchanged height sample outputs for {args.root}.")
+            return 0
 
     with gzip.open(all_samples_path, "wt", newline="") as all_handle:
         all_writer = csv.DictWriter(all_handle, fieldnames=MEASURE_FIELDS)
@@ -790,10 +879,11 @@ def main() -> int:
         print(f"[info] No sample rows were produced in {args.root}.")
         return 0
 
-    write_rows_csv_gz(args.out_root / "height_group_summary.csv.gz", summary_rows, SUMMARY_FIELDS)
+    write_rows_csv_gz(group_summary_path, summary_rows, SUMMARY_FIELDS)
+    save_height_run_state(run_state_path, current_run_state)
     print(f"[done] processed {total_samples} samples in {len(data_dirs)} groups")
     print(f"[done] samples -> {all_samples_path}")
-    print(f"[done] summary -> {args.out_root / 'height_group_summary.csv.gz'}")
+    print(f"[done] summary -> {group_summary_path}")
     return 0
 
 

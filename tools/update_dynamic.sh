@@ -31,6 +31,7 @@ SKIP_HEIGHT_ENSEMBLE="${DYNAMIC_SKIP_HEIGHT_ENSEMBLE:-${SKIP_HEIGHT_ENSEMBLE:-0}
 SKIP_HEIGHT="${DYNAMIC_SKIP_HEIGHT_SERIES:-${SKIP_HEIGHT:-0}}"
 HEIGHT_MIN_COUNT="${HEIGHT_MIN_COUNT:-1}"
 HEIGHT_MAX_SAMPLES="${HEIGHT_MAX_SAMPLES:-}"
+HEIGHT_FORCE_REFRESH="${HEIGHT_FORCE_REFRESH:-0}"
 
 PASSTHROUGH_ARGS=()
 RAW_DIRS_SPECIFIED=0
@@ -85,6 +86,10 @@ while [[ $# -gt 0 ]]; do
       HEIGHT_MAX_SAMPLES="$2"
       shift 2
       ;;
+    --refresh-height)
+      HEIGHT_FORCE_REFRESH=1
+      shift
+      ;;
     -h|--help)
       echo "Usage: $0 [options] [process_dynamic_growth options]"
       echo ""
@@ -104,6 +109,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --only-height           Run only height processing"
       echo "  --height-min-count N    Min sample count threshold for ensemble (default: 1)"
       echo "  --height-max-samples N  Cap samples processed per parameter group"
+      echo "  --refresh-height         Force scanning/rebuilding height outputs"
       echo "  --delete-processed-raw-json"
       echo "                         Delete processed raw .json samples after publishing; keeps .yts files"
       echo ""
@@ -183,6 +189,37 @@ echo "[update_dynamic] SOP_ROOT=${SOP_ROOT}"
 echo "[update_dynamic] Config: raw_dirs=${RAW_DIRS_ARRAY[*]} jobs=${DYNAMIC_JOBS} series_mode=${DYNAMIC_SERIES_MODE} all_data=${DYNAMIC_WRITE_ALL_DATA} migrate=${DYNAMIC_MIGRATE_PUBLISHED} migrate_control_rules=${DYNAMIC_MIGRATE_CONTROL_RULES}"
 echo "[update_dynamic] Stages: dynamic_growth=$(( 1 - SKIP_DYNAMIC )) height_samples=$(( 1 - SKIP_HEIGHT_SAMPLES )) height_ensemble=$(( 1 - SKIP_HEIGHT_ENSEMBLE ))"
 
+HEIGHT_DIRTY_MARKER="${SOP_ROOT}/.height_yts_dirty"
+HEIGHT_COMPLETE_MARKER="${SOP_ROOT}/processed_height_timeseries/.height_pipeline_complete"
+HEIGHT_CONFIG="version=1;raw_dirs=${RAW_DIRS_ARRAY[*]};min_count=${HEIGHT_MIN_COUNT};max_samples=${HEIGHT_MAX_SAMPLES}"
+HEIGHT_AGGREGATES_EXIST=0
+if [[ -f "${SOP_ROOT}/processed_height_timeseries/height_sample_measures_all.csv.gz" \
+   && -f "${SOP_ROOT}/processed_height_timeseries/height_group_summary.csv.gz" \
+   && -f "${SOP_ROOT}/processed_height_timeseries/height_ensemble_timeseries_all.csv.gz" ]]; then
+  HEIGHT_AGGREGATES_EXIST=1
+fi
+
+if [[ "${SKIP_HEIGHT_SAMPLES}" == "0" && "${SKIP_HEIGHT_ENSEMBLE}" == "0" \
+   && "${HEIGHT_FORCE_REFRESH}" != "1" && "${HEIGHT_FORCE_REFRESH}" != "true" \
+   && "${HEIGHT_AGGREGATES_EXIST}" == "1" ]]; then
+  HEIGHT_IS_CURRENT=0
+  if [[ -f "${HEIGHT_COMPLETE_MARKER}" \
+     && "$(cat "${HEIGHT_COMPLETE_MARKER}")" == "${HEIGHT_CONFIG}" \
+     && ( ! -f "${HEIGHT_DIRTY_MARKER}" || ! "${HEIGHT_DIRTY_MARKER}" -nt "${HEIGHT_COMPLETE_MARKER}" ) ]]; then
+    HEIGHT_IS_CURRENT=1
+  elif [[ ! -f "${HEIGHT_COMPLETE_MARKER}" && ! -f "${HEIGHT_DIRTY_MARKER}" ]]; then
+    printf '%s\n' "${HEIGHT_CONFIG}" > "${HEIGHT_COMPLETE_MARKER}"
+    HEIGHT_IS_CURRENT=1
+    echo "[update_dynamic] Adopted existing height aggregates as current."
+  fi
+
+  if [[ "${HEIGHT_IS_CURRENT}" == "1" ]]; then
+    SKIP_HEIGHT_SAMPLES=1
+    SKIP_HEIGHT_ENSEMBLE=1
+    echo "[update_dynamic] Height outputs unchanged; skipped all .yts scanning."
+  fi
+fi
+
 if [[ "${SKIP_DYNAMIC}" == "0" || "${SKIP_DYNAMIC}" == "false" ]]; then
   echo "[update_dynamic] [1/3] Processing dynamic growth samples..."
   python3 "${SCRIPT_DIR}/process_dynamic_growth.py" \
@@ -220,6 +257,11 @@ if [[ "${SKIP_HEIGHT_ENSEMBLE}" == "0" || "${SKIP_HEIGHT_ENSEMBLE}" == "false" ]
       --min-count "${HEIGHT_MIN_COUNT}" \
       "${HEIGHT_CLI_ARGS[@]}"
   done
+fi
+
+if [[ "${SKIP_HEIGHT_SAMPLES}" == "0" && "${SKIP_HEIGHT_ENSEMBLE}" == "0" ]]; then
+  printf '%s\n' "${HEIGHT_CONFIG}" > "${HEIGHT_COMPLETE_MARKER}.tmp"
+  mv "${HEIGHT_COMPLETE_MARKER}.tmp" "${HEIGHT_COMPLETE_MARKER}"
 fi
 
 echo "[update_dynamic] All tasks finished successfully."

@@ -287,6 +287,36 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
                 sys.argv = old_argv
                 PROCESS_DYNAMIC_GROWTH.write_all_data = original_write_all_data
 
+    def test_main_incremental_all_data_repairs_missing_catalog_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, _, _, data_dir = self._make_data_dir(root)
+            self._write_sample(data_dir, "sample_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            sop_root = root / "SOP_data"
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "process_dynamic_growth.py",
+                    "--sop-root",
+                    str(sop_root),
+                    "--series-mode",
+                    "full",
+                ]
+                self.assertEqual(PROCESS_DYNAMIC_GROWTH.main(), 0)
+                PROCESS_DYNAMIC_GROWTH.write_all_data([], sop_root / "all_data_dynamic.dat")
+
+                self.assertEqual(PROCESS_DYNAMIC_GROWTH.main(), 0)
+            finally:
+                sys.argv = old_argv
+
+            rows = PROCESS_DYNAMIC_GROWTH.read_dat_rows(
+                sop_root / "all_data_dynamic.dat",
+                PROCESS_DYNAMIC_GROWTH.ALL_DATA_COLUMNS,
+            )
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["control_rule"], "relative")
+            self.assertEqual(rows[0]["stat_window"], 0)
+
     def test_incremental_merge_updates_total_samples_for_orders_not_in_new_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -797,6 +827,89 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertTrue(all(group["num_samples_total"] == 1 for group in groups))
             self.assertEqual({row["control_rule"] for row in rows}, {"linear", "relative"})
             self.assertEqual({row["control_rule"] for row in color_rows}, {"linear", "relative"})
+
+    def test_same_filename_from_different_raw_roots_is_processed_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, published_root, manifests_root, relative_dir = self._make_data_dir(root)
+            rel_group = PROCESS_DYNAMIC_GROWTH.canonical_rel_group(relative_dir)
+            linear_dir = root / "SOP_data" / "tests_data" / "linear" / rel_group / "data"
+            linear_dir.mkdir(parents=True)
+            filename = "same_seed_P0_0.7_p0_0.2.json"
+            self._write_sample(relative_dir, filename, [0.2, 0.4, 0.6])
+            linear_path = self._write_sample(linear_dir, filename, [0.6, 0.8, 1.0])
+            linear_sample = json.loads(linear_path.read_text(encoding="utf-8"))
+            linear_sample["meta"]["feedback_control_rule"] = "linear"
+            linear_path.write_text(json.dumps(linear_sample), encoding="utf-8")
+
+            out_path, rows, _ = PROCESS_DYNAMIC_GROWTH.process_group(
+                rel_group,
+                [relative_dir, linear_dir],
+                published_root,
+                manifests_root,
+                jobs=1,
+            )
+
+            bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
+            manifest = PROCESS_DYNAMIC_GROWTH.load_manifest(manifests_root, rel_group)
+            self.assertEqual(
+                {group["feedback_control_rule"] for group in bundle["p0_groups"]},
+                {"linear", "relative"},
+            )
+            self.assertEqual({row["control_rule"] for row in rows}, {"linear", "relative"})
+            self.assertEqual(len(manifest["processed_json_files"]), 2)
+            self.assertTrue(all("::" in key for key in manifest["processed_json_files"]))
+            self.assertNotEqual(
+                PROCESS_DYNAMIC_GROWTH.sample_cache_path(Path("cache"), relative_dir / filename),
+                PROCESS_DYNAMIC_GROWTH.sample_cache_path(Path("cache"), linear_dir / filename),
+            )
+
+    def test_fallback_group_keys_include_control_rule(self) -> None:
+        params = {
+            "type_perc": "bond",
+            "dim": 2,
+            "L": 8,
+            "f_T": 0.3,
+            "c": 0.1,
+            "nc": 1,
+            "rho": 1.0,
+            "p0": 0.8,
+            "P0": 0.2,
+            "stat_window": 0,
+        }
+
+        relative = PROCESS_DYNAMIC_GROWTH.all_data_group_key_from_params(params, "relative")
+        linear = PROCESS_DYNAMIC_GROWTH.all_data_group_key_from_params(params, "linear")
+
+        self.assertNotEqual(relative, linear)
+        self.assertIn("relative", relative)
+        self.assertIn("linear", linear)
+
+    def test_legacy_manifest_collision_is_resolved_by_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, _, _, relative_dir = self._make_data_dir(root)
+            rel_group = PROCESS_DYNAMIC_GROWTH.canonical_rel_group(relative_dir)
+            linear_dir = root / "SOP_data" / "tests_data" / "linear" / rel_group / "data"
+            linear_dir.mkdir(parents=True)
+            filename = "same_seed_P0_0.7_p0_0.2.json"
+            relative_path = self._write_sample(relative_dir, filename, [0.2, 0.4, 0.6])
+            linear_path = self._write_sample(linear_dir, filename, [0.6, 0.8, 1.0])
+            relative_id = PROCESS_DYNAMIC_GROWTH.sample_manifest_id(relative_path)
+            linear_id = PROCESS_DYNAMIC_GROWTH.sample_manifest_id(linear_path)
+            old_fingerprint = PROCESS_DYNAMIC_GROWTH.file_fingerprint_for_mode(
+                relative_path, "stat"
+            )
+
+            files, fingerprints = PROCESS_DYNAMIC_GROWTH.migrate_legacy_manifest_file_ids(
+                {filename},
+                {filename: old_fingerprint},
+                {relative_id: relative_path, linear_id: linear_path},
+                "stat",
+            )
+
+            self.assertEqual(files, {relative_id})
+            self.assertEqual(fingerprints, {relative_id: old_fingerprint})
 
     def test_legacy_bundle_control_rule_defaults_to_relative(self) -> None:
         bundle = {

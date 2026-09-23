@@ -52,6 +52,7 @@ RE_p0 = re.compile(rf"(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)")
 
 ALL_DATA_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule",
+    "stat_window",
     "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
     "z_stat_median", "z_stat_q75", "z_stat_q90",
@@ -333,6 +334,70 @@ def sample_control_rule(path: Path) -> str:
     return normalize_control_rule(meta.get("feedback_control_rule"))
 
 
+def sample_manifest_id(path: Path) -> str:
+    """Return a stable ID that distinguishes equal filenames from different raw roots."""
+    parent_text = path.parent.as_posix()
+    match = PARAM_RE.search(parent_text)
+    prefix = parent_text[:match.start()].rstrip("/") if match else parent_text
+    prefix_parts = Path(prefix).parts
+    source = "/".join(prefix_parts[-2:]) if prefix_parts else "raw"
+    return f"{source}::{path.name}"
+
+
+def migrate_legacy_manifest_file_ids(
+    manifest_files: set[str],
+    manifest_fingerprints: dict[str, str],
+    files_by_id: dict[str, Path],
+    fingerprint_mode: str,
+) -> tuple[set[str], dict[str, str]]:
+    """Upgrade basename-only manifest entries without silently resolving collisions."""
+    if not manifest_files and not manifest_fingerprints:
+        return manifest_files, manifest_fingerprints
+
+    ids_by_basename: dict[str, list[str]] = defaultdict(list)
+    for file_id, path in files_by_id.items():
+        ids_by_basename[path.name].append(file_id)
+
+    migrated_files: set[str] = set()
+    migrated_fingerprints: dict[str, str] = {}
+    legacy_keys = set(manifest_files) | set(manifest_fingerprints)
+    for legacy_key in legacy_keys:
+        if "::" in legacy_key:
+            if legacy_key in manifest_files:
+                migrated_files.add(legacy_key)
+            if legacy_key in manifest_fingerprints:
+                migrated_fingerprints[legacy_key] = manifest_fingerprints[legacy_key]
+            continue
+
+        candidates = ids_by_basename.get(legacy_key, [])
+        if len(candidates) > 1 and legacy_key in manifest_fingerprints:
+            old_fingerprint = manifest_fingerprints[legacy_key]
+            candidates = [
+                file_id for file_id in candidates
+                if file_fingerprint_for_mode(files_by_id[file_id], fingerprint_mode)
+                == old_fingerprint
+            ]
+        if len(candidates) > 1:
+            raise RuntimeError(
+                "Ambiguous legacy manifest entry "
+                f"{legacy_key!r}: it matches multiple raw files. "
+                "Run once with --clear to rebuild this parameter group safely."
+            )
+        if len(candidates) == 1:
+            new_key = candidates[0]
+            if legacy_key in manifest_files:
+                migrated_files.add(new_key)
+            if legacy_key in manifest_fingerprints:
+                migrated_fingerprints[new_key] = manifest_fingerprints[legacy_key]
+        else:
+            if legacy_key in manifest_files:
+                migrated_files.add(legacy_key)
+            if legacy_key in manifest_fingerprints:
+                migrated_fingerprints[legacy_key] = manifest_fingerprints[legacy_key]
+
+    return migrated_files, migrated_fingerprints
+
+
 def parse_data_dir(path: Path) -> dict[str, Any] | None:
     m = PARAM_RE.search(path.as_posix())
     if not m:
@@ -524,13 +589,22 @@ def group_key(row: dict[str, Any], columns: tuple[str, ...]) -> tuple[Any, ...]:
     return tuple(normalized_group_value(row.get(column)) for column in columns)
 
 
-def all_data_group_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
-    return group_key(params, ALL_DATA_GROUP_COLUMNS)
+def all_data_group_key_from_params(
+    params: dict[str, Any], control_rule: str | None = None
+) -> tuple[Any, ...]:
+    row = dict(params)
+    if control_rule is not None:
+        row["control_rule"] = control_rule
+    return group_key(row, ALL_DATA_GROUP_COLUMNS)
 
 
-def all_colors_group_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
+def all_colors_group_key_from_params(
+    params: dict[str, Any], control_rule: str | None = None
+) -> tuple[Any, ...]:
     row = dict(params)
     row["num_colors"] = params.get("nc")
+    if control_rule is not None:
+        row["control_rule"] = control_rule
     return group_key(row, ALL_COLORS_GROUP_COLUMNS)
 
 
@@ -545,6 +619,42 @@ def replace_changed_groups(
         if group_key(row, group_columns) not in changed_group_keys
     ]
     return kept_rows + new_rows
+
+
+def catalog_mismatched_groups(
+    existing_rows: list[dict[str, Any]],
+    expected_rows: list[dict[str, Any]],
+    group_columns: tuple[str, ...],
+    identity_columns: tuple[str, ...],
+    value_columns: list[str],
+) -> set[tuple[Any, ...]]:
+    """Find discovered groups whose catalog rows are missing, extra, or stale."""
+    expected_groups = {group_key(row, group_columns) for row in expected_rows}
+    existing_relevant = [
+        row for row in existing_rows
+        if group_key(row, group_columns) in expected_groups
+    ]
+
+    def indexed(rows: list[dict[str, Any]]) -> dict[tuple[Any, ...], tuple[Any, ...]]:
+        return {
+            group_key(row, identity_columns): tuple(
+                dat_value(row.get(column)) for column in value_columns
+            )
+            for row in rows
+        }
+
+    existing_index = indexed(existing_relevant)
+    expected_index = indexed(expected_rows)
+    mismatched: set[tuple[Any, ...]] = set()
+    for identity in set(existing_index) | set(expected_index):
+        if existing_index.get(identity) != expected_index.get(identity):
+            row_identity = identity
+            group_identity = tuple(
+                row_identity[identity_columns.index(column)]
+                for column in group_columns
+            )
+            mismatched.add(group_identity)
+    return mismatched
 
 
 def parse_order_key(key: str) -> int | None:
@@ -1276,7 +1386,7 @@ def process_one_sample_file_for_pool(args: tuple[Path, bool]) -> tuple[list[dict
 
 
 def sample_cache_path(cache_dir: Path, sample_path: Path) -> Path:
-    digest = hashlib.sha1(sample_path.name.encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(sample_manifest_id(sample_path).encode("utf-8")).hexdigest()
     return cache_dir / f"{sample_path.stem}_{digest[:12]}.summary.json"
 
 
@@ -2986,13 +3096,28 @@ def process_group(
 
     json_files = []
     files_by_dir: dict[Path, list[Path]] = defaultdict(list)
+    known_manifest_names = {entry.rsplit("::", 1)[-1] for entry in manifest_files}
     for d in data_dirs:
-        d_files = collect_group_json_files(d, known_names=manifest_files)
+        d_files = collect_group_json_files(d, known_names=known_manifest_names)
         files_by_dir[d].extend(d_files)
         json_files.extend(d_files)
 
-    current_json_files = sorted({fp.name for fp in json_files})
-    files_by_name = {fp.name: fp for fp in json_files}
+    files_by_id: dict[str, Path] = {}
+    for fp in json_files:
+        file_id = sample_manifest_id(fp)
+        if file_id in files_by_id and files_by_id[file_id] != fp:
+            raise RuntimeError(
+                f"Raw sample identity collision for {file_id!r}: "
+                f"{files_by_id[file_id]} and {fp}"
+            )
+        files_by_id[file_id] = fp
+    manifest_files, manifest_fingerprints = migrate_legacy_manifest_file_ids(
+        manifest_files,
+        manifest_fingerprints,
+        files_by_id,
+        fingerprint_mode,
+    )
+    current_json_files = sorted(files_by_id)
     names_new_to_manifest = sorted(set(current_json_files) - manifest_files)
     current_file_fingerprints: dict[str, str] = {}
     if manifest_fingerprints:
@@ -3003,7 +3128,7 @@ def process_group(
                 if name in manifest_fingerprints
             )
         current_file_fingerprints = {
-            name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+            name: file_fingerprint_for_mode(files_by_id[name], fingerprint_mode)
             for name in sorted(names_to_fingerprint)
         }
         replaced_files = (
@@ -3024,7 +3149,7 @@ def process_group(
         else:
             new_sample_files = names_new_to_manifest
         current_file_fingerprints = {
-            name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+            name: file_fingerprint_for_mode(files_by_id[name], fingerprint_mode)
             for name in sorted(new_sample_files)
         }
     existing_bundle_for_validation: dict[str, Any] | None = None
@@ -3076,7 +3201,7 @@ def process_group(
             if detect_replaced_files or not manifest_fingerprints:
                 for name in current_json_files:
                     if name not in current_file_fingerprints:
-                        current_file_fingerprints[name] = file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+                        current_file_fingerprints[name] = file_fingerprint_for_mode(files_by_id[name], fingerprint_mode)
             fingerprints_out = dict(manifest_fingerprints)
             fingerprints_out.update(current_file_fingerprints)
             summary_fingerprint = (
@@ -3159,7 +3284,7 @@ def process_group(
         batch_bundle, _, _ = build_bundle_for_files(
             params,
             rel_group,
-            [files_by_name[name] for name in new_sample_files if name in files_by_name],
+            [files_by_id[name] for name in new_sample_files if name in files_by_id],
             jobs=jobs,
             series_mode=series_mode,
             sample_cache_dir=sample_cache_dir,
@@ -3244,7 +3369,7 @@ def process_group(
     if clear:
         processed_files_out = set(current_json_files)
         fingerprints_out = {
-            name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+            name: file_fingerprint_for_mode(files_by_id[name], fingerprint_mode)
             for name in current_json_files
         }
     else:
@@ -3252,7 +3377,7 @@ def process_group(
         fingerprints_out = dict(manifest_fingerprints)
         missing_fingerprints = sorted(set(current_json_files) - set(fingerprints_out))
         for name in missing_fingerprints:
-            current_file_fingerprints[name] = file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+            current_file_fingerprints[name] = file_fingerprint_for_mode(files_by_id[name], fingerprint_mode)
         fingerprints_out.update(current_file_fingerprints)
 
     manifest.update({
@@ -3620,7 +3745,7 @@ def main() -> int:
             series_mode=args.series_mode,
             collect_rows=args.write_all_data_outputs,
             migrate_published=args.migrate_published,
-            skip_unchanged_rows=incremental_all_data,
+            skip_unchanged_rows=False,
             return_changed=incremental_all_data,
             delete_processed_raw_json=args.delete_processed_raw_json,
         )
@@ -3651,13 +3776,42 @@ def main() -> int:
                     params = parse_data_dir(published_root / rel_group)
                 if params is not None:
                     if not rows:
-                        changed_all_data_groups.add(all_data_group_key_from_params(params))
+                        changed_all_data_groups.update(
+                            all_data_group_key_from_params(params, rule)
+                            for rule in ("relative", "linear")
+                        )
                     if not color_rows:
-                        changed_all_colors_groups.add(all_colors_group_key_from_params(params))
+                        changed_all_colors_groups.update(
+                            all_colors_group_key_from_params(params, rule)
+                            for rule in ("relative", "linear")
+                        )
         print(f"[published] ensured {out_path}")
 
     if args.write_all_data_outputs:
         if incremental_all_data:
+            existing_rows: list[dict[str, Any]] = []
+            existing_color_rows: list[dict[str, Any]] = []
+            if dat_has_current_headers(all_data_path, all_colors_path):
+                existing_rows = read_dat_rows(all_data_path, ALL_DATA_COLUMNS)
+                existing_color_rows = read_dat_rows(all_colors_path, ALL_COLORS_COLUMNS)
+                changed_all_data_groups.update(
+                    catalog_mismatched_groups(
+                        existing_rows,
+                        all_rows,
+                        ALL_DATA_GROUP_COLUMNS,
+                        ALL_DATA_GROUP_COLUMNS + ("order",),
+                        ALL_DATA_COLUMNS,
+                    )
+                )
+                changed_all_colors_groups.update(
+                    catalog_mismatched_groups(
+                        existing_color_rows,
+                        all_color_rows,
+                        ALL_COLORS_GROUP_COLUMNS,
+                        ALL_COLORS_GROUP_COLUMNS,
+                        ALL_COLORS_COLUMNS,
+                    )
+                )
             if not changed_all_data_groups and not changed_all_colors_groups:
                 if dat_has_current_headers(all_data_path, all_colors_path):
                     print("[dynamic] all-data unchanged; kept existing all_data/all_colors files")
@@ -3691,17 +3845,27 @@ def main() -> int:
                             print(f"[warn] failed to import {bundle_path}: {import_exc}")
             else:
                 try:
-                    existing_rows = read_dat_rows(all_data_path, ALL_DATA_COLUMNS)
-                    existing_color_rows = read_dat_rows(all_colors_path, ALL_COLORS_COLUMNS)
+                    if not existing_rows:
+                        existing_rows = read_dat_rows(all_data_path, ALL_DATA_COLUMNS)
+                    if not existing_color_rows:
+                        existing_color_rows = read_dat_rows(all_colors_path, ALL_COLORS_COLUMNS)
+                    replacement_rows = [
+                        row for row in all_rows
+                        if group_key(row, ALL_DATA_GROUP_COLUMNS) in changed_all_data_groups
+                    ]
+                    replacement_color_rows = [
+                        row for row in all_color_rows
+                        if group_key(row, ALL_COLORS_GROUP_COLUMNS) in changed_all_colors_groups
+                    ]
                     all_rows = replace_changed_groups(
                         existing_rows,
-                        all_rows,
+                        replacement_rows,
                         ALL_DATA_GROUP_COLUMNS,
                         changed_all_data_groups,
                     )
                     all_color_rows = replace_changed_groups(
                         existing_color_rows,
-                        all_color_rows,
+                        replacement_color_rows,
                         ALL_COLORS_GROUP_COLUMNS,
                         changed_all_colors_groups,
                     )
