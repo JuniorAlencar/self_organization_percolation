@@ -20,6 +20,10 @@ from process_height_timeseries import (
     read_yts,
     output_group_dir_from_data_dir,
     directory_stat_fingerprint,
+    height_run_state_path,
+    build_height_run_state,
+    load_height_run_state,
+    save_height_run_state,
 )
 
 
@@ -359,6 +363,49 @@ def main() -> int:
     all_path = args.out_root / "height_ensemble_timeseries_all.csv.gz"
     all_path.parent.mkdir(parents=True, exist_ok=True)
 
+    run_config = {
+        "type_perc": args.type_perc,
+        "lengths": args.lengths,
+        "f_T": args.f_T,
+        "colors": args.colors,
+        "min_count": args.min_count,
+        "max_samples_per_group": args.max_samples_per_group,
+    }
+    run_state_path = height_run_state_path(args.out_root, args.root, "height_ensemble")
+    current_run_state = build_height_run_state(
+        data_dirs,
+        HEIGHT_ENSEMBLE_PROCESSING_VERSION,
+        run_config,
+    )
+    if all_path.exists() and load_height_run_state(run_state_path) == current_run_state:
+        print(f"[skip-all] No .yts directory changes under {args.root}; kept height ensemble output.")
+        return 0
+
+    if all_path.exists() and not run_state_path.exists() and data_dirs:
+        can_adopt_existing = run_config == {
+            "type_perc": None,
+            "lengths": None,
+            "f_T": None,
+            "colors": None,
+            "min_count": 1,
+            "max_samples_per_group": None,
+        }
+        for _, data_dir in data_dirs:
+            out_dir = output_group_dir_from_data_dir(args.root, args.out_root, data_dir)
+            manifest = load_manifest(out_dir / HEIGHT_ENSEMBLE_MANIFEST)
+            if (
+                int(manifest.get("height_ensemble_processing_version", 0) or 0)
+                != HEIGHT_ENSEMBLE_PROCESSING_VERSION
+                or not (out_dir / HEIGHT_ENSEMBLE_FILE).exists()
+                or manifest.get(DATA_DIR_FINGERPRINT_KEY) != directory_stat_fingerprint(data_dir)
+            ):
+                can_adopt_existing = False
+                break
+        if can_adopt_existing:
+            save_height_run_state(run_state_path, current_run_state)
+            print(f"[skip-all] Adopted unchanged height ensemble output for {args.root}.")
+            return 0
+
     with gzip.open(all_path, "wt", newline="") as all_handle:
         all_writer = csv.DictWriter(all_handle, fieldnames=FIELDS)
         all_writer.writeheader()
@@ -484,6 +531,7 @@ def main() -> int:
             all_writer.writerows(group_rows)
             print(f"[keep] published-only group -> {group_path}")
 
+    save_height_run_state(run_state_path, current_run_state)
     print(f"[done] averaged {total_samples} samples in {len(data_dirs)} groups")
     print(f"[done] series -> {all_path}")
     return 0

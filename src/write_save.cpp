@@ -855,6 +855,24 @@ void save_data::save_height_timeseries_bin(const TimeSeries& ts,
         throw std::runtime_error(
             std::string("[save_height_timeseries_bin] falha escrevendo: ") + filename_yts);
     }
+    out.close();
+    if (!out) {
+        throw std::runtime_error(
+            std::string("[save_height_timeseries_bin] falha fechando: ") + filename_yts);
+    }
+
+    for (fs::path cursor = out_path.parent_path(); !cursor.empty();) {
+        if (cursor.filename() == "SOP_data") {
+            std::ofstream dirty_marker(cursor / ".height_yts_dirty", std::ios::app);
+            if (dirty_marker) {
+                dirty_marker.put('\n');
+            }
+            break;
+        }
+        const fs::path parent = cursor.parent_path();
+        if (parent == cursor) break;
+        cursor = parent;
+    }
 }
 
 void save_data::save_network_compact_bin(const NetworkCompact& net,
