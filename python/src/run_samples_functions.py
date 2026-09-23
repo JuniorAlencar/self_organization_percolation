@@ -27,6 +27,8 @@ def shell_data(
     surface_observables=False,
     save_animation_window_only=False,
     control_rule: str = "relative",
+    fraction_samples: int | None = None,
+    fraction_gap_over_L: float = 1.0,
     **kwargs,
 ):
     """
@@ -83,8 +85,16 @@ def shell_data(
     num_runs = int(num_runs)
 
     mode = str(mode).strip()
-    if mode not in ("sop", "growth_test"):
-        raise ValueError("mode must be 'sop' or 'growth_test'")
+    if mode not in ("sop", "growth_test", "fractions", "raw_fractions"):
+        raise ValueError("mode must be 'sop', 'growth_test', or 'fractions'")
+
+    if fraction_samples is not None:
+        fraction_samples = int(fraction_samples)
+        if fraction_samples <= 0:
+            raise ValueError("fraction_samples must be positive")
+    fraction_gap_over_L = float(fraction_gap_over_L)
+    if fraction_gap_over_L < 0:
+        raise ValueError("fraction_gap_over_L must be non-negative")
 
     if isinstance(properties, bool):
         properties = "true" if properties else "false"
@@ -150,6 +160,10 @@ InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
 SaveAnimationWindowOnly={save_animation_window_only}
 ControlRule="{control_rule}"
+FractionSamples={fraction_samples if fraction_samples is not None else 30}
+FractionGapOverL={fraction_gap_over_L}
+export SOP_FRACTION_SAMPLES="$FractionSamples"
+export SOP_FRACTION_GAP_OVER_L="$FractionGapOverL"
 
 extra_args=()
 if [[ "$ControlRule" != "relative" ]]; then
@@ -348,6 +362,10 @@ InitialLayout="{initial_layout}"
 SurfaceObservables={surface_observables}
 SaveAnimationWindowOnly={save_animation_window_only}
 ControlRule="{control_rule}"
+FractionSamples={fraction_samples if fraction_samples is not None else 30}
+FractionGapOverL={fraction_gap_over_L}
+export SOP_FRACTION_SAMPLES="$FractionSamples"
+export SOP_FRACTION_GAP_OVER_L="$FractionGapOverL"
 
 extra_args=()
 if [[ "$ControlRule" != "relative" ]]; then
@@ -380,7 +398,13 @@ progress_bar() {{
 TOTAL=$(( num_runs * ${{#rho[@]}} ))
 DONE=0
 
-VERBOSE=${{VERBOSE:-0}}
+if [[ -z "${{VERBOSE+x}}" ]]; then
+  if [[ "$Mode" == "fractions" || "$Mode" == "raw_fractions" ]]; then
+    VERBOSE=1
+  else
+    VERBOSE=0
+  fi
+fi
 
 for ((run=1; run<=num_runs; run++)); do
   for idx in "${{!rho[@]}}"; do

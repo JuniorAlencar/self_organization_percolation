@@ -8,6 +8,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
@@ -164,6 +165,136 @@ struct PercolationSeries {
     double equilibrium_abs_tol = std::numeric_limits<double>::quiet_NaN();
     std::string initial_base_layout;
     
+};
+
+struct FractalDistanceBin {
+    double r_lower = 0.0;
+    double r_upper = 0.0;
+    double r_center = 0.0;
+    long long count = 0;
+    double sum_r = 0.0;
+    double sum_r2 = 0.0;
+    double sum_ell = 0.0;
+    double sum_ell2 = 0.0;
+    double sum_r_ell = 0.0;
+    double min_r = std::numeric_limits<double>::infinity();
+    double max_r = 0.0;
+    int min_ell = std::numeric_limits<int>::max();
+    double r_at_min_ell = std::numeric_limits<double>::quiet_NaN();
+    int max_ell = 0;
+};
+
+struct FractalOriginDistances {
+    std::uint64_t site_id = 0;
+    std::vector<int> coordinates;
+    std::vector<FractalDistanceBin> bins;
+};
+
+struct FractalBoxCountRow {
+    int epsilon = 0;
+    int offset_id = 0;
+    std::vector<int> offset;
+    long long num_boxes = 0;
+};
+
+struct FractalHullSummary {
+    bool defined = true;
+    std::string reason_if_undefined;
+    long long num_elements = 0;
+    std::vector<long long> num_elements_by_orientation;
+    std::vector<FractalBoxCountRow> box_counts;
+};
+
+struct FractalYardstickRow {
+    int R = 0;
+    long long num_spheres = 0;
+};
+
+struct FractalMinimumPathYardstick {
+    bool defined = false;
+    std::string reason_if_undefined;
+    int path_length = -1;
+    std::uint64_t base_site = 0;
+    std::uint64_t top_site = 0;
+    std::vector<int> base_coordinates;
+    std::vector<int> top_coordinates;
+    std::vector<FractalYardstickRow> counts;
+};
+
+struct FractalCountsSample {
+    bool eligible = false;
+    int sample_index = -1;
+    int dim = 0;
+    int L = 0;
+    int anchor_z = -1;
+    int t_stab = -1;
+    std::string type_percolation;
+    std::vector<std::string> boundary_conditions;
+    long long total_occupied_sites = 0;
+    long long total_active_bonds = 0;
+    long long largest_component_sites = 0;
+    long long largest_component_bonds = 0;
+    std::uint64_t largest_component_seed = 0;
+
+    int chemical_seed = 0;
+    int requested_origins = 0;
+    int effective_origins = 0;
+    int max_chemical_distance = -1;
+    double r_min = 0.0;
+    double r_max = 0.0;
+    int num_bins = 0;
+    std::vector<double> bin_edges;
+    long long total_pairs_processed = 0;
+    long long pairs_discarded_out_of_range = 0;
+    std::vector<FractalOriginDistances> origins;
+
+    std::vector<int> epsilons;
+    int offset_seed = 0;
+    std::vector<FractalBoxCountRow> component_box_counts;
+    FractalHullSummary hull_complete;
+    FractalHullSummary hull_external;
+    long long hull_complete_minus_external = 0;
+    FractalMinimumPathYardstick minimum_path_yardstick;
+};
+
+struct RawFractionsSeries {
+    int dim = 0;
+    int L = 0;
+    int seed = -1;
+    int num_colors = 0;
+    int requested_samples = 0;
+    int collected_samples = 0;
+    long long N_total = 0;
+    long long E_total = 0;
+    int sample_stability_layers = -1;
+    double sample_stability_over_L = std::numeric_limits<double>::quiet_NaN();
+    int sample_gap_layers = -1;
+    double sample_gap_over_L = std::numeric_limits<double>::quiet_NaN();
+    int z_stab = -1;
+    int stop_time = -1;
+    std::string stop_reason;
+    std::string type_percolation;
+    std::vector<double> rho;
+    std::vector<double> t_eq_by_species;
+    std::vector<int> z_stat_by_species;
+    std::vector<double> p_inst_bond;
+    std::vector<double> p_inst_node;
+    std::vector<int> S_inst;
+    std::vector<long long> E_inst;
+    std::vector<int> SP_inst;
+    std::vector<double> p_stab_bond;
+    std::vector<double> p_stab_node;
+    std::vector<int> S_stab;
+    std::vector<long long> E_stab;
+    std::vector<int> SP_stab;
+    std::vector<long long> hull_length;
+    std::vector<long long> full_boundary_length;
+    std::vector<long long> external_perimeter_length;
+    std::vector<std::map<long long, long long>> hole_size_counts;
+    std::vector<int> anchor_z;
+    std::vector<int> t_inst;
+    std::vector<int> t_stab;
+    std::vector<FractalCountsSample> fractal_counts;
 };
 
 // Compact network representation: Structure of Arrays (SoA) + CSR edges
