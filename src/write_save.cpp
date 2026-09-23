@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -61,6 +62,34 @@ void write_json_int_matrix(std::ostream& os,
     os << "[";
     for (size_t i = 0; i < rows.size(); ++i) {
         write_json_array(os, rows[i]);
+        if (i + 1 < rows.size()) os << ", ";
+    }
+    os << "]";
+}
+
+void write_json_int_matrix(std::ostream& os,
+                           const std::vector<std::vector<long long>>& rows)
+{
+    os << "[";
+    for (size_t i = 0; i < rows.size(); ++i) {
+        write_json_array(os, rows[i]);
+        if (i + 1 < rows.size()) os << ", ";
+    }
+    os << "]";
+}
+
+void write_json_count_maps(std::ostream& os,
+                           const std::vector<std::map<long long, long long>>& rows)
+{
+    os << "[";
+    for (size_t i = 0; i < rows.size(); ++i) {
+        os << "{";
+        size_t j = 0;
+        for (const auto& kv : rows[i]) {
+            os << "\"" << kv.first << "\": " << kv.second;
+            if (++j < rows[i].size()) os << ", ";
+        }
+        os << "}";
         if (i + 1 < rows.size()) os << ", ";
     }
     os << "]";
