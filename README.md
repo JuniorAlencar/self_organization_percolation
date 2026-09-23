@@ -4,6 +4,7 @@ required libraries
 * zlib.h
 * boost.h
 * openMP.h
+* nlohmann
 
 required program
 * cmake
@@ -31,6 +32,11 @@ sudo apt install libboost-all-dev
 ```bash
 sudo apt update
 sudo apt install build-essential
+
+```
+# To install *nlohmann* (linux ubuntu)
+```bash
+sudo apt install nlohmann-json3-dev
 ```
 
 
