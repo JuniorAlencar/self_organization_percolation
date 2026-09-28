@@ -952,10 +952,12 @@ def get_ft_min_max(
         if type_perc == 'site':
             type_perc_df = 'node'
 
-        data = {"L":[], "c":[], "type_perc":[],
-                    "f0":[], "p0":[], "nc":[], "rho":[],"f_T_min":[],"f_T_max":[]}
+        data = {"L":[], "c":[], "type_perc":[],"control_rule":[],
+                    "f0":[], "p0":[], "nc":[], "rho":[],"f_T_min":[], 
+                    "p_min":[], "p_min_err":[],
+                    "f_T_max":[], "p_max":[], "p_max_err":[]}
 
-        name = f"ft_min_max_2D_{type_perc_df}.csv"
+        name = f"ft_min_max_2D_{type_perc_df}_{control_rule}.csv"
 
         for idx_c, c in enumerate(c_lst):
             for idx_L, L in enumerate(L_lst):
@@ -1002,18 +1004,37 @@ def get_ft_min_max(
 
                 x = df_trunc['f_T']
                 y = df_trunc['p_mean']
+                
                 ft_min = min(x) if len(x) > 0 else None
                 ft_max = max(x) if len(x) > 0 else None
+
+                if len(df_trunc) > 0:
+                    idx_min = df_trunc['p_mean'].idxmin()
+                    idx_max = df_trunc['p_mean'].idxmax()
+
+                    p_min = df_trunc.loc[idx_min, 'p_mean']
+                    p_min_err = df_trunc.loc[idx_min, 'p_err']
+
+                    p_max = df_trunc.loc[idx_max, 'p_mean']
+                    p_max_err = df_trunc.loc[idx_max, 'p_err']
+                else:
+                    p_min = p_min_err = None
+                    p_max = p_max_err = None
 
                 data["L"].append(L)
                 data["c"].append(c)
                 data["type_perc"].append(type_perc)
+                data["control_rule"].append(control_rule)
                 data["f0"].append(P0)
                 data["p0"].append(p0)
                 data["nc"].append(nc)
                 data["rho"].append(rho)
                 data["f_T_min"].append(ft_min)
+                data["p_min"].append(p_min)
+                data["p_min_err"].append(p_min_err)
                 data["f_T_max"].append(ft_max)
+                data["p_max"].append(p_max)
+                data["p_max_err"].append(p_max_err)
 
         df = pd.DataFrame(data=data)
         df.to_csv(f"../SOP_data/{name}", index=False)
