@@ -11,24 +11,24 @@ from src.run_samples_functions import shell_data
 # PARAMETROS DO RUN
 # Edite as listas e os fors abaixo; cada chamada a shell_data cria um .sh.
 # =============================================================================
-seed = -1
+seed = 44
 dim = 2
 
-type_lst = ["bond", "node"]
-L_lst = [16384]
+type_lst = ["bond"]
+L_lst = [4096]
 num_runs_lst = [1]  # one value per L in L_lst
 num_runs_por_L = dict(zip(L_lst, num_runs_lst))
 
 nc = 1
-c_lst = [0.01]
-ft_lst = [0.1041379]
-fraction_samples_lst = 30
+c_lst = [0.1]
+ft_lst = [0.1545]
+fraction_samples_lst = 3
 fraction_gap = 1.0  # spacing in units of L
 
 p0 = 0.8
 P0 = 0.2
 rho = [1.0 / nc]
-multi = True
+multi = False
 Equilibration = "false"
 Properties = "false"
 Mode = "fractions"

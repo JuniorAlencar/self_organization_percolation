@@ -19,6 +19,8 @@
 #include <deque>
 #include <cstdlib>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 
 namespace {
 
@@ -3892,13 +3894,22 @@ RawFractionsSeries network::create_raw_fractions(
                 }
             }
 
-            std::vector<unsigned char> visited(
-                static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
+            const char* snapshot_dir_env =
+                std::getenv("SOP_FRACTION_SNAPSHOT_DIR");
+            const bool capture_component_labels =
+                snapshot_dir_env != nullptr && snapshot_dir_env[0] != '\0';
+            const std::size_t slab_sites =
+                static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L);
+            std::vector<unsigned char> visited(slab_sites, 0u);
+            std::vector<std::uint32_t> component_labels;
+            if (capture_component_labels) component_labels.assign(slab_sites, 0u);
             std::vector<std::uint32_t> queue;
             queue.reserve(static_cast<std::size_t>(L));
             int largest = 0;
             long long largest_edges = 0;
             std::uint32_t largest_seed = std::numeric_limits<std::uint32_t>::max();
+            std::uint32_t largest_component_label = 0u;
+            std::uint32_t next_component_label = 0u;
             auto local_idx = [&](const int x, const int y) -> std::uint32_t {
                 return static_cast<std::uint32_t>(
                     (y - bottom) * L + x);
@@ -3915,12 +3926,14 @@ RawFractionsSeries network::create_raw_fractions(
                     const std::uint32_t seed = local_idx(x, y);
                     if (visited[seed] || get_site_2d(x, y) <= 0) continue;
 
+                    const std::uint32_t component_label = ++next_component_label;
                     int component = 0;
                     long long component_edge_visits = 0;
                     std::size_t head = 0;
                     queue.clear();
                     queue.push_back(seed);
                     visited[seed] = 1u;
+                    if (capture_component_labels) component_labels[seed] = component_label;
 
                     while (head < queue.size()) {
                         const std::uint32_t cur = queue[head++];
@@ -3950,6 +3963,7 @@ RawFractionsSeries network::create_raw_fractions(
                             const std::uint32_t nidx = local_idx(nx, ny);
                             if (visited[nidx]) continue;
                             visited[nidx] = 1u;
+                            if (capture_component_labels) component_labels[nidx] = component_label;
                             queue.push_back(nidx);
                         }
                     }
@@ -3958,6 +3972,7 @@ RawFractionsSeries network::create_raw_fractions(
                         largest = component;
                         largest_edges = component_edge_visits / 2;
                         largest_seed = seed;
+                        largest_component_label = component_label;
                     }
                 }
             }
@@ -4082,6 +4097,49 @@ RawFractionsSeries network::create_raw_fractions(
                         in_giant,
                         can_traverse_2d);
                     has_fractal_counts = fractal_counts.eligible;
+                }
+
+                // Optional visualization snapshots preserve each component label,
+                // allowing the Python plotter to assign a distinct color per cluster.
+                // This is opt-in and does not retain the full temporal network.
+                if (compute_fractal_counts && capture_component_labels) {
+                        const std::filesystem::path snapshot_dir(snapshot_dir_env);
+                        std::filesystem::create_directories(snapshot_dir);
+                        const auto snapshot_path = snapshot_dir /
+                            ("sample_" + std::to_string(fractal_sample_index + 1) +
+                             ".components");
+                        std::ofstream snapshot(snapshot_path,
+                                               std::ios::binary | std::ios::trunc);
+                        if (!snapshot) {
+                            throw std::runtime_error(
+                                "Could not open fraction snapshot: " + snapshot_path.string());
+                        }
+                        snapshot.write("SOPCOMP1", 8);
+                        const std::uint32_t header[] = {
+                            static_cast<std::uint32_t>(L),
+                            static_cast<std::uint32_t>(h_count),
+                            largest_component_label
+                        };
+                        snapshot.write(reinterpret_cast<const char*>(header), sizeof(header));
+                        std::vector<std::uint32_t> row(static_cast<std::size_t>(L), 0u);
+                        for (int y = top; y >= bottom; --y) {
+                            const std::size_t row_offset =
+                                static_cast<std::size_t>(y - bottom) *
+                                static_cast<std::size_t>(L);
+                            for (int x = 0; x < L; ++x) {
+                                const std::size_t local = row_offset +
+                                    static_cast<std::size_t>(x);
+                                row[static_cast<std::size_t>(x)] =
+                                    get_site_2d(x, y) <= 0 ? 0u : component_labels[local];
+                            }
+                            snapshot.write(
+                                reinterpret_cast<const char*>(row.data()),
+                                static_cast<std::streamsize>(row.size() * sizeof(row[0])));
+                        }
+                        if (!snapshot) {
+                            throw std::runtime_error(
+                                "Failed writing fraction snapshot: " + snapshot_path.string());
+                        }
                 }
             }
 
@@ -4230,6 +4288,47 @@ RawFractionsSeries network::create_raw_fractions(
                     anchor = *std::max_element(out.z_stat_by_species.begin(),
                                                out.z_stat_by_species.end());
                     out.z_stab = anchor;
+
+                    // Optional visualization snapshot of the actual network from
+                    // the base up to z_stat. This is captured before the 2D
+                    // rolling layer buffer overwrites any lower heights.
+                    if (const char* base_snapshot_env =
+                            std::getenv("SOP_FRACTION_BASE_SNAPSHOT")) {
+                        if (base_snapshot_env[0] != '\0') {
+                            const std::filesystem::path base_path(base_snapshot_env);
+                            if (!base_path.parent_path().empty()) {
+                                std::filesystem::create_directories(base_path.parent_path());
+                            }
+                            std::ofstream base_snapshot(base_path,
+                                                        std::ios::binary | std::ios::trunc);
+                            if (!base_snapshot) {
+                                throw std::runtime_error(
+                                    "Could not open base snapshot: " + base_path.string());
+                            }
+                            base_snapshot.write("SOPBASE1", 8);
+                            const std::uint32_t base_header[] = {
+                                static_cast<std::uint32_t>(L),
+                                static_cast<std::uint32_t>(anchor)
+                            };
+                            base_snapshot.write(
+                                reinterpret_cast<const char*>(base_header),
+                                sizeof(base_header));
+                            std::vector<unsigned char> row(static_cast<std::size_t>(L), 0u);
+                            for (int y = anchor - 1; y >= 0; --y) {
+                                for (int x = 0; x < L; ++x) {
+                                    row[static_cast<std::size_t>(x)] =
+                                        get_site_2d(x, y) > 0 ? 1u : 0u;
+                                }
+                                base_snapshot.write(
+                                    reinterpret_cast<const char*>(row.data()),
+                                    static_cast<std::streamsize>(row.size()));
+                            }
+                            if (!base_snapshot) {
+                                throw std::runtime_error(
+                                    "Failed writing base snapshot: " + base_path.string());
+                            }
+                        }
+                    }
                     if (!run_fractal_counts) {
                         std::cout << "[fractions] stabilized"
                                   << " t=" << t
