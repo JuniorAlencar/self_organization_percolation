@@ -4140,6 +4140,50 @@ RawFractionsSeries network::create_raw_fractions(
                             throw std::runtime_error(
                                 "Failed writing fraction snapshot: " + snapshot_path.string());
                         }
+
+                        // Capture the L-sized slab immediately above sample 1.
+                        // This is the actual gap between the two stabilized samples.
+                        if (fractal_sample_index == 0) {
+                            const char* gap_snapshot_env =
+                                std::getenv("SOP_FRACTION_GAP_SNAPSHOT");
+                            if (gap_snapshot_env != nullptr && gap_snapshot_env[0] != '\0') {
+                                const std::filesystem::path gap_path(gap_snapshot_env);
+                                if (!gap_path.parent_path().empty()) {
+                                    std::filesystem::create_directories(gap_path.parent_path());
+                                }
+                                std::ofstream gap_snapshot(gap_path,
+                                                           std::ios::binary | std::ios::trunc);
+                                if (!gap_snapshot) {
+                                    throw std::runtime_error(
+                                        "Could not open gap snapshot: " + gap_path.string());
+                                }
+                                gap_snapshot.write("SOPGAP1", 8);
+                                const std::uint32_t gap_header[] = {
+                                    static_cast<std::uint32_t>(L),
+                                    static_cast<std::uint32_t>(L)
+                                };
+                                gap_snapshot.write(
+                                    reinterpret_cast<const char*>(gap_header),
+                                    sizeof(gap_header));
+                                std::vector<unsigned char> gap_row(
+                                    static_cast<std::size_t>(L), 0u);
+                                const int gap_bottom = top + 1;
+                                const int gap_top = gap_bottom + L - 1;
+                                for (int y = gap_top; y >= gap_bottom; --y) {
+                                    for (int x = 0; x < L; ++x) {
+                                        gap_row[static_cast<std::size_t>(x)] =
+                                            get_site_2d(x, y) > 0 ? 1u : 0u;
+                                    }
+                                    gap_snapshot.write(
+                                        reinterpret_cast<const char*>(gap_row.data()),
+                                        static_cast<std::streamsize>(gap_row.size()));
+                                }
+                                if (!gap_snapshot) {
+                                    throw std::runtime_error(
+                                        "Failed writing gap snapshot: " + gap_path.string());
+                                }
+                            }
+                        }
                 }
             }
 

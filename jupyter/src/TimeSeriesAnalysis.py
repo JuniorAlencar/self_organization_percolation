@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from scipy.interpolate import interp1d
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict 
 from typing import Dict, List, Any, Tuple, Optional
 import pandas as pd
 import random
@@ -2283,7 +2283,7 @@ def weighted_mean_and_sem(y, sem):
     return mu, se
 
 # ============================================================
-# Single growth_test sample: p(t) stabilization diagnostics
+# Single growth_test sample: return series and plot the network only
 # ============================================================
 
 def _centered_moving_average(values: np.ndarray, window: int) -> np.ndarray:
@@ -2303,15 +2303,11 @@ def _centered_moving_average(values: np.ndarray, window: int) -> np.ndarray:
 def load_growth_test_stabilization_series(
     json_path: str | Path,
     order: int | None = None,
-) -> dict[str, Any]:
-    """Load p(t) and reproduce the smoothing/block/derivative diagnostics.
+) -> dict[str, list[float]]:
+    """Return p(t), its centered moving average, block means, and s'(t) as lists.
 
-    The returned arrays are directly usable in notebook plots:
-      time, p_t, moving_average, block_time, block_mean_pt,
-      variation, derivative_time, derivative.
-
-    Smoothing and block means follow the growth_test estimator in src/network.cpp.
-    The reported t_stab comes from the simulation JSON.
+    Smoothing, block averaging, and finite differences follow the growth_test
+    estimator in src/network.cpp. The dictionary contains only numeric lists.
     """
     json_path = Path(json_path)
     with json_path.open("r", encoding="utf-8") as handle:
@@ -2343,17 +2339,10 @@ def load_growth_test_stabilization_series(
 
     smooth_window = int(meta.get("growth_test_t_eq_smoothing_window", 15))
     block_window = int(meta.get("growth_test_t_eq_window_block", 10))
-    min_stable_steps = int(meta.get("growth_test_t_eq_min_stable_steps", 100))
-    validation_window_steps = int(meta.get("growth_test_t_eq_validation_window_steps", 200))
-    rel_tol = float(meta.get("growth_test_equilibrium_effective_rel_tol",
-                             meta.get("growth_test_equilibrium_rel_tol", 2.5e-2)))
-    abs_tol = float(meta.get("growth_test_equilibrium_abs_tol", 1.0e-6))
-    s_prime_threshold = float(meta.get("growth_test_t_eq_s_prime_threshold", 1.0e-5))
     moving_average = _centered_moving_average(p_t, smooth_window)
-
     n_blocks = time.size // block_window
     if n_blocks < 3:
-        raise ValueError("At least three complete time blocks are required to plot the derivative")
+        raise ValueError("At least three complete time blocks are required to calculate the derivative")
     block_time = np.array([
         np.mean(time[k * block_window:(k + 1) * block_window])
         for k in range(n_blocks)
@@ -2373,115 +2362,19 @@ def load_growth_test_stabilization_series(
         else:
             derivative[i] = (variation[i + 1] - variation[i - 1]) / (derivative_time[i + 1] - derivative_time[i - 1])
 
-    params = parse_params_from_path(str(json_path.parent)) or {}
-    network_path = json_path.parent.parent / "network" / (json_path.stem + ".bin")
-    z_stab_value = meta.get("z_stat", meta.get("growth_test_z_stat_by_color"))
-    if isinstance(z_stab_value, (list, tuple, np.ndarray)):
-        z_stab_value = z_stab_value[0] if len(z_stab_value) else None
     return {
-        "json_path": json_path,
-        "network_path": network_path,
-        "meta": meta,
-        "params": params,
-        "order": order,
-        "time": time,
-        "p_t": p_t,
-        "moving_average": moving_average,
-        "smooth_window": smooth_window,
-        "block_window": block_window,
-        "min_stable_steps": min_stable_steps,
-        "validation_window_steps": validation_window_steps,
-        "rel_tol": rel_tol,
-        "abs_tol": abs_tol,
-        "s_prime_threshold": s_prime_threshold,
-        "block_time": block_time,
-        "block_mean_pt": block_mean_pt,
-        "variation": variation,
-        "derivative_time": derivative_time,
-        "derivative": derivative,
-        "t_stab": meta.get("t_eq"),
-        "z_stab": z_stab_value,
+        "time": time.tolist(),
+        "p_t": p_t.tolist(),
+        "moving_average": moving_average.tolist(),
+        "block_time": block_time.tolist(),
+        "block_mean_pt": block_mean_pt.tolist(),
+        "variation": variation.tolist(),
+        "derivative_time": derivative_time.tolist(),
+        "derivative": derivative.tolist(),
     }
 
 
-def plot_growth_test_stabilization(
-    series: dict[str, Any],
-    *,
-    axes=None,
-    figsize: tuple[float, float] = (13.0, 4.8),
-    save_path: str | Path | None = None,
-):
-    """Plot p(t) with its moving average beside the derivative criterion."""
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-
-    if axes is None:
-        fig, axes = plt.subplots(1, 2, figsize=figsize, constrained_layout=True)
-    else:
-        axes = np.asarray(axes, dtype=object).reshape(-1)
-        if len(axes) != 2:
-            raise ValueError("axes must contain exactly two Matplotlib axes")
-        fig = axes[0].figure
-    ax_p, ax_d = axes
-    t, p = series["time"], series["p_t"]
-    stab = series.get("t_stab")
-    if stab is not None and series["validation_window_steps"] > 0:
-        window_end = float(stab) + float(series["validation_window_steps"])
-        ax_p.axvspan(float(stab), window_end, color="#70a98c", alpha=0.10, zorder=0)
-        ax_d.axvspan(float(stab), window_end, color="#70a98c", alpha=0.10, zorder=0)
-    ax_p.plot(t, p, color="#263238", linewidth=0.75, alpha=0.82, label=r"$p(t)$")
-    ax_p.scatter(t, series["moving_average"], s=5, color="#d97932", alpha=0.70,
-                 linewidths=0, label=f"Média móvel centrada (janela {series['smooth_window']})", zorder=3)
-    if stab is not None:
-        ax_p.axvline(float(stab), color="#d1495b", linestyle="--", linewidth=1.4,
-                     label=fr"$t_{{stab}}={float(stab):g}$")
-    ax_p.set(xlabel=r"Tempo, $t$", ylabel=r"$p(t)$", title="Série temporal")
-    ax_p.grid(alpha=0.20)
-    ax_p.legend(frameon=False, fontsize=8, loc="upper right")
-
-    inset = inset_axes(ax_p, width="37%", height="36%", loc="lower right", borderpad=1.6)
-    inset.plot(t, p, color="#263238", linewidth=0.65)
-    inset.scatter(t, series["moving_average"], s=4, color="#d97932", alpha=0.72, linewidths=0)
-    if stab is not None:
-        inset.axvline(float(stab), color="#d1495b", linestyle="--", linewidth=0.9)
-    inset.set_xlim(float(t[0]), min(float(t[-1]), float(t[0]) + 650.0))
-    inset.set_title("Detalhe do transiente", fontsize=7)
-    inset.tick_params(labelsize=6)
-    inset.grid(alpha=0.15)
-
-    ax_d.plot(series["derivative_time"], series["derivative"], color="#6554a4", linewidth=0.85)
-    threshold = float(series["s_prime_threshold"])
-    ax_d.axhline(threshold, color="#d1495b", linestyle="--", linewidth=1.0,
-                 label=fr"Limiar local $|s'|={threshold:.0e}$ (validação global ativa)")
-    ax_d.axhline(-threshold, color="#d1495b", linestyle="--", linewidth=1.0)
-    if stab is not None:
-        ax_d.axvline(float(stab), color="#d1495b", linestyle="--", linewidth=1.4,
-                     label=fr"$t_{{stab}}={float(stab):g}$")
-    ax_d.set(xlabel=r"Tempo, $t$", ylabel=r"Derivada $s'(t)$", title="Derivada da variação entre blocos")
-    ax_d.grid(alpha=0.20)
-    ax_d.legend(frameon=False, fontsize=8, loc="upper right")
-    rule_text = (
-        f"Média centrada: {series['smooth_window']} passos | bloco: {series['block_window']} passos\n"
-        f"mínimo estável: {series['min_stable_steps']} passos | validação da cauda: {series['validation_window_steps']} passos\n"
-        f"tolerâncias: relativa={series['rel_tol']:g}, absoluta={series['abs_tol']:g} | alvo desativado\n"
-        "Aceitação exige deriva e inclinação dentro da tolerância na janela e na cauda completa.\n"
-        "Com validação global ativa, o limiar local de s' não decide a aceitação."
-    )
-    ax_d.text(0.02, 0.025, rule_text, transform=ax_d.transAxes, ha="left", va="bottom", fontsize=7.0,
-              bbox={"boxstyle": "round,pad=0.4", "facecolor": "white", "edgecolor": "#c9ced6", "alpha": 0.94})
-    fig.suptitle("Estabilização de uma amostra growth_test", fontsize=12)
-    if save_path is not None:
-        save_path = Path(save_path)
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
-    return fig, axes
-
-
-# ============================================================
-# Single growth_test sample: network and z_stab visualization
-# ============================================================
-
-def _read_compact_network_2d(path: str | Path, L: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _read_compact_network_2d(path: str | Path, L: int) -> tuple[np.ndarray, np.ndarray]:
     """Read occupied coordinates from NetworkCompact .bin without loading edges."""
     import struct
     path = Path(path)
@@ -2494,127 +2387,100 @@ def _read_compact_network_2d(path: str | Path, L: int) -> tuple[np.ndarray, np.n
             raise ValueError(f"Invalid compact network magic in {path}")
         pos = np.fromfile(handle, dtype="<u4", count=n).astype(np.int64)
         species = np.fromfile(handle, dtype="u1", count=n)
-        activation_time = np.fromfile(handle, dtype="<u4", count=n).astype(np.int64)
-    active = species > 0
-    flat = pos[active]
-    return flat % L, flat // L, activation_time[active]
+    flat = pos[species > 0]
+    return flat % L, flat // L
 
 
 def plot_growth_test_network(
-    series_or_json: dict[str, Any] | str | Path,
+    json_path: str | Path,
     *,
     network_path: str | Path | None = None,
+    x_label: str = "x",
+    y_label: str = "y",
+    fs_labels: float = 10.0,
+    fs_zstab: float = 14,
+    L:float = 1024,
+    legend_label_stab: str = "stab",
+    legend_label_posstab: str = "posstab",
+    fs_legend: float = 15,
     z_stab: int | None = None,
-    crop_half_width: int = 24,
     save_path: str | Path | None = None,
+    figsize: tuple[float, float] = (4.2, 9.0),
+    ax=None,
+    title: str | None = None,
+    fs_title: float = 20,
 ):
-    """Draw the full 2D network and a close view of the exact z_stab layer.
-
-    Uses the topology figure palette: cream background, orange below z_stab,
-    purple from z_stab onward, dark outline, and red stabilization marker.
-    The right panels show a crop around z_stab and the occupied sites in that
-    exact horizontal layer.
-    """
+    """Plot the full 2D network in the topology palette and mark z_stab."""
     import matplotlib.pyplot as plt
-    from matplotlib.colors import ListedColormap, BoundaryNorm
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    from matplotlib.patches import Patch
 
-    if isinstance(series_or_json, dict):
-        series = series_or_json
-    else:
-        series = load_growth_test_stabilization_series(series_or_json)
-    meta = series.get("meta", {})
-    params = series.get("params", {})
-    if network_path is None:
-        network_path = series.get("network_path")
-    if network_path is None:
-        raise ValueError("network_path is required when no sample JSON path is available")
-    L = int(params.get("L", meta.get("L", 0)) or 0)
+    json_path = Path(json_path)
+    with json_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    meta = payload.get("meta", {})
+    params = parse_params_from_path(str(json_path.parent)) or {}
+    resolved_L = params.get("L", meta.get("L", L))
+    if not resolved_L:
+        # Also accept the compact Networks/L_<value>_... layout.
+        match_L = re.search(r"(?:^|[/\\])L_(\d+)(?:_|[/\\])", str(json_path))
+        if match_L:
+            resolved_L = int(match_L.group(1))
+    L = int(resolved_L or 0)
     if L <= 0:
-        raise ValueError("Could not determine L from the sample JSON path/metadata")
+        raise ValueError(f"Could not determine L from {json_path}; pass L explicitly")
     if z_stab is None:
-        z_stab = series.get("z_stab")
+        z_stab = meta.get("z_stat", meta.get("growth_test_z_stat_by_color"))
     if isinstance(z_stab, (list, tuple, np.ndarray)):
         z_stab = z_stab[0] if len(z_stab) else None
-    if z_stab is None or not np.isfinite(float(z_stab)):
+    if z_stab is None:
         raise ValueError("z_stab is missing from the sample; pass it explicitly")
     z_stab = int(z_stab)
+    if network_path is None:
+        network_path = json_path.parent.parent / "network" / (json_path.stem + ".bin")
 
-    x, z, _activation = _read_compact_network_2d(network_path, L)
+    x, z = _read_compact_network_2d(network_path, L)
     if x.size == 0:
         raise ValueError(f"No occupied sites in compact network: {network_path}")
     height = int(z.max()) + 1
     if z_stab < 0 or z_stab >= height:
         raise ValueError(f"z_stab={z_stab} lies outside network height [0, {height - 1}]")
 
-    # 0 is empty; 1 is occupied below z_stab; 2 is occupied at/above z_stab.
+    # Empty cells are cream; occupied cells are orange before z_stab and purple after it.
     image = np.zeros((height, L), dtype=np.uint8)
     before = z < z_stab
     image[z[before], x[before]] = 1
     image[z[~before], x[~before]] = 2
-    colors = ["#fff7ef", "#f28e2b", "#8a5cf6"]
-    cmap = ListedColormap(colors)
+    cmap = ListedColormap(["#fff7ef", "#f28e2b", "#8a5cf6"])
     norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
-    ink, accent = "#263238", "#d1495b"
 
-    fig = plt.figure(figsize=(9.4, 7.3), facecolor="white", constrained_layout=True)
-    grid = fig.add_gridspec(2, 2, width_ratios=(1.0, 2.5), height_ratios=(3.0, 1.0))
-    ax_full = fig.add_subplot(grid[:, 0], facecolor="#fff7ef")
-    ax_crop = fig.add_subplot(grid[0, 1], facecolor="#fff7ef")
-    ax_layer = fig.add_subplot(grid[1, 1], facecolor="#fff7ef")
-
-    full_extent = (-0.5, L - 0.5, -0.5, height - 0.5)
-    ax_full.imshow(image, origin="lower", interpolation="nearest", cmap=cmap, norm=norm,
-                   extent=full_extent, rasterized=True, aspect="equal")
-    ax_full.axhline(z_stab, color=accent, linewidth=1.35, zorder=4)
-    ax_full.set_xlim(-0.5, L - 0.5)
-    ax_full.set_ylim(-0.5, height - 0.5)
-    ax_full.set_xlabel("Posição lateral, $x$", color=ink)
-    ax_full.set_ylabel("Altura, $z$", color=ink)
-    ax_full.set_title("Rede completa", color=ink, fontsize=10)
-    ax_full.text(0.5, z_stab + max(12, height * 0.008),
-                 fr"$z_{{\mathrm{{stab}}}}={z_stab}$", ha="center", va="bottom", color=accent,
-                 fontsize=9, bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.9, "pad": 1.5})
-    for spine in ax_full.spines.values():
-        spine.set_color(ink)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, facecolor="white", constrained_layout=True)
+    else:
+        fig = ax.figure
+    ax.set_facecolor("#fff7ef")
+    ax.imshow(image, origin="lower", interpolation="nearest", cmap=cmap, norm=norm,
+              extent=(-0.5, L - 0.5, -0.5, height - 0.5), rasterized=True, aspect="equal")
+    ax.axhline(z_stab, color="#d1495b", linewidth=1.35, zorder=4)
+    ax.text(0.04 * L, z_stab + max(10, 0.006 * height),
+            fr"$z_{{\mathrm{{stab}}}}={z_stab}$", ha="left", va="bottom", color="#000000",
+            fontsize=fs_zstab, bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5})
+    ax.set_xlim(-0.5, L - 0.5)
+    ax.set_ylim(-0.5, height - 0.5)
+    ax.set_xlabel(f"{x_label}", fontsize=fs_labels , color="#263238")
+    ax.set_ylabel(f"{y_label}", fontsize=fs_labels , color="#263238")
+    if title is not None:
+        ax.set_title(title, fontsize=fs_title, color="#263238", pad=8)
+    for spine in ax.spines.values():
+        spine.set_color("#263238")
         spine.set_linewidth(0.9)
-
-    half = max(1, int(crop_half_width))
-    z_low, z_high = max(0, z_stab - half), min(height, z_stab + half + 1)
-    ax_crop.imshow(image[z_low:z_high], origin="lower", interpolation="nearest", cmap=cmap, norm=norm,
-                   extent=(-0.5, L - 0.5, z_low - 0.5, z_high - 0.5), rasterized=True, aspect="auto")
-    ax_crop.axhline(z_stab, color=accent, linewidth=1.4, zorder=4)
-    ax_crop.set_xlim(-0.5, L - 0.5)
-    ax_crop.set_ylim(z_low - 0.5, z_high - 0.5)
-    ax_crop.set_ylabel("Altura, $z$", color=ink)
-    ax_crop.set_title(fr"Vizinhança de $z_{{\mathrm{{stab}}}}={z_stab}$", color=ink, fontsize=10)
-    ax_crop.tick_params(axis="x", labelbottom=False)
-    ax_crop.grid(axis="y", color="white", linewidth=0.55, alpha=0.7)
-    for spine in ax_crop.spines.values():
-        spine.set_color(ink)
-        spine.set_linewidth(0.9)
-
-    layer = image[z_stab:z_stab + 1]
-    active_in_layer = int(np.count_nonzero(layer))
-    ax_layer.imshow(layer, origin="lower", interpolation="nearest", cmap=cmap, norm=norm,
-                    extent=(-0.5, L - 0.5, z_stab - 0.5, z_stab + 0.5), rasterized=True, aspect="auto")
-    ax_layer.set_xlim(-0.5, L - 0.5)
-    ax_layer.set_ylim(z_stab - 0.5, z_stab + 0.5)
-    ax_layer.set_yticks([z_stab], [str(z_stab)])
-    ax_layer.set_xlabel("Posição lateral, $x$", color=ink)
-    ax_layer.set_ylabel("$z$", rotation=0, labelpad=12, color=ink)
-    ax_layer.set_title(fr"Camada exata $z=z_{{\mathrm{{stab}}}}$  ·  sítios ocupados: {active_in_layer}",
-                       color=ink, fontsize=9)
-    for spine in ax_layer.spines.values():
-        spine.set_color(ink)
-        spine.set_linewidth(0.9)
-
-    from matplotlib.patches import Patch
-    legend = [Patch(facecolor=colors[1], edgecolor="none", label=fr"Rede antes de $z_{{\mathrm{{stab}}}}$"),
-              Patch(facecolor=colors[2], edgecolor="none", label=fr"Rede a partir de $z_{{\mathrm{{stab}}}}$")]
-    fig.legend(handles=legend, loc="lower center", bbox_to_anchor=(0.5, -0.015), ncol=2, frameon=False, fontsize=8)
-    fig.suptitle("Rede 2D e altura de estabilização", color=ink, fontsize=12)
+    ax.legend(handles=[
+        Patch(facecolor="#f28e2b", edgecolor="none", label=f"{legend_label_stab}"),
+        Patch(facecolor="#8a5cf6", edgecolor="none", label=f"{legend_label_posstab}"),
+    ], loc="upper right", frameon=True, facecolor="white", edgecolor="none", framealpha=0.88, fontsize=fs_legend)
+    ax.set_xticks(np.arange(0, L + 1, 250))
     if save_path is not None:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=400, bbox_inches="tight", facecolor="white")
-    return fig, (ax_full, ax_crop, ax_layer)
+    return fig, ax
