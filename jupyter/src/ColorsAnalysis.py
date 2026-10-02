@@ -939,7 +939,7 @@ def plot_pmean_series_grid(
 
 
 def get_ft_min_max(
-    df_series, L_lst, c_lst, type_perc_lst, p0, order, nc, rho, dim, P0,
+    df_series, L_lst, c_lst, type_perc_lst, N_samples_lst, p0, order, nc, rho, dim, P0,
     control_rule="relative",
 ):
 
@@ -955,12 +955,14 @@ def get_ft_min_max(
         data = {"L":[], "c":[], "type_perc":[],"control_rule":[],
                     "f0":[], "p0":[], "nc":[], "rho":[],"f_T_min":[], 
                     "p_min":[], "p_min_err":[],
-                    "f_T_max":[], "p_max":[], "p_max_err":[]}
+                    "f_T_max":[], "p_max":[], "p_max_err":[], "N_samples":[], 
+                    "N_samples_exec":[]}
 
         name = f"ft_min_max_2D_{type_perc_df}_{control_rule}.csv"
 
         for idx_c, c in enumerate(c_lst):
             for idx_L, L in enumerate(L_lst):
+                N_samples = N_samples_lst[idx_L]
                 df_SUB = df_series[
                     (df_series['type_perc'] == type_perc_df)
                     & np.isclose(df_series['p0'].astype(float), float(p0))
@@ -1008,6 +1010,7 @@ def get_ft_min_max(
                 ft_min = min(x) if len(x) > 0 else None
                 ft_max = max(x) if len(x) > 0 else None
 
+                N_samples_exec = df_trunc["N_samples"]
                 if len(df_trunc) > 0:
                     idx_min = df_trunc['p_mean'].idxmin()
                     idx_max = df_trunc['p_mean'].idxmax()
@@ -1035,7 +1038,9 @@ def get_ft_min_max(
                 data["f_T_max"].append(ft_max)
                 data["p_max"].append(p_max)
                 data["p_max_err"].append(p_max_err)
-
+                data["N_samples"].append(len(df_plot))
+                data["N_samples_exec"].append(N_samples_exec)
+                data["N_samples"].append(N_samples)
         df = pd.DataFrame(data=data)
         df.to_csv(f"../SOP_data/{name}", index=False)
 
