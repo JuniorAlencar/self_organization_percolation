@@ -1022,6 +1022,57 @@ void write_json_string_array(std::ostream& os, const std::vector<std::string>& v
     os << "]";
 }
 
+// Equal weight per scale; average box counts over offsets before taking logs.
+void write_dimension_fit(std::ostream& os, const std::map<int, double>& counts, int L)
+{
+    std::vector<std::pair<double, double>> points;
+    int min_scale = 0, max_scale = 0;
+    for (const auto& row : counts) {
+        if (row.first < 2 || row.first > L / 4 || row.second <= 1.0) continue;
+        if (min_scale == 0) min_scale = row.first;
+        max_scale = row.first;
+        points.emplace_back(std::log(static_cast<double>(L) / row.first), std::log(row.second));
+    }
+    os << "{\"value\": ";
+    double xx = 0, xy = 0, yy = 0;
+    if (points.size() >= 3) {
+        double mx = 0, my = 0;
+        for (const auto& p : points) { mx += p.first; my += p.second; }
+        mx /= points.size(); my /= points.size();
+        for (const auto& p : points) {
+            xx += (p.first - mx) * (p.first - mx);
+            xy += (p.first - mx) * (p.second - my);
+            yy += (p.second - my) * (p.second - my);
+        }
+    }
+    if (xx > 0) os << std::setprecision(17) << xy / xx;
+    else os << "null";
+    os << ", \"r_squared\": ";
+    if (xx > 0 && yy > 0) os << std::min(1.0, xy * xy / (xx * yy));
+    else os << "null";
+    os << ", \"num_scales\": " << points.size()
+       << ", \"min_scale\": " << min_scale << ", \"max_scale\": " << max_scale
+       << ", \"reason_if_undefined\": \""
+       << (xx > 0 ? "" : "fewer_than_three_valid_scales") << "\"}";
+}
+
+void write_cluster_dimensions(std::ostream& os, const FractalClusterCounts& cluster)
+{
+    std::map<int, std::pair<double, int>> sums;
+    for (const auto& row : cluster.component_box_counts) {
+        sums[row.epsilon].first += row.num_boxes;
+        ++sums[row.epsilon].second;
+    }
+    std::map<int, double> bulk, path;
+    for (const auto& row : sums) bulk[row.first] = row.second.first / row.second.second;
+    for (const auto& row : cluster.minimum_path_yardstick.counts) path[row.R] = row.num_spheres;
+    os << "      \"d_bulk\": ";
+    write_dimension_fit(os, bulk, cluster.L);
+    os << ",\n      \"d_min\": ";
+    write_dimension_fit(os, path, cluster.L);
+    os << ",\n";
+}
+
 void write_fractal_box_rows(std::ostream& os,
                             const std::vector<FractalBoxCountRow>& rows,
                             const int indent)
@@ -1078,23 +1129,6 @@ void write_fractal_minimum_path_yardstick(std::ostream& os,
     os << ",\n";
     os << pad << "\"counts\": ";
     write_fractal_yardstick_rows(os, path.counts, indent + 2);
-    os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ') << "}";
-}
-
-void write_fractal_hull(std::ostream& os,
-                        const FractalHullSummary& hull,
-                        const int indent)
-{
-    const std::string pad(static_cast<std::size_t>(indent), ' ');
-    os << "{\n";
-    os << pad << "\"defined\": " << (hull.defined ? "true" : "false") << ",\n";
-    os << pad << "\"reason_if_undefined\": \"" << hull.reason_if_undefined << "\",\n";
-    os << pad << "\"num_elements\": " << hull.num_elements << ",\n";
-    os << pad << "\"num_elements_by_orientation\": ";
-    write_json_array(os, hull.num_elements_by_orientation);
-    os << ",\n";
-    os << pad << "\"box_counts\": ";
-    write_fractal_box_rows(os, hull.box_counts, indent + 2);
     os << "\n" << std::string(static_cast<std::size_t>(std::max(0, indent - 2)), ' ') << "}";
 }
 
@@ -1234,81 +1268,90 @@ void save_data::save_fractal_counts_json(const RawFractionsSeries& fractions,
     ofs << "    \"num_colors\": " << fractions.num_colors << ",\n";
     ofs << "    \"type_percolation\": \"" << fractions.type_percolation << "\",\n";
     ofs << "    \"num_samples\": " << fractions.fractal_counts.size() << ",\n";
-    ofs << "    \"exponents_are_not_estimated_in_cpp\": true\n";
+    ofs << "    \"schema_version\": 2,\n";
+    ofs << "    \"spanning_definition\": \"connected_inside_slab_touching_bottom_and_top\",\n";
+    ofs << "    \"cluster_order\": \"num_sites_descending_then_component_seed_ascending\",\n";
+    ofs << "    \"dimension_fit\": \"OLS log(count) versus log(L/scale); 2 <= scale <= L/4; count > 1; at least 3 scales; d_bulk uses mean box counts over offsets; d_min uses shortest bottom-to-top path yardstick counts\",\n";
+    ofs << "    \"exponents_are_not_estimated_in_cpp\": false\n";
     ofs << "  },\n";
     ofs << "  \"samples\": [";
     for (std::size_t si = 0; si < fractions.fractal_counts.size(); ++si) {
-        const auto& sample = fractions.fractal_counts[si];
-        ofs << "\n    {\n";
-        ofs << "      \"eligible\": " << (sample.eligible ? "true" : "false") << ",\n";
-        ofs << "      \"sample_index\": " << sample.sample_index << ",\n";
-        ofs << "      \"dim\": " << sample.dim << ",\n";
-        ofs << "      \"L\": " << sample.L << ",\n";
-        ofs << "      \"anchor_z\": " << sample.anchor_z << ",\n";
-        ofs << "      \"t_stab\": " << sample.t_stab << ",\n";
-        ofs << "      \"type_percolation\": \"" << sample.type_percolation << "\",\n";
-        ofs << "      \"boundary_conditions\": ";
-        write_json_string_array(ofs, sample.boundary_conditions);
-        ofs << ",\n";
-        ofs << "      \"largest_component\": {\n";
-        ofs << "        \"num_sites\": " << sample.largest_component_sites << ",\n";
-        ofs << "        \"num_bonds\": " << sample.largest_component_bonds << ",\n";
-        ofs << "        \"component_seed\": " << sample.largest_component_seed << ",\n";
-        ofs << "        \"total_occupied_sites\": " << sample.total_occupied_sites << ",\n";
-        ofs << "        \"total_active_bonds\": " << sample.total_active_bonds << "\n";
-        ofs << "      },\n";
-        ofs << "      \"chemical_distance\": {\n";
-        ofs << "        \"seed\": " << sample.chemical_seed << ",\n";
-        ofs << "        \"requested_origins\": " << sample.requested_origins << ",\n";
-        ofs << "        \"effective_origins\": " << sample.effective_origins << ",\n";
-        ofs << "        \"max_chemical_distance\": " << sample.max_chemical_distance << ",\n";
-        ofs << "        \"r_min\": " << std::setprecision(17) << sample.r_min << ",\n";
-        ofs << "        \"r_max\": " << std::setprecision(17) << sample.r_max << ",\n";
-        ofs << "        \"num_bins\": " << sample.num_bins << ",\n";
-        ofs << "        \"bin_edges\": ";
-        write_json_array(ofs, sample.bin_edges);
-        ofs << ",\n";
-        ofs << "        \"total_pairs_processed\": " << sample.total_pairs_processed << ",\n";
-        ofs << "        \"pairs_discarded_out_of_range\": " << sample.pairs_discarded_out_of_range << ",\n";
-        ofs << "        \"origins\": [";
-        for (std::size_t oi = 0; oi < sample.origins.size(); ++oi) {
-            const auto& origin = sample.origins[oi];
-            ofs << "\n          {\n";
-            ofs << "            \"site_id\": " << origin.site_id << ",\n";
-            ofs << "            \"coordinates\": ";
-            write_json_array(ofs, origin.coordinates);
+        const auto& collected = fractions.fractal_counts[si];
+        ofs << "\n    {\n      \"sample_index\": " << collected.sample_index
+            << ",\n      \"anchor_z\": " << collected.anchor_z
+            << ",\n      \"t_stab\": " << collected.t_stab
+            << ",\n      \"num_spanning_clusters\": " << collected.spanning_clusters.size()
+            << ",\n      \"largest_spanning_cluster_index\": "
+            << (collected.spanning_clusters.empty() ? "null" : "0")
+            << ",\n      \"spanning_clusters\": [";
+        for (std::size_t ci = 0; ci < collected.spanning_clusters.size(); ++ci) {
+            const auto& sample = collected.spanning_clusters[ci];
+            ofs << "\n    {\n";
+            ofs << "      \"eligible\": " << (sample.eligible ? "true" : "false") << ",\n";
+            ofs << "      \"sample_index\": " << sample.sample_index << ",\n";
+            ofs << "      \"dim\": " << sample.dim << ",\n";
+            ofs << "      \"L\": " << sample.L << ",\n";
+            ofs << "      \"anchor_z\": " << sample.anchor_z << ",\n";
+            ofs << "      \"t_stab\": " << sample.t_stab << ",\n";
+            ofs << "      \"type_percolation\": \"" << sample.type_percolation << "\",\n";
+            ofs << "      \"boundary_conditions\": ";
+            write_json_string_array(ofs, sample.boundary_conditions);
             ofs << ",\n";
-            ofs << "            \"bins\": ";
-            write_fractal_distance_bins(ofs, origin.bins, 14);
-            ofs << "\n          }";
-            if (oi + 1 < sample.origins.size()) ofs << ",";
+            ofs << "      \"cluster_index\": " << ci << ",\n";
+            ofs << "      \"component\": {\n";
+            ofs << "        \"num_sites\": " << sample.largest_component_sites << ",\n";
+            ofs << "        \"num_bonds\": " << sample.largest_component_bonds << ",\n";
+            ofs << "        \"component_seed\": " << sample.largest_component_seed << ",\n";
+            ofs << "        \"total_occupied_sites\": " << sample.total_occupied_sites << ",\n";
+            ofs << "        \"total_active_bonds\": " << sample.total_active_bonds << "\n";
+            ofs << "      },\n";
+            write_cluster_dimensions(ofs, sample);
+            ofs << "      \"chemical_distance\": {\n";
+            ofs << "        \"seed\": " << sample.chemical_seed << ",\n";
+            ofs << "        \"requested_origins\": " << sample.requested_origins << ",\n";
+            ofs << "        \"effective_origins\": " << sample.effective_origins << ",\n";
+            ofs << "        \"max_chemical_distance\": " << sample.max_chemical_distance << ",\n";
+            ofs << "        \"r_min\": " << std::setprecision(17) << sample.r_min << ",\n";
+            ofs << "        \"r_max\": " << std::setprecision(17) << sample.r_max << ",\n";
+            ofs << "        \"num_bins\": " << sample.num_bins << ",\n";
+            ofs << "        \"bin_edges\": ";
+            write_json_array(ofs, sample.bin_edges);
+            ofs << ",\n";
+            ofs << "        \"total_pairs_processed\": " << sample.total_pairs_processed << ",\n";
+            ofs << "        \"pairs_discarded_out_of_range\": " << sample.pairs_discarded_out_of_range << ",\n";
+            ofs << "        \"origins\": [";
+            for (std::size_t oi = 0; oi < sample.origins.size(); ++oi) {
+                const auto& origin = sample.origins[oi];
+                ofs << "\n          {\n";
+                ofs << "            \"site_id\": " << origin.site_id << ",\n";
+                ofs << "            \"coordinates\": ";
+                write_json_array(ofs, origin.coordinates);
+                ofs << ",\n";
+                ofs << "            \"bins\": ";
+                write_fractal_distance_bins(ofs, origin.bins, 14);
+                ofs << "\n          }";
+                if (oi + 1 < sample.origins.size()) ofs << ",";
+            }
+            if (!sample.origins.empty()) ofs << "\n        ";
+            ofs << "],\n";
+            ofs << "        \"radial_min_path\": ";
+            write_fractal_radial_min_path(ofs, sample.origins, sample.max_chemical_distance, 10);
+            ofs << "\n";
+            ofs << "      },\n";
+            ofs << "      \"box_counting_component\": {\n";
+            ofs << "        \"epsilon\": ";
+            write_json_array(ofs, sample.epsilons);
+            ofs << ",\n";
+            ofs << "        \"offset_seed\": " << sample.offset_seed << ",\n";
+            ofs << "        \"counts\": ";
+            write_fractal_box_rows(ofs, sample.component_box_counts, 10);
+            ofs << "\n      },\n";
+            ofs << "      \"minimum_path_yardstick\": ";
+            write_fractal_minimum_path_yardstick(ofs, sample.minimum_path_yardstick, 8);
+            ofs << "\n    }";
+            if (ci + 1 < collected.spanning_clusters.size()) ofs << ",";
         }
-        if (!sample.origins.empty()) ofs << "\n        ";
-        ofs << "],\n";
-        ofs << "        \"radial_min_path\": ";
-        write_fractal_radial_min_path(ofs, sample.origins, sample.max_chemical_distance, 10);
-        ofs << "\n";
-        ofs << "      },\n";
-        ofs << "      \"box_counting_component\": {\n";
-        ofs << "        \"epsilon\": ";
-        write_json_array(ofs, sample.epsilons);
-        ofs << ",\n";
-        ofs << "        \"offset_seed\": " << sample.offset_seed << ",\n";
-        ofs << "        \"counts\": ";
-        write_fractal_box_rows(ofs, sample.component_box_counts, 10);
-        ofs << "\n      },\n";
-        ofs << "      \"minimum_path_yardstick\": ";
-        write_fractal_minimum_path_yardstick(ofs, sample.minimum_path_yardstick, 8);
-        ofs << ",\n";
-        ofs << "      \"hull_complete\": ";
-        write_fractal_hull(ofs, sample.hull_complete, 8);
-        ofs << ",\n";
-        ofs << "      \"hull_external\": ";
-        write_fractal_hull(ofs, sample.hull_external, 8);
-        ofs << ",\n";
-        ofs << "      \"hull_complete_minus_external\": "
-            << sample.hull_complete_minus_external << "\n";
-        ofs << "    }";
+        ofs << "\n      ]\n    }";
         if (si + 1 < fractions.fractal_counts.size()) ofs << ",";
     }
     if (!fractions.fractal_counts.empty()) ofs << "\n  ";

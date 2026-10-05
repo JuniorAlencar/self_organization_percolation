@@ -28,7 +28,9 @@ DYNAMIC_MIGRATE_CONTROL_RULES="${DYNAMIC_MIGRATE_CONTROL_RULES:-1}"
 SKIP_DYNAMIC="${DYNAMIC_SKIP_DYNAMIC_GROWTH:-${SKIP_DYNAMIC:-0}}"
 SKIP_HEIGHT_SAMPLES="${DYNAMIC_SKIP_HEIGHT_SAMPLES:-${SKIP_HEIGHT_SAMPLES:-0}}"
 SKIP_HEIGHT_ENSEMBLE="${DYNAMIC_SKIP_HEIGHT_ENSEMBLE:-${SKIP_HEIGHT_ENSEMBLE:-0}}"
-SKIP_HEIGHT="${DYNAMIC_SKIP_HEIGHT_SERIES:-${SKIP_HEIGHT:-0}}"
+# By default, process only dynamic JSON samples used to generate the .dat files.
+# Height processing (.yts) can be enabled explicitly with --with-height.
+SKIP_HEIGHT="${DYNAMIC_SKIP_HEIGHT_SERIES:-${SKIP_HEIGHT:-1}}"
 HEIGHT_MIN_COUNT="${HEIGHT_MIN_COUNT:-1}"
 HEIGHT_MAX_SAMPLES="${HEIGHT_MAX_SAMPLES:-}"
 HEIGHT_FORCE_REFRESH="${HEIGHT_FORCE_REFRESH:-0}"
@@ -58,6 +60,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-height)
       SKIP_HEIGHT=1
+      shift
+      ;;
+    --with-height)
+      SKIP_HEIGHT=0
       shift
       ;;
     --skip-height-samples)
@@ -93,8 +99,9 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Usage: $0 [options] [process_dynamic_growth options]"
       echo ""
-      echo "Orchestrates full dynamic post-processing:"
-      echo "  1) process_dynamic_growth.py          (raw JSON -> published & manifests)"
+      echo "Processes dynamic JSON time series and generates .dat files by default:"
+      echo "  1) process_dynamic_growth.py          (raw JSON -> published, manifests & .dat)"
+      echo "Optional height stages (enable with --with-height):"
       echo "  2) process_height_timeseries.py       (.yts -> height sample measures)"
       echo "  3) process_height_ensemble_series.py  (.yts -> height ensemble timeseries)"
       echo ""
@@ -102,7 +109,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --raw-dir DIR           Raw data directory (default: raw_growth_test_dynamic tests_data)"
       echo "  --raw-dirs DIRS...      One or more raw data directories"
       echo "  --skip-dynamic          Skip dynamic growth JSON processing"
-      echo "  --skip-height           Skip both height timeseries steps"
+      echo "  --skip-height           Skip both height timeseries steps (default)"
+      echo "  --with-height           Enable height processing alongside dynamic JSON"
       echo "  --skip-height-samples   Skip individual .yts sample measurements"
       echo "  --skip-height-ensemble  Skip .yts ensemble series averaging"
       echo "  --only-dynamic          Run only dynamic growth JSON processing"

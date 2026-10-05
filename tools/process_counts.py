@@ -18,6 +18,7 @@ FILENAME_TAG_RE = re.compile(
 
 
 BOX_OBSERVABLES = {
+    "d_bulk": ("box_counting_component", "counts"),
     "d_f": ("box_counting_component", "counts"),
     "d_hull": ("hull_complete", "box_counts"),
     "d_hull_ext": ("hull_external", "box_counts"),
@@ -160,6 +161,9 @@ def discover_existing_outputs(out_root: Path) -> dict[tuple[Any, ...], list[dict
 
 
 def normalize_existing_processed_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    if "spanning_clusters" not in sample:
+        sample["cluster_role"] = "legacy_largest_component_spanning_unknown"
+        sample["num_spanning_clusters"] = None
     properties = sample.get("properties")
     if not isinstance(properties, dict):
         return sample
@@ -498,6 +502,70 @@ def remove_legacy_group_outputs(group_dir: Path) -> None:
             path.unlink()
 
 
+def process_spanning_sample(sample: dict[str, Any], L: int,
+                            args: argparse.Namespace) -> dict[str, Any]:
+    clusters = sample["spanning_clusters"]
+    if not isinstance(clusters, list) or sample.get("num_spanning_clusters") != len(clusters):
+        raise ValueError("num_spanning_clusters must match spanning_clusters")
+    ordered = sorted(clusters, key=lambda cluster: (
+        -cluster["component"]["num_sites"], cluster["component"]["component_seed"]
+    ))
+    processed = []
+    for index, cluster in enumerate(ordered):
+        bulk = box_series(box_curve_for_sample(
+            cluster, "d_bulk", L, args.box_epsilon_min, args.box_epsilon_max
+        ), "N_bulk")
+        processed.append({
+            "cluster_index": index,
+            "source_cluster_index": cluster.get("cluster_index", index),
+            "cluster_role": "largest_spanning" if index == 0 else "other_spanning",
+            "is_largest_spanning": index == 0,
+            "component": cluster["component"],
+            "d_bulk": cluster.get("d_bulk"),
+            "d_min": cluster.get("d_min"),
+            "properties": {
+                "d_bulk": bulk,
+                "d_min": minimum_path_yardstick_series(cluster, L),
+                "d_min_chemical": chemical_series(chemical_curve_for_sample(
+                    cluster, args.chemical_r_min, args.chemical_r_max
+                )),
+            },
+        })
+    return {
+        "topology_schema_version": 2,
+        "anchor_z": sample.get("anchor_z"),
+        "t_stab": sample.get("t_stab"),
+        "num_spanning_clusters": len(processed),
+        "largest_spanning_cluster_index": 0 if processed else None,
+        "spanning_clusters": processed,
+    }
+
+
+def cluster_summary_rows(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for sample in samples:
+        for cluster in sample.get("spanning_clusters", []):
+            row = {key: sample.get(key) for key in
+                   ("sample_id", "source_file", "sample_index", "seed", "num_spanning_clusters")}
+            row.update({key: cluster[key] for key in
+                        ("cluster_index", "cluster_role", "is_largest_spanning")})
+            row.update({key: cluster["component"].get(key) for key in ("num_sites", "num_bonds")})
+            for name in ("d_bulk", "d_min"):
+                fit = cluster.get(name) or {}
+                for metric in ("value", "r_squared", "num_scales", "min_scale", "max_scale", "reason_if_undefined"):
+                    row[f"{name}_{metric}"] = fit.get(metric)
+            rows.append(row)
+    return rows
+
+
+CLUSTER_COLUMNS = [
+    "sample_id", "source_file", "sample_index", "seed", "num_spanning_clusters",
+    "cluster_index", "cluster_role", "is_largest_spanning", "num_sites", "num_bonds",
+    *[f"{name}_{metric}" for name in ("d_bulk", "d_min") for metric in
+      ("value", "r_squared", "num_scales", "min_scale", "max_scale", "reason_if_undefined")],
+]
+
+
 def process_counts(args: argparse.Namespace) -> dict[str, Any]:
     sop_root = args.sop_root.resolve()
     raw_root = sop_root / args.raw_dir
@@ -525,6 +593,15 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
             sample_index = sample.get("sample_index", sample_pos)
             sample_id = f"{path.stem}:sample_{sample_index}"
             L = int(sample.get("L", params["L"]))
+            if "spanning_clusters" in sample:
+                samples_by_group[gkey].append({
+                    "sample_id": sample_id,
+                    "source_file": str(path.relative_to(raw_root)),
+                    "sample_index": sample_index,
+                    "seed": params.get("file_seed"),
+                    **process_spanning_sample(sample, L, args),
+                })
+                continue
             properties: dict[str, Any] = {}
 
             for observable, y_name in [
@@ -551,6 +628,8 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
                 "sample_index": sample_index,
                 "seed": params.get("file_seed"),
                 "properties": properties,
+                "cluster_role": "legacy_largest_component_spanning_unknown",
+                "num_spanning_clusters": None,
             })
 
     split_outputs = []
@@ -591,23 +670,46 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
         d_min_yardstick_samples = sum(
             1
             for sample in merged_samples
-            if sample.get("properties", {}).get("d_min_yardstick", {}).get("defined") is True
+            if (sample.get("properties", {}).get("d_min_yardstick", {}).get("defined") is True
+                or any(cluster.get("properties", {}).get("d_min", {}).get("defined") is True
+                       for cluster in sample.get("spanning_clusters", [])))
         )
+        cluster_rows = cluster_summary_rows(merged_samples)
+        spanning_stats = {
+            "n_spanning_clusters": len(cluster_rows),
+            "n_largest_spanning_clusters": sum(row["is_largest_spanning"] for row in cluster_rows),
+            "n_other_spanning_clusters": sum(not row["is_largest_spanning"] for row in cluster_rows),
+            "n_samples_without_spanning": sum(sample.get("num_spanning_clusters") == 0 for sample in merged_samples),
+            "n_legacy_samples": sum("spanning_clusters" not in sample for sample in merged_samples),
+        }
         output_payload = {
             "meta": {
                 **{col: params.get(col) for col in PARAM_COLUMNS},
-                "relations": {
+                "schema_version": 2,
+                "cluster_roles": {
+                    "largest_spanning": "largest spanning cluster by number of sites in its sample",
+                    "other_spanning": "each remaining spanning cluster, kept separately",
+                    "legacy_largest_component_spanning_unknown": "legacy data without spanning classification",
+                },
+                "spanning_relations": {
+                    "d_bulk": "N_bulk ~ (L_over_epsilon)^d_bulk",
+                    "d_min": "N_R ~ (L_over_R)^d_min (shortest bottom-to-top path)",
+                    "d_min_chemical": "ell_min ~ r^d_min (alternative radial series)",
+                },
+                "estimates_note": "d_bulk/d_min fits are copied from C++; curve filters do not refit them",
+                "legacy_relations": {
                     "d_f": "N_bulk ~ (L_over_epsilon)^d_f",
                     "d_hull": "N_hull ~ (L_over_epsilon)^d_hull",
                     "d_hull_ext": "N_hull_ext ~ (L_over_epsilon)^d_hull_ext",
                     "d_min": "ell ~ r^d_min",
                     "d_min_yardstick": "N_R ~ (L_over_R)^d_min_yardstick",
                 },
-                "d_min_note": (
-                    "No L rescaling is applied to d_min. The default processed series "
+                "chemical_distance_note": (
+                    "No L rescaling is applied to chemical-distance curves. The radial series "
                     "uses ell_min over all bins. ell_mean, ell_max and truncated flags "
                     "are kept only as diagnostics."
                 ),
+                **spanning_stats,
                 "n_count_files": len(merged_source_files),
                 "n_samples": len(merged_samples),
                 "n_legacy_d_min_fallback_samples": legacy_d_min_fallback_samples,
@@ -619,8 +721,14 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
         }
         if not args.dry_run:
             output_path.write_text(json.dumps(output_payload, separators=(",", ":")) + "\n")
+            write_csv(output_path.with_suffix(".clusters.csv"), cluster_rows, CLUSTER_COLUMNS)
+            write_csv(output_path.with_suffix(".samples.csv"), merged_samples, [
+                "sample_id", "source_file", "sample_index", "seed", "anchor_z", "t_stab",
+                "num_spanning_clusters", "largest_spanning_cluster_index", "cluster_role",
+            ])
         split_outputs.append({
             **params,
+            **spanning_stats,
             "path": str(output_path),
             "n_count_files": len(merged_source_files),
             "n_samples": len(merged_samples),
@@ -639,11 +747,13 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
             [
                 *PARAM_COLUMNS,
                 "path",
-            "n_count_files",
-            "n_samples",
-            "n_legacy_d_min_fallback_samples",
-            "n_d_min_yardstick_samples",
-            "last_run_new_samples",
+                "n_spanning_clusters", "n_largest_spanning_clusters", "n_other_spanning_clusters",
+                "n_samples_without_spanning", "n_legacy_samples",
+                "n_count_files",
+                "n_samples",
+                "n_legacy_d_min_fallback_samples",
+                "n_d_min_yardstick_samples",
+                "last_run_new_samples",
                 "last_run_updated_samples",
                 "raw_count_files_this_run",
                 "existing_processed_files",
@@ -670,7 +780,7 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Process SOP raw_fractions/counts JSON files into fractal dimensions and plot-ready curves."
+        description="Process topology counts into per-sample, per-spanning-cluster JSON curves and CSV summaries."
     )
     parser.add_argument("--sop-root", type=Path, default=Path("SOP_data"))
     parser.add_argument("--raw-dir", default="raw_fractions")

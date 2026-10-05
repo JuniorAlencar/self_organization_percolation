@@ -2382,8 +2382,7 @@ void accumulate_distance_bin(FractalDistanceBin& bin,
 long long count_boxes_2d_local_indices(const int L,
                                        const int epsilon,
                                        const std::vector<int>& offset,
-                                       const std::vector<std::uint32_t>& indices,
-                                       const bool encoded_hull_element)
+                                       const std::vector<std::uint32_t>& indices)
 {
     const int nx_boxes = (L + epsilon - 1) / epsilon;
     const int ny_boxes = (L + 2 * epsilon - 2) / epsilon;
@@ -2393,8 +2392,7 @@ long long count_boxes_2d_local_indices(const int L,
     touched.reserve(std::min<std::size_t>(indices.size(), 1024u * 1024u));
     long long count = 0;
 
-    for (std::uint32_t raw : indices) {
-        const std::uint32_t idx = encoded_hull_element ? (raw >> 3) : raw;
+    for (std::uint32_t idx : indices) {
         const int x = static_cast<int>(idx % static_cast<std::uint32_t>(L));
         const int y = static_cast<int>(idx / static_cast<std::uint32_t>(L));
         const int bx = ((x + offset[0]) % L) / epsilon;
@@ -2418,7 +2416,7 @@ long long count_boxes_abs_keys(const int dim,
                                const std::vector<std::uint64_t>& keys)
 {
     const int boxes_x = (L + epsilon - 1) / epsilon;
-    const int boxes_y = boxes_x;
+    const int boxes_y = dim == 2 ? ((L + 2 * epsilon - 2) / epsilon) : boxes_x;
     const int boxes_z = (dim == 2) ? 1 : ((L + 2 * epsilon - 2) / epsilon);
     std::vector<unsigned char> marked(
         static_cast<std::size_t>(boxes_x) *
@@ -2715,7 +2713,7 @@ FractalMinimumPathYardstick compute_minimum_path_yardstick_sparse(
     return out;
 }
 
-FractalCountsSample compute_fractal_counts_2d(
+FractalClusterCounts compute_fractal_counts_2d(
     const int L,
     const int bottom,
     const int top,
@@ -2729,7 +2727,7 @@ FractalCountsSample compute_fractal_counts_2d(
     const std::vector<unsigned char>& in_giant,
     const std::function<bool(int, int, int, int)>& can_traverse)
 {
-    FractalCountsSample out;
+    FractalClusterCounts out;
     const int h_count = top - bottom + 1;
     if (!fractal_counts_eligible(2, L) || h_count != L || in_giant.empty()) {
         return out;
@@ -2746,8 +2744,6 @@ FractalCountsSample compute_fractal_counts_2d(
     out.total_occupied_sites = total_occupied_sites;
     out.total_active_bonds = total_active_bonds;
     out.largest_component_bonds = largest_edges;
-    out.hull_complete.num_elements_by_orientation.assign(4, 0);
-    out.hull_external.num_elements_by_orientation.assign(4, 0);
 
     std::vector<std::uint32_t> giant_sites;
     giant_sites.reserve(in_giant.size() / 2u);
@@ -2852,100 +2848,14 @@ FractalCountsSample compute_fractal_counts_2d(
             const auto& off = offsets[static_cast<std::size_t>(offset_id)];
             out.component_box_counts.push_back({eps, offset_id, off,
                                                 count_boxes_2d_local_indices(
-                                                    L, eps, off, giant_sites, false)});
+                                                    L, eps, off, giant_sites)});
         }
     }
-
-    std::vector<unsigned char> exterior(in_giant.size(), 0u);
-    queue.clear();
-    auto push_ext = [&](const int x, const int y_local) {
-        const std::uint32_t idx = static_cast<std::uint32_t>(y_local * L + x);
-        if (in_giant[idx] || exterior[idx]) return;
-        exterior[idx] = 1u;
-        queue.push_back(idx);
-    };
-    for (int x = 0; x < L; ++x) {
-        push_ext(x, 0);
-        push_ext(x, h_count - 1);
-    }
-    for (std::size_t head = 0; head < queue.size(); ++head) {
-        const std::uint32_t cur = queue[head];
-        const int cy = static_cast<int>(cur / static_cast<std::uint32_t>(L));
-        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-        const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
-        const int ny_values[4] = {cy, cy, cy - 1, cy + 1};
-        for (int ni = 0; ni < 4; ++ni) {
-            const int ny = ny_values[ni];
-            if (ny < 0 || ny >= h_count) continue;
-            const std::uint32_t nidx = static_cast<std::uint32_t>(ny * L + nx_values[ni]);
-            if (in_giant[nidx] || exterior[nidx]) continue;
-            exterior[nidx] = 1u;
-            queue.push_back(nidx);
-        }
-    }
-
-    std::vector<std::uint64_t> hull_complete_elements;
-    std::vector<std::uint64_t> hull_external_elements;
-    for (const std::uint32_t idx : giant_sites) {
-        const int y = static_cast<int>(idx / static_cast<std::uint32_t>(L));
-        const int x = static_cast<int>(idx % static_cast<std::uint32_t>(L));
-        const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
-        const int ny_values[4] = {y, y, y - 1, y + 1};
-        for (int ni = 0; ni < 4; ++ni) {
-            const int ny = ny_values[ni];
-            bool is_boundary = false;
-            bool is_external = false;
-            if (ny < 0 || ny >= h_count) {
-                is_boundary = true;
-                is_external = true;
-            } else {
-                const std::uint32_t nidx = static_cast<std::uint32_t>(ny * L + nx_values[ni]);
-                if (!in_giant[nidx]) {
-                    is_boundary = true;
-                    is_external = exterior[nidx] != 0u;
-                }
-            }
-            if (!is_boundary) continue;
-            ++out.hull_complete.num_elements_by_orientation[static_cast<std::size_t>(ni)];
-            const std::uint64_t encoded =
-                (static_cast<std::uint64_t>(idx) << 3) | static_cast<std::uint64_t>(ni);
-            hull_complete_elements.push_back(encoded);
-            if (is_external) {
-                ++out.hull_external.num_elements_by_orientation[static_cast<std::size_t>(ni)];
-                hull_external_elements.push_back(encoded);
-            }
-        }
-    }
-    out.hull_complete.num_elements = static_cast<long long>(hull_complete_elements.size());
-    out.hull_external.num_elements = static_cast<long long>(hull_external_elements.size());
-    out.hull_complete_minus_external =
-        out.hull_complete.num_elements - out.hull_external.num_elements;
-
-    auto add_hull_box_counts = [&](const std::vector<std::uint64_t>& elements,
-                                   FractalHullSummary& summary) {
-        std::vector<std::uint32_t> local_elements;
-        local_elements.reserve(elements.size());
-        for (const std::uint64_t elem : elements) {
-            local_elements.push_back(static_cast<std::uint32_t>(elem));
-        }
-        std::mt19937 rng2(static_cast<std::uint32_t>(out.offset_seed));
-        for (const int eps : out.epsilons) {
-            const auto offsets = make_fractal_offsets(2, eps, n_offsets, rng2);
-            for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
-                const auto& off = offsets[static_cast<std::size_t>(offset_id)];
-                summary.box_counts.push_back({eps, offset_id, off,
-                                              count_boxes_2d_local_indices(
-                                                  L, eps, off, local_elements, true)});
-            }
-        }
-    };
-    add_hull_box_counts(hull_complete_elements, out.hull_complete);
-    add_hull_box_counts(hull_external_elements, out.hull_external);
 
     return out;
 }
 
-FractalCountsSample compute_fractal_counts_sparse(
+FractalClusterCounts compute_fractal_counts_sparse(
     const int dim,
     const int L,
     const int bottom,
@@ -2960,7 +2870,7 @@ FractalCountsSample compute_fractal_counts_sparse(
     const std::unordered_set<std::uint64_t, AbsSiteKeyHash>& in_giant,
     const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds)
 {
-    FractalCountsSample out;
+    FractalClusterCounts out;
     if (!fractal_counts_eligible(dim, L) || top < bottom || in_giant.empty()) {
         return out;
     }
@@ -2979,11 +2889,10 @@ FractalCountsSample compute_fractal_counts_sparse(
     out.total_active_bonds = total_active_bonds;
     out.largest_component_sites = static_cast<long long>(in_giant.size());
     out.largest_component_bonds = largest_edges;
-    out.largest_component_seed = *in_giant.begin();
-    out.hull_complete.num_elements_by_orientation.assign(static_cast<std::size_t>(2 * dim), 0);
-    out.hull_external.num_elements_by_orientation.assign(static_cast<std::size_t>(2 * dim), 0);
+    out.largest_component_seed = *std::min_element(in_giant.begin(), in_giant.end());
 
     std::vector<std::uint64_t> giant_sites(in_giant.begin(), in_giant.end());
+    std::sort(giant_sites.begin(), giant_sites.end());
     out.requested_origins = env_int_or_default("SOP_FRACTAL_ORIGINS", dim == 2 ? 64 : 32);
     out.r_min = env_double_or_default("SOP_FRACTAL_R_MIN", 4.0);
     out.r_max = env_double_or_default("SOP_FRACTAL_R_MAX", static_cast<double>(L) / 4.0);
@@ -3085,124 +2994,17 @@ FractalCountsSample compute_fractal_counts_sparse(
         }
     }
 
-    auto make_key = [&](const int x, const int y, const int z) {
-        return dim == 2 ? abs_site_key(x, y, 0) : abs_site_key(x, y, z);
-    };
-    auto in_bounds = [&](const int x, const int y, const int z) {
-        if (x < 0 || x >= L) return false;
-        if (dim == 2) return y >= bottom && y <= top && z == 0;
-        return y >= 0 && y < L && z >= bottom && z <= top;
-    };
-    auto complement_neighbors = [&](const std::uint64_t key,
-                                    std::uint64_t out_neigh[6],
-                                    int& count) {
-        int x = 0, y = 0, z = 0;
-        decode_abs_site_key(key, x, y, z);
-        count = 0;
-        out_neigh[count++] = make_key((x + L - 1) % L, y, z);
-        out_neigh[count++] = make_key((x + 1) % L, y, z);
-        if (dim == 2) {
-            if (y > bottom) out_neigh[count++] = make_key(x, y - 1, 0);
-            if (y < top) out_neigh[count++] = make_key(x, y + 1, 0);
-        } else {
-            out_neigh[count++] = make_key(x, (y + L - 1) % L, z);
-            out_neigh[count++] = make_key(x, (y + 1) % L, z);
-            if (z > bottom) out_neigh[count++] = make_key(x, y, z - 1);
-            if (z < top) out_neigh[count++] = make_key(x, y, z + 1);
-        }
-    };
-
-    std::unordered_set<std::uint64_t, AbsSiteKeyHash> exterior;
-    std::vector<std::uint64_t> queue;
-    exterior.reserve(in_giant.size());
-    queue.reserve(1024);
-    auto push_ext = [&](const int x, const int y, const int z) {
-        if (!in_bounds(x, y, z)) return;
-        const std::uint64_t key = make_key(x, y, z);
-        if (in_giant.find(key) != in_giant.end()) return;
-        if (exterior.insert(key).second) queue.push_back(key);
-    };
-    if (dim == 2) {
-        for (int x = 0; x < L; ++x) {
-            push_ext(x, bottom, 0);
-            push_ext(x, top, 0);
-        }
-    } else {
-        for (int y = 0; y < L; ++y) {
-            for (int x = 0; x < L; ++x) {
-                push_ext(x, y, bottom);
-                push_ext(x, y, top);
-            }
-        }
-    }
-    for (std::size_t head = 0; head < queue.size(); ++head) {
-        complement_neighbors(queue[head], neigh, nneigh);
-        for (int ni = 0; ni < nneigh; ++ni) {
-            if (in_giant.find(neigh[ni]) != in_giant.end()) continue;
-            if (exterior.insert(neigh[ni]).second) queue.push_back(neigh[ni]);
-        }
-    }
-
-    std::vector<std::uint64_t> hull_complete_elements;
-    std::vector<std::uint64_t> hull_external_elements;
-    for (const std::uint64_t key : giant_sites) {
-        int x = 0, y = 0, z = 0;
-        decode_abs_site_key(key, x, y, z);
-        const int nx_values[6] = {(x + L - 1) % L, (x + 1) % L, x,
-                                  x, x, x};
-        const int ny_values[6] = {y, y,
-                                  dim == 3 ? (y + L - 1) % L : y - 1,
-                                  dim == 3 ? (y + 1) % L : y + 1,
-                                  y, y};
-        const int nz_values[6] = {z, z, z, z, z - 1, z + 1};
-        const int n_dirs = 2 * dim;
-        for (int ni = 0; ni < n_dirs; ++ni) {
-            const int nx = nx_values[ni];
-            const int ny = ny_values[ni];
-            const int nz = dim == 2 ? 0 : nz_values[ni];
-            bool boundary = false;
-            bool external = false;
-            if (!in_bounds(nx, ny, nz)) {
-                boundary = true;
-                external = true;
-            } else {
-                const std::uint64_t nkey = make_key(nx, ny, nz);
-                if (in_giant.find(nkey) == in_giant.end()) {
-                    boundary = true;
-                    external = exterior.find(nkey) != exterior.end();
-                }
-            }
-            if (!boundary) continue;
-            ++out.hull_complete.num_elements_by_orientation[static_cast<std::size_t>(ni)];
-            hull_complete_elements.push_back(key);
-            if (external) {
-                ++out.hull_external.num_elements_by_orientation[static_cast<std::size_t>(ni)];
-                hull_external_elements.push_back(key);
-            }
-        }
-    }
-    out.hull_complete.num_elements = static_cast<long long>(hull_complete_elements.size());
-    out.hull_external.num_elements = static_cast<long long>(hull_external_elements.size());
-    out.hull_complete_minus_external =
-        out.hull_complete.num_elements - out.hull_external.num_elements;
-
-    auto add_hull_box_counts = [&](const std::vector<std::uint64_t>& elements,
-                                   FractalHullSummary& summary) {
-        std::mt19937 rng2(static_cast<std::uint32_t>(out.offset_seed));
-        for (const int eps : out.epsilons) {
-            const auto offsets = make_fractal_offsets(dim, eps, n_offsets, rng2);
-            for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
-                const auto& off = offsets[static_cast<std::size_t>(offset_id)];
-                summary.box_counts.push_back({eps, offset_id, off,
-                                              count_boxes_abs_keys(
-                                                  dim, L, bottom, eps, off, elements)});
-            }
-        }
-    };
-    add_hull_box_counts(hull_complete_elements, out.hull_complete);
-    add_hull_box_counts(hull_external_elements, out.hull_external);
-
     return out;
+}
+
+void sort_spanning_clusters(FractalCountsSample& sample)
+{
+    std::sort(sample.spanning_clusters.begin(), sample.spanning_clusters.end(),
+              [](const FractalClusterCounts& a, const FractalClusterCounts& b) {
+        if (a.largest_component_sites != b.largest_component_sites)
+            return a.largest_component_sites > b.largest_component_sites;
+        return a.largest_component_seed < b.largest_component_seed;
+    });
 }
 
 SlabFractionResult compute_abs_slab_fractions(
@@ -3252,6 +3054,7 @@ SlabFractionResult compute_abs_slab_fractions(
     long long largest_edges = 0;
     std::uint64_t largest_seed = std::numeric_limits<std::uint64_t>::max();
 
+    std::vector<std::pair<std::unordered_set<std::uint64_t, AbsSiteKeyHash>, long long>> spanning;
     for (const auto& kv : site_state) {
         if (kv.second <= 0) continue;
         const std::uint64_t seed = kv.first;
@@ -3259,6 +3062,8 @@ SlabFractionResult compute_abs_slab_fractions(
         if (h0 < bottom || h0 > top) continue;
         if (visited.find(seed) != visited.end()) continue;
 
+        bool touches_bottom = false, touches_top = false;
+        std::unordered_set<std::uint64_t, AbsSiteKeyHash> members;
         int component = 0;
         long long component_edge_visits = 0;
         visited.insert(seed);
@@ -3269,6 +3074,10 @@ SlabFractionResult compute_abs_slab_fractions(
             const std::uint64_t u = stack.back();
             stack.pop_back();
             ++component;
+            const int hu = abs_grow_coord_from_key(u, dim);
+            touches_bottom |= hu == bottom;
+            touches_top |= hu == top;
+            if (compute_fractal_counts) members.insert(u);
 
             collect_abs_neighbors(dim, L, u, neigh, nneigh);
             for (int ni = 0; ni < nneigh; ++ni) {
@@ -3288,6 +3097,8 @@ SlabFractionResult compute_abs_slab_fractions(
             }
         }
 
+        if (compute_fractal_counts && touches_bottom && touches_top)
+            spanning.emplace_back(std::move(members), component_edge_visits / 2);
         if (component > largest) {
             largest = component;
             largest_edges = component_edge_visits / 2;
@@ -3402,25 +3213,20 @@ SlabFractionResult compute_abs_slab_fractions(
         external_perimeter_length = geometry.external_perimeter_length;
         hole_size_counts = geometry.hole_size_counts;
 
-        if (fractal_counts_eligible(dim, L)) {
-            if (compute_fractal_counts) {
-                fractal_counts = compute_fractal_counts_sparse(
-                    dim,
-                    L,
-                    bottom,
-                    top,
-                    is_node,
-                    fractal_seed,
-                    fractal_sample_index,
-                    fractal_t_stab,
-                    occupied_sites,
-                    open_bonds_in_slab,
-                    largest_edges,
-                    in_giant,
-                    open_bonds);
-                has_fractal_counts = fractal_counts.eligible;
-            }
+    }
+
+    if (compute_fractal_counts && fractal_counts_eligible(dim, L)) {
+        has_fractal_counts = true;
+        fractal_counts.sample_index = fractal_sample_index;
+        fractal_counts.anchor_z = bottom;
+        fractal_counts.t_stab = fractal_t_stab;
+        for (const auto& cluster : spanning) {
+            fractal_counts.spanning_clusters.push_back(compute_fractal_counts_sparse(
+                dim, L, bottom, top, is_node, fractal_seed, fractal_sample_index,
+                fractal_t_stab, occupied_sites, open_bonds_in_slab, cluster.second,
+                cluster.first, open_bonds));
         }
+        sort_spanning_clusters(fractal_counts);
     }
 
     return {
@@ -3905,6 +3711,7 @@ RawFractionsSeries network::create_raw_fractions(
             if (capture_component_labels) component_labels.assign(slab_sites, 0u);
             std::vector<std::uint32_t> queue;
             queue.reserve(static_cast<std::size_t>(L));
+            std::vector<std::pair<std::vector<std::uint32_t>, long long>> spanning;
             int largest = 0;
             long long largest_edges = 0;
             std::uint32_t largest_seed = std::numeric_limits<std::uint32_t>::max();
@@ -3927,6 +3734,7 @@ RawFractionsSeries network::create_raw_fractions(
                     if (visited[seed] || get_site_2d(x, y) <= 0) continue;
 
                     const std::uint32_t component_label = ++next_component_label;
+                    bool touches_bottom = false, touches_top = false;
                     int component = 0;
                     long long component_edge_visits = 0;
                     std::size_t head = 0;
@@ -3940,6 +3748,8 @@ RawFractionsSeries network::create_raw_fractions(
                         const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
                         const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
                         ++component;
+                        touches_bottom |= cy == bottom;
+                        touches_top |= cy == top;
 
                         const int nx_values[4] = {
                             (cx + L - 1) % L,
@@ -3968,6 +3778,8 @@ RawFractionsSeries network::create_raw_fractions(
                         }
                     }
 
+                    if (compute_fractal_counts && touches_bottom && touches_top)
+                        spanning.emplace_back(queue, component_edge_visits / 2);
                     if (component > largest) {
                         largest = component;
                         largest_edges = component_edge_visits / 2;
@@ -3984,6 +3796,22 @@ RawFractionsSeries network::create_raw_fractions(
             std::map<long long, long long> hole_size_counts;
             bool has_fractal_counts = false;
             FractalCountsSample fractal_counts;
+            if (compute_fractal_counts && fractal_counts_eligible(dim, L)) {
+                has_fractal_counts = true;
+                fractal_counts.sample_index = fractal_sample_index;
+                fractal_counts.anchor_z = bottom;
+                fractal_counts.t_stab = fractal_t_stab;
+                std::vector<unsigned char> membership(slab_sites, 0u);
+                for (const auto& cluster : spanning) {
+                    for (auto site : cluster.first) membership[site] = 1u;
+                    fractal_counts.spanning_clusters.push_back(compute_fractal_counts_2d(
+                        L, bottom, top, is_node, out.seed, fractal_sample_index,
+                        fractal_t_stab, active_sites, open_bonds_count, cluster.second,
+                        membership, can_traverse_2d));
+                    for (auto site : cluster.first) membership[site] = 0u;
+                }
+                sort_spanning_clusters(fractal_counts);
+            }
             if (largest_seed != std::numeric_limits<std::uint32_t>::max()) {
                 std::vector<unsigned char> in_giant(
                     static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
@@ -4080,23 +3908,6 @@ RawFractionsSeries network::create_raw_fractions(
                         current.swap(next);
                         ++distance;
                     }
-                }
-
-                if (compute_fractal_counts && fractal_counts_eligible(dim, L)) {
-                    fractal_counts = compute_fractal_counts_2d(
-                        L,
-                        bottom,
-                        top,
-                        is_node,
-                        out.seed,
-                        fractal_sample_index,
-                        fractal_t_stab,
-                        active_sites,
-                        open_bonds_count,
-                        largest_edges,
-                        in_giant,
-                        can_traverse_2d);
-                    has_fractal_counts = fractal_counts.eligible;
                 }
 
                 // Optional visualization snapshots preserve each component label,
@@ -4459,10 +4270,7 @@ RawFractionsSeries network::create_raw_fractions(
                                   << "/" << requested
                                   << " t=" << t
                                   << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                                  << " origins=" << stab.fractal_counts.effective_origins
-                                  << " component_boxes=" << stab.fractal_counts.component_box_counts.size()
-                                  << " hull_boxes=" << stab.fractal_counts.hull_complete.box_counts.size()
-                                  << " external_hull_boxes=" << stab.fractal_counts.hull_external.box_counts.size()
+                                  << " spanning_clusters=" << stab.fractal_counts.spanning_clusters.size()
                                   << std::endl;
                     } else if (!run_fractal_counts) {
                         std::cout << "[fractions] sample_collected"
@@ -5022,10 +4830,7 @@ RawFractionsSeries network::create_raw_fractions(
                               << "/" << requested
                               << " t=" << t
                               << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                              << " origins=" << stab.fractal_counts.effective_origins
-                              << " component_boxes=" << stab.fractal_counts.component_box_counts.size()
-                              << " hull_boxes=" << stab.fractal_counts.hull_complete.box_counts.size()
-                              << " external_hull_boxes=" << stab.fractal_counts.hull_external.box_counts.size()
+                              << " spanning_clusters=" << stab.fractal_counts.spanning_clusters.size()
                               << std::endl;
                 } else if (!run_fractal_counts) {
                     std::cout << "[fractions] sample_collected"
