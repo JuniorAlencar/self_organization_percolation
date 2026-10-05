@@ -197,14 +197,6 @@ struct FractalBoxCountRow {
     long long num_boxes = 0;
 };
 
-struct FractalHullSummary {
-    bool defined = true;
-    std::string reason_if_undefined;
-    long long num_elements = 0;
-    std::vector<long long> num_elements_by_orientation;
-    std::vector<FractalBoxCountRow> box_counts;
-};
-
 struct FractalYardstickRow {
     int R = 0;
     long long num_spheres = 0;
@@ -221,7 +213,7 @@ struct FractalMinimumPathYardstick {
     std::vector<FractalYardstickRow> counts;
 };
 
-struct FractalCountsSample {
+struct FractalClusterCounts {
     bool eligible = false;
     int sample_index = -1;
     int dim = 0;
@@ -251,10 +243,14 @@ struct FractalCountsSample {
     std::vector<int> epsilons;
     int offset_seed = 0;
     std::vector<FractalBoxCountRow> component_box_counts;
-    FractalHullSummary hull_complete;
-    FractalHullSummary hull_external;
-    long long hull_complete_minus_external = 0;
     FractalMinimumPathYardstick minimum_path_yardstick;
+};
+
+struct FractalCountsSample {
+    int sample_index = -1;
+    int anchor_z = -1;
+    int t_stab = -1;
+    std::vector<FractalClusterCounts> spanning_clusters;
 };
 
 struct RawFractionsSeries {

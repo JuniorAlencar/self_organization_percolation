@@ -52,6 +52,14 @@ Usage: update_topological.sh [--sop-root PATH] [--raw-dir DIR] [--dry-run]
                             [--counts-arg ARG] [--fractions-arg ARG]
 
 By default, processes both raw topological counts and raw fraction series.
+Counts outputs in SOP_ROOT/published_counts (one set per parameter group):
+  counts_P0_*_p0_*.json          samples with separate spanning_clusters
+  counts_P0_*_p0_*.clusters.csv  one row per cluster, with d_bulk/d_min fits
+  counts_P0_*_p0_*.samples.csv   spanning count per sample (including zero)
+Cluster roles: largest_spanning (index 0) and other_spanning (indices 1+).
+Legacy samples retain their properties and are marked spanning_unknown.
+C++ fit estimates are preserved; curve-filter options do not refit them.
+Example: update_topological.sh --counts-only --sop-root /path/to/SOP_data
 Use repeated --counts-arg/--fractions-arg to pass processor-specific options.
 HELP
       exit 0
@@ -74,7 +82,7 @@ mkdir -p \
 echo "[update_topological] sop_root=${SOP_ROOT}"
 
 if [[ "$run_counts" -eq 1 ]]; then
-  echo "[update_topological] processing topological counts"
+  echo "[update_topological] processing counts: largest spanning cluster and each other spanning cluster"
   python3 "${SCRIPT_DIR}/process_counts.py" \
     --sop-root "${SOP_ROOT}" \
     "${shared_args[@]}" \

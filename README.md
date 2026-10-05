@@ -107,3 +107,7 @@ For more information, see discussion_SOP.pdf in /docs.
 
 
 
+
+Os arquivos de topologia agora usam o schema 2, com quantidade de spanning
+clusters e `d_bulk`/`d_min` de cada cluster por amostra. Veja o
+[formato e exemplos de leitura](docs/topologia_spanning_clusters.md).
