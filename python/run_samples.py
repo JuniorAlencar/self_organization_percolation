@@ -17,40 +17,17 @@ import pandas as pd
 
 seed = -1
 dim = 2
-#nc=2
 
-#type_perc = 'node'
-#type_lst = ['node', 'bond']
 type_lst = ['node', 'bond']
 # L_lst =        [512, 1024, 2048, 4096, 8192, 16384]
 # num_runs_lst = [700, 500,  400,   200, 100,   50]
 #L_lst =        [645, 813, 1448, 2896, 5793, 11585] 
-L_lst =        [645, 813, 1448, 2896, 5793, 11585] + [512, 1024, 2048, 4096, 8192, 16384]
-#L_lst = [645, 813, 1448, 2896, 5793, 11585]
-#num_runs_lst = [600, 550, 450, 150, 75, 60]
-num_runs_lst = [600, 550, 450, 150, 75, 60] + [700, 500,  400,   200, 100,   50]
-#L_lst = [16384]
-#um_runs_lst = []
-#L_lst = [8192, 16384]
-#num_runs_lst = [100, 50]
-#L_lst = [16384]
-#num_runs_lst = [50]
+L_lst =        [512, 645, 813, 1024, 1448, 2048, 2896, 4096, 5793, 8192, 11585, 16384]
+num_runs_lst = [700, 600, 550, 500, 450, 400, 200, 150, 100, 75, 60, 50]
 
-# L_lst = [1024]
-# num_runs_lst = [500]
 num_runs_por_L = dict(zip(L_lst, num_runs_lst))
-#L_lst = [1024]
-#num_runs = [400]
-# nc = 4
-#L_lst = [128, 256, 512, 1024]
-#num_runs = [300, 150, 50, 5]
 
-#L_lst = [256]
-#num_runs = [150]
 nc = 1
-#c_lst = [0.01, 0.05, 0.1, 0.15, 0.2]
-#c_lst = [0.02, 0.03, 0.04, 0.06, 0.07, 0.8, 0.9]
-#c_lst = np.round(np.arange(0.01, 0.21, 0.01), 2)
 c = 0.05
 #P0 = 0.2
 multi=True
@@ -87,12 +64,17 @@ P0 = 0.2
 #P0_lst = [0.8]
 
 #ftmin = 0.1
-for idx, L in enumerate(L_lst):
+#L_lst_sub = L_lst[0:7]
+L_lst_sub = [5793]
+num_runs_lst = [100]
+num_runs_por_L = dict(zip(L_lst_sub, num_runs_lst))
+
+for idx, L in enumerate(L_lst_sub):
     for type_perc in type_lst:
         csv_path = f"../SOP_data/ft_min_max_2D_{type_perc}_{ControlRule}.csv"
         df = pd.read_csv(csv_path, sep=',')
         df_sub = df[(df['L'] == L) & (df['c'] == c) & (df['f0'] == P0)]
-    
+        num_runs = num_runs_por_L[L]
         for index, row in df_sub.iterrows():
             c = row['c']
             P0 = row['f0']
@@ -102,7 +84,7 @@ for idx, L in enumerate(L_lst):
 
             ft_lst = fT - step * np.arange(5, 0, -1)
         
-            num_runs = num_runs_por_L[L]
+            
             for ft in ft_lst:
                 mode_tag = "" if Mode == "sop" else f"_{Mode}"
                 layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"
