@@ -2484,3 +2484,426 @@ def plot_growth_test_network(
         save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=400, bbox_inches="tight", facecolor="white")
     return fig, ax
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from scipy.optimize import curve_fit
+
+
+# ============================================================
+# Funções Auxiliares de Arredondamento e Modelo
+# ============================================================
+
+def round_value_error(value, error):
+    r"""
+    Arredonda valor e erro de forma consistente.
+
+    Regra:
+    - 2 algarismos significativos no erro se o primeiro
+      algarismo for 1 ou 2;
+    - 1 algarismo significativo caso contrário.
+    """
+    if (
+        not np.isfinite(value)
+        or not np.isfinite(error)
+        or error <= 0
+    ):
+        return str(value), str(error)
+
+    exponent = int(np.floor(np.log10(abs(error))))
+    first_digit = int(np.floor(error / 10**exponent))
+
+    if first_digit in [1, 2]:
+        n_sig = 2
+    else:
+        n_sig = 1
+
+    decimals = -(exponent - (n_sig - 1))
+    decimals = max(decimals, 0)
+
+    error_rounded = round(error, decimals)
+    value_rounded = round(value, decimals)
+
+    value_str = f"{value_rounded:.{decimals}f}"
+    error_str = f"{error_rounded:.{decimals}f}"
+
+    return value_str, error_str
+
+
+def finite_size_model(L, pc, A, nu):
+    r"""
+    Modelo de finite-size scaling:
+    p*(L) = pc [1 - A L^(-1/nu)]
+    """
+    return pc * (1.0 - A * L**(-1.0 / nu))
+
+
+def _load_or_resolve_data(data, type_perc, c_val=0.05):
+    r"""
+    Carrega dados do arquivo CSV padrão ou extrai colunas de um DataFrame fornecido.
+    """
+    if data is None:
+        candidates = [
+            Path(f'../SOP_data/ft_min_max_2D_{type_perc}_linear.csv'),
+            Path(f'SOP_data/ft_min_max_2D_{type_perc}_linear.csv'),
+        ]
+        for p in candidates:
+            if p.exists():
+                data = pd.read_csv(p)
+                break
+        if data is None:
+            raise FileNotFoundError(f'Não foi possível encontrar os dados padrão para {type_perc}.')
+    elif isinstance(data, (str, Path)):
+        data = pd.read_csv(data)
+
+    df = data.copy()
+    if 'c' in df.columns and c_val is not None:
+        df = df[np.isclose(df['c'], c_val)]
+
+    # Detecção automática de colunas compatíveis
+    l_col = 'L' if 'L' in df.columns else df.columns[0]
+    y_col = next((c for c in ['p_min', 'p_usado', 'p_mean', 'p_at_min', 'y'] if c in df.columns), None)
+    err_col = next((c for c in ['p_min_err', 'p_err_usado', 'p_err', 'y_err', 'sigma'] if c in df.columns), None)
+
+    if y_col is None or err_col is None:
+        raise ValueError(f'Colunas de valor ou erro não encontradas em {df.columns}.')
+
+    df = df.sort_values(l_col)
+    L = df[l_col].to_numpy(dtype=float)
+    y = df[y_col].to_numpy(dtype=float)
+    y_err = df[err_col].to_numpy(dtype=float)
+
+    valid = (
+        np.isfinite(L)
+        & np.isfinite(y)
+        & np.isfinite(y_err)
+        & (L > 0)
+        & (y_err > 0)
+    )
+    return L[valid], y[valid], y_err[valid]
+
+
+# ============================================================
+# Função Principal de Plotagem para o Artigo
+# ============================================================
+
+def plot_article_fss(
+    # --- Dados de Entrada ---
+    df_node=None,
+    df_bond=None,
+    c_val=0.05,
+    p0_node=None,
+    p0_bond=None,
+    # --- Dimensões da Figura ---
+    figsize=(14.0, 5.8),
+    dpi=300,
+    # --- Títulos e Rótulos dos Painéis ---
+    panel_titles=(r'(a) Node percolation', r'(b) Bond percolation'),
+    xlabel=r'$L^{-1/\nu}$',
+    ylabel=r'$p^\ast(L;\,f_{\mathrm{T,min}})$',
+    ylabel_node=None,
+    ylabel_bond=None,
+    fontsize_titles=16,
+    fontsize_labels=18,
+    # --- Ticks dos Eixos ---
+    fontsize_ticks=14,
+    tick_direction='in',
+    tick_width_major=1.2,
+    tick_length_major=6.0,
+    tick_width_minor=0.8,
+    tick_length_minor=3.5,
+    top_ticks=True,
+    right_ticks=True,
+    # --- Estilo dos Dados Experimentais ---
+    color_data_node='red',
+    color_data_bond='red',
+    marker_node='o',
+    marker_bond='s',
+    marker_size=6.0,
+    marker_facecolor='none',
+    capsize=3.0,
+    elinewidth=1.0,
+    data_label='Data',
+    # --- Estilo das Linhas de Ajuste ---
+    color_fit_node='green',
+    color_fit_bond='green',
+    linestyle_fit='-',
+    linewidth_fit=2.0,
+    # --- Legenda ---
+    show_legend=True,
+    legend_loc_node='upper left',
+    legend_loc_bond='upper left',
+    fontsize_legend=12,
+    legend_frameon=False,
+    show_chi2=True,
+    # --- Caixa de Texto com a Fórmula do Modelo ---
+    show_formula=True,
+    formula_text=r'$p^\ast(L)=p_c\left(1-A L^{-1/\nu}\right)$',
+    formula_pos_node=(0.96, 0.06),
+    formula_pos_bond=(0.96, 0.06),
+    fontsize_formula=15,
+    formula_ha='right',
+    formula_va='bottom',
+    # --- Saída / Salvamento ---
+    save_path=None,
+    show_plot=True,
+    verbose=True,
+):
+    r"""
+    Constrói a figura de publicação em layout subplots 1x2 (Node e Bond percolation).
+
+    Parâmetros:
+    -----------
+    df_node, df_bond : pd.DataFrame ou caminho (str/Path), optional
+        Dados para cada tipo de percolação. Se None, lê de '../SOP_data/ft_min_max_2D_{type}_linear.csv'.
+    c_val : float, default 0.05
+        Valor de concentração c para filtragem no DataFrame, se houver coluna 'c'.
+    p0_node, p0_bond : list, optional
+        Chute inicial [pc_0, A_0, nu_0] para curve_fit.
+    figsize : tuple, default (14.0, 5.8)
+        Dimensões da figura (largura, altura) em polegadas.
+    dpi : int, default 300
+        Resolução da figura ao salvar.
+    panel_titles : tuple de str, default ('(a) Node percolation', '(b) Bond percolation')
+        Títulos no topo de cada subplot. Passe None para omitir.
+    xlabel : str, default r'$L^{-1/\nu}$'
+        Rótulo do eixo x comum aos dois painéis.
+    ylabel : str, default r'$p^\ast(L;\,f_{\mathrm{T,min}})$'
+        Rótulo do eixo y padrão para ambos os painéis.
+    ylabel_node, ylabel_bond : str, optional
+        Rótulo específico do eixo y para cada painel. Se None, usa ylabel.
+    fontsize_titles : int, default 16
+        Tamanho da fonte dos títulos dos painéis.
+    fontsize_labels : int, default 18
+        Tamanho da fonte dos rótulos dos eixos x e y.
+    fontsize_ticks : int, default 14
+        Tamanho da fonte dos valores numéricos nos ticks.
+    tick_direction : str, default 'in'
+        Direção dos ticks ('in', 'out', 'inout').
+    tick_width_major, tick_width_minor : float, default 1.2, 0.8
+        Espessura dos ticks principais e secundários.
+    tick_length_major, tick_length_minor : float, default 6.0, 3.5
+        Comprimento dos ticks principais e secundários.
+    top_ticks, right_ticks : bool, default True
+        Se True, desenha ticks nas bordas superior e direita do painel.
+    color_data_node, color_data_bond : str, default 'red'
+        Cor dos marcadores dos pontos experimentais.
+    marker_node, marker_bond : str, default 'o', 's'
+        Formato dos marcadores dos pontos experimentais.
+    marker_size : float, default 6.0
+        Tamanho dos marcadores.
+    marker_facecolor : str, default 'none'
+        Preenchimento dos marcadores ('none' para vazado).
+    capsize : float, default 3.0
+        Comprimento das barras nas pontas das incertezas (errorbars).
+    elinewidth : float, default 1.0
+        Espessura das linhas das barras de erro.
+    data_label : str, default 'Data'
+        Texto da legenda para os dados experimentais.
+    color_fit_node, color_fit_bond : str, default 'green'
+        Cor da linha de regressão ajustada.
+    linestyle_fit : str, default '-'
+        Estilo da linha ajustada.
+    linewidth_fit : float, default 2.0
+        Espessura da linha ajustada.
+    show_legend : bool, default True
+        Exibe a legenda com os parâmetros ajustados.
+    legend_loc_node, legend_loc_bond : str, default 'upper left'
+        Posição da legenda em cada painel.
+    fontsize_legend : int, default 12
+        Tamanho da fonte do texto da legenda.
+    legend_frameon : bool, default False
+        Borda/moldura da legenda.
+    show_chi2 : bool, default True
+        Se True, inclui chi^2_red na legenda do ajuste.
+    show_formula : bool, default True
+        Se True, insere a fórmula analítica dentro do painel.
+    formula_text : str, default r'$p^\ast(L)=p_c\left(1-A L^{-1/\nu}\right)$'
+        Fórmula do modelo exibida como texto no painel.
+    formula_pos_node, formula_pos_bond : tuple, default (0.96, 0.06)
+        Coordenadas (x, y) relativas aos eixos (transAxes) para a fórmula.
+    fontsize_formula : int, default 15
+        Tamanho da fonte da fórmula do modelo.
+    formula_ha, formula_va : str, default 'right', 'bottom'
+        Alinhamento horizontal e vertical do texto da fórmula.
+    save_path : str ou Path, optional
+        Caminho para exportar a figura (ex: 'figura_artigo.pdf').
+    show_plot : bool, default True
+        Executa plt.show() ao final.
+    verbose : bool, default True
+        Imprime a tabela detalhada de parâmetros no terminal/output.
+
+    Retorno:
+    --------
+    fig : matplotlib.figure.Figure
+    axes : ndarray de Axes (shape (2,))
+    results : dict contendo popt, pcov, perr, chi2, chi2_red, dof e resíduos para node e bond.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    configs = [
+        {
+            'name': 'node',
+            'ax': axes[0],
+            'data': df_node,
+            'title': panel_titles[0] if panel_titles else None,
+            'ylabel': ylabel_node or ylabel,
+            'color_data': color_data_node,
+            'marker': marker_node,
+            'color_fit': color_fit_node,
+            'legend_loc': legend_loc_node,
+            'formula_pos': formula_pos_node,
+            'p0': p0_node,
+        },
+        {
+            'name': 'bond',
+            'ax': axes[1],
+            'data': df_bond,
+            'title': panel_titles[1] if panel_titles else None,
+            'ylabel': ylabel_bond or ylabel,
+            'color_data': color_data_bond,
+            'marker': marker_bond,
+            'color_fit': color_fit_bond,
+            'legend_loc': legend_loc_bond,
+            'formula_pos': formula_pos_bond,
+            'p0': p0_bond,
+        },
+    ]
+
+    results = {}
+
+    for cfg in configs:
+        ax = cfg['ax']
+        t_name = cfg['name']
+
+        L, y, y_err = _load_or_resolve_data(cfg['data'], t_name, c_val=c_val)
+        if len(L) < 4:
+            raise ValueError(f'São necessários pelo menos 4 pontos válidos para {t_name}.')
+
+        p0 = cfg['p0']
+        if p0 is None:
+            p0 = [y[-1], 1.0, 4.0 / 3.0]
+
+        popt, pcov = curve_fit(
+            finite_size_model, L, y,
+            sigma=y_err, absolute_sigma=True,
+            p0=p0, maxfev=100000
+        )
+        perr = np.sqrt(np.diag(pcov))
+        pc_b, A_b, nu_b = popt
+        pc_e, A_e, nu_e = perr
+
+        y_fit_pts = finite_size_model(L, *popt)
+        res_sigma = (y - y_fit_pts) / y_err
+        chi2 = float(np.sum(res_sigma**2))
+        dof = len(y) - len(popt)
+        chi2_red = chi2 / dof if dof > 0 else np.nan
+
+        pc_s, pc_es = round_value_error(pc_b, pc_e)
+        A_s, A_es = round_value_error(A_b, A_e)
+        nu_s, nu_es = round_value_error(nu_b, nu_e)
+
+        results[t_name] = {
+            'L': L, 'y': y, 'y_err': y_err,
+            'popt': popt, 'pcov': pcov, 'perr': perr,
+            'pc': (pc_b, pc_e, pc_s, pc_es),
+            'A': (A_b, A_e, A_s, A_es),
+            'nu': (nu_b, nu_e, nu_s, nu_es),
+            'chi2': chi2, 'dof': dof, 'chi2_red': chi2_red,
+            'residuals_sigma': res_sigma,
+        }
+
+        # Eixo transformado: x = L^(-1/nu)
+        x = L**(-1.0 / nu_b)
+        x_fit = np.linspace(0.0, x.max() * 1.05, 500)
+        y_fit = pc_b * (1.0 - A_b * x_fit)
+
+        # Rótulo da curva ajustada na legenda
+        fit_label = (
+            fr'$p_c = {pc_s} \pm {pc_es}$'
+            '\n'
+            fr'$A\;\, = {A_s} \pm {A_es}$'
+            '\n'
+            fr'$\nu\;\, = {nu_s} \pm {nu_es}$'
+        )
+        if show_chi2:
+            fit_label += '\n' + fr'$\chi^2_\mathrm{{red}} = {chi2_red:.2f}$'
+
+        # Curva de ajuste
+        ax.plot(
+            x_fit, y_fit,
+            color=cfg['color_fit'], linestyle=linestyle_fit,
+            linewidth=linewidth_fit, label=fit_label, zorder=2
+        )
+
+        # Pontos experimentais
+        ax.errorbar(
+            x, y, yerr=y_err,
+            fmt=cfg['marker'], color=cfg['color_data'],
+            markerfacecolor=marker_facecolor, markeredgecolor=cfg['color_data'],
+            markersize=marker_size, capsize=capsize, elinewidth=elinewidth,
+            label=data_label, zorder=3
+        )
+
+        # Fórmula do modelo dentro do painel
+        if show_formula and formula_text:
+            ax.text(
+                cfg['formula_pos'][0], cfg['formula_pos'][1], formula_text,
+                transform=ax.transAxes, fontsize=fontsize_formula,
+                horizontalalignment=formula_ha, verticalalignment=formula_va
+            )
+
+        # Título do painel e eixos
+        if cfg['title']:
+            ax.set_title(cfg['title'], fontsize=fontsize_titles)
+        ax.set_xlabel(xlabel, fontsize=fontsize_labels)
+        ax.set_ylabel(cfg['ylabel'], fontsize=fontsize_labels)
+
+        # Formatação de ticks (direção, espessura e comprimento)
+        ax.tick_params(
+            axis='both', which='major',
+            direction=tick_direction, length=tick_length_major, width=tick_width_major,
+            labelsize=fontsize_ticks, top=top_ticks, right=right_ticks
+        )
+        ax.tick_params(
+            axis='both', which='minor',
+            direction=tick_direction, length=tick_length_minor, width=tick_width_minor,
+            top=top_ticks, right=right_ticks
+        )
+        ax.minorticks_on()
+
+        # Legenda
+        if show_legend:
+            ax.legend(loc=cfg['legend_loc'], fontsize=fontsize_legend, frameon=legend_frameon)
+
+    fig.tight_layout()
+
+    if verbose:
+        print('=' * 75)
+        print('RESUMO DOS AJUSTES FINITE-SIZE SCALING: p*(L) = pc [1 - A L^(-1/nu)]')
+        print('=' * 75)
+        for t_name in ['node', 'bond']:
+            res = results[t_name]
+            _, _, pc_s, pc_es = res['pc']
+            _, _, A_s, A_es = res['A']
+            _, _, nu_s, nu_es = res['nu']
+            print(f'[{t_name.upper()} PERCOLATION]')
+            print(f'  pc        = {pc_s} +/- {pc_es}')
+            print(f'  A         = {A_s} +/- {A_es}')
+            print(f'  nu        = {nu_s} +/- {nu_es}')
+            print(f'  1/nu      = {1.0 / res["nu"][0]:.8f}')
+            print(f'  chi2      = {res["chi2"]:.4f}  (dof = {res["dof"]})')
+            print(f'  chi2_red  = {res["chi2_red"]:.4f}')
+            print(f'  max |res| = {np.max(np.abs(res["residuals_sigma"])):.2f} sigma')
+            print('-' * 75)
+
+    if save_path:
+        fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show_plot:
+        plt.show()
+
+    return fig, axes, results

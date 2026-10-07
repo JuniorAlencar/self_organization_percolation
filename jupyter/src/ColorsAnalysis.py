@@ -982,7 +982,7 @@ def get_ft_min_max(
                     continue
 
                 df_filter = df_SUB[
-                    (1.0 * df_SUB['N_samples'])
+                    (0.98 * df_SUB['N_samples'])
                     <= df_SUB['N_samples_perc']
                 ]
 
