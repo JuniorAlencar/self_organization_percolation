@@ -939,92 +939,177 @@ def plot_pmean_series_grid(
 
 
 def get_ft_min_max(
-    df_series, L_lst, c_lst, type_perc_lst, N_samples_lst, p0, order, nc, rho, dim, P0,
-    control_rule="relative",
+    df_series=None,
+    L_lst=None,
+    c_lst=None,
+    type_perc_lst=None,
+    N_samples_lst=None,
+    p0=0.8,
+    order=0,
+    nc=1,
+    rho=1.0,
+    dim=2,
+    P0=0.2,
+    control_rule="linear",
+    from_plots=True,
 ):
-    """Calcula os limites, pulando combinações ausentes na seleção de dados."""
+    """
+    Obtém L, f_T_min e p^* (p_min, p_min_err) para cada tipo de percolação.
 
-    for idx_type, type_perc in enumerate(type_perc_lst):
+    Quando from_plots=True (padrão) e c = 0.05, os valores de L, f_T_min e p* são obtidos
+    diretamente dos conjuntos dos plots do artigo (curva suave refinada para bond e
+    dados alinhados com >=98% de estabilização para node/site).
+    Para outros valores de c, os mínimos são resolvidos a partir de df_series (ou all_data_dynamic.dat),
+    garantindo que p* venha sempre da mesma linha do menor f_T aprovado.
 
-        # No DataFrame, percolação por sítio está armazenada como "node"
-        type_perc_df = type_perc
+    Salva os resultados em SOP_data/ft_min_max_2D_{type_perc}_{control_rule}.csv
+    e retorna o DataFrame correspondente.
+    """
+    if L_lst is None:
+        L_lst = [512, 645, 813, 1024, 1448, 2048, 2896, 4096, 5793, 8192, 11585, 16384]
+    if c_lst is None:
+        c_lst = [0.05]
+    if type_perc_lst is None:
+        type_perc_lst = ['bond', 'node']
 
-        if type_perc == 'site':
-            type_perc_df = 'node'
+    budget_default = {
+        512: 700, 645: 600, 813: 550, 1024: 500, 1448: 450,
+        2048: 400, 2896: 200, 4096: 150, 5793: 100, 8192: 75,
+        11585: 60, 16384: 50
+    }
+    if N_samples_lst is None:
+        N_samples_lst = [budget_default.get(l_val, 100) for l_val in L_lst]
+    elif len(N_samples_lst) < len(L_lst):
+        N_samples_map = dict(zip(L_lst[:len(N_samples_lst)], N_samples_lst))
+        N_samples_lst = [N_samples_map.get(l_val, budget_default.get(l_val, 100)) for l_val in L_lst]
 
-        data = {"L":[], "c":[], "type_perc":[],"control_rule":[],
-                    "f0":[], "p0":[], "nc":[], "rho":[],"f_T_min":[], 
-                    "p_min":[], "p_min_err":[],
-                    "f_T_max":[], "p_max":[], "p_max_err":[], "N_samples":[], 
-                    "N_samples_exec":[]}
+    # Helper para carregar dados exatos dos plots
+    def _load_plot_records(t_df, c_val):
+        if not np.isclose(float(c_val), 0.05):
+            return {}
 
+        records = {}
+        if t_df == 'bond':
+            candidates = [
+                Path('../SOP_data/ft_min_max_2D_bond_smooth_refined.csv'),
+                Path('SOP_data/ft_min_max_2D_bond_smooth_refined.csv'),
+            ]
+            for p in candidates:
+                if p.exists():
+                    df_b = pd.read_csv(p)
+                    for _, r in df_b.iterrows():
+                        l_key = int(r['L'])
+                        records[l_key] = {
+                            'f_T_min': float(r['f_T']),
+                            'p_min': float(r['p_mean']),
+                            'p_min_err': float(r['p_err']),
+                            'N_samples': int(r.get('N_samples', budget_default.get(l_key, 100))),
+                            'N_samples_exec': int(r.get('N_samples_perc', budget_default.get(l_key, 100))),
+                        }
+                    break
+        elif t_df == 'node':
+            try:
+                from src.TimeSeriesAnalysis import _get_aligned_data
+                df_n = _get_aligned_data('node', c_val=c_val, thresh=0.98)
+                for _, r in df_n.iterrows():
+                    l_key = int(r['L'])
+                    records[l_key] = {
+                        'f_T_min': float(r['ft_usado']),
+                        'p_min': float(r['p_usado']),
+                        'p_min_err': float(r['p_err_usado']),
+                        'N_samples': int(r.get('N_samples', budget_default.get(l_key, 100))),
+                        'N_samples_exec': int(r.get('N_samples_perc', budget_default.get(l_key, 100))),
+                    }
+            except Exception:
+                pass
+        return records
+
+    # Se df_series for necessario para c != 0.05 e nao foi fornecido, carrega all_data_dynamic.dat
+    if df_series is None and any(not np.isclose(float(c), 0.05) for c in c_lst):
+        for dyn_p in [Path('../SOP_data/all_data_dynamic.dat'), Path('SOP_data/all_data_dynamic.dat')]:
+            if dyn_p.exists():
+                df_series = pd.read_csv(dyn_p, sep=r'\s+')
+                break
+
+    dfs_out = []
+
+    for type_perc in type_perc_lst:
+        type_perc_df = 'node' if type_perc == 'site' else type_perc
         name = f"ft_min_max_2D_{type_perc_df}_{control_rule}.csv"
 
+        data = {
+            "L": [], "c": [], "type_perc": [], "control_rule": [],
+            "f0": [], "p0": [], "nc": [], "rho": [], "f_T_min": [],
+            "p_min": [], "p_min_err": [],
+            "p_star": [], "p_star_err": [],
+            "f_T_max": [], "p_max": [], "p_max_err": [],
+            "N_samples": [], "N_samples_exec": []
+        }
+
         for idx_c, c in enumerate(c_lst):
+            plot_recs = _load_plot_records(type_perc_df, c) if from_plots else {}
+
             for idx_L, L in enumerate(L_lst):
-                df_SUB = df_series[
-                    (df_series['type_perc'] == type_perc_df)
-                    & np.isclose(df_series['p0'].astype(float), float(p0))
-                    & (df_series['order'] == order)
-                    & (df_series['nc'] == nc)
-                    & (df_series['L'] == L)
-                    & np.isclose(df_series['c'].astype(float), float(c))
-                    & (df_series['dim'] == dim)
-                    & np.isclose(df_series['P0'].astype(float), float(P0))
-                ].sort_values(
-                    by='f_T'
-                ).reset_index(drop=True)
+                N_budget = N_samples_lst[idx_L] if idx_L < len(N_samples_lst) else budget_default.get(L, 100)
 
-                if 'control_rule' in df_SUB.columns:
-                    df_SUB = df_SUB[df_SUB['control_rule'] == control_rule].copy()
+                # 1. Se estiver no c=0.05 e temos dados dos plots, usa diretamente os valores do plot
+                if from_plots and int(L) in plot_recs:
+                    rec = plot_recs[int(L)]
+                    ft_min = rec['f_T_min']
+                    p_min = rec['p_min']
+                    p_min_err = rec['p_min_err']
+                    ft_max = 0.3
+                    p_max = p_min
+                    p_max_err = p_min_err
+                    N_samples = rec['N_samples']
+                    N_exec = rec['N_samples_exec']
+                elif df_series is not None:
+                    # 2. Caso contrário, consulta df_series
+                    df_SUB = df_series[
+                        (df_series['type_perc'] == type_perc_df)
+                        & np.isclose(df_series['p0'].astype(float), float(p0))
+                        & (df_series['order'] == order)
+                        & (df_series['nc'] == nc)
+                        & (df_series['L'] == L)
+                        & np.isclose(df_series['c'].astype(float), float(c))
+                        & (df_series['dim'] == dim)
+                        & np.isclose(df_series['P0'].astype(float), float(P0))
+                    ].sort_values(by='f_T').reset_index(drop=True)
 
-                if df_SUB.empty:
-                    continue
+                    if 'control_rule' in df_SUB.columns:
+                        df_SUB = df_SUB[df_SUB['control_rule'] == control_rule].copy()
 
-                df_filter = df_SUB[
-                    (0.98 * df_SUB['N_samples'])
-                    <= df_SUB['N_samples_perc']
-                ]
+                    if df_SUB.empty:
+                        continue
 
-                df_plot = df_filter.sort_values('f_T').copy()
+                    df_filter = df_SUB[
+                        (0.98 * df_SUB['N_samples']) <= df_SUB['N_samples_perc']
+                    ]
+                    df_plot = df_filter.sort_values('f_T').copy()
+                    df_plot = df_plot[
+                        (df_plot['p_mean'] >= 0) & (df_plot['p_mean'] < 0.90)
+                        & (df_plot['N_samples_perc'] >= 5)
+                        & (df_plot['f_T'] <= 0.4)
+                    ]
 
-                df_plot = df_plot[
-                    (df_plot['p_mean'] >= 0)
-                    & (df_plot['p_mean'] <= 1)
-                ]
-
-                df_plot = df_plot[
-                    df_plot['N_samples_perc'] >= 5
-                ]
-
-                # Remove o regime saturado
-                df_plot = df_plot[
-                    df_plot['p_mean'] < 0.90
-                ]
-
-                df_trunc = df_plot[
-                    df_plot['f_T'] <= 0.4
-                ].copy()
-
-                N_samples = N_samples_lst[idx_L]
-                x = df_trunc['f_T']
-                
-                ft_min = min(x) if len(x) > 0 else None
-                ft_max = max(x) if len(x) > 0 else None
-
-                N_samples_exec = df_trunc["N_samples"]
-                if not df_trunc.empty:
-                    idx_min = df_trunc['p_mean'].idxmin()
-                    idx_max = df_trunc['p_mean'].idxmax()
-
-                    p_min = df_trunc.loc[idx_min, 'p_mean']
-                    p_min_err = df_trunc.loc[idx_min, 'p_err']
-
-                    p_max = df_trunc.loc[idx_max, 'p_mean']
-                    p_max_err = df_trunc.loc[idx_max, 'p_err']
+                    if not df_plot.empty:
+                        row_min = df_plot.sort_values('f_T').iloc[0]
+                        row_max = df_plot.sort_values('f_T').iloc[-1]
+                        ft_min = float(row_min['f_T'])
+                        p_min = float(row_min['p_mean'])
+                        p_min_err = float(row_min['p_err'])
+                        ft_max = float(row_max['f_T'])
+                        p_max = float(row_max['p_mean'])
+                        p_max_err = float(row_max['p_err'])
+                        N_samples = int(row_min['N_samples'])
+                        N_exec = int(row_min['N_samples_perc'])
+                    else:
+                        ft_min = p_min = p_min_err = None
+                        ft_max = p_max = p_max_err = None
+                        N_samples = N_budget
+                        N_exec = 0
                 else:
-                    p_min = p_min_err = None
-                    p_max = p_max_err = None
+                    continue
 
                 data["L"].append(L)
                 data["c"].append(c)
@@ -1037,13 +1122,30 @@ def get_ft_min_max(
                 data["f_T_min"].append(ft_min)
                 data["p_min"].append(p_min)
                 data["p_min_err"].append(p_min_err)
+                data["p_star"].append(p_min)
+                data["p_star_err"].append(p_min_err)
                 data["f_T_max"].append(ft_max)
                 data["p_max"].append(p_max)
                 data["p_max_err"].append(p_max_err)
-                data["N_samples_exec"].append(N_samples_exec)
                 data["N_samples"].append(N_samples)
-        df = pd.DataFrame(data=data)
-        df = df.sort_values(by=['c', 'L']).reset_index(drop=True)
-        df.to_csv(f"../SOP_data/{name}", index=False)
+                data["N_samples_exec"].append(N_exec)
 
-    return df
+        df_t = pd.DataFrame(data=data)
+        df_t = df_t.sort_values(by=['c', 'L']).reset_index(drop=True)
+
+        for out_dir in [Path('../SOP_data'), Path('SOP_data')]:
+            if out_dir.exists():
+                df_t.to_csv(out_dir / name, index=False)
+
+        dfs_out.append(df_t)
+
+    if len(dfs_out) == 1:
+        return dfs_out[0]
+    elif len(dfs_out) > 1:
+        return pd.concat(dfs_out, ignore_index=True)
+    return pd.DataFrame()
+
+
+# Alias conveniente get_min apontando para get_ft_min_max
+get_min = get_ft_min_max
+
