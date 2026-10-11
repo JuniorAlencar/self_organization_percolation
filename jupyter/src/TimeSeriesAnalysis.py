@@ -2541,30 +2541,141 @@ def finite_size_model(L, pc, A, nu):
     return pc * (1.0 - A * L**(-1.0 / nu))
 
 
-def _load_or_resolve_data(data, type_perc, c_val=0.05):
+def _get_aligned_data(type_perc, c_val=0.05, thresh=0.98):
     r"""
-    Carrega dados do arquivo CSV padrão ou extrai colunas de um DataFrame fornecido.
+    Gera DataFrame de dados alinhados à reta suave de f_T com taxa de estabilização >= thresh.
     """
-    if data is None:
+    candidates = [
+        Path('../SOP_data/all_data_dynamic.dat'),
+        Path('SOP_data/all_data_dynamic.dat'),
+    ]
+    data_path = None
+    for p in candidates:
+        if p.exists():
+            data_path = p
+            break
+    if data_path is None:
+        raise FileNotFoundError("Não foi possível encontrar 'all_data_dynamic.dat'.")
+
+    ma_raw = pd.read_csv(data_path, sep=r'\s+')
+    ma_mask = (
+        (ma_raw['type_perc'] == type_perc)
+        & (ma_raw['dim'] == 2) & (ma_raw['nc'] == 1)
+        & (ma_raw['order'] == 0) & (ma_raw['stat_window'] == 0)
+        & (ma_raw['control_rule'] == 'linear')
+    )
+    for col, val in {'c': c_val, 'p0': 0.8, 'P0': 0.2, 'rho': 1.0}.items():
+        if col in ma_raw.columns:
+            ma_mask &= np.isclose(ma_raw[col], val, rtol=0, atol=1e-12)
+
+    ma_data = ma_raw.loc[ma_mask].copy()
+    ma_data['all_ok'] = ma_data['N_samples'].eq(ma_data['N_samples_perc']) & ma_data['N_samples'].ge(5)
+
+    # 1. Encontra o menor f_T com 100% de estabilização para cada L
+    rows_min = []
+    for m_L, m_g in ma_data.groupby('L'):
+        m_g = m_g.sort_values('f_T')
+        m_ok = m_g.loc[m_g['all_ok'] & m_g['p_mean'].between(0, 0.9, inclusive='left') & m_g['f_T'].le(0.4)]
+        if m_ok.empty:
+            continue
+        m_r = m_ok.iloc[0]
+        rows_min.append({
+            'L': int(m_L),
+            'ft_observado': m_r['f_T'],
+            'p_at_min': m_r['p_mean'],
+            'p_err': m_r['p_err']
+        })
+    df_min = pd.DataFrame(rows_min).sort_values('L').reset_index(drop=True)
+
+    # 2. Ajuste da reta suave de f_T em log-log: log(f_T) = a * log(L/512) + b
+    L_vals = df_min['L'].to_numpy(float)
+    x = np.log(L_vals / 512.0)
+    logf = np.log(df_min['ft_observado'].to_numpy())
+    coef = np.polyfit(x, logf, 1)
+    f_pred = np.exp(np.polyval(coef, x))
+
+    # 3. Para cada L, seleciona o ponto com (N_samples_perc/N_samples) >= thresh mais próximo da reta suave
+    chosen = []
+    for l_val, ft_target in zip(L_vals, f_pred):
+        pool = ma_data.loc[
+            (ma_data['L'] == l_val)
+            & ((ma_data['N_samples_perc'] / ma_data['N_samples']) >= thresh)
+            & ma_data['N_samples'].ge(5)
+            & ma_data['p_mean'].between(0, 0.9, inclusive='left')
+            & ma_data['f_T'].le(0.4)
+        ].copy()
+        if pool.empty:
+            continue
+        pool['diff'] = (pool['f_T'] - ft_target).abs()
+        best = pool.sort_values('diff').iloc[0]
+        chosen.append({
+            'L': int(l_val),
+            'p_usado': best['p_mean'],
+            'p_err_usado': best['p_err'],
+            'ft_usado': best['f_T'],
+            'ft_pred_reta': ft_target,
+            'N_samples': int(best['N_samples']),
+            'N_samples_perc': int(best['N_samples_perc'])
+        })
+    return pd.DataFrame(chosen)
+
+
+def _load_or_resolve_data(
+    data,
+    type_perc,
+    c_val=0.05,
+    use_aligned=False,
+    thresh=0.98,
+    L_min=None,
+):
+    r"""
+    Carrega dados do arquivo CSV padrão, extrai colunas de um DataFrame fornecido,
+    ou resolve automaticamente os dados alinhados à reta suave (use_aligned=True).
+    Aplica filtro opcional L >= L_min.
+    """
+    if data is None and use_aligned:
+        # Se houver dados refinados de f_T contínuo gerados pelo run_samples, prioriza-os
+        refined_candidates = [
+            Path(f'../SOP_data/ft_min_max_2D_{type_perc}_smooth_refined.csv'),
+            Path(f'SOP_data/ft_min_max_2D_{type_perc}_smooth_refined.csv'),
+        ]
+        found_refined = None
+        for p in refined_candidates:
+            if p.exists():
+                found_refined = pd.read_csv(p)
+                break
+        if found_refined is not None:
+            df = found_refined
+        else:
+            df = _get_aligned_data(type_perc, c_val=c_val, thresh=thresh)
+    elif data is None:
         candidates = [
+            Path(f'../SOP_data/ft_min_max_2D_{type_perc}_smooth_refined.csv'),
+            Path(f'SOP_data/ft_min_max_2D_{type_perc}_smooth_refined.csv'),
             Path(f'../SOP_data/ft_min_max_2D_{type_perc}_linear.csv'),
             Path(f'SOP_data/ft_min_max_2D_{type_perc}_linear.csv'),
         ]
+        found = None
         for p in candidates:
             if p.exists():
-                data = pd.read_csv(p)
+                found = pd.read_csv(p)
                 break
-        if data is None:
+        if found is None:
             raise FileNotFoundError(f'Não foi possível encontrar os dados padrão para {type_perc}.')
+        df = found
     elif isinstance(data, (str, Path)):
-        data = pd.read_csv(data)
+        df = pd.read_csv(data)
+    else:
+        df = data.copy()
 
-    df = data.copy()
     if 'c' in df.columns and c_val is not None:
         df = df[np.isclose(df['c'], c_val)]
 
     # Detecção automática de colunas compatíveis
     l_col = 'L' if 'L' in df.columns else df.columns[0]
+    if L_min is not None:
+        df = df[df[l_col] >= L_min]
+
     y_col = next((c for c in ['p_min', 'p_usado', 'p_mean', 'p_at_min', 'y'] if c in df.columns), None)
     err_col = next((c for c in ['p_min_err', 'p_err_usado', 'p_err', 'y_err', 'sigma'] if c in df.columns), None)
 
@@ -2590,6 +2701,45 @@ def _load_or_resolve_data(data, type_perc, c_val=0.05):
 # Função Principal de Plotagem para o Artigo
 # ============================================================
 
+def _get_ft_min_observed_data(type_perc, c_val=0.05, L_min=1024):
+    r"""
+    Retorna os menores valores observados de f_T (com estabilização >= 98%) para cada L >= L_min,
+    lendo prioritariamente de ft_min_max_2D_{type_perc}_smooth_refined.csv.
+    """
+    for p in [
+        Path(f'../SOP_data/ft_min_max_2D_{type_perc}_smooth_refined.csv'),
+        Path(f'SOP_data/ft_min_max_2D_{type_perc}_smooth_refined.csv'),
+    ]:
+        if p.exists():
+            df_csv = pd.read_csv(p)
+            if 'f_T_min_obs' in df_csv.columns:
+                if L_min is not None:
+                    df_csv = df_csv[df_csv['L'] >= L_min]
+                df_csv = df_csv.sort_values('L')
+                return df_csv['L'].to_numpy(dtype=float), df_csv['f_T_min_obs'].to_numpy(dtype=float)
+
+    # Mínimos discretos de referência (estabilização >= 98%) para c = 0.05
+    baseline_minima = {
+        'node': {
+            512: 0.1931579, 645: 0.1778947, 813: 0.1626316,
+            1024: 0.1525225, 1448: 0.1464674, 2048: 0.1321053,
+            2896: 0.1168421, 4096: 0.1015789, 5793: 0.09328492,
+            8192: 0.0870912, 11585: 0.08219182, 16384: 0.07230416,
+        },
+        'bond': {
+            512: 0.2381803, 645: 0.2236842, 813: 0.2084211,
+            1024: 0.1931579, 1448: 0.1778947, 2048: 0.1626316,
+            2896: 0.1473684, 4096: 0.1325766, 5793: 0.1200485,
+            8192: 0.1072443, 11585: 0.09604457, 16384: 0.0852577,
+        },
+    }
+    d = baseline_minima.get(type_perc, {})
+    items = sorted((k, v) for k, v in d.items() if (L_min is None or k >= L_min))
+    L_arr = np.array([k for k, _ in items], dtype=float)
+    ft_arr = np.array([v for _, v in items], dtype=float)
+    return L_arr, ft_arr
+
+
 def plot_article_fss(
     # --- Dados de Entrada ---
     df_node=None,
@@ -2597,13 +2747,33 @@ def plot_article_fss(
     c_val=0.05,
     p0_node=None,
     p0_bond=None,
+    use_aligned=False,
+    thresh_aligned=0.98,
+    L_min=1024,
+    # --- Modelo e Expoente Nu ---
+    fix_nu=False,
+    nu_theoretical=4.0 / 3.0,
+    display_nu_mode='nu',  # 'nu', 'both', 'inv_nu'
     # --- Dimensões da Figura ---
-    figsize=(14.0, 5.8),
+    figsize=(14.0, 11.2),
     dpi=300,
     # --- Títulos e Rótulos dos Painéis ---
-    panel_titles=(r'(a) Node percolation', r'(b) Bond percolation'),
-    xlabel=r'$L^{-1/\nu}$',
-    ylabel=r'$p^\ast(L;\,f_{\mathrm{T,min}})$',
+    panel_titles=None,
+    panel_label_ft_node=r'\textbf{(a) Site percolation}',
+    panel_label_ft_bond=r'\textbf{(b) Bond percolation}',
+    panel_label_node=r'\textbf{(c) Site percolation}',
+    panel_label_bond=r'\textbf{(d) Bond percolation}',
+    panel_label_pos_ft_node=(0.05, 0.19),
+    panel_label_pos_ft_bond=(0.05, 0.19),
+    panel_label_pos_node=(0.95, 0.19),
+    panel_label_pos_bond=(0.95, 0.19),
+    fontsize_panel_label=17,
+    panel_label_ha='right',
+    panel_label_va='bottom',
+    xlabel_ft=r'$L$',
+    ylabel_ft=r'$f_{\mathrm{T,min}}(L)$',
+    xlabel=None,
+    ylabel=r'$p^*(L; f_{\mathrm{T,min}})$',
     ylabel_node=None,
     ylabel_bond=None,
     fontsize_titles=16,
@@ -2617,34 +2787,47 @@ def plot_article_fss(
     tick_length_minor=3.5,
     top_ticks=True,
     right_ticks=True,
+    # --- Limites do Eixo X ---
+    xlim=None,
+    xlim_node=None,
+    xlim_bond=None,
+    xlim_margin=0.00045,
     # --- Estilo dos Dados Experimentais ---
     color_data_node='red',
     color_data_bond='red',
     marker_node='o',
     marker_bond='s',
-    marker_size=6.0,
+    marker_size=9.0,
     marker_facecolor='none',
-    capsize=3.0,
-    elinewidth=1.0,
-    data_label='Data',
+    markeredgewidth=1.3,
+    capsize=3.5,
+    elinewidth=1.2,
+    data_label=None,
     # --- Estilo das Linhas de Ajuste ---
-    color_fit_node='green',
-    color_fit_bond='green',
+    color_fit_node='black',
+    color_fit_bond='black',
     linestyle_fit='-',
-    linewidth_fit=2.0,
+    linewidth_fit=2.2,
     # --- Legenda ---
     show_legend=True,
+    legend_loc_ft_node='upper right',
+    legend_loc_ft_bond='upper right',
     legend_loc_node='upper left',
     legend_loc_bond='upper left',
-    fontsize_legend=12,
+    fontsize_legend=15,
     legend_frameon=False,
-    show_chi2=True,
+    legend_handlelength=2.5,
+    legend_borderaxespad=1.2,
+    show_chi2=False,
     # --- Caixa de Texto com a Fórmula do Modelo ---
     show_formula=True,
-    formula_text=r'$p^\ast(L)=p_c\left(1-A L^{-1/\nu}\right)$',
-    formula_pos_node=(0.96, 0.06),
-    formula_pos_bond=(0.96, 0.06),
-    fontsize_formula=15,
+    formula_text_ft=r'$f_{\mathrm{T,min}}(L) = A L^{-b}$',
+    formula_pos_ft_node=(0.05, 0.07),
+    formula_pos_ft_bond=(0.05, 0.07),
+    formula_text=None,
+    formula_pos_node=(0.95, 0.07),
+    formula_pos_bond=(0.95, 0.07),
+    fontsize_formula=16,
     formula_ha='right',
     formula_va='bottom',
     # --- Saída / Salvamento ---
@@ -2653,122 +2836,56 @@ def plot_article_fss(
     verbose=True,
 ):
     r"""
-    Constrói a figura de publicação em layout subplots 1x2 (Node e Bond percolation).
-
-    Parâmetros:
-    -----------
-    df_node, df_bond : pd.DataFrame ou caminho (str/Path), optional
-        Dados para cada tipo de percolação. Se None, lê de '../SOP_data/ft_min_max_2D_{type}_linear.csv'.
-    c_val : float, default 0.05
-        Valor de concentração c para filtragem no DataFrame, se houver coluna 'c'.
-    p0_node, p0_bond : list, optional
-        Chute inicial [pc_0, A_0, nu_0] para curve_fit.
-    figsize : tuple, default (14.0, 5.8)
-        Dimensões da figura (largura, altura) em polegadas.
-    dpi : int, default 300
-        Resolução da figura ao salvar.
-    panel_titles : tuple de str, default ('(a) Node percolation', '(b) Bond percolation')
-        Títulos no topo de cada subplot. Passe None para omitir.
-    xlabel : str, default r'$L^{-1/\nu}$'
-        Rótulo do eixo x comum aos dois painéis.
-    ylabel : str, default r'$p^\ast(L;\,f_{\mathrm{T,min}})$'
-        Rótulo do eixo y padrão para ambos os painéis.
-    ylabel_node, ylabel_bond : str, optional
-        Rótulo específico do eixo y para cada painel. Se None, usa ylabel.
-    fontsize_titles : int, default 16
-        Tamanho da fonte dos títulos dos painéis.
-    fontsize_labels : int, default 18
-        Tamanho da fonte dos rótulos dos eixos x e y.
-    fontsize_ticks : int, default 14
-        Tamanho da fonte dos valores numéricos nos ticks.
-    tick_direction : str, default 'in'
-        Direção dos ticks ('in', 'out', 'inout').
-    tick_width_major, tick_width_minor : float, default 1.2, 0.8
-        Espessura dos ticks principais e secundários.
-    tick_length_major, tick_length_minor : float, default 6.0, 3.5
-        Comprimento dos ticks principais e secundários.
-    top_ticks, right_ticks : bool, default True
-        Se True, desenha ticks nas bordas superior e direita do painel.
-    color_data_node, color_data_bond : str, default 'red'
-        Cor dos marcadores dos pontos experimentais.
-    marker_node, marker_bond : str, default 'o', 's'
-        Formato dos marcadores dos pontos experimentais.
-    marker_size : float, default 6.0
-        Tamanho dos marcadores.
-    marker_facecolor : str, default 'none'
-        Preenchimento dos marcadores ('none' para vazado).
-    capsize : float, default 3.0
-        Comprimento das barras nas pontas das incertezas (errorbars).
-    elinewidth : float, default 1.0
-        Espessura das linhas das barras de erro.
-    data_label : str, default 'Data'
-        Texto da legenda para os dados experimentais.
-    color_fit_node, color_fit_bond : str, default 'green'
-        Cor da linha de regressão ajustada.
-    linestyle_fit : str, default '-'
-        Estilo da linha ajustada.
-    linewidth_fit : float, default 2.0
-        Espessura da linha ajustada.
-    show_legend : bool, default True
-        Exibe a legenda com os parâmetros ajustados.
-    legend_loc_node, legend_loc_bond : str, default 'upper left'
-        Posição da legenda em cada painel.
-    fontsize_legend : int, default 12
-        Tamanho da fonte do texto da legenda.
-    legend_frameon : bool, default False
-        Borda/moldura da legenda.
-    show_chi2 : bool, default True
-        Se True, inclui chi^2_red na legenda do ajuste.
-    show_formula : bool, default True
-        Se True, insere a fórmula analítica dentro do painel.
-    formula_text : str, default r'$p^\ast(L)=p_c\left(1-A L^{-1/\nu}\right)$'
-        Fórmula do modelo exibida como texto no painel.
-    formula_pos_node, formula_pos_bond : tuple, default (0.96, 0.06)
-        Coordenadas (x, y) relativas aos eixos (transAxes) para a fórmula.
-    fontsize_formula : int, default 15
-        Tamanho da fonte da fórmula do modelo.
-    formula_ha, formula_va : str, default 'right', 'bottom'
-        Alinhamento horizontal e vertical do texto da fórmula.
-    save_path : str ou Path, optional
-        Caminho para exportar a figura (ex: 'figura_artigo.pdf').
-    show_plot : bool, default True
-        Executa plt.show() ao final.
-    verbose : bool, default True
-        Imprime a tabela detalhada de parâmetros no terminal/output.
-
-    Retorno:
-    --------
-    fig : matplotlib.figure.Figure
-    axes : ndarray de Axes (shape (2,))
-    results : dict contendo popt, pcov, perr, chi2, chi2_red, dof e resíduos para node e bond.
+    Constrói a figura de publicação em layout subplots 2x2:
+      - Linha 1: f_{T,min}(L) vs L com ajuste Power-law (Site e Bond percolation)
+      - Linha 2: p*(L; f_{T,min}) vs L^{-1/\nu*} (Site e Bond percolation)
     """
-    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    if xlabel is None:
+        xlabel = r'$L^{-3/4}$' if fix_nu else r'$L^{-1/\nu^\ast}$'
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
 
     configs = [
         {
             'name': 'node',
-            'ax': axes[0],
+            'ax_ft': axes[0, 0],
+            'ax_p': axes[1, 0],
             'data': df_node,
             'title': panel_titles[0] if panel_titles else None,
+            'panel_label_ft': panel_label_ft_node,
+            'panel_label_pos_ft': panel_label_pos_ft_node,
+            'legend_loc_ft': legend_loc_ft_node,
+            'formula_pos_ft': formula_pos_ft_node,
+            'panel_label': panel_label_node,
+            'panel_label_pos': panel_label_pos_node,
             'ylabel': ylabel_node or ylabel,
             'color_data': color_data_node,
             'marker': marker_node,
             'color_fit': color_fit_node,
             'legend_loc': legend_loc_node,
             'formula_pos': formula_pos_node,
+            'xlim': xlim_node or xlim,
             'p0': p0_node,
         },
         {
             'name': 'bond',
-            'ax': axes[1],
+            'ax_ft': axes[0, 1],
+            'ax_p': axes[1, 1],
             'data': df_bond,
             'title': panel_titles[1] if panel_titles else None,
+            'panel_label_ft': panel_label_ft_bond,
+            'panel_label_pos_ft': panel_label_pos_ft_bond,
+            'legend_loc_ft': legend_loc_ft_bond,
+            'formula_pos_ft': formula_pos_ft_bond,
+            'panel_label': panel_label_bond,
+            'panel_label_pos': panel_label_pos_bond,
             'ylabel': ylabel_bond or ylabel,
             'color_data': color_data_bond,
             'marker': marker_bond,
             'color_fit': color_fit_bond,
             'legend_loc': legend_loc_bond,
             'formula_pos': formula_pos_bond,
+            'xlim': xlim_bond or xlim,
             'p0': p0_bond,
         },
     ]
@@ -2776,93 +2893,272 @@ def plot_article_fss(
     results = {}
 
     for cfg in configs:
-        ax = cfg['ax']
+        ax_ft = cfg['ax_ft']
+        ax = cfg['ax_p']
         t_name = cfg['name']
 
-        L, y, y_err = _load_or_resolve_data(cfg['data'], t_name, c_val=c_val)
-        if len(L) < 4:
-            raise ValueError(f'São necessários pelo menos 4 pontos válidos para {t_name}.')
+        # =====================================================================
+        # LINHA 1: f_{T,min}(L) versus L com ajuste Power-law
+        # =====================================================================
+        L_ft, ft_min = _get_ft_min_observed_data(t_name, c_val=c_val, L_min=L_min)
 
-        p0 = cfg['p0']
-        if p0 is None:
-            p0 = [y[-1], 1.0, 4.0 / 3.0]
+        p_pow, cov_pow = np.polyfit(np.log(L_ft), np.log(ft_min), 1, cov=True)
+        b_ft = float(-p_pow[0])
+        b_ft_err = float(np.sqrt(cov_pow[0, 0]))
+        A_ft = float(np.exp(p_pow[1]))
+        A_ft_err = float(A_ft * np.sqrt(cov_pow[1, 1]))
 
-        popt, pcov = curve_fit(
-            finite_size_model, L, y,
-            sigma=y_err, absolute_sigma=True,
-            p0=p0, maxfev=100000
+        ft_pred_pts = A_ft * (L_ft ** (-b_ft))
+        r2_ft = float(1.0 - np.sum((ft_min - ft_pred_pts)**2) / np.sum((ft_min - np.mean(ft_min))**2))
+
+        A_ft_s, A_ft_es = round_value_error(A_ft, A_ft_err)
+        b_ft_s, b_ft_es = round_value_error(b_ft, b_ft_err)
+
+        L_ft_dense = np.geomspace(np.min(L_ft) * 0.92, np.max(L_ft) * 1.08, 400)
+        ft_fit_dense = A_ft * (L_ft_dense ** (-b_ft))
+
+        ft_fit_label = (
+            fr'$A = {A_ft_s} \pm {A_ft_es}$'
+            '\n'
+            fr'$b = {b_ft_s} \pm {b_ft_es}$'
+            '\n'
+            fr'$R^2 = {r2_ft:.4f}$'
         )
-        perr = np.sqrt(np.diag(pcov))
-        pc_b, A_b, nu_b = popt
-        pc_e, A_e, nu_e = perr
 
-        y_fit_pts = finite_size_model(L, *popt)
-        res_sigma = (y - y_fit_pts) / y_err
-        chi2 = float(np.sum(res_sigma**2))
-        dof = len(y) - len(popt)
-        chi2_red = chi2 / dof if dof > 0 else np.nan
+        # Curva Power-law preta
+        ax_ft.plot(
+            L_ft_dense, ft_fit_dense,
+            color=cfg['color_fit'], linestyle=linestyle_fit,
+            linewidth=linewidth_fit, label=ft_fit_label, zorder=2
+        )
 
-        pc_s, pc_es = round_value_error(pc_b, pc_e)
-        A_s, A_es = round_value_error(A_b, A_e)
-        nu_s, nu_es = round_value_error(nu_b, nu_e)
+        # Pontos apenas dos menores valores (f_{T,min})
+        ax_ft.plot(
+            L_ft, ft_min,
+            linestyle='none', marker=cfg['marker'], color=cfg['color_data'],
+            markerfacecolor=marker_facecolor, markeredgecolor=cfg['color_data'],
+            markeredgewidth=markeredgewidth, markersize=marker_size,
+            label=data_label, zorder=3
+        )
 
-        results[t_name] = {
-            'L': L, 'y': y, 'y_err': y_err,
-            'popt': popt, 'pcov': pcov, 'perr': perr,
-            'pc': (pc_b, pc_e, pc_s, pc_es),
-            'A': (A_b, A_e, A_s, A_es),
-            'nu': (nu_b, nu_e, nu_s, nu_es),
-            'chi2': chi2, 'dof': dof, 'chi2_red': chi2_red,
-            'residuals_sigma': res_sigma,
-        }
+        ax_ft.set_xscale('log', base=2)
+        ax_ft.set_xlim(np.min(L_ft) * 0.88, np.max(L_ft) * 1.14)
 
-        # Eixo transformado: x = L^(-1/nu)
-        x = L**(-1.0 / nu_b)
-        x_fit = np.linspace(0.0, x.max() * 1.05, 500)
+        if cfg['panel_label_ft']:
+            ax_ft.text(
+                cfg['panel_label_pos_ft'][0], cfg['panel_label_pos_ft'][1],
+                cfg['panel_label_ft'],
+                transform=ax_ft.transAxes, fontsize=fontsize_panel_label,
+                horizontalalignment='left', verticalalignment=panel_label_va
+            )
+
+        if show_formula and formula_text_ft:
+            ax_ft.text(
+                cfg['formula_pos_ft'][0], cfg['formula_pos_ft'][1],
+                formula_text_ft,
+                transform=ax_ft.transAxes, fontsize=fontsize_formula,
+                horizontalalignment='left', verticalalignment=formula_va
+            )
+
+        if cfg['title']:
+            ax_ft.set_title(cfg['title'], fontsize=fontsize_titles)
+        ax_ft.set_xlabel(xlabel_ft, fontsize=fontsize_labels)
+        ax_ft.set_ylabel(ylabel_ft, fontsize=fontsize_labels)
+
+        ax_ft.tick_params(
+            axis='both', which='major',
+            direction=tick_direction, length=tick_length_major, width=tick_width_major,
+            labelsize=fontsize_ticks, top=top_ticks, right=right_ticks
+        )
+        ax_ft.tick_params(
+            axis='both', which='minor',
+            direction=tick_direction, length=tick_length_minor, width=tick_width_minor,
+            top=top_ticks, right=right_ticks
+        )
+        ax_ft.minorticks_on()
+
+        if show_legend:
+            ax_ft.legend(
+                loc=cfg['legend_loc_ft'],
+                fontsize=fontsize_legend,
+                frameon=legend_frameon,
+                handlelength=legend_handlelength,
+                borderaxespad=legend_borderaxespad
+            )
+
+        # =====================================================================
+        # LINHA 2: Finite-Size Scaling de p*(L; f_{T,min})
+        # =====================================================================
+        L, y, y_err = _load_or_resolve_data(
+            cfg['data'], t_name, c_val=c_val,
+            use_aligned=use_aligned, thresh=thresh_aligned, L_min=L_min
+        )
+        min_pts = 3 if fix_nu else 4
+        if len(L) < min_pts:
+            raise ValueError(f'São necessários pelo menos {min_pts} pontos válidos para {t_name}. Encontrados: {len(L)}.')
+
+        if fix_nu:
+            def model_fixed(L_arr, pc, A):
+                return pc * (1.0 - A * L_arr**(-1.0 / nu_theoretical))
+
+            p0 = cfg['p0']
+            if p0 is None or len(p0) < 2:
+                p0_fit = [y[-1], -1.0]
+            else:
+                p0_fit = [p0[0], p0[1]]
+
+            popt, pcov = curve_fit(
+                model_fixed, L, y,
+                sigma=y_err, absolute_sigma=True,
+                p0=p0_fit, maxfev=100000
+            )
+            perr = np.sqrt(np.diag(pcov))
+            pc_b, A_b = popt
+            pc_e, A_e = perr
+            nu_b, nu_e = nu_theoretical, 0.0
+            inv_nu_b, inv_nu_e = 1.0 / nu_theoretical, 0.0
+
+            y_fit_pts = model_fixed(L, *popt)
+            res_sigma = (y - y_fit_pts) / y_err
+            chi2 = float(np.sum(res_sigma**2))
+            dof = len(y) - len(popt)
+            chi2_red = chi2 / dof if dof > 0 else np.nan
+
+            pc_s, pc_es = round_value_error(pc_b, pc_e)
+            A_s, A_es = round_value_error(A_b, A_e)
+            nu_s, nu_es = "4/3", "0"
+            inv_nu_s, inv_nu_es = "3/4", "0"
+
+            results[t_name] = {
+                'L': L, 'y': y, 'y_err': y_err,
+                'popt': popt, 'pcov': pcov, 'perr': perr,
+                'pc': (pc_b, pc_e, pc_s, pc_es),
+                'A': (A_b, A_e, A_s, A_es),
+                'nu': (nu_b, nu_e, nu_s, nu_es),
+                'inv_nu': (inv_nu_b, inv_nu_e, inv_nu_s, inv_nu_es),
+                'chi2': chi2, 'dof': dof, 'chi2_red': chi2_red,
+                'residuals_sigma': res_sigma,
+                'fix_nu': True,
+                'ft_fit': {'A': (A_ft, A_ft_err, A_ft_s, A_ft_es), 'b': (b_ft, b_ft_err, b_ft_s, b_ft_es), 'r2': r2_ft},
+            }
+
+            if display_nu_mode == 'both':
+                nu_line = fr'$\nu^\ast = 4/3 \;\mathrm{{(fixo)}}$' + '\n' + fr'$1/\nu^\ast = 3/4 \;\mathrm{{(fixo)}}$'
+            elif display_nu_mode == 'nu':
+                nu_line = fr'$\nu^\ast = 4/3 \;\mathrm{{(fixo)}}$'
+            else:
+                nu_line = fr'$1/\nu^\ast = 3/4 \;\mathrm{{(fixo)}}$'
+
+        else:
+            p0 = cfg['p0']
+            if p0 is None:
+                p0 = [y[-1], -1.0, 4.0 / 3.0]
+
+            popt, pcov = curve_fit(
+                finite_size_model, L, y,
+                sigma=y_err, absolute_sigma=True,
+                p0=p0, maxfev=100000
+            )
+            perr = np.sqrt(np.diag(pcov))
+            pc_b, A_b, nu_b = popt
+            pc_e, A_e, nu_e = perr
+            inv_nu_b = 1.0 / nu_b
+            inv_nu_e = nu_e / (nu_b**2)
+
+            y_fit_pts = finite_size_model(L, *popt)
+            res_sigma = (y - y_fit_pts) / y_err
+            chi2 = float(np.sum(res_sigma**2))
+            dof = len(y) - len(popt)
+            chi2_red = chi2 / dof if dof > 0 else np.nan
+
+            pc_s, pc_es = round_value_error(pc_b, pc_e)
+            A_s, A_es = round_value_error(A_b, A_e)
+            nu_s, nu_es = round_value_error(nu_b, nu_e)
+            inv_nu_s, inv_nu_es = round_value_error(inv_nu_b, inv_nu_e)
+
+            results[t_name] = {
+                'L': L, 'y': y, 'y_err': y_err,
+                'popt': popt, 'pcov': pcov, 'perr': perr,
+                'pc': (pc_b, pc_e, pc_s, pc_es),
+                'A': (A_b, A_e, A_s, A_es),
+                'nu': (nu_b, nu_e, nu_s, nu_es),
+                'inv_nu': (inv_nu_b, inv_nu_e, inv_nu_s, inv_nu_es),
+                'chi2': chi2, 'dof': dof, 'chi2_red': chi2_red,
+                'residuals_sigma': res_sigma,
+                'fix_nu': False,
+                'ft_fit': {'A': (A_ft, A_ft_err, A_ft_s, A_ft_es), 'b': (b_ft, b_ft_err, b_ft_s, b_ft_es), 'r2': r2_ft},
+            }
+
+            if display_nu_mode == 'both':
+                nu_line = fr'$\nu^\ast = {nu_s} \pm {nu_es}$' + '\n' + fr'$1/\nu^\ast = {inv_nu_s} \pm {inv_nu_es}$'
+            elif display_nu_mode == 'nu':
+                nu_line = fr'$\nu^\ast = {nu_s} \pm {nu_es}$'
+            else:
+                nu_line = fr'$1/\nu^\ast = {inv_nu_s} \pm {inv_nu_es}$'
+
+        nu_plot = nu_theoretical if fix_nu else nu_b
+        x = L**(-1.0 / nu_plot)
+
+        x_max_val = float(np.max(x))
+        if cfg['xlim'] is not None:
+            x_lim_left, x_lim_right = cfg['xlim']
+        else:
+            x_lim_left = 0.0
+            x_lim_right = x_max_val + xlim_margin
+
+        x_fit = np.linspace(x_lim_left, x_lim_right, 500)
         y_fit = pc_b * (1.0 - A_b * x_fit)
 
-        # Rótulo da curva ajustada na legenda
         fit_label = (
-            fr'$p_c = {pc_s} \pm {pc_es}$'
+            fr'$p_c^* = {pc_s} \pm {pc_es}$'
             '\n'
-            fr'$A\;\, = {A_s} \pm {A_es}$'
-            '\n'
-            fr'$\nu\;\, = {nu_s} \pm {nu_es}$'
+            + nu_line
         )
         if show_chi2:
             fit_label += '\n' + fr'$\chi^2_\mathrm{{red}} = {chi2_red:.2f}$'
 
-        # Curva de ajuste
         ax.plot(
             x_fit, y_fit,
             color=cfg['color_fit'], linestyle=linestyle_fit,
             linewidth=linewidth_fit, label=fit_label, zorder=2
         )
 
-        # Pontos experimentais
         ax.errorbar(
             x, y, yerr=y_err,
             fmt=cfg['marker'], color=cfg['color_data'],
             markerfacecolor=marker_facecolor, markeredgecolor=cfg['color_data'],
+            markeredgewidth=markeredgewidth,
             markersize=marker_size, capsize=capsize, elinewidth=elinewidth,
             label=data_label, zorder=3
         )
 
-        # Fórmula do modelo dentro do painel
-        if show_formula and formula_text:
+        if cfg['panel_label']:
             ax.text(
-                cfg['formula_pos'][0], cfg['formula_pos'][1], formula_text,
-                transform=ax.transAxes, fontsize=fontsize_formula,
-                horizontalalignment=formula_ha, verticalalignment=formula_va
+                cfg['panel_label_pos'][0], cfg['panel_label_pos'][1],
+                cfg['panel_label'],
+                transform=ax.transAxes, fontsize=fontsize_panel_label,
+                horizontalalignment=panel_label_ha, verticalalignment=panel_label_va
             )
 
-        # Título do painel e eixos
-        if cfg['title']:
-            ax.set_title(cfg['title'], fontsize=fontsize_titles)
+        if show_formula:
+            if formula_text is not None:
+                f_txt = formula_text
+            elif fix_nu:
+                f_txt = r'$p^*(L; f_{\mathrm{T,min}}) = p_c^* (1 - A L^{-4/3})$'
+            else:
+                f_txt = r'$p^*(L; f_{\mathrm{T,min}}) = p_c^* (1 - A L^{-1/\nu^*})$'
+
+            if f_txt:
+                ax.text(
+                    cfg['formula_pos'][0], cfg['formula_pos'][1], f_txt,
+                    transform=ax.transAxes, fontsize=fontsize_formula,
+                    horizontalalignment=formula_ha, verticalalignment=formula_va
+                )
+
+        ax.set_xlim(x_lim_left, x_lim_right)
         ax.set_xlabel(xlabel, fontsize=fontsize_labels)
         ax.set_ylabel(cfg['ylabel'], fontsize=fontsize_labels)
 
-        # Formatação de ticks (direção, espessura e comprimento)
         ax.tick_params(
             axis='both', which='major',
             direction=tick_direction, length=tick_length_major, width=tick_width_major,
@@ -2875,26 +3171,39 @@ def plot_article_fss(
         )
         ax.minorticks_on()
 
-        # Legenda
         if show_legend:
-            ax.legend(loc=cfg['legend_loc'], fontsize=fontsize_legend, frameon=legend_frameon)
+            ax.legend(
+                loc=cfg['legend_loc'],
+                fontsize=fontsize_legend,
+                frameon=legend_frameon,
+                handlelength=legend_handlelength,
+                borderaxespad=legend_borderaxespad
+            )
 
     fig.tight_layout()
 
     if verbose:
         print('=' * 75)
-        print('RESUMO DOS AJUSTES FINITE-SIZE SCALING: p*(L) = pc [1 - A L^(-1/nu)]')
+        title_summary = "COM NU FIXO = 4/3 (THEORETICAL)" if fix_nu else "COM NU ESTIMADO LIVRE"
+        print(f'RESUMO DOS AJUSTES FINITE-SIZE SCALING: {title_summary}')
         print('=' * 75)
         for t_name in ['node', 'bond']:
             res = results[t_name]
             _, _, pc_s, pc_es = res['pc']
             _, _, A_s, A_es = res['A']
             _, _, nu_s, nu_es = res['nu']
+            _, _, inv_nu_s, inv_nu_es = res['inv_nu']
+            ft_info = res['ft_fit']
             print(f'[{t_name.upper()} PERCOLATION]')
-            print(f'  pc        = {pc_s} +/- {pc_es}')
+            print(f'  f_T,min(L): A = {ft_info["A"][2]} +/- {ft_info["A"][3]}, b = {ft_info["b"][2]} +/- {ft_info["b"][3]} (R^2 = {ft_info["r2"]:.4f})')
+            print(f'  pc*       = {pc_s} +/- {pc_es}')
             print(f'  A         = {A_s} +/- {A_es}')
-            print(f'  nu        = {nu_s} +/- {nu_es}')
-            print(f'  1/nu      = {1.0 / res["nu"][0]:.8f}')
+            if fix_nu:
+                print(f'  nu*       = 4/3 (fixo)')
+                print(f'  1/nu*     = 3/4 (fixo)')
+            else:
+                print(f'  nu*       = {nu_s} +/- {nu_es}')
+                print(f'  1/nu*     = {inv_nu_s} +/- {inv_nu_es}')
             print(f'  chi2      = {res["chi2"]:.4f}  (dof = {res["dof"]})')
             print(f'  chi2_red  = {res["chi2_red"]:.4f}')
             print(f'  max |res| = {np.max(np.abs(res["residuals_sigma"])):.2f} sigma')
@@ -2907,3 +3216,680 @@ def plot_article_fss(
         plt.show()
 
     return fig, axes, results
+
+
+# ============================================================
+# Finite-Size Scaling para um f_T fixo (ex: f_T = 0.30)
+# ============================================================
+
+def _fit_fss_robust(L, y, y_err):
+    r"""
+    Obtém um chute inicial ótimo para finite_size_model varrendo nu em uma grade fina
+    (onde p*(L) = p_c* - B * L^{-1/nu} é estritamente linear em L^{-1/nu}) e em seguida
+    refina via curve_fit não-linear com pesos exatos 1/y_err^2.
+    """
+    w = 1.0 / (y_err ** 2)
+    W = np.sum(w)
+    yb = np.sum(w * y) / W
+    best_chi2 = np.inf
+    best_p0 = [float(y[-1]), -1.0, 4.0 / 3.0]
+    for nu_try in np.linspace(0.25, 2.5, 500):
+        x = L ** (-1.0 / nu_try)
+        xb = np.sum(w * x) / W
+        denom = np.sum(w * (x - xb) ** 2)
+        if denom <= 0:
+            continue
+        c1 = np.sum(w * (x - xb) * (y - yb)) / denom
+        c0 = yb - c1 * xb
+        if c0 <= 0:
+            continue
+        chi2 = float(np.sum(w * (y - (c0 + c1 * x)) ** 2))
+        if chi2 < best_chi2:
+            best_chi2 = chi2
+            best_p0 = [float(c0), float(-c1 / c0), float(nu_try)]
+    popt, pcov = curve_fit(
+        finite_size_model, L, y,
+        sigma=y_err, absolute_sigma=True,
+        p0=best_p0, maxfev=100000
+    )
+    return popt, pcov
+
+
+def get_fixed_ft_data(
+    type_perc,
+    ft_val=0.3,
+    c_val=0.05,
+    L_min=1024,
+    thresh=0.98,
+    ft_tol=1e-3,
+    data_path=None,
+):
+    r"""
+    Extrai de all_data_dynamic.dat todos os tamanhos L >= L_min disponíveis para um valor fixo de f_T
+    (dentro da tolerância ft_tol) e retorna (L, p_star, p_err, df_filtrado).
+    """
+    if data_path is not None:
+        p_found = Path(data_path)
+    else:
+        p_found = None
+        for p in [
+            Path('../SOP_data/all_data_dynamic.dat'),
+            Path('SOP_data/all_data_dynamic.dat'),
+        ]:
+            if p.exists():
+                p_found = p
+                break
+    if p_found is None or not p_found.exists():
+        raise FileNotFoundError("Não foi possível encontrar 'all_data_dynamic.dat'.")
+
+    raw = pd.read_csv(p_found, sep=r'\s+')
+    mask = (
+        (raw['type_perc'] == type_perc)
+        & (raw['dim'] == 2)
+        & (raw['nc'] == 1)
+        & (raw['order'] == 0)
+        & (raw['stat_window'] == 0)
+        & (raw['control_rule'] == 'linear')
+    )
+    for col, val in {'c': c_val, 'p0': 0.8, 'P0': 0.2, 'rho': 1.0}.items():
+        if col in raw.columns:
+            mask &= np.isclose(raw[col], val, rtol=0, atol=1e-12)
+
+    df = raw.loc[mask].copy()
+    if L_min is not None:
+        df = df[df['L'] >= L_min]
+    if thresh is not None and 'N_samples_perc' in df.columns and 'N_samples' in df.columns:
+        df = df[(df['N_samples_perc'] / df['N_samples']) >= thresh]
+
+    df['ft_diff'] = (df['f_T'] - ft_val).abs()
+    df = df[df['ft_diff'] <= ft_tol]
+    if df.empty:
+        raise ValueError(
+            f'Nenhum ponto encontrado para {type_perc} com f_T = {ft_val} (tolerância={ft_tol}).'
+        )
+
+    # Seleciona para cada L a linha mais próxima do f_T solicitado
+    df = (
+        df.sort_values(['L', 'ft_diff'])
+        .groupby('L', as_index=False)
+        .first()
+        .sort_values('L')
+        .reset_index(drop=True)
+    )
+
+    L = df['L'].to_numpy(dtype=float)
+    y = df['p_mean'].to_numpy(dtype=float)
+    y_err = df['p_err'].to_numpy(dtype=float)
+    return L, y, y_err, df
+
+
+def plot_fss_fixed_ft(
+    ft_val=0.3,
+    c_val=0.05,
+    L_min=1024,
+    thresh=0.98,
+    ft_tol=1e-3,
+    fix_nu=False,
+    nu_theoretical=4.0 / 3.0,
+    x_mode='both',  # 'both' (2x2: vs L e vs L^{-1/nu*}), 'scaled' (1x2: vs L^{-1/nu*}), 'L' (1x2: vs L)
+    show_A_in_legend=False,
+    figsize=None,
+    dpi=300,
+    save_path=None,
+    show_plot=True,
+    verbose=True,
+):
+    r"""
+    Realiza o ajuste de Finite-Size Scaling de p*(L; f_T) para um f_T fixo (truncando L >= L_min):
+        p*(L; f_T) = p_c* (1 - A L^{-1/\nu*})
+    para Site (node) e Bond percolation.
+    """
+    if figsize is None:
+        figsize = (14.0, 11.2) if x_mode == 'both' else (14.0, 5.6)
+
+    if x_mode == 'both':
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
+    else:
+        fig, axes_1d = plt.subplots(1, 2, figsize=figsize)
+        axes = np.array([axes_1d])
+
+    ft_str = f'{ft_val:.2f}' if abs(ft_val * 100 - round(ft_val * 100)) < 1e-3 else f'{ft_val:.4f}'
+    ylabel_str = fr'$p^*(L; f_{{\mathrm{{T}}}}={ft_str})$'
+    xlabel_scaled = r'$L^{-3/4}$' if fix_nu else r'$L^{-1/\nu^\ast}$'
+    f_txt = (
+        r'$p^*(L; f_{\mathrm{T}}) = p_c^* (1 - A L^{-4/3})$'
+        if fix_nu
+        else r'$p^*(L; f_{\mathrm{T}}) = p_c^* (1 - A L^{-1/\nu^*})$'
+    )
+
+    configs = [
+        {
+            'name': 'node',
+            'marker': 'o',
+            'color_data': 'red',
+            'color_fit': 'black',
+            'label_top': r'\textbf{(a) Site percolation}',
+            'label_bot': r'\textbf{(c) Site percolation}' if x_mode == 'both' else r'\textbf{(a) Site percolation}',
+        },
+        {
+            'name': 'bond',
+            'marker': 's',
+            'color_data': 'red',
+            'color_fit': 'black',
+            'label_top': r'\textbf{(b) Bond percolation}',
+            'label_bot': r'\textbf{(d) Bond percolation}' if x_mode == 'both' else r'\textbf{(b) Bond percolation}',
+        },
+    ]
+
+    results = {}
+
+    for j, cfg in enumerate(configs):
+        t_name = cfg['name']
+        L, y, y_err, df_sub = get_fixed_ft_data(
+            t_name, ft_val=ft_val, c_val=c_val, L_min=L_min, thresh=thresh, ft_tol=ft_tol
+        )
+
+        if fix_nu:
+            def model_fixed(L_arr, pc, A):
+                return pc * (1.0 - A * L_arr**(-1.0 / nu_theoretical))
+
+            popt, pcov = curve_fit(
+                model_fixed, L, y,
+                sigma=y_err, absolute_sigma=True,
+                p0=[y[-1], -1.0], maxfev=100000
+            )
+            perr = np.sqrt(np.diag(pcov))
+            pc_b, A_b = popt
+            pc_e, A_e = perr
+            nu_b, nu_e = nu_theoretical, 0.0
+            inv_nu_b, inv_nu_e = 1.0 / nu_theoretical, 0.0
+            y_fit_pts = model_fixed(L, *popt)
+            pc_s, pc_es = round_value_error(pc_b, pc_e)
+            A_s, A_es = round_value_error(A_b, A_e)
+            nu_s, nu_es = '4/3', '0'
+            inv_nu_s, inv_nu_es = '3/4', '0'
+            nu_line = r'$\nu^\ast = 4/3 \;\mathrm{(fixo)}$'
+        else:
+            popt, pcov = _fit_fss_robust(L, y, y_err)
+            perr = np.sqrt(np.diag(pcov))
+            pc_b, A_b, nu_b = popt
+            pc_e, A_e, nu_e = perr
+            inv_nu_b = 1.0 / nu_b
+            inv_nu_e = nu_e / (nu_b**2)
+            y_fit_pts = finite_size_model(L, *popt)
+            pc_s, pc_es = round_value_error(pc_b, pc_e)
+            A_s, A_es = round_value_error(A_b, A_e)
+            nu_s, nu_es = round_value_error(nu_b, nu_e)
+            inv_nu_s, inv_nu_es = round_value_error(inv_nu_b, inv_nu_e)
+            nu_line = fr'$\nu^\ast = {nu_s} \pm {nu_es}$'
+
+        res_sigma = (y - y_fit_pts) / y_err
+        chi2 = float(np.sum(res_sigma**2))
+        dof = len(y) - len(popt)
+        chi2_red = chi2 / dof if dof > 0 else np.nan
+
+        results[t_name] = {
+            'L': L, 'y': y, 'y_err': y_err, 'df': df_sub,
+            'popt': popt, 'pcov': pcov, 'perr': perr,
+            'pc': (pc_b, pc_e, pc_s, pc_es),
+            'A': (A_b, A_e, A_s, A_es),
+            'nu': (nu_b, nu_e, nu_s, nu_es),
+            'inv_nu': (inv_nu_b, inv_nu_e, inv_nu_s, inv_nu_es),
+            'chi2': chi2, 'dof': dof, 'chi2_red': chi2_red,
+            'residuals_sigma': res_sigma,
+        }
+
+        if show_A_in_legend:
+            fit_label = (
+                fr'$p_c^* = {pc_s} \pm {pc_es}$'
+                '\n'
+                fr'$A = {A_s} \pm {A_es}$'
+                '\n'
+                + nu_line
+            )
+        else:
+            fit_label = fr'$p_c^* = {pc_s} \pm {pc_es}$' + '\n' + nu_line
+
+        # Painel p*(L; f_T) versus L
+        if x_mode in ('both', 'L'):
+            ax_l = axes[0, j]
+            L_dense = np.geomspace(np.min(L) * 0.92, np.max(L) * 1.08, 500)
+            y_dense = pc_b * (1.0 - A_b * L_dense**(-1.0 / nu_b))
+            ax_l.plot(
+                L_dense, y_dense,
+                color=cfg['color_fit'], linestyle='-', linewidth=2.2,
+                label=fit_label, zorder=2
+            )
+            ax_l.errorbar(
+                L, y, yerr=y_err,
+                fmt=cfg['marker'], color=cfg['color_data'],
+                markerfacecolor='none', markeredgecolor=cfg['color_data'],
+                markeredgewidth=1.3, markersize=9.0, capsize=3.5, elinewidth=1.2,
+                zorder=3
+            )
+            ax_l.set_xscale('log', base=2)
+            ax_l.set_xlim(np.min(L) * 0.88, np.max(L) * 1.14)
+            ax_l.set_xlabel(r'$L$', fontsize=18)
+            ax_l.set_ylabel(ylabel_str, fontsize=18)
+            ax_l.text(
+                0.95, 0.50, cfg['label_top'],
+                transform=ax_l.transAxes, fontsize=17,
+                horizontalalignment='right', verticalalignment='bottom'
+            )
+            ax_l.text(
+                0.95, 0.37, f_txt,
+                transform=ax_l.transAxes, fontsize=16,
+                horizontalalignment='right', verticalalignment='bottom'
+            )
+            ax_l.legend(
+                loc='upper right', fontsize=15, frameon=False,
+                handlelength=2.5, borderaxespad=1.2
+            )
+            ax_l.tick_params(
+                axis='both', which='major', direction='in',
+                length=6.0, width=1.2, labelsize=14, top=True, right=True
+            )
+            ax_l.tick_params(
+                axis='both', which='minor', direction='in',
+                length=3.5, width=0.8, top=True, right=True
+            )
+            ax_l.minorticks_on()
+
+        # Painel p*(L; f_T) versus L^{-1/nu*}
+        if x_mode in ('both', 'scaled'):
+            ax_s = axes[1, j] if x_mode == 'both' else axes[0, j]
+            x = L**(-1.0 / nu_b)
+            x_max = float(np.max(x)) * 1.08
+            x_fit = np.linspace(0.0, x_max, 500)
+            y_fit = pc_b * (1.0 - A_b * x_fit)
+            ax_s.plot(
+                x_fit, y_fit,
+                color=cfg['color_fit'], linestyle='-', linewidth=2.2,
+                label=fit_label, zorder=2
+            )
+            ax_s.errorbar(
+                x, y, yerr=y_err,
+                fmt=cfg['marker'], color=cfg['color_data'],
+                markerfacecolor='none', markeredgecolor=cfg['color_data'],
+                markeredgewidth=1.3, markersize=9.0, capsize=3.5, elinewidth=1.2,
+                zorder=3
+            )
+            ax_s.set_xlim(0.0, x_max)
+            ax_s.set_xlabel(xlabel_scaled, fontsize=18)
+            ax_s.set_ylabel(ylabel_str, fontsize=18)
+            ax_s.text(
+                0.95, 0.19, cfg['label_bot'],
+                transform=ax_s.transAxes, fontsize=17,
+                horizontalalignment='right', verticalalignment='bottom'
+            )
+            ax_s.text(
+                0.95, 0.07, f_txt,
+                transform=ax_s.transAxes, fontsize=16,
+                horizontalalignment='right', verticalalignment='bottom'
+            )
+            ax_s.legend(
+                loc='upper left', fontsize=15, frameon=False,
+                handlelength=2.5, borderaxespad=1.2
+            )
+            ax_s.tick_params(
+                axis='both', which='major', direction='in',
+                length=6.0, width=1.2, labelsize=14, top=True, right=True
+            )
+            ax_s.tick_params(
+                axis='both', which='minor', direction='in',
+                length=3.5, width=0.8, top=True, right=True
+            )
+            ax_s.ticklabel_format(style='sci', axis='x', scilimits=(-2, 2), useMathText=True)
+            ax_s.minorticks_on()
+
+    fig.tight_layout()
+
+    if verbose:
+        print('=' * 75)
+        mode_str = 'NU FIXO = 4/3' if fix_nu else 'NU LIVRE'
+        print(f'AJUSTE FSS PARA f_T FIXO = {ft_val} ({mode_str}, L >= {L_min})')
+        print('=' * 75)
+        for t_name in ['node', 'bond']:
+            res = results[t_name]
+            _, _, pc_s, pc_es = res['pc']
+            _, _, A_s, A_es = res['A']
+            _, _, nu_s, nu_es = res['nu']
+            _, _, inv_nu_s, inv_nu_es = res['inv_nu']
+            print(f'[{t_name.upper()} PERCOLATION] (N_pontos = {len(res["L"])}, L in [{int(min(res["L"]))}, {int(max(res["L"]))}])')
+            print(f'  pc*       = {pc_s} +/- {pc_es}')
+            print(f'  A         = {A_s} +/- {A_es}')
+            if fix_nu:
+                print('  nu*       = 4/3 (fixo)')
+                print('  1/nu*     = 3/4 (fixo)')
+            else:
+                print(f'  nu*       = {nu_s} +/- {nu_es}')
+                print(f'  1/nu*     = {inv_nu_s} +/- {inv_nu_es}')
+            print(f'  chi2_red  = {res["chi2_red"]:.4f} (chi2 = {res["chi2"]:.2f}, dof = {res["dof"]})')
+            print('-' * 75)
+
+    if save_path:
+        fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show_plot:
+        plt.show()
+
+    return fig, axes, results
+
+
+# ============================================================
+# Estudo de convergência de p_c* e nu_eff* conforme variamos f_T (L >= 1024)
+# ============================================================
+
+def analyze_ft_convergence(c_val=0.05, thresh=0.98, L_min=1024):
+    r"""
+    Avalia o comportamento de p_c* e nu_eff* usando duas estratégias complementares,
+    truncando sempre L >= L_min (padrão L_min = 1024) em todos os casos:
+      1) const_ft: valores fixos decrescentes de f_T na grade (mantendo os 9 tamanhos L >= 1024).
+      2) scaled_ft_min: escalonamento proporcional f_T(L) = \lambda f_{T,min}(L) (\lambda -> 1.0),
+         mantendo os mesmos 9 tamanhos L >= 1024 ativos em uma mesma lei de potência.
+    """
+    p_found = None
+    for p in [Path('../SOP_data/all_data_dynamic.dat'), Path('SOP_data/all_data_dynamic.dat')]:
+        if p.exists():
+            p_found = p
+            break
+    if p_found is None:
+        raise FileNotFoundError("Não foi possível encontrar 'all_data_dynamic.dat'.")
+
+    raw = pd.read_csv(p_found, sep=r'\s+')
+    mask = (
+        (raw['dim'] == 2)
+        & (raw['nc'] == 1)
+        & (raw['order'] == 0)
+        & (raw['stat_window'] == 0)
+        & (raw['control_rule'] == 'linear')
+        & np.isclose(raw['c'], c_val)
+        & np.isclose(raw['p0'], 0.8)
+        & np.isclose(raw['P0'], 0.2)
+        & np.isclose(raw['rho'], 1.0)
+    )
+    sub = raw.loc[mask].copy()
+    sub['stab'] = sub['N_samples_perc'] / sub['N_samples']
+    sub_ok = sub[
+        (sub['stab'] >= thresh)
+        & (sub['N_samples'] >= 5)
+        & (sub['p_mean'] < 0.9)
+        & (sub['f_T'] <= 0.305)
+        & (sub['L'] >= L_min)
+    ].copy()
+
+    def interp_p(df_L, ft_target):
+        df_L = df_L.sort_values('f_T')
+        fts = df_L['f_T'].to_numpy(float)
+        ps = df_L['p_mean'].to_numpy(float)
+        errs = df_L['p_err'].to_numpy(float)
+        return float(np.interp(ft_target, fts, ps)), float(np.interp(ft_target, fts, errs))
+
+    out = {'const_ft': {}, 'scaled_ft_min': {}}
+
+    # Valores da grade onde todos os 9 tamanhos L >= 1024 estão presentes
+    ft_const_list_node = [
+        0.3000000, 0.2847368, 0.2694737, 0.2542105, 0.2389474,
+        0.2236842, 0.2084211, 0.1931579, 0.1778947, 0.1626316,
+    ]
+    ft_const_list_bond = [
+        0.3000000, 0.2847368, 0.2694737, 0.2542105, 0.2389474,
+        0.2236842, 0.2084211, 0.1931579,
+    ]
+
+    for tp, ft_list in [('node', ft_const_list_node), ('bond', ft_const_list_bond)]:
+        s_tp = sub_ok[sub_ok['type_perc'] == tp].copy()
+        rows_res = []
+        for ft_val in ft_list:
+            pts = []
+            for l_val, g in s_tp.groupby('L'):
+                g_near = g[np.abs(g['f_T'] - ft_val) <= 1e-3].sort_values(
+                    by='f_T', key=lambda s: np.abs(s - ft_val)
+                )
+                if not g_near.empty:
+                    r0 = g_near.iloc[0]
+                    pts.append((l_val, float(r0['p_mean']), float(r0['p_err'])))
+            if len(pts) < 9:
+                continue
+            L = np.array([x[0] for x in pts], float)
+            y = np.array([x[1] for x in pts], float)
+            y_err = np.array([x[2] for x in pts], float)
+            popt, pcov = _fit_fss_robust(L, y, y_err)
+            perr = np.sqrt(np.diag(pcov))
+            chi2_r = float(np.sum(((y - finite_size_model(L, *popt)) / y_err)**2) / (len(y) - 3))
+            pc_s, pc_es = round_value_error(popt[0], perr[0])
+            nu_s, nu_es = round_value_error(popt[2], perr[2])
+            rows_res.append({
+                'Regime': f'{ft_val:.4f}',
+                'ft_ref': ft_val,
+                'N_L': len(L),
+                'L_min': int(min(L)),
+                'pc': popt[0], 'pc_err': perr[0], 'pc_str': f'{pc_s} +/- {pc_es}',
+                'nu': popt[2], 'nu_err': perr[2], 'nu_str': f'{nu_s} +/- {nu_es}',
+                'chi2_red': chi2_r,
+            })
+
+        for p_ref in [
+            Path(f'../SOP_data/ft_min_max_2D_{tp}_smooth_refined.csv'),
+            Path(f'SOP_data/ft_min_max_2D_{tp}_smooth_refined.csv'),
+        ]:
+            if p_ref.exists():
+                df_ref = pd.read_csv(p_ref)
+                break
+        df_ref = df_ref[df_ref['L'] >= L_min].sort_values('L')
+        L_r = df_ref['L'].to_numpy(float)
+        y_r = df_ref['p_min'].to_numpy(float)
+        err_r = df_ref['p_min_err'].to_numpy(float)
+        popt, pcov = _fit_fss_robust(L_r, y_r, err_r)
+        perr = np.sqrt(np.diag(pcov))
+        chi2_r = float(np.sum(((y_r - finite_size_model(L_r, *popt)) / err_r)**2) / (len(y_r) - 3))
+        pc_s, pc_es = round_value_error(popt[0], perr[0])
+        nu_s, nu_es = round_value_error(popt[2], perr[2])
+        rows_res.append({
+            'Regime': 'f_T,min(L)',
+            'ft_ref': float(df_ref['f_T'].mean()),
+            'N_L': len(L_r),
+            'L_min': int(min(L_r)),
+            'pc': popt[0], 'pc_err': perr[0], 'pc_str': f'{pc_s} +/- {pc_es}',
+            'nu': popt[2], 'nu_err': perr[2], 'nu_str': f'{nu_s} +/- {nu_es}',
+            'chi2_red': chi2_r,
+        })
+        out['const_ft'][tp] = pd.DataFrame(rows_res)
+
+    for tp in ['node', 'bond']:
+        for p_ref in [
+            Path(f'../SOP_data/ft_min_max_2D_{tp}_smooth_refined.csv'),
+            Path(f'SOP_data/ft_min_max_2D_{tp}_smooth_refined.csv'),
+        ]:
+            if p_ref.exists():
+                df_ref = pd.read_csv(p_ref)
+                break
+        df_ref = df_ref[df_ref['L'] >= L_min].sort_values('L')
+        s_tp = sub_ok[sub_ok['type_perc'] == tp].copy()
+        max_lam = 0.30 / df_ref['f_T'].max()
+        lams = np.linspace(max_lam, 1.0, 6)
+        rows_lam = []
+        for idx_l, lam in enumerate(lams):
+            if idx_l == len(lams) - 1:
+                L_r = df_ref['L'].to_numpy(float)
+                y_r = df_ref['p_min'].to_numpy(float)
+                err_r = df_ref['p_min_err'].to_numpy(float)
+                ft_mean = float(df_ref['f_T'].mean())
+            else:
+                pts = []
+                for _, r_ref in df_ref.iterrows():
+                    l_val = int(r_ref['L'])
+                    ft_t = lam * r_ref['f_T']
+                    g = s_tp[s_tp['L'] == l_val]
+                    pv, ev = interp_p(g, ft_t)
+                    pts.append((l_val, ft_t, pv, ev))
+                L_r = np.array([x[0] for x in pts], float)
+                ft_mean = float(np.mean([x[1] for x in pts]))
+                y_r = np.array([x[2] for x in pts], float)
+                err_r = np.array([x[3] for x in pts], float)
+            popt, pcov = _fit_fss_robust(L_r, y_r, err_r)
+            perr = np.sqrt(np.diag(pcov))
+            chi2_r = float(np.sum(((y_r - finite_size_model(L_r, *popt)) / err_r)**2) / (len(y_r) - 3))
+            pc_s, pc_es = round_value_error(popt[0], perr[0])
+            nu_s, nu_es = round_value_error(popt[2], perr[2])
+            rows_lam.append({
+                'lambda': round(float(lam), 2),
+                'ft_mean': round(ft_mean, 4),
+                'N_L': len(L_r),
+                'L_min': int(min(L_r)),
+                'pc': popt[0], 'pc_err': perr[0], 'pc_str': f'{pc_s} +/- {pc_es}',
+                'nu': popt[2], 'nu_err': perr[2], 'nu_str': f'{nu_s} +/- {nu_es}',
+                'chi2_red': chi2_r,
+            })
+        out['scaled_ft_min'][tp] = pd.DataFrame(rows_lam)
+
+    return out
+
+
+def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=None, show_plot=True, verbose=True):
+    r"""
+    Plota a evolução de p_c* e \nu_eff* em função de f_T (Método 1: f_T constante;
+    Método 2: f_T(L) = \lambda f_{T,min}(L)), truncando L >= L_min em todos os casos e
+    destacando a convergência para os valores críticos teóricos (p_c e \nu = 4/3).
+    """
+    out = analyze_ft_convergence(c_val=c_val, thresh=thresh, L_min=L_min)
+
+    fig, axes = plt.subplots(2, 2, figsize=(14.0, 10.6), sharex='col')
+
+    configs = [
+        {
+            'tp': 'node',
+            'col': 0,
+            'pc_theo': 0.592746,
+            'pc_theo_lbl': r'$p_c \approx 0.59275$',
+            'title_pc': r'\textbf{(a) Site percolation: $p_{\mathrm{c,eff}}^*$}',
+            'title_nu': r'\textbf{(c) Site percolation: $\nu_{\mathrm{eff}}^*$}',
+            'marker': 'o',
+        },
+        {
+            'tp': 'bond',
+            'col': 1,
+            'pc_theo': 0.500000,
+            'pc_theo_lbl': r'$p_c = 0.50000$',
+            'title_pc': r'\textbf{(b) Bond percolation: $p_{\mathrm{c,eff}}^*$}',
+            'title_nu': r'\textbf{(d) Bond percolation: $\nu_{\mathrm{eff}}^*$}',
+            'marker': 's',
+        },
+    ]
+
+    for cfg in configs:
+        tp = cfg['tp']
+        j = cfg['col']
+        df_c = out['const_ft'][tp]
+        df_s = out['scaled_ft_min'][tp]
+
+        # Separa os pontos de f_T constante do ponto limite f_{T,min}(L)
+        df_c_only = df_c[df_c['Regime'] != 'f_T,min(L)']
+        df_lim = df_c[df_c['Regime'] == 'f_T,min(L)'].iloc[0]
+
+        ax_pc = axes[0, j]
+        ax_nu = axes[1, j]
+
+        # --- Painel Superior: p_{c,eff}* vs f_T ---
+        ax_pc.errorbar(
+            df_c_only['ft_ref'], df_c_only['pc'], yerr=df_c_only['pc_err'],
+            fmt=cfg['marker'] + '-', color='tab:blue', markerfacecolor='none',
+            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
+            label=r'$\mathrm{Constant}\;f_{\mathrm{T}}$'
+        )
+        ax_pc.errorbar(
+            df_s['ft_mean'], df_s['pc'], yerr=df_s['pc_err'],
+            fmt=cfg['marker'] + '--', color='red', markerfacecolor='none',
+            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
+            label=r'$f_{\mathrm{T}}(L) = \lambda\, f_{\mathrm{T,min}}(L)$'
+        )
+        ax_pc.plot(
+            df_lim['ft_ref'], df_lim['pc'],
+            marker='*', color='black', markersize=14, linestyle='none',
+            label=r'$\mathrm{Limit}\;f_{\mathrm{T,min}}(L)$', zorder=5
+        )
+        ax_pc.axhline(cfg['pc_theo'], color='black', linestyle=':', linewidth=1.6, label=cfg['pc_theo_lbl'])
+        if j == 0:
+            ax_pc.set_ylabel(r'$p_{\mathrm{c,eff}}^*$', fontsize=18)
+        ax_pc.text(0.05, 0.12, cfg['title_pc'], transform=ax_pc.transAxes, fontsize=16, ha='left', va='bottom')
+        ax_pc.legend(loc='upper right', fontsize=13.5, frameon=False)
+        ax_pc.tick_params(
+            axis='both', which='major', direction='in',
+            length=6.0, width=1.2, labelsize=14, top=True, right=True, labelbottom=False
+        )
+        ax_pc.tick_params(axis='both', which='minor', direction='in', length=3.5, width=0.8, top=True, right=True)
+        ax_pc.minorticks_on()
+
+        # --- Painel Inferior: nu_eff* vs f_T ---
+        ax_nu.errorbar(
+            df_c_only['ft_ref'], df_c_only['nu'], yerr=df_c_only['nu_err'],
+            fmt=cfg['marker'] + '-', color='tab:blue', markerfacecolor='none',
+            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
+            label=r'$\mathrm{Constant}\;f_{\mathrm{T}}$'
+        )
+        ax_nu.errorbar(
+            df_s['ft_mean'], df_s['nu'], yerr=df_s['nu_err'],
+            fmt=cfg['marker'] + '--', color='red', markerfacecolor='none',
+            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
+            label=r'$f_{\mathrm{T}}(L) = \lambda\, f_{\mathrm{T,min}}(L)$'
+        )
+        ax_nu.plot(
+            df_lim['ft_ref'], df_lim['nu'],
+            marker='*', color='black', markersize=14, linestyle='none',
+            label=r'$\mathrm{Limit}\;f_{\mathrm{T,min}}(L)$', zorder=5
+        )
+        ax_nu.axhline(4.0 / 3.0, color='black', linestyle=':', linewidth=1.6, label=r'$\nu = 4/3 \approx 1.333$')
+        y_min_nu = float(min(df_c_only['nu'].min(), df_s['nu'].min())) - 0.06
+        ax_nu.set_ylim(y_min_nu, 1.46)
+        ax_nu.set_xlabel(r'$f_{\mathrm{T}}\;\;(\mathrm{or}\;\langle f_{\mathrm{T}}(L)\rangle)$', fontsize=18)
+        if j == 0:
+            ax_nu.set_ylabel(r'$\nu_{\mathrm{eff}}^*$', fontsize=18)
+        ax_nu.text(0.05, 0.90, cfg['title_nu'], transform=ax_nu.transAxes, fontsize=16, ha='left', va='bottom')
+        ax_nu.legend(loc='lower right', fontsize=13.5, frameon=False)
+        ax_nu.invert_xaxis()
+        ax_nu.tick_params(
+            axis='both', which='major', direction='in',
+            length=6.0, width=1.2, labelsize=14, top=True, right=True, labelbottom=True
+        )
+        ax_nu.tick_params(axis='both', which='minor', direction='in', length=3.5, width=0.8, top=True, right=True)
+        ax_nu.minorticks_on()
+
+    fig.tight_layout()
+
+    if verbose:
+        for tp in ['node', 'bond']:
+            print('=' * 78)
+            print(f'TABELA 1 ({tp.upper()}): f_T CONSTANTE DECRESCENTE -> LIMITE f_T,min(L) (L >= {L_min})')
+            print('=' * 78)
+            print(out['const_ft'][tp][['Regime', 'N_L', 'L_min', 'pc_str', 'nu_str', 'chi2_red']].to_string(index=False))
+            print()
+            print(f'TABELA 2 ({tp.upper()}): ESCALONAMENTO PROPORCIONAL f_T(L) = lambda * f_T,min(L) (L >= {L_min})')
+            print('-' * 78)
+            print(out['scaled_ft_min'][tp][['lambda', 'ft_mean', 'N_L', 'L_min', 'pc_str', 'nu_str', 'chi2_red']].to_string(index=False))
+            print()
+
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    if show_plot:
+        plt.show()
+
+    return fig, axes, out
+
+
+# ============================================================
+# Exportações e aliases para uso interativo
+# ============================================================
+load_or_resolve_data = _load_or_resolve_data
+get_aligned_data = _get_aligned_data
+
+# Garante que 'from src.TimeSeriesAnalysis import *' também disponibilize os
+# utilitários internos de FSS caso a função plot_article_fss seja copiada para um notebook:
+__all__ = [name for name in dir() if not name.startswith('__')] + [
+    '_load_or_resolve_data',
+    '_get_aligned_data',
+    'get_fixed_ft_data',
+    'plot_fss_fixed_ft',
+    'analyze_ft_convergence',
+    'plot_ft_convergence_study',
+]

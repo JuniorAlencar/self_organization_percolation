@@ -254,7 +254,7 @@ void helpers::print_slice(const NetworkPattern& net, int g_level, int max_w) {
 void helpers::print_help(const char* prog) {
     std::cout <<
 R"(To run:
-  ./SOP <L> <p0> <P0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule]
+  ./SOP <L> <p0> <P0> <seed> <type_percolation> <c> <f_T> <dim> <num_colors> <rho_val> <Equilibration> [Properties] [Mode] [InitialLayout] [SurfaceObservables] [SaveAnimationWindowOnly] [ControlRule] [HeightTimeseries]
 
 Arguments:
   L                : Length of network (int)
@@ -276,6 +276,7 @@ Arguments:
   ControlRule      : Optional; 'relative' (default) or 'linear'
                      relative => p(t+1) = p(t) + c * (1 - f(t)/f_T), clamped with delta_p >= -c
                      linear   => p(t+1) = p(t) + c * (f_T - f(t))
+  HeightTimeseries : Optional; calculate height/front positions and save .yts ['true' or 'false']; default false
 
 Examples:
   ./SOP 1024 0.8 0.12 -1 bond 1.0e-02 1.0e-01 2 1 1.0 false false growth_test clustered false false relative

@@ -214,8 +214,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Allow either zero-argument (use defaults) or a parameterized run with
-    // optional arguments through ControlRule (17 arguments after argv[0]).
-    if (argc != 1 && (argc < 11 || argc > 18)) {
+    // optional arguments through HeightTimeseries (18 arguments after argv[0]).
+    if (argc != 1 && (argc < 11 || argc > 19)) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -241,6 +241,7 @@ int main(int argc, char* argv[]) {
         bool save_surface_observables = false;
         bool save_animation_window_only = false;
         std::string control_rule_name = "relative";
+        bool calculate_height_timeseries = false;
         int fraction_samples = 30;
         double sample_gap_over_L = 1.0;
         
@@ -273,6 +274,9 @@ int main(int argc, char* argv[]) {
             }
             if (argc >= 18) {
                 control_rule_name = argv[17];
+            }
+            if (argc >= 19) {
+                calculate_height_timeseries = helpers::parse_bool(argv[18]);
             }
         }
         if (const char* env_samples = std::getenv("SOP_FRACTION_SAMPLES")) {
@@ -467,6 +471,7 @@ int main(int argc, char* argv[]) {
                     p0, P0, a, alpha, type_percolation,
                     num_colors, rho, ts, ps, rng,
                     calculate_detailed_properties,
+                    calculate_height_timeseries,
                     stop_config
               )
             : net_generator.create_network(
@@ -474,6 +479,7 @@ int main(int argc, char* argv[]) {
                     p0, P0, a, alpha, type_percolation,
                     num_colors, rho, ts, ps, rng, false,
                     calculate_detailed_properties,
+                    calculate_height_timeseries,
                     stop_config
               );
 
@@ -756,8 +762,10 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        const std::string height_ts_filename = data_dir + "/" + sample_base + ".yts";
-        saver.save_height_timeseries_bin(ts, height_ts_filename);
+        if (calculate_height_timeseries) {
+            const std::string height_ts_filename = data_dir + "/" + sample_base + ".yts";
+            saver.save_height_timeseries_bin(ts, height_ts_filename);
+        }
         saver.save_percolation_json(ps, ts, json_filename, true);
 
         return 0;

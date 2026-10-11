@@ -59,6 +59,7 @@ public:
         all_random& rng,
         bool save_compact = true,
         bool calculate_detailed_properties = false,
+        bool calculate_height_timeseries = false,
         GrowthStopConfig stop_config = GrowthStopConfig{});
 
     NetworkPattern initialize_network(
@@ -90,6 +91,7 @@ public:
         PercolationSeries& ps_out,
         all_random& rng,
         bool calculate_detailed_properties = false,
+        bool calculate_height_timeseries = false,
         GrowthStopConfig stop_config = GrowthStopConfig{});
 
     RawFractionsSeries create_raw_fractions(

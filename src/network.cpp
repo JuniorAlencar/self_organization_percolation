@@ -4919,6 +4919,7 @@ NetworkPattern network::create_network(
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
     TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng,
     const bool save_compact, const bool calculate_detailed_properties,
+    const bool calculate_height_timeseries,
     const GrowthStopConfig stop_config)
 {
     this->c = c_value;
@@ -5004,9 +5005,12 @@ NetworkPattern network::create_network(
     std::vector<int>    next_frontier;
 
     const std::size_t lateral_size = static_cast<std::size_t>(base_size);
-    std::vector<std::vector<int>> surface_height(
-        static_cast<std::size_t>(num_colors),
-        std::vector<int>(lateral_size, -1));
+    std::vector<std::vector<int>> surface_height;
+    if (calculate_height_timeseries) {
+        surface_height.assign(
+            static_cast<std::size_t>(num_colors),
+            std::vector<int>(lateral_size, -1));
+    }
     std::vector<double> surface_sum_height(static_cast<std::size_t>(num_colors), 0.0);
     std::vector<double> surface_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
     std::vector<uint32_t> surface_active_columns(static_cast<std::size_t>(num_colors), 0);
@@ -5024,12 +5028,14 @@ NetworkPattern network::create_network(
     };
 
     auto reset_front_height_accumulators = [&]() {
+        if (!calculate_height_timeseries) return;
         std::fill(front_sum_height.begin(), front_sum_height.end(), 0.0);
         std::fill(front_sum_height_sq.begin(), front_sum_height_sq.end(), 0.0);
         std::fill(front_count.begin(), front_count.end(), 0u);
     };
 
     auto record_height_activation = [&](const int color_idx, const int idx) {
+        if (!calculate_height_timeseries) return;
         if (color_idx < 0 || color_idx >= num_colors) return;
         const std::size_t c = static_cast<std::size_t>(color_idx);
         const int h = grid.grow_coord(idx);
@@ -5073,6 +5079,7 @@ NetworkPattern network::create_network(
         for (int c = 0; c < num_colors; ++c) {
             p_series[c].push_back(p_vec[c]);
             f_series[c].push_back(f_vec[c]);
+            if (!calculate_height_timeseries) continue;
 
             const std::size_t row = static_cast<std::size_t>(c);
             const uint32_t ncols = surface_active_columns[row];
@@ -6415,6 +6422,7 @@ NetworkPattern network::animate_network(
     const std::string& type_percolation, const int& num_colors, const std::vector<double>& rho,
     TimeSeries& ts_out, PercolationSeries& ps_out, all_random& rng,
     const bool calculate_detailed_properties,
+    const bool calculate_height_timeseries,
     const GrowthStopConfig stop_config)
 {
     this->c = c_value;
@@ -6507,9 +6515,12 @@ NetworkPattern network::animate_network(
     std::vector<int>    next_frontier;
 
     const std::size_t lateral_size = static_cast<std::size_t>(base_size);
-    std::vector<std::vector<int>> surface_height(
-        static_cast<std::size_t>(num_colors),
-        std::vector<int>(lateral_size, -1));
+    std::vector<std::vector<int>> surface_height;
+    if (calculate_height_timeseries) {
+        surface_height.assign(
+            static_cast<std::size_t>(num_colors),
+            std::vector<int>(lateral_size, -1));
+    }
     std::vector<double> surface_sum_height(static_cast<std::size_t>(num_colors), 0.0);
     std::vector<double> surface_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
     std::vector<uint32_t> surface_active_columns(static_cast<std::size_t>(num_colors), 0);
@@ -6527,12 +6538,14 @@ NetworkPattern network::animate_network(
     };
 
     auto reset_front_height_accumulators = [&]() {
+        if (!calculate_height_timeseries) return;
         std::fill(front_sum_height.begin(), front_sum_height.end(), 0.0);
         std::fill(front_sum_height_sq.begin(), front_sum_height_sq.end(), 0.0);
         std::fill(front_count.begin(), front_count.end(), 0u);
     };
 
     auto record_height_activation = [&](const int color_idx, const int idx) {
+        if (!calculate_height_timeseries) return;
         if (color_idx < 0 || color_idx >= num_colors) return;
         const std::size_t c = static_cast<std::size_t>(color_idx);
         const int h = grid.grow_coord(idx);
@@ -6576,6 +6589,7 @@ NetworkPattern network::animate_network(
         for (int c = 0; c < num_colors; ++c) {
             p_series[c].push_back(p_vec[c]);
             f_series[c].push_back(f_vec[c]);
+            if (!calculate_height_timeseries) continue;
 
             const std::size_t row = static_cast<std::size_t>(c);
             const uint32_t ncols = surface_active_columns[row];
