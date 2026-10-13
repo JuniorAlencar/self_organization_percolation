@@ -45,8 +45,12 @@ ytick.minor.width : 1.4
 
 axes.ymargin : 0.05
 
+# ---- Typography: LaTeX / Computer Modern ----
+text.usetex : True
+font.family : serif
+font.serif : Computer Modern Roman
+
 # ---- Fontsize ----
-text.usetex: True
 font.size : 20
 axes.labelsize: 20
 xtick.labelsize : 20

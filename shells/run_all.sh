@@ -56,10 +56,10 @@ RAM_LOG_DIR="${RAM_LOG_DIR:-.run_all_ram_logs}"
 # after the first successful job. Set to 0 if your GNU parallel version rejects it.
 RUN_ALL_PROBE_ONE_PARALLEL_JOB="${RUN_ALL_PROBE_ONE_PARALLEL_JOB:-1}"
 
-# Topological fractions shells can be long-running and may already benchmark
-# their own memory when generated with multi=True. Skip the extra probe by default.
+# Topological fractions shells can now be safely auto-tuned using a fast 1-sample probe.
+# Set RUN_ALL_AUTO_RAM_TOPOLOGY=0 to disable auto RAM tuning for topological shells.
 # RUN_ALL_AUTO_RAM_FRACTIONS remains as a backwards-compatible alias.
-RUN_ALL_AUTO_RAM_TOPOLOGY="${RUN_ALL_AUTO_RAM_TOPOLOGY:-${RUN_ALL_AUTO_RAM_FRACTIONS:-0}}"
+RUN_ALL_AUTO_RAM_TOPOLOGY="${RUN_ALL_AUTO_RAM_TOPOLOGY:-${RUN_ALL_AUTO_RAM_FRACTIONS:-1}}"
 
 # Optional timeout for the probe, e.g. RAM_PROBE_TIMEOUT=20m. Use 0 to disable.
 RAM_PROBE_TIMEOUT="${RAM_PROBE_TIMEOUT:-0}"
@@ -371,8 +371,13 @@ run_script_measured() {
     MKL_NUM_THREADS="1"
     RUN_ALL_PROBE="$probe"
     RUN_ALL_PROBE_ONE_PARALLEL_JOB="$RUN_ALL_PROBE_ONE_PARALLEL_JOB"
-    "$script"
   )
+
+  if [[ "$probe" -eq 1 ]] && is_topological_script "$script"; then
+    cmd+=( SOP_FRACTION_SAMPLES="1" )
+  fi
+
+  cmd+=( "$script" )
 
   mkdir -p "$(dirname "$out_log")"
 

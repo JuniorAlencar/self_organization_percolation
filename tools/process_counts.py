@@ -6,10 +6,13 @@ import csv
 import json
 import math
 import re
+import hashlib
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 from typing import Any
+
+from topology_parallel import default_jobs, ordered_parallel_map, positive_jobs
 
 
 FILENAME_TAG_RE = re.compile(
@@ -566,6 +569,98 @@ CLUSTER_COLUMNS = [
 ]
 
 
+def process_count_file(task):
+    path, raw_root, args = task
+    payload = json.loads(path.read_text())
+    params = parse_params_from_path(path, raw_root, payload)
+    gkey = group_key(params)
+    samples = []
+
+    for sample_pos, sample in enumerate(payload.get("samples", [])):
+        if not isinstance(sample, dict) or not sample.get("eligible", True):
+            continue
+        sample_index = sample.get("sample_index", sample_pos)
+        sample_id = f"{path.stem}:sample_{sample_index}"
+        L = int(sample.get("L", params["L"]))
+        if "spanning_clusters" in sample:
+            samples.append({
+                "sample_id": sample_id,
+                "source_file": str(path.relative_to(raw_root)),
+                "sample_index": sample_index,
+                "seed": params.get("file_seed"),
+                **process_spanning_sample(sample, L, args),
+            })
+            continue
+        properties: dict[str, Any] = {}
+
+        for observable, y_name in [
+            ("d_f", "N_bulk"),
+            ("d_hull", "N_hull"),
+            ("d_hull_ext", "N_hull_ext"),
+        ]:
+            curve = box_curve_for_sample(
+                sample,
+                observable,
+                L,
+                args.box_epsilon_min,
+                args.box_epsilon_max,
+            )
+            properties[observable] = box_series(curve, y_name)
+
+        curve = chemical_curve_for_sample(sample, args.chemical_r_min, args.chemical_r_max)
+        properties["d_min"] = chemical_series(curve)
+        properties["d_min_yardstick"] = minimum_path_yardstick_series(sample, L)
+
+        samples.append({
+            "sample_id": sample_id,
+            "source_file": str(path.relative_to(raw_root)),
+            "sample_index": sample_index,
+            "seed": params.get("file_seed"),
+            "properties": properties,
+            "cluster_role": "legacy_largest_component_spanning_unknown",
+            "num_spanning_clusters": None,
+        })
+
+    return gkey, str(path.relative_to(raw_root)), samples
+
+
+def stat_signature(paths, root):
+    signature = []
+    for path in sorted(paths):
+        stat = path.stat()
+        signature.append([str(path.relative_to(root)), stat.st_size,
+                          stat.st_mtime_ns, stat.st_ctime_ns])
+    return signature
+
+
+def counts_input_state(args, raw_root, count_paths):
+    implementation = hashlib.sha256()
+    for name in ("process_counts.py", "topology_parallel.py"):
+        implementation.update(Path(__file__).with_name(name).read_bytes())
+    return {
+        "implementation": implementation.hexdigest(),
+        "raw_root": str(raw_root),
+        "filters": [args.box_epsilon_min, args.box_epsilon_max,
+                    args.chemical_r_min, args.chemical_r_max],
+        "files": stat_signature(count_paths, raw_root),
+    }
+
+
+def counts_output_state(out_root):
+    paths = [path for path in out_root.rglob("*")
+             if path.is_file() and path.name != ".counts_state.json"]
+    return stat_signature(paths, out_root)
+
+
+def write_json_atomic(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, separators=(",", ":"))
+        fh.write("\n")
+    temporary.replace(path)
+
+
 def process_counts(args: argparse.Namespace) -> dict[str, Any]:
     sop_root = args.sop_root.resolve()
     raw_root = sop_root / args.raw_dir
@@ -574,63 +669,34 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
         set(raw_root.glob("**/counts/*_counts.topology"))
         | set(raw_root.glob("**/counts/*_counts.json"))
     )
+    input_state = counts_input_state(args, raw_root, count_paths)
+    state_path = out_root / ".counts_state.json"
+    if not args.refresh and state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+            if (isinstance(state, dict) and state.get("inputs") == input_state
+                    and (out_root / "manifest.json").exists()
+                    and state.get("outputs") == counts_output_state(out_root)):
+                manifest = json.loads((out_root / "manifest.json").read_text())
+                manifest["dry_run"] = args.dry_run
+                manifest["skipped_unchanged"] = True
+                print("[process_counts] unchanged inputs/options/outputs; skipped JSON parsing and publishing")
+                return manifest
+        except (OSError, ValueError, TypeError):
+            pass  # A missing/corrupt cache is always safe to rebuild.
     if not args.dry_run:
+        # Invalidate before writing so a partial failed run cannot be skipped.
+        state_path.unlink(missing_ok=True)
         remove_legacy_flat_outputs(out_root)
     existing_outputs = discover_existing_outputs(out_root)
 
     files_by_group: dict[tuple[Any, ...], set[str]] = defaultdict(set)
     samples_by_group: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
 
-    for path in count_paths:
-        payload = json.loads(path.read_text())
-        params = parse_params_from_path(path, raw_root, payload)
-        gkey = group_key(params)
-        files_by_group[gkey].add(str(path.relative_to(raw_root)))
-
-        for sample_pos, sample in enumerate(payload.get("samples", [])):
-            if not isinstance(sample, dict) or not sample.get("eligible", True):
-                continue
-            sample_index = sample.get("sample_index", sample_pos)
-            sample_id = f"{path.stem}:sample_{sample_index}"
-            L = int(sample.get("L", params["L"]))
-            if "spanning_clusters" in sample:
-                samples_by_group[gkey].append({
-                    "sample_id": sample_id,
-                    "source_file": str(path.relative_to(raw_root)),
-                    "sample_index": sample_index,
-                    "seed": params.get("file_seed"),
-                    **process_spanning_sample(sample, L, args),
-                })
-                continue
-            properties: dict[str, Any] = {}
-
-            for observable, y_name in [
-                ("d_f", "N_bulk"),
-                ("d_hull", "N_hull"),
-                ("d_hull_ext", "N_hull_ext"),
-            ]:
-                curve = box_curve_for_sample(
-                    sample,
-                    observable,
-                    L,
-                    args.box_epsilon_min,
-                    args.box_epsilon_max,
-                )
-                properties[observable] = box_series(curve, y_name)
-
-            curve = chemical_curve_for_sample(sample, args.chemical_r_min, args.chemical_r_max)
-            properties["d_min"] = chemical_series(curve)
-            properties["d_min_yardstick"] = minimum_path_yardstick_series(sample, L)
-
-            samples_by_group[gkey].append({
-                "sample_id": sample_id,
-                "source_file": str(path.relative_to(raw_root)),
-                "sample_index": sample_index,
-                "seed": params.get("file_seed"),
-                "properties": properties,
-                "cluster_role": "legacy_largest_component_spanning_unknown",
-                "num_spanning_clusters": None,
-            })
+    tasks = ((path, raw_root, args) for path in count_paths)
+    for gkey, source_file, samples in ordered_parallel_map(process_count_file, tasks, args.jobs):
+        files_by_group[gkey].add(source_file)
+        samples_by_group[gkey].extend(samples)
 
     split_outputs = []
     all_groups = sorted(set(existing_outputs) | set(samples_by_group))
@@ -720,7 +786,7 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
             "samples": merged_samples,
         }
         if not args.dry_run:
-            output_path.write_text(json.dumps(output_payload, separators=(",", ":")) + "\n")
+            write_json_atomic(output_path, output_payload)
             write_csv(output_path.with_suffix(".clusters.csv"), cluster_rows, CLUSTER_COLUMNS)
             write_csv(output_path.with_suffix(".samples.csv"), merged_samples, [
                 "sample_id", "source_file", "sample_index", "seed", "anchor_z", "t_stab",
@@ -775,6 +841,10 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
     }
     if not args.dry_run:
         (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if not args.dry_run and counts_input_state(args, raw_root, sorted(
+            set(raw_root.glob("**/counts/*_counts.topology"))
+            | set(raw_root.glob("**/counts/*_counts.json")))) == input_state:
+        write_json_atomic(state_path, {"inputs": input_state, "outputs": counts_output_state(out_root)})
     return manifest
 
 
@@ -782,6 +852,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Process topology counts into per-sample, per-spanning-cluster JSON curves and CSV summaries."
     )
+    parser.add_argument("-j", "--jobs", type=positive_jobs, default=default_jobs())
+    parser.add_argument("--refresh", action="store_true", help="Bypass unchanged-counts cache.")
     parser.add_argument("--sop-root", type=Path, default=Path("SOP_data"))
     parser.add_argument("--raw-dir", default="raw_fractions")
     parser.add_argument("--out-dir", default="published_counts")
