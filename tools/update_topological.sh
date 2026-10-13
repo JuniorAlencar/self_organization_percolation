@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_SOP_ROOT="${SCRIPT_DIR}/../SOP_data"
 SOP_ROOT="${SOP_ROOT:-$DEFAULT_SOP_ROOT}"
 
+TOPOLOGICAL_JOBS="${TOPOLOGICAL_JOBS:-4}"
+
 run_counts=1
 run_fractions=1
 counts_args=()
@@ -13,6 +15,15 @@ shared_args=()
 
 while (($#)); do
   case "$1" in
+    -j|--jobs)
+      (($# >= 2)) || { echo "[ERROR] --jobs requires a value" >&2; exit 2; }
+      TOPOLOGICAL_JOBS="$2"
+      shift 2
+      ;;
+    --refresh-counts)
+      counts_args+=(--refresh)
+      shift
+      ;;
     --counts-only)
       run_fractions=0
       shift
@@ -48,10 +59,15 @@ while (($#)); do
     -h|--help)
       cat <<'HELP'
 Usage: update_topological.sh [--sop-root PATH] [--raw-dir DIR] [--dry-run]
+                            [-j N | --jobs N] [--refresh-counts]
                             [--counts-only | --fractions-only]
                             [--counts-arg ARG] [--fractions-arg ARG]
 
 By default, processes both raw topological counts and raw fraction series.
+Uses up to 4 worker processes (TOPOLOGICAL_JOBS or --jobs to override).
+--jobs 1 runs serially. Counts parallelize by input file; fractions by bundle.
+Unchanged counts skip parsing/publishing; --refresh-counts forces reprocessing.
+Stages run sequentially, sharing the same worker limit to bound memory usage.
 Counts outputs in SOP_ROOT/published_counts (one set per parameter group):
   counts_P0_*_p0_*.json          samples with separate spanning_clusters
   counts_P0_*_p0_*.clusters.csv  one row per cluster, with d_bulk/d_min fits
@@ -71,6 +87,10 @@ HELP
   esac
 done
 
+[[ "$TOPOLOGICAL_JOBS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "[ERROR] jobs must be a positive integer" >&2; exit 2;
+}
+
 mkdir -p \
   "${SOP_ROOT}/raw_fractions" \
   "${SOP_ROOT}/published_counts" \
@@ -79,12 +99,13 @@ mkdir -p \
   "${SOP_ROOT}/logs" \
   "${SOP_ROOT}/tmp"
 
-echo "[update_topological] sop_root=${SOP_ROOT}"
+echo "[update_topological] sop_root=${SOP_ROOT} jobs=${TOPOLOGICAL_JOBS}"
 
 if [[ "$run_counts" -eq 1 ]]; then
   echo "[update_topological] processing counts: largest spanning cluster and each other spanning cluster"
   python3 "${SCRIPT_DIR}/process_counts.py" \
     --sop-root "${SOP_ROOT}" \
+    --jobs "${TOPOLOGICAL_JOBS}" \
     "${shared_args[@]}" \
     "${counts_args[@]}"
 fi
@@ -93,6 +114,7 @@ if [[ "$run_fractions" -eq 1 ]]; then
   echo "[update_topological] processing fractions"
   python3 "${SCRIPT_DIR}/process_raw_fractions.py" \
     --sop-root "${SOP_ROOT}" \
+    --jobs "${TOPOLOGICAL_JOBS}" \
     "${shared_args[@]}" \
     "${fractions_args[@]}"
 fi

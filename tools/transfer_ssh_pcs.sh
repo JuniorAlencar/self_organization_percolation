@@ -2,8 +2,8 @@
 
 set -e
 
-DEST="$HOME/Documents/self_organization_percolation/SOP_data/tests_data/"
-SRC="Documents/self_organization_percolation/SOP_data/tests_data/"
+DEST="$HOME/Documents/self_organization_percolation/SOP_data/raw_fractions/"
+SRC="Documents/self_organization_percolation/SOP_data/raw_fractions/"
 
 SOCKET_GUI="/tmp/ssh-gui-$USER"
 SOCKET_LAB="/tmp/ssh-lab-$USER"

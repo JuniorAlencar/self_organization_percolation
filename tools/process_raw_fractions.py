@@ -11,8 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from topology_parallel import default_jobs, ordered_parallel_map, positive_jobs
 
-FRACTIONS_PROCESSING_VERSION = 8
+
+FRACTIONS_PROCESSING_VERSION = 9
 
 FILENAME_TAG_RE = re.compile(
     r"_P0_(?P<P0>[^_]+)_p0_(?P<p0>[^_.]+(?:\.[^_.]+)?)"
@@ -285,6 +287,68 @@ def concatenate_fraction_data(
     return sample_len
 
 
+def topology_path(fraction_path: Path) -> Path | None:
+    for extension in ("topology", "json"):
+        candidate = fraction_path.parent / "counts" / f"{fraction_path.stem}_counts.{extension}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def topology_fingerprints(files: list[Path]) -> dict[str, Any]:
+    fingerprints = {}
+    for fraction in files:
+        path = topology_path(fraction)
+        if path is None:
+            fingerprints[fraction.name] = None
+        else:
+            stat = path.stat()
+            fingerprints[fraction.name] = [path.name, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+    return fingerprints
+
+
+def spanning_summaries(fraction_path: Path, data: dict[str, Any], n_samples: int):
+    path = topology_path(fraction_path)
+    indexed = {}
+    if path is not None:
+        for position, sample in enumerate(read_json(path).get("samples", [])):
+            index = sample.get("sample_index", position)
+            if index in indexed:
+                raise ValueError(f"{path}: duplicate sample_index {index}")
+            indexed[index] = sample
+    for index in range(n_samples):
+        sample = indexed.get(index)
+        status = "missing_topology" if sample is None else "legacy_spanning_unknown"
+        clusters = None
+        if sample is not None and "spanning_clusters" in sample:
+            for field in ("anchor_z", "t_stab"):
+                values = data.get(field, [])
+                if index < len(values) and field in sample and values[index] != sample[field]:
+                    raise ValueError(f"{path}: {field} mismatch at sample {index}")
+            raw_clusters = sample["spanning_clusters"]
+            if sample.get("num_spanning_clusters") != len(raw_clusters):
+                raise ValueError(f"{path}: inconsistent num_spanning_clusters at sample {index}")
+            clusters = []
+            for rank, cluster in enumerate(sorted(raw_clusters, key=lambda c: (
+                    -c["component"]["num_sites"], c["component"]["component_seed"]))):
+                clusters.append({
+                    "cluster_index": rank,
+                    "cluster_role": "largest_spanning" if rank == 0 else "other_spanning",
+                    "component": cluster["component"],
+                    "d_bulk": cluster.get("d_bulk"),
+                    "d_min": cluster.get("d_min"),
+                    "shortest_path_edges": cluster.get("minimum_path_yardstick", {}).get("path_length"),
+                })
+            status = "available"
+        yield {
+            "topology_status": status,
+            "topology_source_file": str(path.name) if path is not None else None,
+            "num_spanning_clusters": len(clusters) if clusters is not None else None,
+            "largest_spanning_cluster": clusters[0] if clusters else None,
+            "other_spanning_clusters": clusters[1:] if clusters is not None else None,
+        }
+
+
 def build_published_fractions_bundle(
     files: list[Path],
     raw_root: Path,
@@ -298,6 +362,7 @@ def build_published_fractions_bundle(
         raise ValueError("cannot build a bundle without input files")
 
     data_out: dict[str, list[Any]] = defaultdict(list)
+    spanning_data: dict[str, list[Any]] = defaultdict(list)
     source_files = []
     seeds = []
     sample_counts = []
@@ -326,6 +391,9 @@ def build_published_fractions_bundle(
             strict=strict,
             total_samples_so_far=sum(sample_counts),
         )
+        for summary in spanning_summaries(path, data, n_samples):
+            for key, value in summary.items():
+                spanning_data[key].append(value)
         seed = meta.get("seed")
         source_files.append(str(path.relative_to(raw_root)))
         seeds.append(seed)
@@ -333,6 +401,7 @@ def build_published_fractions_bundle(
         requested_counts.append(meta.get("requested_samples"))
         stop_reasons[str(meta.get("stop_reason", "unknown"))] += 1
 
+    data_out.update(spanning_data)
     total_samples = sum(sample_counts)
     data_out["source_seed"] = [
         seed for seed, n_samples in zip(seeds, sample_counts) for _ in range(n_samples)
@@ -346,7 +415,10 @@ def build_published_fractions_bundle(
             **first_param_meta,
             "mode": "published_fractions",
             "source_mode": "raw_fractions",
-            "schema_version": 1,
+            "schema_version": 2,
+            "spanning_summary_convention": "data arrays aligned by sample; largest_spanning_cluster and other_spanning_clusters summarize stabilized topology; null means unavailable, zero/empty means measured without spanning clusters",
+            "legacy_component_convention": "S_inst/E_inst/SP_inst and S_stab/E_stab/SP_stab retain the original largest-connected-component definition; they are not spanning-cluster selections",
+            "n_samples_with_topology": spanning_data["topology_status"].count("available"),
             "processed_at_utc": datetime.now(timezone.utc).isoformat(),
             "relative_parameter_dir": str(rel_parent),
             "P0": None if P0 == "unknown" else float(P0),
@@ -365,6 +437,109 @@ def build_published_fractions_bundle(
     }
 
 
+def process_fraction_group(task):
+    (group, files, raw_root, published_root, manifests_root, pretty_json,
+     dry_run, clear, fingerprint_mode, detect_replaced_files, strict) = task
+    rel_parent, P0, p0, base = group
+    bundle_name = bundle_filename(P0, p0, base)
+    out_path = published_root / rel_parent / bundle_name
+    current_json_files = sorted(path.name for path in files)
+    files_by_name = {path.name: path for path in files}
+    manifest = load_manifest(manifests_root, rel_parent, bundle_name)
+    manifest_files = set(map(str, manifest.get("processed_json_files", [])))
+    manifest_fingerprints_raw = manifest.get("processed_json_file_fingerprints", {})
+    manifest_fingerprints = (
+        {str(k): str(v) for k, v in manifest_fingerprints_raw.items()}
+        if isinstance(manifest_fingerprints_raw, dict)
+        else {}
+    )
+    manifest_version = int(manifest.get("fractions_processing_version", 0) or 0)
+    names_new_to_manifest = sorted(set(current_json_files) - manifest_files)
+    current_file_fingerprints: dict[str, str] = {}
+
+    if manifest_fingerprints:
+        names_to_fingerprint = set(names_new_to_manifest)
+        if detect_replaced_files:
+            names_to_fingerprint.update(
+                name for name in current_json_files if name in manifest_fingerprints
+            )
+        current_file_fingerprints = {
+            name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+            for name in sorted(names_to_fingerprint)
+        }
+        replaced_files = (
+            [
+                name for name in current_json_files
+                if name in current_file_fingerprints
+                and fingerprint_matches_mode(manifest_fingerprints.get(name), fingerprint_mode)
+                and manifest_fingerprints.get(name) != current_file_fingerprints.get(name)
+            ]
+            if detect_replaced_files
+            else []
+        )
+        changed_files = sorted(set(names_new_to_manifest) | set(replaced_files))
+    else:
+        missing_manifest_files = bool(manifest_files - set(current_json_files))
+        changed_files = current_json_files if missing_manifest_files else names_new_to_manifest
+        current_file_fingerprints = {
+            name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+            for name in sorted(changed_files)
+        }
+
+    current_topology = topology_fingerprints(files)
+    should_rebuild = (
+        clear
+        or not out_path.exists()
+        or manifest_version != FRACTIONS_PROCESSING_VERSION
+        or manifest.get("fingerprint_mode") != fingerprint_mode
+        or bool(changed_files)
+        or manifest.get("topology_fingerprints") != current_topology
+    )
+
+    if dry_run:
+        action = "rebuild" if should_rebuild else "skip"
+        print(f"[dry-run:{action}] {len(files)} file(s) -> {out_path}")
+        return out_path
+    if not should_rebuild:
+        print(f"[skip] {out_path}")
+        return out_path
+
+    if changed_files:
+        preview = ", ".join(changed_files[:5])
+        suffix = "" if len(changed_files) <= 5 else f", ... (+{len(changed_files) - 5} more)"
+        print(f"[update] detected {len(changed_files)} changed file(s) for {rel_parent}: {preview}{suffix}")
+
+    bundle = build_published_fractions_bundle(
+        files=files,
+        raw_root=raw_root,
+        rel_parent=rel_parent,
+        P0=P0,
+        p0=p0,
+        base=base,
+        strict=strict,
+    )
+    write_json_xz(out_path, bundle, pretty=pretty_json)
+    fingerprints_out = {
+        name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
+        for name in current_json_files
+    }
+    manifest.update({
+        "group_relpath": rel_parent.as_posix(),
+        "processed_json_files": current_json_files,
+        "n_processed_json_files": len(current_json_files),
+        "processed_json_file_fingerprints": dict(sorted(fingerprints_out.items())),
+        "fingerprint_mode": fingerprint_mode,
+        "summary_file": out_path.as_posix(),
+        "fractions_processing_version": FRACTIONS_PROCESSING_VERSION,
+        "topology_fingerprints": current_topology,
+        "last_update": datetime.now(timezone.utc).isoformat(),
+    })
+    save_manifest(manifests_root, rel_parent, bundle_name, manifest)
+    print(f"[published_fractions] {len(files)} file(s) -> {out_path}")
+    return out_path
+
+
+
 def process_raw_fractions(
     sop_root: Path,
     raw_dir: str = "raw_fractions",
@@ -376,109 +551,19 @@ def process_raw_fractions(
     fingerprint_mode: str = "stat",
     detect_replaced_files: bool = False,
     strict: bool = True,
+    jobs: int = 1,
 ) -> list[Path]:
     raw_root = sop_root / raw_dir
     published_root = sop_root / published_dir
     manifests_root = sop_root / manifests_dir
     groups = group_raw_fraction_files(raw_root)
-    written_paths = []
 
-    for (rel_parent, P0, p0, base), files in sorted(groups.items()):
-        bundle_name = bundle_filename(P0, p0, base)
-        out_path = published_root / rel_parent / bundle_name
-        current_json_files = sorted(path.name for path in files)
-        files_by_name = {path.name: path for path in files}
-        manifest = load_manifest(manifests_root, rel_parent, bundle_name)
-        manifest_files = set(map(str, manifest.get("processed_json_files", [])))
-        manifest_fingerprints_raw = manifest.get("processed_json_file_fingerprints", {})
-        manifest_fingerprints = (
-            {str(k): str(v) for k, v in manifest_fingerprints_raw.items()}
-            if isinstance(manifest_fingerprints_raw, dict)
-            else {}
-        )
-        manifest_version = int(manifest.get("fractions_processing_version", 0) or 0)
-        names_new_to_manifest = sorted(set(current_json_files) - manifest_files)
-        current_file_fingerprints: dict[str, str] = {}
-
-        if manifest_fingerprints:
-            names_to_fingerprint = set(names_new_to_manifest)
-            if detect_replaced_files:
-                names_to_fingerprint.update(
-                    name for name in current_json_files if name in manifest_fingerprints
-                )
-            current_file_fingerprints = {
-                name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
-                for name in sorted(names_to_fingerprint)
-            }
-            replaced_files = (
-                [
-                    name for name in current_json_files
-                    if name in current_file_fingerprints
-                    and fingerprint_matches_mode(manifest_fingerprints.get(name), fingerprint_mode)
-                    and manifest_fingerprints.get(name) != current_file_fingerprints.get(name)
-                ]
-                if detect_replaced_files
-                else []
-            )
-            changed_files = sorted(set(names_new_to_manifest) | set(replaced_files))
-        else:
-            missing_manifest_files = bool(manifest_files - set(current_json_files))
-            changed_files = current_json_files if missing_manifest_files else names_new_to_manifest
-            current_file_fingerprints = {
-                name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
-                for name in sorted(changed_files)
-            }
-
-        should_rebuild = (
-            clear
-            or not out_path.exists()
-            or manifest_version != FRACTIONS_PROCESSING_VERSION
-            or manifest.get("fingerprint_mode") != fingerprint_mode
-            or bool(changed_files)
-        )
-
-        if dry_run:
-            action = "rebuild" if should_rebuild else "skip"
-            print(f"[dry-run:{action}] {len(files)} file(s) -> {out_path}")
-            written_paths.append(out_path)
-            continue
-        if not should_rebuild:
-            print(f"[skip] {out_path}")
-            written_paths.append(out_path)
-            continue
-
-        if changed_files:
-            preview = ", ".join(changed_files[:5])
-            suffix = "" if len(changed_files) <= 5 else f", ... (+{len(changed_files) - 5} more)"
-            print(f"[update] detected {len(changed_files)} changed file(s) for {rel_parent}: {preview}{suffix}")
-
-        bundle = build_published_fractions_bundle(
-            files=files,
-            raw_root=raw_root,
-            rel_parent=rel_parent,
-            P0=P0,
-            p0=p0,
-            base=base,
-            strict=strict,
-        )
-        write_json_xz(out_path, bundle, pretty=pretty_json)
-        fingerprints_out = {
-            name: file_fingerprint_for_mode(files_by_name[name], fingerprint_mode)
-            for name in current_json_files
-        }
-        manifest.update({
-            "group_relpath": rel_parent.as_posix(),
-            "processed_json_files": current_json_files,
-            "n_processed_json_files": len(current_json_files),
-            "processed_json_file_fingerprints": dict(sorted(fingerprints_out.items())),
-            "fingerprint_mode": fingerprint_mode,
-            "summary_file": out_path.as_posix(),
-            "fractions_processing_version": FRACTIONS_PROCESSING_VERSION,
-            "last_update": datetime.now(timezone.utc).isoformat(),
-        })
-        save_manifest(manifests_root, rel_parent, bundle_name, manifest)
-        print(f"[published_fractions] {len(files)} file(s) -> {out_path}")
-        written_paths.append(out_path)
+    tasks = (
+        (group, files, raw_root, published_root, manifests_root, pretty_json,
+         dry_run, clear, fingerprint_mode, detect_replaced_files, strict)
+        for group, files in sorted(groups.items())
+    )
+    written_paths = list(ordered_parallel_map(process_fraction_group, tasks, jobs))
 
     return written_paths
 
@@ -490,6 +575,7 @@ def build_parser() -> argparse.ArgumentParser:
             "bundles, preserving the raw parameter directory structure."
         )
     )
+    parser.add_argument("-j", "--jobs", type=positive_jobs, default=default_jobs())
     parser.add_argument("--sop-root", type=Path, default=Path("SOP_data"))
     parser.add_argument("--raw-dir", default="raw_fractions")
     parser.add_argument("--published-dir", default="published_fractions")
@@ -526,6 +612,7 @@ def main() -> None:
         fingerprint_mode=args.fingerprint_mode,
         detect_replaced_files=args.detect_replaced_files,
         strict=not args.no_strict,
+        jobs=args.jobs,
     )
     print(f"[published_fractions] processed {len(paths)} bundle(s)")
 

@@ -169,8 +169,8 @@ SaveAnimationWindowOnly={save_animation_window_only}
 ControlRule="{control_rule}"
 FractionSamples={fraction_samples if fraction_samples is not None else 30}
 FractionGapOverL={fraction_gap_over_L}
-export SOP_FRACTION_SAMPLES="$FractionSamples"
-export SOP_FRACTION_GAP_OVER_L="$FractionGapOverL"
+export SOP_FRACTION_SAMPLES="${{SOP_FRACTION_SAMPLES:-$FractionSamples}}"
+export SOP_FRACTION_GAP_OVER_L="${{SOP_FRACTION_GAP_OVER_L:-$FractionGapOverL}}"
 ForceTopologicalCounts={force_topological_counts}
 if [[ "$ForceTopologicalCounts" == "true" ]]; then
   export SOP_FRACTAL_FORCE_COUNTS=1
@@ -217,102 +217,118 @@ if [[ "$TOTAL" -le 0 ]]; then
 fi
 
 # --- detect machine resources ---
-CPU_THREADS_TOTAL=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)
-CPU_THREADS_LIMIT=$(( CPU_THREADS_TOTAL - RESERVE_THREADS ))
-if [[ "$CPU_THREADS_LIMIT" -lt 1 ]]; then
-  CPU_THREADS_LIMIT=1
+EXTERNAL_JOBS="${{RUN_ALL_JOBS:-${{PARALLEL_JOBS:-${{NUM_JOBS:-${{JOBS:-}}}}}}}}"
+
+if [[ -n "$EXTERNAL_JOBS" && "$EXTERNAL_JOBS" -gt 0 ]]; then
+  JOBS="$EXTERNAL_JOBS"
+  SKIP_FIRST=0
+  echo "[INFO] Using external parallel jobs setting: JOBS=$JOBS"
+else
+  # --- detect machine resources ---
+  CPU_THREADS_TOTAL=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)
+  CPU_THREADS_LIMIT=$(( CPU_THREADS_TOTAL - RESERVE_THREADS ))
+  if [[ "$CPU_THREADS_LIMIT" -lt 1 ]]; then
+    CPU_THREADS_LIMIT=1
+  fi
+
+  MEM_TOTAL_KB=$(awk '/MemTotal:/ {{print int($2)}}' /proc/meminfo)
+  MEM_AVAILABLE_KB=$(awk '/MemAvailable:/ {{print int($2)}}' /proc/meminfo)
+
+  RAM_BUDGET_KB=$(awk -v total="$MEM_TOTAL_KB" -v avail="$MEM_AVAILABLE_KB" -v frac="$MEMORY_SAFETY_FRACTION" '
+    BEGIN {{
+      budget = int(total * frac)
+      if (avail < budget) budget = avail
+      if (budget < 1) budget = 1
+      print budget
+    }}'
+  )
+
+  # --- benchmark exactly one simulation to estimate RAM per job ---
+  BENCH_RHO=${{rho[0]}}
+  BENCH_LOG=$(mktemp)
+
+  echo "[INFO] Running RAM benchmark for this parameter set..."
+  echo "[INFO] Benchmark command: ./build/SOP $L $p0 $P0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $Equilibration ${{extra_args[*]}}"
+
+  if [[ "$Mode" == "fractions" || "$Mode" == "raw_fractions" ]]; then
+    SOP_FRACTION_SAMPLES=1 /usr/bin/time -f "%M" -o "$BENCH_LOG" \
+      ./build/SOP "$L" "$p0" "$P0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
+    SKIP_FIRST=0
+  else
+    /usr/bin/time -f "%M" -o "$BENCH_LOG" \
+      ./build/SOP "$L" "$p0" "$P0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
+    SKIP_FIRST=1
+  fi
+
+  PEAK_RAM_KB=$(tr -dc '0-9' < "$BENCH_LOG")
+  rm -f "$BENCH_LOG"
+
+  if [[ -z "$PEAK_RAM_KB" || "$PEAK_RAM_KB" -le 0 ]]; then
+    echo "[ERROR] Could not determine peak RAM from benchmark."
+    exit 1
+  fi
+
+  PER_JOB_RAM_KB=$(awk -v peak="$PEAK_RAM_KB" -v mult="$RAM_MULTIPLIER" '
+    BEGIN {{
+      x = int(peak * mult)
+      if (x < 1) x = 1
+      print x
+    }}'
+  )
+
+  THREADS_BY_RAM=$(awk -v budget="$RAM_BUDGET_KB" -v per_job="$PER_JOB_RAM_KB" '
+    BEGIN {{
+      jobs = int(budget / per_job)
+      if (jobs < 1) jobs = 1
+      print jobs
+    }}'
+  )
+
+  JOBS=$THREADS_BY_RAM
+  if [[ "$JOBS" -gt "$CPU_THREADS_LIMIT" ]]; then
+    JOBS=$CPU_THREADS_LIMIT
+  fi
+
+  if [[ -n "$MAX_THREADS" && "$MAX_THREADS" -lt "$JOBS" ]]; then
+    JOBS=$MAX_THREADS
+  fi
+
+  if [[ "$JOBS" -lt 1 ]]; then
+    JOBS=1
+  fi
+
+  PEAK_RAM_GB=$(awk -v kb="$PEAK_RAM_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+  PER_JOB_RAM_GB=$(awk -v kb="$PER_JOB_RAM_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+  RAM_BUDGET_GB=$(awk -v kb="$RAM_BUDGET_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+  MEM_TOTAL_GB=$(awk -v kb="$MEM_TOTAL_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+  MEM_AVAILABLE_GB=$(awk -v kb="$MEM_AVAILABLE_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
+
+  echo "[INFO] Peak RAM from benchmark   : $PEAK_RAM_GB GB"
+  echo "[INFO] RAM per parallel job      : $PER_JOB_RAM_GB GB (with RAM_MULTIPLIER=$RAM_MULTIPLIER)"
+  echo "[INFO] Total RAM                 : $MEM_TOTAL_GB GB"
+  echo "[INFO] Available RAM             : $MEM_AVAILABLE_GB GB"
+  echo "[INFO] Usable RAM budget         : $RAM_BUDGET_GB GB (MEMORY_SAFETY_FRACTION=$MEMORY_SAFETY_FRACTION)"
+  echo "[INFO] CPU threads total         : $CPU_THREADS_TOTAL"
+  echo "[INFO] CPU threads usable        : $CPU_THREADS_LIMIT (RESERVE_THREADS=$RESERVE_THREADS)"
+  echo "[INFO] Selected GNU parallel jobs: $JOBS"
 fi
 
-MEM_TOTAL_KB=$(awk '/MemTotal:/ {{print int($2)}}' /proc/meminfo)
-MEM_AVAILABLE_KB=$(awk '/MemAvailable:/ {{print int($2)}}' /proc/meminfo)
-
-RAM_BUDGET_KB=$(awk -v total="$MEM_TOTAL_KB" -v avail="$MEM_AVAILABLE_KB" -v frac="$MEMORY_SAFETY_FRACTION" '
-  BEGIN {{
-    budget = int(total * frac)
-    if (avail < budget) budget = avail
-    if (budget < 1) budget = 1
-    print budget
-  }}'
-)
-
-# --- benchmark exactly one simulation to estimate RAM per job ---
-BENCH_RHO=${{rho[0]}}
-BENCH_LOG=$(mktemp)
-
-echo "[INFO] Running RAM benchmark for this parameter set..."
-echo "[INFO] Benchmark command: ./build/SOP $L $p0 $P0 $seed $type $c $f_T $dim $num_colors $BENCH_RHO $Equilibration ${{extra_args[*]}}"
-
-/usr/bin/time -f "%M" -o "$BENCH_LOG" \
-  ./build/SOP "$L" "$p0" "$P0" "$seed" "$type" "$c" "$f_T" "$dim" "$num_colors" "$BENCH_RHO" "$Equilibration" "${{extra_args[@]}}" >/dev/null
-
-PEAK_RAM_KB=$(tr -dc '0-9' < "$BENCH_LOG")
-rm -f "$BENCH_LOG"
-
-if [[ -z "$PEAK_RAM_KB" || "$PEAK_RAM_KB" -le 0 ]]; then
-  echo "[ERROR] Could not determine peak RAM from benchmark."
-  exit 1
-fi
-
-PER_JOB_RAM_KB=$(awk -v peak="$PEAK_RAM_KB" -v mult="$RAM_MULTIPLIER" '
-  BEGIN {{
-    x = int(peak * mult)
-    if (x < 1) x = 1
-    print x
-  }}'
-)
-
-THREADS_BY_RAM=$(awk -v budget="$RAM_BUDGET_KB" -v per_job="$PER_JOB_RAM_KB" '
-  BEGIN {{
-    jobs = int(budget / per_job)
-    if (jobs < 1) jobs = 1
-    print jobs
-  }}'
-)
-
-JOBS=$THREADS_BY_RAM
-if [[ "$JOBS" -gt "$CPU_THREADS_LIMIT" ]]; then
-  JOBS=$CPU_THREADS_LIMIT
-fi
-
-if [[ -n "$MAX_THREADS" && "$MAX_THREADS" -lt "$JOBS" ]]; then
-  JOBS=$MAX_THREADS
-fi
-
-if [[ "$JOBS" -lt 1 ]]; then
-  JOBS=1
-fi
-
-PEAK_RAM_GB=$(awk -v kb="$PEAK_RAM_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
-PER_JOB_RAM_GB=$(awk -v kb="$PER_JOB_RAM_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
-RAM_BUDGET_GB=$(awk -v kb="$RAM_BUDGET_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
-MEM_TOTAL_GB=$(awk -v kb="$MEM_TOTAL_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
-MEM_AVAILABLE_GB=$(awk -v kb="$MEM_AVAILABLE_KB" 'BEGIN {{printf "%.2f", kb/1024/1024}}')
-
-echo "[INFO] Peak RAM from benchmark   : $PEAK_RAM_GB GB"
-echo "[INFO] RAM per parallel job      : $PER_JOB_RAM_GB GB (with RAM_MULTIPLIER=$RAM_MULTIPLIER)"
-echo "[INFO] Total RAM                 : $MEM_TOTAL_GB GB"
-echo "[INFO] Available RAM             : $MEM_AVAILABLE_GB GB"
-echo "[INFO] Usable RAM budget         : $RAM_BUDGET_GB GB (MEMORY_SAFETY_FRACTION=$MEMORY_SAFETY_FRACTION)"
-echo "[INFO] CPU threads total         : $CPU_THREADS_TOTAL"
-echo "[INFO] CPU threads usable        : $CPU_THREADS_LIMIT (RESERVE_THREADS=$RESERVE_THREADS)"
-echo "[INFO] Selected GNU parallel jobs: $JOBS"
-
-if [[ "$TOTAL" -eq 1 ]]; then
+if [[ "$SKIP_FIRST" -eq 1 && "$TOTAL" -eq 1 ]]; then
   echo "[INFO] Only one simulation requested. Benchmark run already completed it."
   exit 0
 fi
 
-# --- build remaining task list, skipping the benchmarked first task ---
+# --- build task list ---
 TASK_FILE=$(mktemp)
 trap 'rm -f "$TASK_FILE"' EXIT
-SKIP_FIRST=1
+skip_flag="$SKIP_FIRST"
 
 for ((run=1; run<=num_runs; run++)); do
   for idx in "${{!rho[@]}}"; do
     RHO=${{rho[$idx]}}
 
-    if [[ "$SKIP_FIRST" -eq 1 ]]; then
-      SKIP_FIRST=0
+    if [[ "$skip_flag" -eq 1 ]]; then
+      skip_flag=0
       continue
     fi
 
@@ -320,9 +336,11 @@ for ((run=1; run<=num_runs; run++)); do
   done
 done
 
-REMAINING=$(( TOTAL - 1 ))
-echo "[INFO] Benchmark counted as the first completed simulation (1/$TOTAL)."
-echo "[INFO] Running remaining $REMAINING simulation(s) with -j $JOBS ..."
+REMAINING=$(wc -l < "$TASK_FILE")
+if [[ "$SKIP_FIRST" -eq 1 ]]; then
+  echo "[INFO] Benchmark counted as the first completed simulation (1/$TOTAL)."
+fi
+echo "[INFO] Running $REMAINING simulation(s) with -j $JOBS ..."
 
 parallel -j "$JOBS" --bar --halt soon,fail=1 --colsep '\t' '
   RHO={{1}}
@@ -375,8 +393,8 @@ SaveAnimationWindowOnly={save_animation_window_only}
 ControlRule="{control_rule}"
 FractionSamples={fraction_samples if fraction_samples is not None else 30}
 FractionGapOverL={fraction_gap_over_L}
-export SOP_FRACTION_SAMPLES="$FractionSamples"
-export SOP_FRACTION_GAP_OVER_L="$FractionGapOverL"
+export SOP_FRACTION_SAMPLES="${{SOP_FRACTION_SAMPLES:-$FractionSamples}}"
+export SOP_FRACTION_GAP_OVER_L="${{SOP_FRACTION_GAP_OVER_L:-$FractionGapOverL}}"
 ForceTopologicalCounts={force_topological_counts}
 if [[ "$ForceTopologicalCounts" == "true" ]]; then
   export SOP_FRACTAL_FORCE_COUNTS=1

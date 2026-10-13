@@ -16,28 +16,7 @@ OBSERVABLES = {
         "xlabel": r"$L/\epsilon$",
         "ylabel": r"$N_{\mathrm{bulk}}(\epsilon)$",
     },
-    "d_hull": {
-        "x": "L_over_epsilon",
-        "y": "N_hull",
-        "axis": "epsilon",
-        "xlabel": r"$L/\epsilon$",
-        "ylabel": r"$N_{\mathrm{hull}}(\epsilon)$",
-    },
-    "d_hull_ext": {
-        "x": "L_over_epsilon",
-        "y": "N_hull_ext",
-        "axis": "epsilon",
-        "xlabel": r"$L/\epsilon$",
-        "ylabel": r"$N_{\mathrm{hull,ext}}(\epsilon)$",
-    },
     "d_min": {
-        "x": "r",
-        "y": "ell_min",
-        "axis": "bin_index",
-        "xlabel": r"$r$",
-        "ylabel": r"$\ell_{\min}$",
-    },
-    "d_min_yardstick": {
         "x": "L_over_R",
         "y": "N_R",
         "axis": "R",
@@ -72,10 +51,38 @@ def list_counts_files(root: str | Path = "../SOP_data/published_counts") -> list
     return sorted(root.glob("**/counts_P0_*_p0_*.json"))
 
 
-def read_counts_file(path: str | Path) -> dict:
+def select_spanning_clusters(payload: dict, cluster_role: str = "largest_spanning") -> dict:
+    """One analysis record per selected cluster; never substitute chemical d_min."""
+    if cluster_role not in {"largest_spanning", "other_spanning", "all"}:
+        raise ValueError("cluster_role must be largest_spanning, other_spanning or all")
+    records = []
+    for position, sample in enumerate(payload.get("samples", [])):
+        for cluster in sample.get("spanning_clusters", []):
+            role = cluster["cluster_role"]
+            if cluster_role != "all" and role != cluster_role:
+                continue
+            properties = cluster.get("properties", {})
+            yardstick = properties.get("d_min", {})
+            if "L_over_R" not in yardstick or "N_R" not in yardstick:
+                raise ValueError("Spanning cluster is missing the yardstick d_min series")
+            sample_id = sample.get("sample_id", f"sample_{position}")
+            records.append({
+                **{key: sample.get(key) for key in
+                   ("sample_index", "seed", "source_file", "anchor_z", "t_stab", "num_spanning_clusters")},
+                "sample_id": sample_id,
+                "cluster_id": f"{sample_id}:cluster_{cluster['cluster_index']}",
+                "cluster_index": cluster["cluster_index"],
+                "cluster_role": role,
+                "properties": {"d_f": properties.get("d_bulk", {}), "d_min": yardstick},
+            })
+    return {"meta": {**payload.get("meta", {}), "selected_cluster_role": cluster_role,
+                     "n_selected_clusters": len(records)}, "samples": records}
+
+
+def read_counts_file(path: str | Path, cluster_role: str = "largest_spanning") -> dict:
     path = Path(path).expanduser()
     with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
+        return select_spanning_clusters(json.load(fh), cluster_role)
 
 
 def processed_counts_index(root: str | Path = "../SOP_data/published_counts") -> pd.DataFrame:
@@ -133,18 +140,14 @@ def sample_series(payload: dict, sample_index: int, observable: str) -> pd.DataF
         "sample_index": sample.get("sample_index", sample_index),
         "sample_id": sample.get("sample_id"),
         "seed": sample.get("seed"),
+        "cluster_id": sample.get("cluster_id"),
+        "cluster_index": sample.get("cluster_index"),
+        "cluster_role": sample.get("cluster_role"),
         "observable": observable,
         axis_name: series.get(axis_name, range(len(series[x_name]))),
         x_name: series[x_name],
         y_name: series[y_name],
-        **({
-            "ell_mean": series.get("ell_mean", series.get("ell")),
-            "ell_min": series.get("ell_min"),
-            "ell_max": series.get("ell_max"),
-            "ell_std": series.get("ell_std"),
-            "truncated": series.get("truncated"),
-            "pairs": series.get("pairs"),
-        } if observable == "d_min" else {}),
+
     })
 
 
@@ -160,7 +163,7 @@ def aggregate_series(payload: dict, observable: str) -> pd.DataFrame:
     info = OBSERVABLES[observable]
     df = all_sample_series(payload, observable)
     if df.empty:
-        return df
+        return pd.DataFrame(columns=["x_mean", "y_mean", "y_sem", "x_sem", "n_samples", "n_clusters"])
 
     axis_name = info["axis"]
     x_name = info["x"]
@@ -171,9 +174,10 @@ def aggregate_series(payload: dict, observable: str) -> pd.DataFrame:
         y_mean=(y_name, "mean"),
         y_std=(y_name, "std"),
         n_samples=("sample_id", "nunique"),
+        n_clusters=("cluster_id", "nunique"),
     )
-    grouped["x_sem"] = grouped["x_std"] / np.sqrt(grouped["n_samples"])
-    grouped["y_sem"] = grouped["y_std"] / np.sqrt(grouped["n_samples"])
+    grouped["x_sem"] = grouped["x_std"] / np.sqrt(grouped["n_clusters"])
+    grouped["y_sem"] = grouped["y_std"] / np.sqrt(grouped["n_clusters"])
     return grouped
 
 
@@ -205,7 +209,7 @@ def fit_loglog(
     log_base: float = np.e,
 ) -> dict:
     x, y = _fit_arrays(x, y, x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max, keep=keep)
-    if len(x) < 2:
+    if len(x) < 2 or np.unique(x).size < 2:
         return {
             "slope": np.nan,
             "slope_err": np.nan,
@@ -294,6 +298,9 @@ def fit_samples(
             "observable": observable,
             "sample_index": sample.get("sample_index", i),
             "sample_id": sample.get("sample_id"),
+            "cluster_id": sample.get("cluster_id"),
+            "cluster_index": sample.get("cluster_index"),
+            "cluster_role": sample.get("cluster_role"),
             "seed": sample.get("seed"),
             "x_name": info["x"],
             "y_name": y_name,
@@ -322,12 +329,13 @@ def fit_all_observables(payload: dict, **fit_kwargs) -> pd.DataFrame:
 def summarize_fits(fits: pd.DataFrame) -> pd.DataFrame:
     if fits.empty:
         return fits
-    return fits.groupby("observable", as_index=False).agg(
+    return fits.groupby(["observable", "cluster_role"], as_index=False).agg(
         slope_mean=("slope", "mean"),
         slope_std=("slope", "std"),
         slope_sem=("slope", lambda x: x.std() / np.sqrt(x.notna().sum())),
         r2_mean=("r2", "mean"),
-        n_samples=("slope", "count"),
+        n_clusters=("slope", "count"),
+        n_samples=("sample_id", "nunique"),
     )
 
 
@@ -389,18 +397,6 @@ def plot_mean(
     info = OBSERVABLES[observable]
     df = aggregate_series(payload, observable)
     y_col = "y_mean"
-    if observable == "d_min" and y_variant in {"ell_mean", "ell_min", "ell_max"}:
-        raw = all_sample_series(payload, observable)
-        keep_cols = [info["axis"], "r", y_variant]
-        if ignore_truncated and "truncated" in raw.columns:
-            raw = raw[~raw["truncated"].astype(bool)]
-        df = raw[keep_cols].groupby(info["axis"], as_index=False).agg(
-            x_mean=("r", "mean"),
-            y_mean=(y_variant, "mean"),
-            y_std=(y_variant, "std"),
-            n_samples=("r", "count"),
-        )
-        df["y_sem"] = df["y_std"] / np.sqrt(df["n_samples"])
     ax = ax or plt.gca()
     ax.errorbar(
         df["x_mean"],
