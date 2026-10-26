@@ -30,6 +30,9 @@ def shell_data(
     fraction_samples: int | None = None,
     fraction_gap_over_L: float = 1.0,
     force_topological_counts: bool = False,
+    snapshot_dir: str | None = None,
+    base_snapshot: str | None = None,
+    gap_snapshot: str | None = None,
     **kwargs,
 ):
     """
@@ -140,6 +143,17 @@ def shell_data(
 
     rho_list = " ".join(map(str, rho))
 
+    snapshot_exports = []
+    if snapshot_dir:
+        snapshot_exports.append(f'export SOP_FRACTION_SNAPSHOT_DIR="${{SOP_FRACTION_SNAPSHOT_DIR:-{snapshot_dir}}}"')
+    if base_snapshot:
+        snapshot_exports.append(f'export SOP_FRACTION_BASE_SNAPSHOT="${{SOP_FRACTION_BASE_SNAPSHOT:-{base_snapshot}}}"')
+    if gap_snapshot:
+        snapshot_exports.append(f'export SOP_FRACTION_GAP_SNAPSHOT="${{SOP_FRACTION_GAP_SNAPSHOT:-{gap_snapshot}}}"')
+    snapshot_export_str = "\n".join(snapshot_exports)
+    if snapshot_export_str:
+        snapshot_export_str = "\n" + snapshot_export_str
+
     if multi:
         script = f"""\
 #!/usr/bin/env bash
@@ -174,7 +188,7 @@ export SOP_FRACTION_GAP_OVER_L="${{SOP_FRACTION_GAP_OVER_L:-$FractionGapOverL}}"
 ForceTopologicalCounts={force_topological_counts}
 if [[ "$ForceTopologicalCounts" == "true" ]]; then
   export SOP_FRACTAL_FORCE_COUNTS=1
-fi
+fi{snapshot_export_str}
 
 extra_args=()
 if [[ "$ControlRule" != "relative" ]]; then
@@ -398,7 +412,7 @@ export SOP_FRACTION_GAP_OVER_L="${{SOP_FRACTION_GAP_OVER_L:-$FractionGapOverL}}"
 ForceTopologicalCounts={force_topological_counts}
 if [[ "$ForceTopologicalCounts" == "true" ]]; then
   export SOP_FRACTAL_FORCE_COUNTS=1
-fi
+fi{snapshot_export_str}
 
 extra_args=()
 if [[ "$ControlRule" != "relative" ]]; then

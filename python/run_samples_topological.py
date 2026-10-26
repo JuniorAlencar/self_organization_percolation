@@ -60,7 +60,8 @@ ft_min_por_L = {
 }
 
 # Fator multiplicativo lambda (escalonamento f_T(L) = lambda * f_{T,min}(L))
-# Pode ser um valor escalar (ex: 1.0) ou uma lista (ex: [1.0])
+# Pode ser um valor escalar (ex: 1.0 para f_T = f_{T,min}(L)), uma lista (ex: [1.0]),
+# ou None para usar as listas empíricas padrão por tipo (bond: [1.53...], node: [1.92...])
 lambda_lst = [1.0]
 
 fraction_samples_lst = 30
@@ -105,9 +106,12 @@ if dim not in (2, 3):
 if nc <= 0:
     raise ValueError("nc must be positive")
 
-lambda_values = [float(value) for value in as_list(lambda_lst)]
-if any(value <= 0 for value in lambda_values):
-    raise ValueError("lambda_lst values must be positive")
+if lambda_lst is not None:
+    lambda_values = [float(value) for value in as_list(lambda_lst)]
+    if any(value <= 0 for value in lambda_values):
+        raise ValueError("lambda_lst values must be positive")
+else:
+    lambda_values = None
 
 fraction_samples_values = [int(value) for value in as_list(fraction_samples_lst)]
 fraction_gap_values = [float(value) for value in as_list(fraction_gap)]
@@ -124,11 +128,16 @@ for L in L_lst:
 
     for type_perc in type_lst:
         ft_min_base = get_ft_min(type_perc, L)
-        if(type_perc == "bond"):
-            lambda_values = [1.53, 1.42, 1.32, 1.21, 1.11]
-        elif(type_perc == "node"):
-            lambda_values = [1.92, 1.74, 1.55, 1.37, 1.18]
-        for lam in lambda_values:
+        if lambda_values is not None:
+            current_lambdas = lambda_values
+        elif type_perc == "bond":
+            current_lambdas = [1.53, 1.42, 1.32, 1.21, 1.11]
+        elif type_perc == "node":
+            current_lambdas = [1.92, 1.74, 1.55, 1.37, 1.18]
+        else:
+            current_lambdas = [1.0]
+
+        for lam in current_lambdas:
             ft = round(float(lam * ft_min_base), 7)
 
             for fraction_samples in fraction_samples_values:
