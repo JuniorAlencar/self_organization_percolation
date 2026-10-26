@@ -2430,11 +2430,11 @@ def plot_growth_test_network(
     if L <= 0:
         raise ValueError(f"Could not determine L from {json_path}; pass L explicitly")
     if z_stab is None:
-        z_stab = meta.get("z_stat", meta.get("growth_test_z_stat_by_color"))
+        z_stab = meta.get("y_stat", meta.get("growth_test_z_stat_by_color"))
     if isinstance(z_stab, (list, tuple, np.ndarray)):
         z_stab = z_stab[0] if len(z_stab) else None
     if z_stab is None:
-        raise ValueError("z_stab is missing from the sample; pass it explicitly")
+        raise ValueError("y_stab is missing from the sample; pass it explicitly")
     z_stab = int(z_stab)
     if network_path is None:
         network_path = json_path.parent.parent / "network" / (json_path.stem + ".bin")
@@ -2444,7 +2444,7 @@ def plot_growth_test_network(
         raise ValueError(f"No occupied sites in compact network: {network_path}")
     height = int(z.max()) + 1
     if z_stab < 0 or z_stab >= height:
-        raise ValueError(f"z_stab={z_stab} lies outside network height [0, {height - 1}]")
+        raise ValueError(f"y_stab={z_stab} lies outside network height [0, {height - 1}]")
 
     # Empty cells are cream; occupied cells are orange before z_stab and purple after it.
     image = np.zeros((height, L), dtype=np.uint8)
@@ -2463,7 +2463,7 @@ def plot_growth_test_network(
               extent=(-0.5, L - 0.5, -0.5, height - 0.5), rasterized=True, aspect="equal")
     ax.axhline(z_stab, color="#d1495b", linewidth=1.35, zorder=4)
     ax.text(0.04 * L, z_stab + max(10, 0.006 * height),
-            fr"$z_{{\mathrm{{stab}}}}={z_stab}$", ha="left", va="bottom", color="#000000",
+            fr"$y_{{\mathrm{{stab}}}}={z_stab}$", ha="left", va="bottom", color="#000000",
             fontsize=fs_zstab, bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5})
     ax.set_xlim(-0.5, L - 0.5)
     ax.set_ylim(-0.5, height - 0.5)
@@ -2489,6 +2489,9 @@ def plot_growth_test_network(
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+import matplotlib.collections as mcoll
+from matplotlib.legend_handler import HandlerErrorbar
 from pathlib import Path
 from scipy.optimize import curve_fit
 
@@ -3427,6 +3430,9 @@ def plot_fss_fixed_ft(
         chi2 = float(np.sum(res_sigma**2))
         dof = len(y) - len(popt)
         chi2_red = chi2 / dof if dof > 0 else np.nan
+        ss_res = float(np.sum((y - y_fit_pts)**2))
+        ss_tot = float(np.sum((y - np.mean(y))**2))
+        r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan
 
         results[t_name] = {
             'L': L, 'y': y, 'y_err': y_err, 'df': df_sub,
@@ -3435,7 +3441,7 @@ def plot_fss_fixed_ft(
             'A': (A_b, A_e, A_s, A_es),
             'nu': (nu_b, nu_e, nu_s, nu_es),
             'inv_nu': (inv_nu_b, inv_nu_e, inv_nu_s, inv_nu_es),
-            'chi2': chi2, 'dof': dof, 'chi2_red': chi2_red,
+            'chi2': chi2, 'dof': dof, 'chi2_red': chi2_red, 'r2': r2,
             'residuals_sigma': res_sigma,
         }
 
@@ -3564,7 +3570,7 @@ def plot_fss_fixed_ft(
             else:
                 print(f'  nu*       = {nu_s} +/- {nu_es}')
                 print(f'  1/nu*     = {inv_nu_s} +/- {inv_nu_es}')
-            print(f'  chi2_red  = {res["chi2_red"]:.4f} (chi2 = {res["chi2"]:.2f}, dof = {res["dof"]})')
+            print(f'  chi2_red  = {res["chi2_red"]:.4f} (chi2 = {res["chi2"]:.2f}, dof = {res["dof"]}, R2 = {res["r2"]:.6f})')
             print('-' * 75)
 
     if save_path:
@@ -3656,7 +3662,11 @@ def analyze_ft_convergence(c_val=0.05, thresh=0.98, L_min=1024):
             y_err = np.array([x[2] for x in pts], float)
             popt, pcov = _fit_fss_robust(L, y, y_err)
             perr = np.sqrt(np.diag(pcov))
-            chi2_r = float(np.sum(((y - finite_size_model(L, *popt)) / y_err)**2) / (len(y) - 3))
+            y_pred = finite_size_model(L, *popt)
+            chi2_r = float(np.sum(((y - y_pred) / y_err)**2) / (len(y) - 3))
+            ss_res = float(np.sum((y - y_pred)**2))
+            ss_tot = float(np.sum((y - np.mean(y))**2))
+            r2_val = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan
             pc_s, pc_es = round_value_error(popt[0], perr[0])
             nu_s, nu_es = round_value_error(popt[2], perr[2])
             rows_res.append({
@@ -3667,6 +3677,7 @@ def analyze_ft_convergence(c_val=0.05, thresh=0.98, L_min=1024):
                 'pc': popt[0], 'pc_err': perr[0], 'pc_str': f'{pc_s} +/- {pc_es}',
                 'nu': popt[2], 'nu_err': perr[2], 'nu_str': f'{nu_s} +/- {nu_es}',
                 'chi2_red': chi2_r,
+                'r2': r2_val,
             })
 
         for p_ref in [
@@ -3682,7 +3693,11 @@ def analyze_ft_convergence(c_val=0.05, thresh=0.98, L_min=1024):
         err_r = df_ref['p_min_err'].to_numpy(float)
         popt, pcov = _fit_fss_robust(L_r, y_r, err_r)
         perr = np.sqrt(np.diag(pcov))
-        chi2_r = float(np.sum(((y_r - finite_size_model(L_r, *popt)) / err_r)**2) / (len(y_r) - 3))
+        y_r_pred = finite_size_model(L_r, *popt)
+        chi2_r = float(np.sum(((y_r - y_r_pred) / err_r)**2) / (len(y_r) - 3))
+        ss_res = float(np.sum((y_r - y_r_pred)**2))
+        ss_tot = float(np.sum((y_r - np.mean(y_r))**2))
+        r2_val = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan
         pc_s, pc_es = round_value_error(popt[0], perr[0])
         nu_s, nu_es = round_value_error(popt[2], perr[2])
         rows_res.append({
@@ -3693,6 +3708,7 @@ def analyze_ft_convergence(c_val=0.05, thresh=0.98, L_min=1024):
             'pc': popt[0], 'pc_err': perr[0], 'pc_str': f'{pc_s} +/- {pc_es}',
             'nu': popt[2], 'nu_err': perr[2], 'nu_str': f'{nu_s} +/- {nu_es}',
             'chi2_red': chi2_r,
+            'r2': r2_val,
         })
         out['const_ft'][tp] = pd.DataFrame(rows_res)
 
@@ -3729,7 +3745,11 @@ def analyze_ft_convergence(c_val=0.05, thresh=0.98, L_min=1024):
                 err_r = np.array([x[3] for x in pts], float)
             popt, pcov = _fit_fss_robust(L_r, y_r, err_r)
             perr = np.sqrt(np.diag(pcov))
-            chi2_r = float(np.sum(((y_r - finite_size_model(L_r, *popt)) / err_r)**2) / (len(y_r) - 3))
+            y_r_pred = finite_size_model(L_r, *popt)
+            chi2_r = float(np.sum(((y_r - y_r_pred) / err_r)**2) / (len(y_r) - 3))
+            ss_res = float(np.sum((y_r - y_r_pred)**2))
+            ss_tot = float(np.sum((y_r - np.mean(y_r))**2))
+            r2_val = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan
             pc_s, pc_es = round_value_error(popt[0], perr[0])
             nu_s, nu_es = round_value_error(popt[2], perr[2])
             rows_lam.append({
@@ -3740,10 +3760,57 @@ def analyze_ft_convergence(c_val=0.05, thresh=0.98, L_min=1024):
                 'pc': popt[0], 'pc_err': perr[0], 'pc_str': f'{pc_s} +/- {pc_es}',
                 'nu': popt[2], 'nu_err': perr[2], 'nu_str': f'{nu_s} +/- {nu_es}',
                 'chi2_red': chi2_r,
+                'r2': r2_val,
             })
         out['scaled_ft_min'][tp] = pd.DataFrame(rows_lam)
 
     return out
+
+
+class _CleanErrorbarHandler(HandlerErrorbar):
+    def create_artists(self, legend, orig_handle,
+                       xdescent, ydescent, width, height, fontsize,
+                       trans):
+        plotlines, caplines, barlinecols = orig_handle
+        xdata, xdata_marker = self.get_xdata(legend, xdescent, ydescent,
+                                             width, height, fontsize)
+        ydata = np.full_like(xdata, (height - ydescent) / 2)
+        xm = float(xdata_marker[0])
+        ym = float(ydata[0])
+
+        ms = plotlines.get_markersize()
+        # 1. Linha guia no fundo
+        legline = Line2D(xdata, ydata)
+        self.update_prop(legline, plotlines, legend)
+        legline.set_drawstyle('default')
+        legline.set_marker('none')
+
+        # 2. Marcador com fundo branco para que a linha guia não passe por dentro
+        legline_marker = Line2D([xm], [ym])
+        self.update_prop(legline_marker, plotlines, legend)
+        legline_marker.set_linestyle('None')
+        legline_marker.set_markerfacecolor('white')
+        legline_marker.set_markeredgewidth(1.4)
+        legline_marker.set_markersize(ms)
+
+        # 3. Barra de erro vertical perfeitamente centrada no marcador
+        yerr_size = ms * 0.75
+        verts = [((xm, ym - yerr_size), (xm, ym + yerr_size))]
+        coll = mcoll.LineCollection(verts)
+        self.update_prop(coll, barlinecols[0] if barlinecols else plotlines, legend)
+        coll.set_color(plotlines.get_color())
+        coll.set_linewidth(1.8)
+
+        cap_w = 3.5
+        cap_top = Line2D([xm - cap_w, xm + cap_w], [ym + yerr_size, ym + yerr_size],
+                         color=plotlines.get_color(), lw=1.4)
+        cap_bot = Line2D([xm - cap_w, xm + cap_w], [ym - yerr_size, ym - yerr_size],
+                         color=plotlines.get_color(), lw=1.4)
+
+        artists = [legline, legline_marker, coll, cap_top, cap_bot]
+        for a in artists:
+            a.set_transform(trans)
+        return artists
 
 
 def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=None, show_plot=True, verbose=True):
@@ -3762,8 +3829,8 @@ def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=Non
             'col': 0,
             'pc_theo': 0.592746,
             'pc_theo_lbl': r'$p_c \approx 0.59275$',
-            'title_pc': r'\textbf{(a) Site percolation: $p_{\mathrm{c,eff}}^*$}',
-            'title_nu': r'\textbf{(c) Site percolation: $\nu_{\mathrm{eff}}^*$}',
+            'title_pc': '(a) Site Percolation',
+            'title_nu': '(c) Site Percolation',
             'marker': 'o',
         },
         {
@@ -3771,8 +3838,8 @@ def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=Non
             'col': 1,
             'pc_theo': 0.500000,
             'pc_theo_lbl': r'$p_c = 0.50000$',
-            'title_pc': r'\textbf{(b) Bond percolation: $p_{\mathrm{c,eff}}^*$}',
-            'title_nu': r'\textbf{(d) Bond percolation: $\nu_{\mathrm{eff}}^*$}',
+            'title_pc': '(b) Bond Percolation',
+            'title_nu': '(d) Bond Percolation',
             'marker': 's',
         },
     ]
@@ -3790,17 +3857,21 @@ def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=Non
         ax_pc = axes[0, j]
         ax_nu = axes[1, j]
 
+        # Inverte o eixo x da coluna no início para posicionamento correto da legenda
+        ax_nu.invert_xaxis()
+
         # --- Painel Superior: p_{c,eff}* vs f_T ---
-        ax_pc.errorbar(
-            df_c_only['ft_ref'], df_c_only['pc'], yerr=df_c_only['pc_err'],
-            fmt=cfg['marker'] + '-', color='tab:blue', markerfacecolor='none',
-            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
+        # Somente marcadores, sem linhas guias e sem barras de erro
+        ax_pc.plot(
+            df_c_only['ft_ref'], df_c_only['pc'],
+            marker=cfg['marker'], color='tab:blue', markerfacecolor='none',
+            markeredgewidth=1.4, markersize=8.5, linestyle='none',
             label=r'$\mathrm{Constant}\;f_{\mathrm{T}}$'
         )
-        ax_pc.errorbar(
-            df_s['ft_mean'], df_s['pc'], yerr=df_s['pc_err'],
-            fmt=cfg['marker'] + '--', color='red', markerfacecolor='none',
-            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
+        ax_pc.plot(
+            df_s['ft_mean'], df_s['pc'],
+            marker=cfg['marker'], color='red', markerfacecolor='none',
+            markeredgewidth=1.4, markersize=8.5, linestyle='none',
             label=r'$f_{\mathrm{T}}(L) = \lambda\, f_{\mathrm{T,min}}(L)$'
         )
         ax_pc.plot(
@@ -3811,7 +3882,7 @@ def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=Non
         ax_pc.axhline(cfg['pc_theo'], color='black', linestyle=':', linewidth=1.6, label=cfg['pc_theo_lbl'])
         if j == 0:
             ax_pc.set_ylabel(r'$p_{\mathrm{c,eff}}^*$', fontsize=18)
-        ax_pc.text(0.05, 0.12, cfg['title_pc'], transform=ax_pc.transAxes, fontsize=16, ha='left', va='bottom')
+        ax_pc.text(0.05, 0.12, cfg['title_pc'], transform=ax_pc.transAxes, fontsize=16, fontweight='bold', ha='left', va='bottom')
         ax_pc.legend(loc='upper right', fontsize=13.5, frameon=False)
         ax_pc.tick_params(
             axis='both', which='major', direction='in',
@@ -3821,32 +3892,66 @@ def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=Non
         ax_pc.minorticks_on()
 
         # --- Painel Inferior: nu_eff* vs f_T ---
+        # 1. Linhas guias conectando os marcadores (zorder=2)
+        ax_nu.plot(df_c_only['ft_ref'], df_c_only['nu'], '-', color='tab:blue', lw=1.8, zorder=2)
+        ax_nu.plot(df_s['ft_mean'], df_s['nu'], '--', color='red', lw=1.8, zorder=2)
+
+        # 2. Marcadores com fundo branco para que a linha guia não passe por dentro (zorder=3)
+        ax_nu.plot(
+            df_c_only['ft_ref'], df_c_only['nu'], linestyle='none', marker=cfg['marker'],
+            color='tab:blue', markerfacecolor='white', markeredgewidth=1.4, markersize=8.5, zorder=3
+        )
+        ax_nu.plot(
+            df_s['ft_mean'], df_s['nu'], linestyle='none', marker=cfg['marker'],
+            color='red', markerfacecolor='white', markeredgewidth=1.4, markersize=8.5, zorder=3
+        )
+
+        # 3. Barras de erro por cima do marcador (zorder=4)
         ax_nu.errorbar(
             df_c_only['ft_ref'], df_c_only['nu'], yerr=df_c_only['nu_err'],
-            fmt=cfg['marker'] + '-', color='tab:blue', markerfacecolor='none',
-            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
-            label=r'$\mathrm{Constant}\;f_{\mathrm{T}}$'
+            fmt='none', ecolor='tab:blue', capsize=3.5, elinewidth=1.8, capthick=1.4, zorder=4
         )
         ax_nu.errorbar(
             df_s['ft_mean'], df_s['nu'], yerr=df_s['nu_err'],
-            fmt=cfg['marker'] + '--', color='red', markerfacecolor='none',
-            markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8,
-            label=r'$f_{\mathrm{T}}(L) = \lambda\, f_{\mathrm{T,min}}(L)$'
+            fmt='none', ecolor='red', capsize=3.5, elinewidth=1.8, capthick=1.4, zorder=4
         )
-        ax_nu.plot(
+
+        h_lim = ax_nu.plot(
             df_lim['ft_ref'], df_lim['nu'],
             marker='*', color='black', markersize=14, linestyle='none',
             label=r'$\mathrm{Limit}\;f_{\mathrm{T,min}}(L)$', zorder=5
+        )[0]
+        h_nu_theo = ax_nu.axhline(4.0 / 3.0, color='black', linestyle=':', linewidth=1.6, label=r'$\nu = 4/3 \approx 1.333$')
+
+        # Handles para a legenda de nu
+        h_c_dummy = ax_nu.errorbar(
+            [], [], yerr=[], fmt=cfg['marker'] + '-', color='tab:blue',
+            markerfacecolor='white', markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8
         )
-        ax_nu.axhline(4.0 / 3.0, color='black', linestyle=':', linewidth=1.6, label=r'$\nu = 4/3 \approx 1.333$')
+        h_s_dummy = ax_nu.errorbar(
+            [], [], yerr=[], fmt=cfg['marker'] + '--', color='red',
+            markerfacecolor='white', markeredgewidth=1.4, markersize=8.5, capsize=3.5, lw=1.8
+        )
+
         y_min_nu = float(min(df_c_only['nu'].min(), df_s['nu'].min())) - 0.06
         ax_nu.set_ylim(y_min_nu, 1.46)
         ax_nu.set_xlabel(r'$f_{\mathrm{T}}\;\;(\mathrm{or}\;\langle f_{\mathrm{T}}(L)\rangle)$', fontsize=18)
         if j == 0:
             ax_nu.set_ylabel(r'$\nu_{\mathrm{eff}}^*$', fontsize=18)
-        ax_nu.text(0.05, 0.90, cfg['title_nu'], transform=ax_nu.transAxes, fontsize=16, ha='left', va='bottom')
-        ax_nu.legend(loc='lower right', fontsize=13.5, frameon=False)
-        ax_nu.invert_xaxis()
+        ax_nu.text(0.05, 0.90, cfg['title_nu'], transform=ax_nu.transAxes, fontsize=16, fontweight='bold', ha='left', va='bottom')
+
+        handles_nu = [h_c_dummy, h_s_dummy, h_lim, h_nu_theo]
+        labels_nu = [
+            r'$\mathrm{Constant}\;f_{\mathrm{T}}$',
+            r'$f_{\mathrm{T}}(L) = \lambda\, f_{\mathrm{T,min}}(L)$',
+            r'$\mathrm{Limit}\;f_{\mathrm{T,min}}(L)$',
+            r'$\nu = 4/3 \approx 1.333$',
+        ]
+        ax_nu.legend(
+            handles=handles_nu, labels=labels_nu,
+            handler_map={type(h_c_dummy): _CleanErrorbarHandler()},
+            loc='lower right', fontsize=13.5, frameon=False
+        )
         ax_nu.tick_params(
             axis='both', which='major', direction='in',
             length=6.0, width=1.2, labelsize=14, top=True, right=True, labelbottom=True
@@ -3858,14 +3963,14 @@ def plot_ft_convergence_study(c_val=0.05, thresh=0.98, L_min=1024, save_path=Non
 
     if verbose:
         for tp in ['node', 'bond']:
-            print('=' * 78)
+            print('=' * 85)
             print(f'TABELA 1 ({tp.upper()}): f_T CONSTANTE DECRESCENTE -> LIMITE f_T,min(L) (L >= {L_min})')
-            print('=' * 78)
-            print(out['const_ft'][tp][['Regime', 'N_L', 'L_min', 'pc_str', 'nu_str', 'chi2_red']].to_string(index=False))
+            print('=' * 85)
+            print(out['const_ft'][tp][['Regime', 'N_L', 'L_min', 'pc_str', 'nu_str', 'chi2_red', 'r2']].to_string(index=False))
             print()
             print(f'TABELA 2 ({tp.upper()}): ESCALONAMENTO PROPORCIONAL f_T(L) = lambda * f_T,min(L) (L >= {L_min})')
-            print('-' * 78)
-            print(out['scaled_ft_min'][tp][['lambda', 'ft_mean', 'N_L', 'L_min', 'pc_str', 'nu_str', 'chi2_red']].to_string(index=False))
+            print('-' * 85)
+            print(out['scaled_ft_min'][tp][['lambda', 'ft_mean', 'N_L', 'L_min', 'pc_str', 'nu_str', 'chi2_red', 'r2']].to_string(index=False))
             print()
 
     if save_path:
