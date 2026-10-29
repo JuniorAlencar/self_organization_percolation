@@ -2374,8 +2374,12 @@ def load_growth_test_stabilization_series(
     }
 
 
-def _read_compact_network_2d(path: str | Path, L: int) -> tuple[np.ndarray, np.ndarray]:
-    """Read occupied coordinates from NetworkCompact .bin without loading edges."""
+def _read_compact_network_2d(
+    path: str | Path,
+    L: int,
+    return_activation_time: bool = False,
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read occupied coordinates and activation times from NetworkCompact .bin without loading edges."""
     import struct
     path = Path(path)
     with path.open("rb") as handle:
@@ -2387,8 +2391,150 @@ def _read_compact_network_2d(path: str | Path, L: int) -> tuple[np.ndarray, np.n
             raise ValueError(f"Invalid compact network magic in {path}")
         pos = np.fromfile(handle, dtype="<u4", count=n).astype(np.int64)
         species = np.fromfile(handle, dtype="u1", count=n)
-    flat = pos[species > 0]
-    return flat % L, flat // L
+        activation_time = np.fromfile(handle, dtype="<u4", count=n)
+    active = species > 0
+    flat = pos[active]
+    x = flat % L
+    z = flat // L
+    if return_activation_time:
+        return x, z, activation_time[active]
+    return x, z
+
+
+def get_growth_test_network_partition(
+    json_path: str | Path,
+    *,
+    network_path: str | Path | None = None,
+    z_stab: int | None = None,
+    t_stab: float | int | None = None,
+    L: int | None = None,
+) -> dict:
+    """
+    Determina exatamente todos os sítios da rede compacta 2D particionados pela
+    fronteira física ruidosa no momento da estabilização:
+      - fora da cauda (antes da estabilização): z < h_front[x] (laranja)
+      - no limiar / fronteira física: z == h_front[x] (vermelho)
+      - na cauda (pós-estabilização): z > h_front[x] (roxo)
+
+    Retorna um dicionário com:
+      - 'L', 'height', 'z_stab', 't_stab'
+      - 'h_front': array 1D com a altura da fronteira h(x) para cada coluna x in [0, L)
+      - 'x', 'z', 'activation_time'
+      - 'before_mask', 'frontier_mask', 'after_mask'
+      - 'x_before', 'z_before'
+      - 'x_frontier', 'z_frontier'
+      - 'x_after', 'z_after'
+    """
+    json_path = Path(json_path)
+    with json_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    meta = payload.get("meta", {})
+    params = parse_params_from_path(str(json_path.parent)) or {}
+    resolved_L = params.get("L", meta.get("L", L))
+    if not resolved_L:
+        match_L = re.search(r"(?:^|[/\\])L_(\d+)(?:_|[/\\])", str(json_path))
+        if match_L:
+            resolved_L = int(match_L.group(1))
+    L = int(resolved_L or 0)
+    if L <= 0:
+        raise ValueError(f"Could not determine L from {json_path}; pass L explicitly")
+
+    if z_stab is None:
+        z_stab = meta.get("y_stat", meta.get("growth_test_z_stat_by_color"))
+    if isinstance(z_stab, (list, tuple, np.ndarray)):
+        z_stab = z_stab[0] if len(z_stab) else None
+    if z_stab is not None:
+        z_stab = int(z_stab)
+
+    if network_path is None:
+        network_path = json_path.parent.parent / "network" / (json_path.stem + ".bin")
+
+    x, z, act_time = _read_compact_network_2d(network_path, L, return_activation_time=True)
+    if x.size == 0:
+        raise ValueError(f"No occupied sites in compact network: {network_path}")
+
+    height = int(z.max()) + 1
+
+    # Determina o momento t_stab_moment em que a rede atinge a estabilização
+    if t_stab is not None:
+        t_stab_moment = float(t_stab)
+    elif z_stab is not None:
+        mask_z = z >= z_stab
+        if np.any(mask_z):
+            t_stab_moment = int(act_time[mask_z].min())
+        else:
+            t_stab_moment = int(round(float(meta.get("t_eq", 0))))
+    else:
+        t_stab_moment = int(round(float(meta.get("t_eq", 0))))
+
+    # Perfil da fronteira superior h_front(x) no momento da estabilização
+    h_front = np.full(L, -1, dtype=np.int64)
+    mask_t = act_time <= t_stab_moment
+    if np.any(mask_t):
+        np.maximum.at(h_front, x[mask_t], z[mask_t])
+    if np.any(h_front < 0):
+        valid_idx = np.where(h_front >= 0)[0]
+        if len(valid_idx) > 0:
+            h_front[h_front < 0] = np.interp(np.where(h_front < 0)[0], valid_idx, h_front[valid_idx]).astype(int)
+        else:
+            h_front[:] = 0
+
+    hf_per_site = h_front[x]
+    before_mask = z < hf_per_site
+    frontier_mask = z == hf_per_site
+    after_mask = z >= hf_per_site
+
+    return {
+        "L": L,
+        "height": height,
+        "z_stab": z_stab if z_stab is not None else int(h_front.max()),
+        "t_stab": t_stab_moment,
+        "h_front": h_front,
+        "x": x,
+        "z": z,
+        "activation_time": act_time,
+        "before_mask": before_mask,
+        "frontier_mask": frontier_mask,
+        "after_mask": after_mask,
+        "x_before": x[before_mask],
+        "z_before": z[before_mask],
+        "x_frontier": x[frontier_mask],
+        "z_frontier": z[frontier_mask],
+        "x_after": x[after_mask],
+        "z_after": z[after_mask],
+    }
+
+
+def _patch_pdf_writer_safe():
+    """Garante que o backend PDF do matplotlib use FlateDecode seguro sem compressão redundante."""
+    try:
+        import matplotlib.backends.backend_pdf as bpdf
+        from matplotlib.backends.backend_pdf import Name
+
+        if getattr(bpdf.PdfFile, "_writeImg_poppler_safe", False):
+            return
+
+        def safe_writeImg(self, data, id, smask=None):
+            height, width, color_channels = data.shape
+            obj = {
+                'Type': Name('XObject'),
+                'Subtype': Name('Image'),
+                'Width': width,
+                'Height': height,
+                'ColorSpace': Name({1: 'DeviceGray', 3: 'DeviceRGB'}[color_channels]),
+                'BitsPerComponent': 8,
+            }
+            if smask:
+                obj['SMask'] = smask
+
+            self.beginStream(id, self.reserveObject('length of image stream'), obj)
+            self.currentstream.write(data.tobytes())
+            self.endStream()
+
+        bpdf.PdfFile._writeImg = safe_writeImg
+        bpdf.PdfFile._writeImg_poppler_safe = True
+    except Exception:
+        pass
 
 
 def plot_growth_test_network(
@@ -2397,23 +2543,77 @@ def plot_growth_test_network(
     network_path: str | Path | None = None,
     x_label: str = "x",
     y_label: str = "y",
-    fs_labels: float = 10.0,
-    fs_zstab: float = 14,
-    L:float = 1024,
-    legend_label_stab: str = "stab",
-    legend_label_posstab: str = "posstab",
+    fs_labels: float = 20.0,
+    fs_zstab: float = 15,
+    L: float = 1024,
+    legend_label_stab: str | None = None,
+    legend_label_frontier: str | None = None,
+    legend_label_posstab: str | None = None,
     fs_legend: float = 15,
     z_stab: int | None = None,
+    t_stab: float | int | None = None,
+    frontier: str | None = None,
+    use_frontier_sites: bool = False,
+    frontier_color: str = "#d1495b",
+    frontier_linewidth: float = 1.35,
+    show_frontier_line: bool = True,
+    show_frontier_text: bool = True,
     save_path: str | Path | None = None,
     figsize: tuple[float, float] = (4.2, 9.0),
     ax=None,
     title: str | None = None,
     fs_title: float = 20,
+    return_partition: bool = False,
 ):
-    """Plot the full 2D network in the topology palette and mark z_stab."""
+    """
+    Plota a rede 2D compacta:
+      - frontier='frontier_y' (ou use_frontier_sites=True): particiona exatamente pelos sítios no
+        limiar da estabilização t = t_stab: z < h_front[x] (laranja) e z >= h_front[x] (roxo),
+        traçando a curva ruidosa y = y_stab(x) nos sítios da fronteira física.
+      - frontier='max_y': particiona em z < max(y_stab) (laranja) e z >= max(y_stab) (roxo),
+        traçando a reta horizontal no valor máximo da altura da fronteira, com captions
+        adaptados para y < max(y_stab), y = max(y_stab) e y >= max(y_stab).
+      - frontier=None (padrão legado se use_frontier_sites=False): particiona horizontalmente
+        em z < z_stab (laranja) e z >= z_stab (roxo), com reta horizontal z = z_stab.
+    """
     import matplotlib.pyplot as plt
     from matplotlib.colors import BoundaryNorm, ListedColormap
+    from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
+
+    _patch_pdf_writer_safe()
+
+    if frontier is not None and frontier not in ("max_y", "frontier_y"):
+        raise ValueError(f"frontier must be 'max_y', 'frontier_y', or None; got {frontier!r}")
+
+    # Determina o modo
+    if frontier is not None:
+        mode = frontier
+    elif use_frontier_sites or (legend_label_frontier is not None):
+        mode = "frontier_y"
+    else:
+        mode = "legacy"
+
+    # Define legendas padrão de acordo com o modo
+    if mode == "frontier_y":
+        if legend_label_stab is None:
+            legend_label_stab = r"$y < y_{\mathrm{stab}}(x)$"
+        if legend_label_frontier is None:
+            legend_label_frontier = r"$y = y_{\mathrm{stab}}(x)$"
+        if legend_label_posstab is None:
+            legend_label_posstab = r"$y \geq y_{\mathrm{stab}}(x)$"
+    elif mode == "max_y":
+        if legend_label_stab is None:
+            legend_label_stab = r"$y < \max(y_{\mathrm{stab}})$"
+        if legend_label_frontier is None:
+            legend_label_frontier = r"$y = \max(y_{\mathrm{stab}})$"
+        if legend_label_posstab is None:
+            legend_label_posstab = r"$y \geq \max(y_{\mathrm{stab}})$"
+    else:
+        if legend_label_stab is None:
+            legend_label_stab = "stab"
+        if legend_label_posstab is None:
+            legend_label_posstab = "posstab"
 
     json_path = Path(json_path)
     with json_path.open("r", encoding="utf-8") as handle:
@@ -2422,35 +2622,66 @@ def plot_growth_test_network(
     params = parse_params_from_path(str(json_path.parent)) or {}
     resolved_L = params.get("L", meta.get("L", L))
     if not resolved_L:
-        # Also accept the compact Networks/L_<value>_... layout.
         match_L = re.search(r"(?:^|[/\\])L_(\d+)(?:_|[/\\])", str(json_path))
         if match_L:
             resolved_L = int(match_L.group(1))
     L = int(resolved_L or 0)
     if L <= 0:
         raise ValueError(f"Could not determine L from {json_path}; pass L explicitly")
-    if z_stab is None:
-        z_stab = meta.get("y_stat", meta.get("growth_test_z_stat_by_color"))
-    if isinstance(z_stab, (list, tuple, np.ndarray)):
-        z_stab = z_stab[0] if len(z_stab) else None
-    if z_stab is None:
-        raise ValueError("y_stab is missing from the sample; pass it explicitly")
-    z_stab = int(z_stab)
+
     if network_path is None:
         network_path = json_path.parent.parent / "network" / (json_path.stem + ".bin")
 
-    x, z = _read_compact_network_2d(network_path, L)
-    if x.size == 0:
-        raise ValueError(f"No occupied sites in compact network: {network_path}")
-    height = int(z.max()) + 1
-    if z_stab < 0 or z_stab >= height:
-        raise ValueError(f"y_stab={z_stab} lies outside network height [0, {height - 1}]")
+    if mode in ("frontier_y", "max_y"):
+        part = get_growth_test_network_partition(
+            json_path,
+            network_path=network_path,
+            z_stab=z_stab,
+            t_stab=t_stab,
+            L=L,
+        )
+        L = part["L"]
+        height = part["height"]
+        z_stab_val = part["z_stab"]
+        h_front = part["h_front"]
+        max_y = int(np.max(h_front))
+        x = part["x"]
+        z = part["z"]
 
-    # Empty cells are cream; occupied cells are orange before z_stab and purple after it.
-    image = np.zeros((height, L), dtype=np.uint8)
-    before = z < z_stab
-    image[z[before], x[before]] = 1
-    image[z[~before], x[~before]] = 2
+        if mode == "frontier_y":
+            before = part["before_mask"]
+            after = part["after_mask"]
+        else:
+            before = z < max_y
+            after = z >= max_y
+
+        image = np.zeros((height, L), dtype=np.uint8)
+        image[z[before], x[before]] = 1
+        image[z[after], x[after]] = 2
+    else:
+        if z_stab is None:
+            z_stab = meta.get("y_stat", meta.get("growth_test_z_stat_by_color"))
+        if isinstance(z_stab, (list, tuple, np.ndarray)):
+            z_stab = z_stab[0] if len(z_stab) else None
+        if z_stab is None:
+            raise ValueError("y_stab is missing from the sample; pass it explicitly")
+        z_stab = int(z_stab)
+        z_stab_val = z_stab
+        max_y = z_stab
+
+        x, z = _read_compact_network_2d(network_path, L)
+        if x.size == 0:
+            raise ValueError(f"No occupied sites in compact network: {network_path}")
+        height = int(z.max()) + 1
+        if z_stab < 0 or z_stab >= height:
+            raise ValueError(f"y_stab={z_stab} lies outside network height [0, {height - 1}]")
+
+        image = np.zeros((height, L), dtype=np.uint8)
+        before = z < z_stab
+        image[z[before], x[before]] = 1
+        image[z[~before], x[~before]] = 2
+        part = None
+
     cmap = ListedColormap(["#fff7ef", "#f28e2b", "#8a5cf6"])
     norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
 
@@ -2458,31 +2689,127 @@ def plot_growth_test_network(
         fig, ax = plt.subplots(figsize=figsize, facecolor="white", constrained_layout=True)
     else:
         fig = ax.figure
+
     ax.set_facecolor("#fff7ef")
-    ax.imshow(image, origin="lower", interpolation="nearest", cmap=cmap, norm=norm,
-              extent=(-0.5, L - 0.5, -0.5, height - 0.5), rasterized=True, aspect="equal")
-    ax.axhline(z_stab, color="#d1495b", linewidth=1.35, zorder=4)
-    ax.text(0.04 * L, z_stab + max(10, 0.006 * height),
-            fr"$y_{{\mathrm{{stab}}}}={z_stab}$", ha="left", va="bottom", color="#000000",
-            fontsize=fs_zstab, bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5})
+    ax.imshow(
+        image,
+        origin="lower",
+        interpolation="none",
+        cmap=cmap,
+        norm=norm,
+        extent=(-0.5, L - 0.5, -0.5, height - 0.5),
+        rasterized=False,
+        aspect="equal",
+    )
+
+    if mode == "frontier_y":
+        if show_frontier_line:
+            x_line = np.arange(L)
+            ax.plot(x_line, h_front, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+
+        if show_frontier_text and z_stab_val is not None:
+            ax.text(
+                0.04 * L,
+                z_stab_val + max(10, 0.006 * height),
+                fr"$y_{{\mathrm{{stab}}}}={z_stab_val}$",
+                ha="left",
+                va="bottom",
+                color="#000000",
+                fontsize=fs_zstab,
+                bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+            )
+
+        legend_handles = [
+            Patch(facecolor="#f28e2b", edgecolor="none", label=legend_label_stab),
+        ]
+        if show_frontier_line and legend_label_frontier:
+            legend_handles.append(
+                Line2D([0], [0], color=frontier_color, linewidth=max(1.8, frontier_linewidth), label=legend_label_frontier)
+            )
+        legend_handles.append(
+            Patch(facecolor="#8a5cf6", edgecolor="none", label=legend_label_posstab)
+        )
+    elif mode == "max_y":
+        if show_frontier_line:
+            ax.axhline(max_y, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+
+        if show_frontier_text:
+            ax.text(
+                0.04 * L,
+                max_y + max(10, 0.006 * height),
+                fr"$\max(y_{{\mathrm{{stab}}}})={max_y}$",
+                ha="left",
+                va="bottom",
+                color="#000000",
+                fontsize=fs_zstab,
+                bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+            )
+
+        legend_handles = [
+            Patch(facecolor="#f28e2b", edgecolor="none", label=legend_label_stab),
+        ]
+        if show_frontier_line and legend_label_frontier:
+            legend_handles.append(
+                Line2D([0], [0], color=frontier_color, linewidth=max(1.8, frontier_linewidth), label=legend_label_frontier)
+            )
+        legend_handles.append(
+            Patch(facecolor="#8a5cf6", edgecolor="none", label=legend_label_posstab)
+        )
+    else:  # legacy mode
+        if show_frontier_line:
+            ax.axhline(z_stab, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+
+        if show_frontier_text:
+            ax.text(
+                0.04 * L,
+                z_stab + max(10, 0.006 * height),
+                fr"$y_{{\mathrm{{stab}}}}={z_stab}$",
+                ha="left",
+                va="bottom",
+                color="#000000",
+                fontsize=fs_zstab,
+                bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+            )
+
+        legend_handles = [
+            Patch(facecolor="#f28e2b", edgecolor="none", label=f"{legend_label_stab}"),
+        ]
+        if show_frontier_line and legend_label_frontier:
+            legend_handles.append(
+                Line2D([0], [0], color=frontier_color, linewidth=max(1.8, frontier_linewidth), label=legend_label_frontier)
+            )
+        legend_handles.append(
+            Patch(facecolor="#8a5cf6", edgecolor="none", label=f"{legend_label_posstab}"),
+        )
+
     ax.set_xlim(-0.5, L - 0.5)
     ax.set_ylim(-0.5, height - 0.5)
-    ax.set_xlabel(f"{x_label}", fontsize=fs_labels , color="#263238")
-    ax.set_ylabel(f"{y_label}", fontsize=fs_labels , color="#263238")
+    ax.set_xlabel(f"{x_label}", fontsize=fs_labels, color="#263238")
+    ax.set_ylabel(f"{y_label}", fontsize=fs_labels, color="#263238")
     if title is not None:
         ax.set_title(title, fontsize=fs_title, color="#263238", pad=8)
     for spine in ax.spines.values():
         spine.set_color("#263238")
         spine.set_linewidth(0.9)
-    ax.legend(handles=[
-        Patch(facecolor="#f28e2b", edgecolor="none", label=f"{legend_label_stab}"),
-        Patch(facecolor="#8a5cf6", edgecolor="none", label=f"{legend_label_posstab}"),
-    ], loc="upper right", frameon=True, facecolor="white", edgecolor="none", framealpha=0.88, fontsize=fs_legend)
+
+    ax.legend(
+        handles=legend_handles,
+        loc="upper right",
+        frameon=True,
+        facecolor="white",
+        edgecolor="none",
+        framealpha=0.88,
+        fontsize=fs_legend,
+    )
     ax.set_xticks(np.arange(0, L + 1, 250))
+
     if save_path is not None:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(save_path, dpi=400, bbox_inches="tight", facecolor="white")
+        fig.savefig(save_path, bbox_inches="tight", facecolor="white")
+
+    if return_partition:
+        return fig, ax, part
     return fig, ax
 
 
