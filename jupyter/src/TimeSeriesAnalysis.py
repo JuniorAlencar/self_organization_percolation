@@ -2601,14 +2601,14 @@ def plot_growth_test_network(
         if legend_label_frontier is None:
             legend_label_frontier = r"$y = y_{\mathrm{stab}}(x)$"
         if legend_label_posstab is None:
-            legend_label_posstab = r"$y \geq y_{\mathrm{stab}}(x)$"
+            legend_label_posstab = r"$y > y_{\mathrm{stab}}(x)$"
     elif mode == "max_y":
         if legend_label_stab is None:
             legend_label_stab = r"$y < \max(y_{\mathrm{stab}})$"
         if legend_label_frontier is None:
             legend_label_frontier = r"$y = \max(y_{\mathrm{stab}})$"
         if legend_label_posstab is None:
-            legend_label_posstab = r"$y \geq \max(y_{\mathrm{stab}})$"
+            legend_label_posstab = r"$y > \max(y_{\mathrm{stab}})$"
     else:
         if legend_label_stab is None:
             legend_label_stab = "stab"
@@ -2737,7 +2737,7 @@ def plot_growth_test_network(
             ax.text(
                 0.04 * L,
                 max_y + max(10, 0.006 * height),
-                fr"$\max(y_{{\mathrm{{stab}}}})={max_y}$",
+                fr"$\max\left(y_{{\mathrm{{stab}}}}\right)={max_y}$",
                 ha="left",
                 va="bottom",
                 color="#000000",
@@ -2786,8 +2786,8 @@ def plot_growth_test_network(
     ax.set_ylim(-0.5, height - 0.5)
     ax.set_xlabel(f"{x_label}", fontsize=fs_labels, color="#263238")
     ax.set_ylabel(f"{y_label}", fontsize=fs_labels, color="#263238")
-    if title is not None:
-        ax.set_title(title, fontsize=fs_title, color="#263238", pad=8)
+    # if title is not None:
+    #     ax.set_title(title, fontsize=fs_title, color="#263238", pad=8)
     for spine in ax.spines.values():
         spine.set_color("#263238")
         spine.set_linewidth(0.9)
