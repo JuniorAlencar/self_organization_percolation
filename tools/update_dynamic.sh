@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_SOP_ROOT="${SCRIPT_DIR}/../SOP_data"
 SOP_ROOT="${SOP_ROOT:-$DEFAULT_SOP_ROOT}"
+PUBLISHED_DIR="${PUBLISHED_DIR:-published_dynamic}"
+MANIFESTS_DIR="${MANIFESTS_DIR:-manifests_dynamic}"
 if [[ -z "${DYNAMIC_JOBS:-}" ]]; then
   DETECTED_CORES="$(nproc 2>/dev/null || echo 4)"
   if (( DETECTED_CORES > 5 )); then
@@ -96,6 +98,21 @@ while [[ $# -gt 0 ]]; do
       HEIGHT_FORCE_REFRESH=1
       shift
       ;;
+    --sop-root)
+      (($# >= 2)) || { echo "[ERROR] --sop-root requires a value" >&2; exit 2; }
+      SOP_ROOT="$2"
+      shift 2
+      ;;
+    --published-dir)
+      (($# >= 2)) || { echo "[ERROR] --published-dir requires a value" >&2; exit 2; }
+      PUBLISHED_DIR="$2"
+      shift 2
+      ;;
+    --manifests-dir)
+      (($# >= 2)) || { echo "[ERROR] --manifests-dir requires a value" >&2; exit 2; }
+      MANIFESTS_DIR="$2"
+      shift 2
+      ;;
     -h|--help)
       echo "Usage: $0 [options] [process_dynamic_growth options]"
       echo ""
@@ -106,6 +123,9 @@ while [[ $# -gt 0 ]]; do
       echo "  3) process_height_ensemble_series.py  (.yts -> height ensemble timeseries)"
       echo ""
       echo "Pipeline control:"
+      echo "  --sop-root PATH         SOP data root directory (default: SOP_data)"
+      echo "  --published-dir DIR     Published output folder relative to sop-root (default: published_dynamic)"
+      echo "  --manifests-dir DIR     Manifests directory relative to sop-root (default: manifests_dynamic)"
       echo "  --raw-dir DIR           Raw data directory (default: raw_growth_test_dynamic tests_data)"
       echo "  --raw-dirs DIRS...      One or more raw data directories"
       echo "  --skip-dynamic          Skip dynamic growth JSON processing"
@@ -117,7 +137,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --only-height           Run only height processing"
       echo "  --height-min-count N    Min sample count threshold for ensemble (default: 1)"
       echo "  --height-max-samples N  Cap samples processed per parameter group"
-      echo "  --refresh-height         Force scanning/rebuilding height outputs"
+      echo "  --refresh-height        Force scanning/rebuilding height outputs"
       echo "  --delete-processed-raw-json"
       echo "                         Delete processed raw .json samples after publishing; keeps .yts files"
       echo ""
@@ -130,6 +150,19 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${SOP_ROOT}" = /* ]]; then
+  SOP_ROOT="$(cd "${SOP_ROOT}" 2>/dev/null && pwd || echo "${SOP_ROOT}")"
+else
+  SOP_ROOT="$(cd "${SOP_ROOT}" 2>/dev/null && pwd || realpath "${SOP_ROOT}" 2>/dev/null || echo "${SOP_ROOT}")"
+fi
+
+case "$(basename "${SOP_ROOT}")" in
+  published_dynamic|published_counts|raw_fractions|raw_growth_test_dynamic|tests_data|processed_height_timeseries)
+    echo "[ERROR] SOP_ROOT cannot be a subdirectory of SOP_data (${SOP_ROOT}). It must point to SOP_data." >&2
+    exit 1
+    ;;
+esac
 
 if (( RAW_DIRS_SPECIFIED > 0 )); then
   RAW_DIRS_ARRAY=()
@@ -153,11 +186,16 @@ fi
 mkdir -p \
   "${SOP_ROOT}/raw_growth_test_dynamic" \
   "${SOP_ROOT}/tests_data" \
-  "${SOP_ROOT}/published_dynamic" \
-  "${SOP_ROOT}/manifests_dynamic" \
+  "${SOP_ROOT}/${PUBLISHED_DIR}" \
+  "${SOP_ROOT}/${MANIFESTS_DIR}" \
   "${SOP_ROOT}/processed_height_timeseries" \
   "${SOP_ROOT}/logs" \
   "${SOP_ROOT}/tmp"
+
+# Safety guard: ensure no empty nested published directory exists
+if [[ -d "${SOP_ROOT}/${PUBLISHED_DIR}/${PUBLISHED_DIR}" ]]; then
+  rmdir "${SOP_ROOT}/${PUBLISHED_DIR}/${PUBLISHED_DIR}" 2>/dev/null || true
+fi
 
 EXTRA_ARGS=(
   --raw-dirs "${RAW_DIRS_ARRAY[@]}"
@@ -232,7 +270,8 @@ if [[ "${SKIP_DYNAMIC}" == "0" || "${SKIP_DYNAMIC}" == "false" ]]; then
   echo "[update_dynamic] [1/3] Processing dynamic growth samples..."
   python3 "${SCRIPT_DIR}/process_dynamic_growth.py" \
     --sop-root "${SOP_ROOT}" \
-    --manifests-dir "manifests_dynamic" \
+    --published-dir "${PUBLISHED_DIR}" \
+    --manifests-dir "${MANIFESTS_DIR}" \
     "${EXTRA_ARGS[@]}" \
     "${PASSTHROUGH_ARGS[@]}"
 fi
@@ -245,7 +284,11 @@ fi
 if [[ "${SKIP_HEIGHT_SAMPLES}" == "0" || "${SKIP_HEIGHT_SAMPLES}" == "false" ]]; then
   echo "[update_dynamic] [2/3] Processing height timeseries (.yts -> sample measures)..."
   for raw_dir_name in "${RAW_DIRS_ARRAY[@]}"; do
-    raw_path="${SOP_ROOT}/${raw_dir_name}"
+    if [[ "${raw_dir_name}" = /* ]]; then
+      raw_path="${raw_dir_name}"
+    else
+      raw_path="${SOP_ROOT}/${raw_dir_name}"
+    fi
     [[ -d "${raw_path}" ]] || continue
     python3 "${SCRIPT_DIR}/process_height_timeseries.py" \
       --root "${raw_path}" \
@@ -257,7 +300,11 @@ fi
 if [[ "${SKIP_HEIGHT_ENSEMBLE}" == "0" || "${SKIP_HEIGHT_ENSEMBLE}" == "false" ]]; then
   echo "[update_dynamic] [3/3] Processing height ensemble timeseries (.yts -> ensemble averages)..."
   for raw_dir_name in "${RAW_DIRS_ARRAY[@]}"; do
-    raw_path="${SOP_ROOT}/${raw_dir_name}"
+    if [[ "${raw_dir_name}" = /* ]]; then
+      raw_path="${raw_dir_name}"
+    else
+      raw_path="${SOP_ROOT}/${raw_dir_name}"
+    fi
     [[ -d "${raw_path}" ]] || continue
     python3 "${SCRIPT_DIR}/process_height_ensemble_series.py" \
       --root "${raw_path}" \
