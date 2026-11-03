@@ -9,7 +9,7 @@ MANIFESTS_DIR="${MANIFESTS_DIR:-manifests_dynamic}"
 if [[ -z "${DYNAMIC_JOBS:-}" ]]; then
   DETECTED_CORES="$(nproc 2>/dev/null || echo 4)"
   if (( DETECTED_CORES > 5 )); then
-    DYNAMIC_JOBS=4
+    DYNAMIC_JOBS=10
   elif (( DETECTED_CORES > 1 )); then
     DYNAMIC_JOBS=$((DETECTED_CORES - 1))
   else
