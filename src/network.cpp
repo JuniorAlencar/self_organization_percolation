@@ -21,6 +21,8 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
+#include <climits>
 
 namespace {
 
@@ -495,19 +497,28 @@ inline std::uint64_t dynamic_bond_key(const int direction, const int lower_idx)
 struct DynamicTestedBondBitmap {
     std::array<std::vector<std::uint64_t>, 3> words_by_direction;
 
-    bool mark_if_new(const std::uint64_t key)
+    void ensure_capacity(const std::size_t total_sites)
+    {
+        const std::size_t needed = (total_sites + 63u) >> 6;
+        for (auto& words : words_by_direction) {
+            if (needed > words.size()) {
+                if (needed > words.capacity()) {
+                    words.reserve(needed + (needed >> 2));
+                }
+                words.resize(needed, 0ull);
+            }
+        }
+    }
+
+    inline bool mark_if_new(const std::uint64_t key)
     {
         const int direction = static_cast<int>(key >> 62);
-        if (direction < 0 || direction >= 3) {
-            throw std::runtime_error("DynamicTestedBondBitmap: invalid direction");
-        }
-
         const std::uint64_t idx = key & ((1ull << 62) - 1ull);
         const std::size_t word_idx = static_cast<std::size_t>(idx >> 6);
         const std::uint64_t mask = 1ull << (idx & 63ull);
 
         auto& words = words_by_direction[static_cast<std::size_t>(direction)];
-        if (word_idx >= words.size()) {
+        if (__builtin_expect(word_idx >= words.size(), 0)) {
             words.resize(word_idx + 1u, 0ull);
         }
 
@@ -861,12 +872,82 @@ inline double topology_uniform01(std::mt19937_64& rng)
     return std::generate_canonical<double, 53>(rng);
 }
 
+struct FastSlotMap {
+    struct Entry {
+        int key = -1;
+        int val = -1;
+    };
+    std::vector<Entry> table;
+    std::vector<uint32_t> touched_slots;
+    uint32_t mask = 0;
+
+    void ensure_capacity(const std::size_t expected) {
+        std::size_t cap = 256;
+        while (cap < expected * 2) cap <<= 1;
+        if (cap > table.size()) {
+            table.assign(cap, {-1, -1});
+            mask = static_cast<uint32_t>(cap - 1);
+            touched_slots.reserve(expected);
+        }
+    }
+
+    inline int find(const int key) const {
+        if (mask == 0) return -1;
+        uint32_t h = (static_cast<uint32_t>(key) * 0x9E3779B9u) & mask;
+        while (table[h].key != -1) {
+            if (table[h].key == key) return table[h].val;
+            h = (h + 1) & mask;
+        }
+        return -1;
+    }
+
+    inline void insert(const int key, const int val) {
+        if (mask == 0 || (touched_slots.size() * 2 >= mask)) {
+            rehash(table.empty() ? 512 : table.size() * 2);
+        }
+        uint32_t h = (static_cast<uint32_t>(key) * 0x9E3779B9u) & mask;
+        while (table[h].key != -1 && table[h].key != key) {
+            h = (h + 1) & mask;
+        }
+        if (table[h].key == -1) {
+            table[h].key = key;
+            touched_slots.push_back(h);
+        }
+        table[h].val = val;
+    }
+
+    void rehash(const std::size_t new_cap) {
+        std::vector<Entry> old = std::move(table);
+        std::vector<uint32_t> old_touched = std::move(touched_slots);
+        table.assign(new_cap, {-1, -1});
+        mask = static_cast<uint32_t>(new_cap - 1);
+        touched_slots.reserve(old_touched.size() * 2);
+        for (const uint32_t slot : old_touched) {
+            if (old[slot].key != -1) {
+                insert(old[slot].key, old[slot].val);
+            }
+        }
+    }
+
+    inline void clear() {
+        for (const uint32_t h : touched_slots) {
+            table[h].key = -1;
+            table[h].val = -1;
+        }
+        touched_slots.clear();
+    }
+};
+
 struct SparseFrontCandidates {
-    static constexpr int max_candidates_per_target = 16;
+    // A site on the regular lattice has at most one candidate per incident
+    // bond: four in 2D and six in 3D.  Keeping room for sixteen candidates
+    // used considerably more memory at the growth front without admitting a
+    // state the model can produce.
+    static constexpr int max_candidates_per_target = 6;
 
     std::vector<int> touched_targets;
     std::vector<int> slot_of_target;
-    std::unordered_map<int, int> sparse_slot_of_target;
+    FastSlotMap sparse_slot_of_target;
     std::vector<std::array<std::uint32_t, max_candidates_per_target>> activators;
     std::vector<std::array<std::uint8_t, max_candidates_per_target>> colors;
     std::vector<std::array<std::uint64_t, max_candidates_per_target>> edge_bits;
@@ -895,7 +976,7 @@ struct SparseFrontCandidates {
         edge_bits.reserve(expected_targets);
         counts.reserve(expected_targets);
         if (sparse_lookup) {
-            sparse_slot_of_target.reserve(expected_targets);
+            sparse_slot_of_target.ensure_capacity(expected_targets);
         }
     }
 
@@ -917,10 +998,7 @@ struct SparseFrontCandidates {
     void add(const int target, const FrontCandidate candidate) {
         int slot = -1;
         if (sparse_lookup) {
-            auto it = sparse_slot_of_target.find(target);
-            if (it != sparse_slot_of_target.end()) {
-                slot = it->second;
-            }
+            slot = sparse_slot_of_target.find(target);
         } else {
             slot = slot_of_target[static_cast<std::size_t>(target)];
         }
@@ -928,7 +1006,7 @@ struct SparseFrontCandidates {
         if (slot < 0) {
             slot = static_cast<int>(counts.size());
             if (sparse_lookup) {
-                sparse_slot_of_target.emplace(target, slot);
+                sparse_slot_of_target.insert(target, slot);
             } else {
                 slot_of_target[static_cast<std::size_t>(target)] = slot;
             }
@@ -4930,10 +5008,6 @@ NetworkPattern network::create_network(
         lenght_network,
         stop_config.height_multiplier,
         stop_config.height_extra_layers);
-    const std::vector<int> shape = (dim == 2)
-        ? std::vector<int>{grid.SX, grid.SY}
-        : std::vector<int>{grid.SX, grid.SY, grid.SZ};
-
     const bool is_node = (type_percolation == "node");
     const long long base_size = compute_base_size(grid);
     const double norm_factor = static_cast<double>(base_size);
@@ -4961,7 +5035,13 @@ NetworkPattern network::create_network(
         site_state[static_cast<std::size_t>(idx)] = static_cast<std::int8_t>(value);
     };
 
-    const bool needs_activation_time = true;
+    const bool save_lateral_observables = stop_config.save_lateral_observables;
+
+    // Activation times are only required by consumers that retain/revisit the
+    // complete network.  The time-series-only path never reads them: keeping
+    // an uint32_t for every visited site was its largest avoidable allocation.
+    const bool needs_activation_time =
+        save_compact || calculate_detailed_properties || save_lateral_observables;
 
     // activation times: UINT32_MAX means never activated
     std::vector<uint32_t> activation_time;
@@ -4970,7 +5050,6 @@ NetworkPattern network::create_network(
             static_cast<std::size_t>(grid.total_size),
             std::numeric_limits<uint32_t>::max());
     }
-    const bool save_lateral_observables = stop_config.save_lateral_observables;
     std::vector<int> activated_indices_for_lateral;
     if (save_lateral_observables) {
         activated_indices_for_lateral.reserve(static_cast<std::size_t>(base_size));
@@ -5351,6 +5430,7 @@ NetworkPattern network::create_network(
     std::unique_ptr<TestedBondBitmap> tested_bonds_bitmap;
     DynamicTestedBondBitmap tested_bonds_dynamic;
     if (stop_config.dynamic_height) {
+        tested_bonds_dynamic.ensure_capacity(static_cast<std::size_t>(grid.total_size));
     } else {
         tested_bonds_bitmap = std::make_unique<TestedBondBitmap>(grid);
     }
@@ -5404,10 +5484,21 @@ NetworkPattern network::create_network(
         const int new_total = grid.total_size;
         if (new_total <= old_total) return;
 
+        if (static_cast<std::size_t>(new_total) > site_state.capacity()) {
+            site_state.reserve(static_cast<std::size_t>(new_total) +
+                               (static_cast<std::size_t>(new_total) >> 2));
+        }
         site_state.resize(
             static_cast<std::size_t>(new_total),
             static_cast<std::int8_t>(-1));
+
+        tested_bonds_dynamic.ensure_capacity(static_cast<std::size_t>(new_total));
+
         if (needs_activation_time) {
+            if (static_cast<std::size_t>(new_total) > activation_time.capacity()) {
+                activation_time.reserve(static_cast<std::size_t>(new_total) +
+                                       (static_cast<std::size_t>(new_total) >> 2));
+            }
             activation_time.resize(
                 static_cast<std::size_t>(new_total),
                 std::numeric_limits<uint32_t>::max());
@@ -5595,15 +5686,9 @@ NetworkPattern network::create_network(
                     }
 
                     if (vv > 0) {
-                        // Purely topological bond: active frontier site to an
-                        // already-active neighbor of the same species. This
-                        // never changes the state, N(t), f(t), frontier, parent
-                        // or activation_time. It also uses topology_rng, not the
-                        // dynamical rng, so p(t) is not indirectly changed.
+                        if (!calculate_detailed_properties) continue;
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
-
-                        if (!calculate_detailed_properties) continue;
                         if (!mark_tested_bond(edge_bit)) continue;
 
                         if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
@@ -6405,7 +6490,12 @@ NetworkPattern network::create_network(
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
 
-    NetworkPattern net(dim, shape, num_colors, rho, save_compact);
+    // grid may have grown beyond the initial shape in dynamic-height runs.
+    // Allocate the returned pattern with its final extent before copying it.
+    const std::vector<int> final_shape = (dim == 2)
+        ? std::vector<int>{grid.SX, grid.SY}
+        : std::vector<int>{grid.SX, grid.SY, grid.SZ};
+    NetworkPattern net(dim, final_shape, num_colors, rho, save_compact);
     net.seed = net_seed;
     if (save_compact) {
         for (int idx = 0; idx < grid.total_size; ++idx) {

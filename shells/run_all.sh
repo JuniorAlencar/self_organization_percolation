@@ -498,11 +498,52 @@ run_without_auto_ram_jobs() {
 
 trap cleanup EXIT
 
+SCRIPT_PATTERNS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -j|--jobs|--max-jobs)
+      (($# >= 2)) || { echo "[ERROR] $1 requires a value" >&2; exit 2; }
+      RAM_MAX_JOBS="$2"
+      shift 2
+      ;;
+    --min-jobs)
+      (($# >= 2)) || { echo "[ERROR] $1 requires a value" >&2; exit 2; }
+      RAM_MIN_JOBS="$2"
+      shift 2
+      ;;
+    --no-auto-ram)
+      AUTO_RAM_JOBS=0
+      shift
+      ;;
+    -h|--help)
+      cat <<'HELP'
+Usage: ./run_all.sh [options] [script_patterns...]
+
+Options:
+  -j N, --jobs N, --max-jobs N   Limit maximum parallel jobs/threads (default: all cores)
+  --min-jobs N                   Set minimum parallel jobs (default: 1)
+  --no-auto-ram                  Disable RAM auto-tuning probe
+  -h, --help                     Show this help message
+
+Examples:
+  ./run_all.sh -j 4
+  ./run_all.sh -j 4 L_16384*.sh
+  RAM_MAX_JOBS=4 ./run_all.sh
+HELP
+      exit 0
+      ;;
+    *)
+      SCRIPT_PATTERNS+=("$1")
+      shift
+      ;;
+  esac
+done
+
 log "run_all.sh started"
 log "Working directory: $(pwd)"
 log "Script path: $self"
-if [[ "$#" -gt 0 ]]; then
-  log "Script filters: $*"
+if [[ "${#SCRIPT_PATTERNS[@]}" -gt 0 ]]; then
+  log "Script filters: ${SCRIPT_PATTERNS[*]}"
 fi
 
 apply_cpu_limit
@@ -514,22 +555,24 @@ if [[ "$AUTO_RAM_JOBS" -eq 1 ]]; then
   else
     mkdir -p "$RAM_LOG_DIR"
     setup_parallel_wrapper
-    log "RAM auto-tuning enabled."
+    log "RAM auto-tuning enabled (RAM_MAX_JOBS=$RAM_MAX_JOBS, RAM_MIN_JOBS=$RAM_MIN_JOBS)."
   fi
 else
   log "RAM auto-tuning disabled."
 fi
 
 log "Scanning .sh files in current directory..."
-if [[ "$#" -gt 0 ]]; then
+if [[ "${#SCRIPT_PATTERNS[@]}" -gt 0 ]]; then
   scripts=()
-  for pattern in "$@"; do
+  for pattern in "${SCRIPT_PATTERNS[@]}"; do
     for candidate in $pattern; do
       [[ -f "$candidate" ]] || continue
       scripts+=("$candidate")
     done
   done
-  mapfile -t scripts < <(printf '%s\n' "${scripts[@]}" | sort -Vu)
+  if [[ "${#scripts[@]}" -gt 0 ]]; then
+    mapfile -t scripts < <(printf '%s\n' "${scripts[@]}" | sort -Vu)
+  fi
 else
   mapfile -t scripts < <(printf '%s\n' ./*.sh | sort -V)
 fi
