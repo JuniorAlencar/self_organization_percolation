@@ -2556,6 +2556,7 @@ def plot_growth_test_network(
     use_frontier_sites: bool = False,
     frontier_color: str = "#d1495b",
     frontier_linewidth: float = 1.35,
+    tick_width: float | None = None,
     show_frontier_line: bool = True,
     show_frontier_text: bool = True,
     save_path: str | Path | None = None,
@@ -2788,9 +2789,37 @@ def plot_growth_test_network(
     ax.set_ylabel(f"{y_label}", fontsize=fs_labels, color="#263238")
     # if title is not None:
     #     ax.set_title(title, fontsize=fs_title, color="#263238", pad=8)
+
+    # Sincroniza a espessura dos ticks com o contorno da caixa (spines)
+    current_tick_width = None
+    if tick_width is not None:
+        current_tick_width = float(tick_width)
+    elif hasattr(ax, "xaxis") and hasattr(ax.xaxis, "_major_tick_kw") and "width" in ax.xaxis._major_tick_kw:
+        current_tick_width = float(ax.xaxis._major_tick_kw["width"])
+
+    if current_tick_width is not None:
+        spine_width = current_tick_width
+        ax.tick_params(axis="both", which="both", width=current_tick_width)
+    else:
+        spine_width = 0.9
+
     for spine in ax.spines.values():
         spine.set_color("#263238")
-        spine.set_linewidth(0.9)
+        spine.set_linewidth(spine_width)
+
+    # Garante que qualquer chamada subsequente a ax.tick_params(..., width=...) também atualize as spines
+    orig_tick_params = ax.tick_params
+
+    def _synced_tick_params(*args, **kwargs):
+        if "width" in kwargs and kwargs["width"] is not None:
+            w = float(kwargs["width"])
+            which = kwargs.get("which", "major")
+            if which in ("major", "both"):
+                for s in ax.spines.values():
+                    s.set_linewidth(w)
+        return orig_tick_params(*args, **kwargs)
+
+    ax.tick_params = _synced_tick_params
 
     ax.legend(
         handles=legend_handles,

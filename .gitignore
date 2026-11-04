@@ -12,6 +12,7 @@
 /network
 /results
 /article
+/FIX
 .agents
 .pyenv
 .codex
@@ -28,3 +29,5 @@ shells/after/
 /shells/dps
 /Network
 animation_*
+.run_all_ram_logs
+.pytest_cache
