@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -3428,6 +3428,60 @@ def process_group(
     return out_path, all_rows, all_color_rows
 
 
+def _process_group_worker(
+    task: tuple[
+        Path,
+        list[Path],
+        Path,
+        Path,
+        bool,
+        int,
+        str,
+        bool,
+        bool,
+        str,
+        bool,
+        bool,
+        bool,
+        bool,
+    ],
+) -> tuple[Path, list[Path], Any]:
+    (
+        rel_group,
+        group_dirs,
+        published_root,
+        manifests_root,
+        clear,
+        jobs,
+        fingerprint_mode,
+        detect_replaced_files,
+        pretty_json,
+        series_mode,
+        collect_rows,
+        migrate_published,
+        return_changed,
+        delete_processed_raw_json,
+    ) = task
+    result = process_group(
+        rel_group,
+        group_dirs,
+        published_root=published_root,
+        manifests_root=manifests_root,
+        clear=clear,
+        jobs=jobs,
+        fingerprint_mode=fingerprint_mode,
+        detect_replaced_files=detect_replaced_files,
+        pretty_json=pretty_json,
+        series_mode=series_mode,
+        collect_rows=collect_rows,
+        migrate_published=migrate_published,
+        skip_unchanged_rows=False,
+        return_changed=return_changed,
+        delete_processed_raw_json=delete_processed_raw_json,
+    )
+    return rel_group, group_dirs, result
+
+
 def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
     ensure_dir(output_path.parent)
     rows = [
@@ -3539,7 +3593,7 @@ def compress_published_only(
     return dynamic_converted, skipped
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Process raw_growth_test_dynamic into published_dynamic and all_data_dynamic.dat."
     )
@@ -3610,7 +3664,7 @@ def main() -> int:
         "--jobs",
         type=int,
         default=max(1, min(8, (os.cpu_count() or 2) - 1)),
-        help="Number of worker processes used to parse new JSON samples. Use 1 to disable multiprocessing.",
+        help="Number of worker processes used to parse new JSON samples and process groups in parallel. Use 1 to disable multiprocessing.",
     )
     parser.add_argument(
         "--fingerprint-mode",
@@ -3658,7 +3712,7 @@ def main() -> int:
         default=True,
         help="Add feedback_control_rule='relative' to legacy published bundles once.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     sop_root = Path(args.sop_root).expanduser().resolve()
     jobs = max(1, int(args.jobs))
@@ -3730,25 +3784,10 @@ def main() -> int:
     changed_all_data_groups: set[tuple[Any, ...]] = set()
     changed_all_colors_groups: set[tuple[Any, ...]] = set()
     processed_bundle_paths: set[Path] = set()
-    # First, ensure all raw data groups are processed and published bundles are up-to-date.
-    for rel_group, group_dirs in grouped_data_dirs.items():
-        result = process_group(
-            rel_group,
-            group_dirs,
-            published_root=published_root,
-            manifests_root=manifests_root,
-            clear=args.clear,
-            jobs=jobs,
-            fingerprint_mode=args.fingerprint_mode,
-            detect_replaced_files=args.detect_replaced_files,
-            pretty_json=args.pretty_json,
-            series_mode=args.series_mode,
-            collect_rows=args.write_all_data_outputs,
-            migrate_published=args.migrate_published,
-            skip_unchanged_rows=False,
-            return_changed=incremental_all_data,
-            delete_processed_raw_json=args.delete_processed_raw_json,
-        )
+    def record_group_result(
+        rel_group: Path, group_dirs: list[Path], result: Any
+    ) -> None:
+        nonlocal all_rows, all_color_rows, changed_all_data_groups, changed_all_colors_groups, processed_bundle_paths
         if incremental_all_data:
             out_path, rows, color_rows, group_changed = result
         else:
@@ -3786,6 +3825,58 @@ def main() -> int:
                             for rule in ("relative", "linear")
                         )
         print(f"[published] ensured {out_path}")
+
+    # Process all raw data groups and ensure published bundles are up-to-date.
+    if jobs <= 1 or len(grouped_data_dirs) <= 1:
+        for rel_group, group_dirs in grouped_data_dirs.items():
+            result = process_group(
+                rel_group,
+                group_dirs,
+                published_root=published_root,
+                manifests_root=manifests_root,
+                clear=args.clear,
+                jobs=jobs,
+                fingerprint_mode=args.fingerprint_mode,
+                detect_replaced_files=args.detect_replaced_files,
+                pretty_json=args.pretty_json,
+                series_mode=args.series_mode,
+                collect_rows=args.write_all_data_outputs,
+                migrate_published=args.migrate_published,
+                skip_unchanged_rows=False,
+                return_changed=incremental_all_data,
+                delete_processed_raw_json=args.delete_processed_raw_json,
+            )
+            record_group_result(rel_group, group_dirs, result)
+    else:
+        workers = min(jobs, len(grouped_data_dirs))
+        print(
+            f"[dynamic] processing {len(grouped_data_dirs)} groups with "
+            f"{workers} worker processes"
+        )
+        tasks = [
+            (
+                rel_group,
+                group_dirs,
+                published_root,
+                manifests_root,
+                args.clear,
+                1,
+                args.fingerprint_mode,
+                args.detect_replaced_files,
+                args.pretty_json,
+                args.series_mode,
+                args.write_all_data_outputs,
+                args.migrate_published,
+                incremental_all_data,
+                args.delete_processed_raw_json,
+            )
+            for rel_group, group_dirs in grouped_data_dirs.items()
+        ]
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_process_group_worker, task) for task in tasks]
+            for future in as_completed(futures):
+                rel_group, group_dirs, result = future.result()
+                record_group_result(rel_group, group_dirs, result)
 
     if args.write_all_data_outputs:
         if incremental_all_data:

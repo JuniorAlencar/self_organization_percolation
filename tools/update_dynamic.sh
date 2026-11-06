@@ -43,6 +43,11 @@ USER_RAW_DIRS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -j|--jobs)
+      (($# >= 2)) || { echo "[ERROR] --jobs requires a value" >&2; exit 2; }
+      DYNAMIC_JOBS="$2"
+      shift 2
+      ;;
     --raw-dir)
       RAW_DIRS_SPECIFIED=1
       USER_RAW_DIRS+=("$2")
@@ -128,6 +133,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --manifests-dir DIR     Manifests directory relative to sop-root (default: manifests_dynamic)"
       echo "  --raw-dir DIR           Raw data directory (default: raw_growth_test_dynamic tests_data)"
       echo "  --raw-dirs DIRS...      One or more raw data directories"
+      echo "  -j, --jobs N            Number of worker processes for dynamic processing (default: auto, up to 10)"
       echo "  --skip-dynamic          Skip dynamic growth JSON processing"
       echo "  --skip-height           Skip both height timeseries steps (default)"
       echo "  --with-height           Enable height processing alongside dynamic JSON"
@@ -150,6 +156,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+[[ "${DYNAMIC_JOBS}" =~ ^[1-9][0-9]*$ ]] || {
+  echo "[ERROR] jobs must be a positive integer" >&2; exit 2;
+}
 
 if [[ "${SOP_ROOT}" = /* ]]; then
   SOP_ROOT="$(cd "${SOP_ROOT}" 2>/dev/null && pwd || echo "${SOP_ROOT}")"
