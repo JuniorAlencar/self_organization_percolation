@@ -1106,5 +1106,116 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(stabilized_counts, [1.0, 1.0])
             self.assertEqual(len(rows), 2)
 
+    def test_process_group_worker_and_multiprocessing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root = root / "SOP_data" / "raw_growth_test_dynamic"
+            published_root = root / "SOP_data" / "published_dynamic"
+            manifests_root = root / "SOP_data" / "manifests_dynamic"
+
+            group1_dir = (
+                raw_root
+                / "S1_percolation"
+                / "num_colors_2"
+                / "dim_2"
+                / "L_8"
+                / "fT_constant"
+                / "fT_0.3"
+                / "c_0.2"
+                / "rho_0.2"
+                / "data"
+            )
+            group2_dir = (
+                raw_root
+                / "S1_percolation"
+                / "num_colors_2"
+                / "dim_2"
+                / "L_16"
+                / "fT_constant"
+                / "fT_0.3"
+                / "c_0.2"
+                / "rho_0.2"
+                / "data"
+            )
+            group1_dir.mkdir(parents=True, exist_ok=True)
+            group2_dir.mkdir(parents=True, exist_ok=True)
+
+            self._write_sample(group1_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            self._write_sample(group2_dir, "sample_b_P0_0.7_p0_0.2.json", [0.3, 0.5, 0.7])
+
+            argv = [
+                "--sop-root", str(root / "SOP_data"),
+                "--raw-dirs", "raw_growth_test_dynamic",
+                "-j", "2",
+            ]
+            exit_code = PROCESS_DYNAMIC_GROWTH.main(argv)
+            self.assertEqual(exit_code, 0)
+
+            g1_rel = Path("S1_percolation/num_colors_2/dim_2/L_8/fT_constant/fT_0.3/c_0.2/rho_0.2")
+            g2_rel = Path("S1_percolation/num_colors_2/dim_2/L_16/fT_constant/fT_0.3/c_0.2/rho_0.2")
+
+            bundle1 = PROCESS_DYNAMIC_GROWTH.existing_dynamic_bundle_path(published_root / g1_rel)
+            bundle2 = PROCESS_DYNAMIC_GROWTH.existing_dynamic_bundle_path(published_root / g2_rel)
+
+            self.assertIsNotNone(bundle1)
+            self.assertIsNotNone(bundle2)
+            self.assertTrue(bundle1.exists())
+            self.assertTrue(bundle2.exists())
+
+            all_data = root / "SOP_data" / "all_data_dynamic.dat"
+            self.assertTrue(all_data.exists())
+            lines = all_data.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 3)  # header + 2 groups
+
+    def test_process_group_worker_and_multiprocessing_serial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root = root / "SOP_data" / "raw_growth_test_dynamic"
+            published_root = root / "SOP_data" / "published_dynamic"
+
+            group1_dir = (
+                raw_root
+                / "S1_percolation"
+                / "num_colors_2"
+                / "dim_2"
+                / "L_8"
+                / "fT_constant"
+                / "fT_0.3"
+                / "c_0.2"
+                / "rho_0.2"
+                / "data"
+            )
+            group2_dir = (
+                raw_root
+                / "S1_percolation"
+                / "num_colors_2"
+                / "dim_2"
+                / "L_16"
+                / "fT_constant"
+                / "fT_0.3"
+                / "c_0.2"
+                / "rho_0.2"
+                / "data"
+            )
+            group1_dir.mkdir(parents=True, exist_ok=True)
+            group2_dir.mkdir(parents=True, exist_ok=True)
+
+            self._write_sample(group1_dir, "sample_a_P0_0.7_p0_0.2.json", [0.2, 0.4, 0.6])
+            self._write_sample(group2_dir, "sample_b_P0_0.7_p0_0.2.json", [0.3, 0.5, 0.7])
+
+            argv = [
+                "--sop-root", str(root / "SOP_data"),
+                "--raw-dirs", "raw_growth_test_dynamic",
+                "-j", "1",
+            ]
+            exit_code = PROCESS_DYNAMIC_GROWTH.main(argv)
+            self.assertEqual(exit_code, 0)
+
+            all_data = root / "SOP_data" / "all_data_dynamic.dat"
+            self.assertTrue(all_data.exists())
+            lines = all_data.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
