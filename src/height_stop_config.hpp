@@ -34,7 +34,7 @@ struct GrowthStopConfig {
     bool save_lateral_observables = false;
     bool save_surface_observables = false;
     InitialBaseLayout initial_base_layout = InitialBaseLayout::Clustered;
-    FeedbackControlRule feedback_control_rule = FeedbackControlRule::RelativeError;
+    FeedbackControlRule feedback_control_rule = FeedbackControlRule::Linear;
 };
 
 #endif // HEIGHT_STOP_CONFIG_HPP
