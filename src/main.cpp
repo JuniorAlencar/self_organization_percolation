@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
         int L = 128; 
         double pp0 = 1.0;
         int seed = 12345;
-        std::string type_percolation = "site";
+        std::string type_percolation = "node";
         double c = 0.01;
         double f_T = 0.06;
         double P0 = std::min(1.0, 1.2 * f_T);
@@ -240,7 +240,7 @@ int main(int argc, char* argv[]) {
         std::string initial_layout = "clustered";
         bool save_surface_observables = false;
         bool save_animation_window_only = false;
-        std::string control_rule_name = "relative";
+        std::string control_rule_name = "linear";
         bool calculate_height_timeseries = false;
         int fraction_samples = 30;
         double sample_gap_over_L = 1.0;

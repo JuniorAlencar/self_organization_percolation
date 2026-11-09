@@ -30,7 +30,7 @@ type_lst = ['node', 'bond']  # 'node' (site) e/ou 'bond' percolation
 # Para L=16384 em modo fractions, cada run gera 'fraction_samples' (ex: 30) fatias gigantes;
 # recomenda-se 3 a 5 runs por script.
 L_lst = [16384]
-num_runs_lst = [7]
+num_runs_lst = [50]
 num_runs_por_L = dict(zip(L_lst, num_runs_lst))
 
 c = 0.05
@@ -39,10 +39,10 @@ Equilibration = 'false'
 Properties = 'false'
 
 # Modo e Layout para propriedades topologicas (d_bulk, d_min):
-Mode = 'fractions'           # 'fractions' calcula fatias topologicas; use 'growth_test' para crescimento continuo
+Mode = 'growth_test'           # 'fractions' calcula fatias topologicas; use 'growth_test' para crescimento continuo
 InitialLayout = 'random'     # 'random' e o padrao para fracoes/topologia; 'clustered' para crescimento
 ControlRule = 'linear'       # 'linear' ou 'relative'
-ForceTopologicalCounts = True
+ForceTopologicalCounts = False
 
 # Parametros das fatias (slabs) no modo fractions:
 fraction_samples = 30        # Quantidade de fatias estabilizadas coletadas por run
@@ -56,10 +56,11 @@ P0 = 0.2                     # 0.2 e o padrao nas analises topologicas
 
 # Valores de f_{T,min} para L=16384 (c = 0.05, dim = 2)
 # Obtidos dos ajustes empiricos refinados:
-ft_por_tipo = {
-    'bond': 0.0874002,
-    'node': 0.0720032,
-}
+#ft_por_tipo = {
+    #'bond': 0.0874002,
+    #'node': 0.0720032,
+#}
+ft_lst = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 # =============================================================================
 # GERACAO DOS SCRIPTS SHELL
@@ -68,8 +69,8 @@ ft_por_tipo = {
 for L in L_lst:
     num_runs = num_runs_por_L.get(L, 3)
     for type_perc in type_lst:
-        ftmin = ft_por_tipo.get(type_perc, 0.1)
-        ft_lst = np.linspace(ftmin, 0.3, 10)
+        #ftmin = ft_por_tipo.get(type_perc, 0.1)
+        #ft_lst = np.linspace(ftmin, 0.3, 10)
         for ft in ft_lst:
             mode_tag = "" if Mode == "sop" else f"_{Mode}"
             layout_tag = "" if InitialLayout == "clustered" else f"_{InitialLayout}"

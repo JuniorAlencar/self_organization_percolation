@@ -3411,28 +3411,12 @@ double network::generate_p(const int type_f_T,
             } else {
                 p_step = c * (f_target - f_current);
             }
-            // Symmetrical protection against excessive downward plunge:
-            // When f_current drops to 0, p_step reaches +c.
-            // Clamping negative step at -c prevents sudden population spikes
-            // from dragging p(t) deeply into the subcritical regime in one step.
+            // Symmetrical protection against excessive step:
             if (p_step < -c) {
                 p_step = -c;
             }
             if (p_step > c) {
                 p_step = c;
-            }
-            // Headroom damping for positive p_step:
-            // Prevents p from shooting abruptly to 1.0 when the front is starved or narrowed.
-            // Full gain is maintained for p_t <= 0.60.
-            // Smoothly tapers to 0 as p_t reaches 0.75 (maximum supercritical operating ceiling).
-            if (p_step > 0.0) {
-                constexpr double p_max_effective = 0.75;
-                if (p_t >= p_max_effective) {
-                    p_step = 0.0;
-                } else if (p_t > 0.60) {
-                    const double damp = (p_max_effective - p_t) / (p_max_effective - 0.60);
-                    p_step *= damp;
-                }
             }
             break;
         }
@@ -4096,63 +4080,113 @@ RawFractionsSeries network::create_raw_fractions(
             std::fill(f_current.begin(), f_current.end(), 0.0);
             next_frontier.clear();
 
-            std::unordered_map<std::uint64_t, std::vector<DenseCandidate>, AbsSiteKeyHash> candidates;
-            candidates.reserve(frontier.size() * 2u + 16u);
+            if (is_node) {
+                std::unordered_map<std::uint64_t, std::vector<DenseCandidate>, AbsSiteKeyHash> candidates;
+                candidates.reserve(frontier.size() * 2u + 16u);
 
-            for (const std::uint64_t key : frontier) {
-                int x = 0, y = 0;
-                decode_xy(key, x, y);
-                const int a_val = get_site_2d(x, y);
-                if (a_val <= 0) continue;
-                const int color = value_to_color_index(num_colors, a_val);
-                if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
+                for (const std::uint64_t key : frontier) {
+                    int x = 0, y = 0;
+                    decode_xy(key, x, y);
+                    const int a_val = get_site_2d(x, y);
+                    if (a_val <= 0) continue;
+                    const int color = value_to_color_index(num_colors, a_val);
+                    if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
 
-                const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
-                const int ny_values[4] = {y, y, y - 1, y + 1};
-                for (int ni = 0; ni < 4; ++ni) {
-                    const int nx = nx_values[ni];
-                    const int ny = ny_values[ni];
-                    if (ny < 0) continue;
-                    if (is_node) {
+                    const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
+                    const int ny_values[4] = {y, y, y - 1, y + 1};
+                    for (int ni = 0; ni < 4; ++ni) {
+                        const int nx = nx_values[ni];
+                        const int ny = ny_values[ni];
+                        if (ny < 0) continue;
                         const int vv = get_site_2d(nx, ny);
                         if (vv >= 0) continue;
                         candidates[encode_xy(nx, ny)].push_back(DenseCandidate{color, x, y});
-                    } else {
+                    }
+                }
+
+                for (const auto& kv : candidates) {
+                    const auto& list = kv.second;
+                    const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
+                    const DenseCandidate chosen = list[static_cast<std::size_t>(pick)];
+                    int x = 0, y = 0;
+                    decode_xy(kv.first, x, y);
+                    if (rng.uniform_real(0.0, 1.0) >=
+                        p_curr[static_cast<std::size_t>(chosen.color)]) {
+                        set_site_2d(x, y, 0);
+                        continue;
+                    }
+
+                    set_site_2d(x, y, color_to_active_value(num_colors, chosen.color));
+                    next_frontier.push_back(kv.first);
+                    ++N_current[static_cast<std::size_t>(chosen.color)];
+                    max_heights[static_cast<std::size_t>(chosen.color)] =
+                        std::max(max_heights[static_cast<std::size_t>(chosen.color)], y);
+                }
+            } else {
+                std::unordered_map<std::uint64_t, std::vector<DenseCandidate>, AbsSiteKeyHash> open_bond_candidates;
+                open_bond_candidates.reserve(frontier.size() * 2u + 16u);
+
+                for (const std::uint64_t key : frontier) {
+                    int x = 0, y = 0;
+                    decode_xy(key, x, y);
+                    const int a_val = get_site_2d(x, y);
+                    if (a_val <= 0) continue;
+                    const int color = value_to_color_index(num_colors, a_val);
+                    if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
+
+                    const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
+                    const int ny_values[4] = {y, y, y - 1, y + 1};
+                    for (int ni = 0; ni < 4; ++ni) {
+                        const int nx = nx_values[ni];
+                        const int ny = ny_values[ni];
+                        if (ny < 0) continue;
+
                         if (!mark_tested_bond_2d(x, y, nx, ny)) continue;
+
                         const int vv = get_site_2d(nx, ny);
+                        if (vv == 0) continue;
+
                         if (vv > 0) {
+                            const int neigh_color = value_to_color_index(num_colors, vv);
+                            if (neigh_color != color) continue;
                             if (rng.uniform_real(0.0, 1.0) <
                                 p_curr[static_cast<std::size_t>(color)]) {
                                 set_open_bond_2d(x, y, nx, ny);
+                                ++N_current[static_cast<std::size_t>(color)];
                             }
                             continue;
                         }
-                        if (vv == 0) continue;
-                        candidates[encode_xy(nx, ny)].push_back(DenseCandidate{color, x, y});
+
+                        // vv < 0: inactive neighbor
+                        if (rng.uniform_real(0.0, 1.0) <
+                            p_curr[static_cast<std::size_t>(color)]) {
+                            open_bond_candidates[encode_xy(nx, ny)].push_back(
+                                DenseCandidate{color, x, y});
+                        }
                     }
                 }
-            }
 
-            for (const auto& kv : candidates) {
-                const auto& list = kv.second;
-                const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
-                const DenseCandidate chosen = list[static_cast<std::size_t>(pick)];
-                int x = 0, y = 0;
-                decode_xy(kv.first, x, y);
-                if (rng.uniform_real(0.0, 1.0) >=
-                    p_curr[static_cast<std::size_t>(chosen.color)]) {
-                    if (is_node) set_site_2d(x, y, 0);
-                    continue;
-                }
+                for (const auto& kv : open_bond_candidates) {
+                    const auto& list = kv.second;
+                    if (list.empty()) continue;
 
-                set_site_2d(x, y, color_to_active_value(num_colors, chosen.color));
-                if (!is_node) {
-                    set_open_bond_2d(chosen.x_from, chosen.y_from, x, y);
+                    const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
+                    const int winning_color = list[static_cast<std::size_t>(pick)].color;
+
+                    int x = 0, y = 0;
+                    decode_xy(kv.first, x, y);
+
+                    for (const auto& cand : list) {
+                        if (cand.color != winning_color) continue;
+                        set_open_bond_2d(cand.x_from, cand.y_from, x, y);
+                        ++N_current[static_cast<std::size_t>(winning_color)];
+                    }
+
+                    set_site_2d(x, y, color_to_active_value(num_colors, winning_color));
+                    next_frontier.push_back(kv.first);
+                    max_heights[static_cast<std::size_t>(winning_color)] =
+                        std::max(max_heights[static_cast<std::size_t>(winning_color)], y);
                 }
-                next_frontier.push_back(kv.first);
-                ++N_current[static_cast<std::size_t>(chosen.color)];
-                max_heights[static_cast<std::size_t>(chosen.color)] =
-                    std::max(max_heights[static_cast<std::size_t>(chosen.color)], y);
             }
 
             for (int color = 0; color < num_colors; ++color) {
@@ -4716,31 +4750,42 @@ RawFractionsSeries network::create_raw_fractions(
                     if (!tested_bonds.insert(bkey).second) continue;
 
                     const int vv = get_site(target);
+                    if (vv == 0) continue;
+
                     if (vv > 0) {
+                        const int neigh_color = value_to_color_index(num_colors, vv);
+                        if (neigh_color != color) continue;
                         if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(color)]) {
                             open_bonds.insert(bkey);
+                            ++N_current[static_cast<std::size_t>(color)];
                         }
                         continue;
                     }
-                    if (vv == 0) continue;
-                    bond_candidates[target].push_back(RawBondCandidate{color, bkey});
+
+                    // vv < 0: inactive neighbor
+                    if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(color)]) {
+                        bond_candidates[target].push_back(RawBondCandidate{color, bkey});
+                    }
                 }
             }
 
             for (const auto& kv : bond_candidates) {
                 const auto& list = kv.second;
+                if (list.empty()) continue;
+
                 const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
-                const RawBondCandidate chosen = list[static_cast<std::size_t>(pick)];
-                const int color = chosen.color;
-                if (rng.uniform_real(0.0, 1.0) >= p_curr[static_cast<std::size_t>(color)]) {
-                    continue;
+                const int winning_color = list[static_cast<std::size_t>(pick)].color;
+
+                for (const auto& cand : list) {
+                    if (cand.color != winning_color) continue;
+                    open_bonds.insert(cand.bond);
+                    ++N_current[static_cast<std::size_t>(winning_color)];
                 }
-                set_site(kv.first, color_to_active_value(num_colors, color));
-                open_bonds.insert(chosen.bond);
+
+                set_site(kv.first, color_to_active_value(num_colors, winning_color));
                 next_frontier.push_back(kv.first);
-                ++N_current[static_cast<std::size_t>(color)];
-                max_heights[static_cast<std::size_t>(color)] =
-                    std::max(max_heights[static_cast<std::size_t>(color)],
+                max_heights[static_cast<std::size_t>(winning_color)] =
+                    std::max(max_heights[static_cast<std::size_t>(winning_color)],
                              abs_grow_coord_from_key(kv.first, dim));
             }
         }
@@ -5686,13 +5731,13 @@ NetworkPattern network::create_network(
                     }
 
                     if (vv > 0) {
-                        if (!calculate_detailed_properties) continue;
                         const int neigh_color_idx = value_to_color_index(num_colors, vv);
                         if (neigh_color_idx != cor_idx) continue;
                         if (!mark_tested_bond(edge_bit)) continue;
 
-                        if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
+                        if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
                             open_bond(idx, viz_idx, edge_bit);
+                            ++N_current[cor_idx];
                         }
                         continue;
                     }
@@ -5772,7 +5817,6 @@ NetworkPattern network::create_network(
                 set_site(viz, new_val);
                 dsu_make_active(viz);
                 next_frontier.push_back(viz);
-                ++N_current[cor_idx];
                 set_activation_time(viz, static_cast<uint32_t>(t));
                 record_height_activation(cor_idx, viz);
 
@@ -5788,18 +5832,11 @@ NetworkPattern network::create_network(
                     z_max_at_perc[cor_idx] = max_heights[cor_idx];
                 }
 
-                if (target_without_species) {
-                    for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidate(slot, i);
-                        if (fc.color_idx != cor_idx) continue;
-                        open_bond(fc.activator, viz, fc.edge_bit);
-                    }
-                } else {
-                    for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidate(slot, i);
-                        if (fc.color_idx != cor_idx) continue;
-                        open_bond(fc.activator, viz, fc.edge_bit);
-                    }
+                for (int i = 0; i < n_cand; ++i) {
+                    const FrontCandidate fc = front_candidates.candidate(slot, i);
+                    if (fc.color_idx != cor_idx) continue;
+                    open_bond(fc.activator, viz, fc.edge_bit);
+                    ++N_current[cor_idx];
                 }
             }
         }
@@ -7300,11 +7337,12 @@ NetworkPattern network::animate_network(
 
                         if (!mark_tested_bond(edge_bit)) continue;
 
-                        if (topology_uniform01(topology_rng) < p_curr[cor_idx]) {
+                        if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
                             edge_pairs.emplace_back(static_cast<uint32_t>(idx),
                                                     static_cast<uint32_t>(viz_idx));
                             edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
                                                     static_cast<uint32_t>(idx));
+                            ++N_current[cor_idx];
                         }
                         continue;
                     }
@@ -7376,7 +7414,6 @@ NetworkPattern network::animate_network(
                 activation_code[static_cast<std::size_t>(viz)] =
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
-                ++N_current[cor_idx];
                 record_height_activation(cor_idx, viz);
 
                 const int h = grid.grow_coord(viz);
@@ -7391,24 +7428,14 @@ NetworkPattern network::animate_network(
                     z_max_at_perc[cor_idx] = max_heights[cor_idx];
                 }
 
-                if (target_without_species) {
-                    for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidate(slot, i);
-                        if (fc.color_idx != cor_idx) continue;
-                        edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
-                                                static_cast<uint32_t>(viz));
-                        edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                                static_cast<uint32_t>(fc.activator));
-                    }
-                } else {
-                    for (int i = 0; i < n_cand; ++i) {
-                        const FrontCandidate fc = front_candidates.candidate(slot, i);
-                        if (fc.color_idx != cor_idx) continue;
-                        edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
-                                                static_cast<uint32_t>(viz));
-                        edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                                static_cast<uint32_t>(fc.activator));
-                    }
+                for (int i = 0; i < n_cand; ++i) {
+                    const FrontCandidate fc = front_candidates.candidate(slot, i);
+                    if (fc.color_idx != cor_idx) continue;
+                    edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
+                                            static_cast<uint32_t>(viz));
+                    edge_pairs.emplace_back(static_cast<uint32_t>(viz),
+                                            static_cast<uint32_t>(fc.activator));
+                    ++N_current[cor_idx];
                 }
             }
         }
