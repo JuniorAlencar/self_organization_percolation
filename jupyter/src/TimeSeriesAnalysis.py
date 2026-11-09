@@ -2533,6 +2533,28 @@ def _patch_pdf_writer_safe():
 
         bpdf.PdfFile._writeImg = safe_writeImg
         bpdf.PdfFile._writeImg_poppler_safe = True
+
+        # Fallback para renderização tex em PNG caso dvipng não esteja instalado
+        import shutil
+        if not shutil.which("dvipng") and shutil.which("dvips") and shutil.which("gs"):
+            import subprocess
+            from matplotlib.texmanager import TexManager
+            if not getattr(TexManager, "_dvips_gs_patched", False):
+                @classmethod
+                def _gs_make_png(cls, tex, fontsize, dpi):
+                    basefile = cls.get_basefile(tex, fontsize, dpi)
+                    pngfile = f"{basefile}.png"
+                    if not os.path.exists(pngfile):
+                        dvifile = cls.make_dvi(tex, fontsize)
+                        psfile = f"{basefile}.ps"
+                        subprocess.run(["dvips", "-q", "-E", "-o", psfile, dvifile], check=True)
+                        subprocess.run([
+                            "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pngalpha",
+                            f"-r{int(dpi)}", "-dEPSCrop", f"-sOutputFile={pngfile}", psfile
+                        ], check=True)
+                    return pngfile
+                TexManager.make_png = _gs_make_png
+                TexManager._dvips_gs_patched = True
     except Exception:
         pass
 
@@ -2543,12 +2565,15 @@ def plot_growth_test_network(
     network_path: str | Path | None = None,
     x_label: str = "x",
     y_label: str = "y",
-    fs_labels: float = 20.0,
+    fs_labels: float = 24.0,
+    fs_ticks: float = 20.0,
     fs_zstab: float = 15,
     L: float = 1024,
     legend_label_stab: str | None = None,
     legend_label_frontier: str | None = None,
     legend_label_posstab: str | None = None,
+    legend_label_teq: str | None = None,
+    legend_label_frontlines: str | None = None,
     fs_legend: float = 15,
     z_stab: int | None = None,
     t_stab: float | int | None = None,
@@ -2556,11 +2581,29 @@ def plot_growth_test_network(
     use_frontier_sites: bool = False,
     frontier_color: str = "#d1495b",
     frontier_linewidth: float = 1.35,
+    rotate_90: bool = False,
+    uniform_color: bool = False,
+    network_color: str | None = None,
+    show_frontlines: bool = False,
+    t_frontlines: list[float | int] | None = None,
+    t_frontline_start: int | float = 1000,
+    t_frontline_step: int | float = 2000,
+    frontline_spacing_from_teq: bool = True,
+    t_max: float | int | None = None,
+    show_teq_line: bool = True,
+    frontline_color: str = "#000000",
+    frontline_linewidth: float = 2.0,
+    teq_line_color: str = "#d1495b",
+    teq_linewidth: float = 2.8,
+    block_size: int = 8,
+    show_legend: bool = False,
+    ticks_direction: str = "in",
+    ticks_all_sides: bool = True,
     tick_width: float | None = None,
     show_frontier_line: bool = True,
     show_frontier_text: bool = True,
     save_path: str | Path | None = None,
-    figsize: tuple[float, float] = (4.2, 9.0),
+    figsize: tuple[float, float] | None = None,
     ax=None,
     title: str | None = None,
     fs_title: float = 20,
@@ -2572,10 +2615,17 @@ def plot_growth_test_network(
         limiar da estabilização t = t_stab: z < h_front[x] (laranja) e z >= h_front[x] (roxo),
         traçando a curva ruidosa y = y_stab(x) nos sítios da fronteira física.
       - frontier='max_y': particiona em z < max(y_stab) (laranja) e z >= max(y_stab) (roxo),
-        traçando a reta horizontal no valor máximo da altura da fronteira, com captions
-        adaptados para y < max(y_stab), y = max(y_stab) e y >= max(y_stab).
-      - frontier=None (padrão legado se use_frontier_sites=False): particiona horizontalmente
-        em z < z_stab (laranja) e z >= z_stab (roxo), com reta horizontal z = z_stab.
+        traçando a reta horizontal no valor máximo da altura da fronteira.
+      - rotate_90=True: rotaciona 90 graus (o fluxo passa a ser horizontal da esquerda para a direita,
+        com o eixo x representando o crescimento ao longo da fita e o eixo y a direção transversal [0, L)),
+        reproduzindo o leiaute e estilo da Figure 1 (a) do artigo.
+      - show_frontlines=True: desenha as linhas de fronteira ativas nos instantes de tempo t:
+        a primeira curva vermelha em t=t_eq e as demais em t=t_eq + N*2000 (pretas com maior espessura),
+        agrupadas em blocos de block_size sítios (padrão 8 sítios ao longo de y, como no artigo).
+      - t_max: tempo máximo de simulação a exibir (ex.: t_eq + 3*2000 + 1000). Filtra a rede até esse instante.
+      - ticks_direction='in' e ticks_all_sides=True: desenha ticks apontando para dentro sobre toda a figura
+        (top, bottom, left, right) com fontsize configurável e sobrepostos à imagem.
+      - show_legend=False: remove a legenda interna se desejado apenas a rede com as curvas.
     """
     import matplotlib.pyplot as plt
     from matplotlib.colors import BoundaryNorm, ListedColormap
@@ -2598,11 +2648,11 @@ def plot_growth_test_network(
     # Define legendas padrão de acordo com o modo
     if mode == "frontier_y":
         if legend_label_stab is None:
-            legend_label_stab = r"$y < y_{\mathrm{stab}}(x)$"
+            legend_label_stab = r"$y < y_{\mathrm{stab}}(x)$" if not rotate_90 else r"$t < t_{\mathrm{eq}}$"
         if legend_label_frontier is None:
-            legend_label_frontier = r"$y = y_{\mathrm{stab}}(x)$"
+            legend_label_frontier = r"$y = y_{\mathrm{stab}}(x)$" if not rotate_90 else r"$t = t_{\mathrm{eq}}$"
         if legend_label_posstab is None:
-            legend_label_posstab = r"$y > y_{\mathrm{stab}}(x)$"
+            legend_label_posstab = r"$y > y_{\mathrm{stab}}(x)$" if not rotate_90 else r"$t \geq t_{\mathrm{eq}}$"
     elif mode == "max_y":
         if legend_label_stab is None:
             legend_label_stab = r"$y < \max(y_{\mathrm{stab}})$"
@@ -2633,7 +2683,10 @@ def plot_growth_test_network(
     if network_path is None:
         network_path = json_path.parent.parent / "network" / (json_path.stem + ".bin")
 
-    if mode in ("frontier_y", "max_y"):
+    if frontline_spacing_from_teq and t_stab is None and "t_eq" in meta and meta["t_eq"] is not None:
+        t_stab = float(meta["t_eq"])
+
+    if mode in ("frontier_y", "max_y") or show_frontlines:
         part = get_growth_test_network_partition(
             json_path,
             network_path=network_path,
@@ -2649,16 +2702,33 @@ def plot_growth_test_network(
         x = part["x"]
         z = part["z"]
 
-        if mode == "frontier_y":
-            before = part["before_mask"]
-            after = part["after_mask"]
+        # Se houver recorte temporal t_max (ex.: t_eq + 3*2000 + 1000)
+        if t_max is not None and "activation_time" in part:
+            mask_tmax = part["activation_time"] <= float(t_max)
+            x = x[mask_tmax]
+            z = z[mask_tmax]
+            part["activation_time"] = part["activation_time"][mask_tmax]
+            part["x"] = x
+            part["z"] = z
+            height = int(np.max(z)) + 1
+            part["height"] = height
+
+        hf_per_site = h_front[x]
+        if uniform_color or network_color is not None:
+            image = np.zeros((height, L), dtype=np.uint8)
+            image[z, x] = 1
+        elif mode == "frontier_y" or show_frontlines:
+            before = z < hf_per_site
+            after = z >= hf_per_site
+            image = np.zeros((height, L), dtype=np.uint8)
+            image[z[before], x[before]] = 1
+            image[z[after], x[after]] = 2
         else:
             before = z < max_y
             after = z >= max_y
-
-        image = np.zeros((height, L), dtype=np.uint8)
-        image[z[before], x[before]] = 1
-        image[z[after], x[after]] = 2
+            image = np.zeros((height, L), dtype=np.uint8)
+            image[z[before], x[before]] = 1
+            image[z[after], x[after]] = 2
     else:
         if z_stab is None:
             z_stab = meta.get("y_stat", meta.get("growth_test_z_stat_by_color"))
@@ -2678,47 +2748,164 @@ def plot_growth_test_network(
             raise ValueError(f"y_stab={z_stab} lies outside network height [0, {height - 1}]")
 
         image = np.zeros((height, L), dtype=np.uint8)
-        before = z < z_stab
-        image[z[before], x[before]] = 1
-        image[z[~before], x[~before]] = 2
+        if uniform_color or network_color is not None:
+            image[z, x] = 1
+        else:
+            before = z < z_stab
+            image[z[before], x[before]] = 1
+            image[z[~before], x[~before]] = 2
         part = None
 
-    cmap = ListedColormap(["#fff7ef", "#f28e2b", "#8a5cf6"])
-    norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+    if uniform_color or network_color is not None:
+        net_col = network_color if network_color is not None else "#4682b4"
+        cmap = ListedColormap(["#ffffff", net_col])
+        norm = BoundaryNorm([-0.5, 0.5, 1.5], cmap.N)
+    else:
+        cmap = ListedColormap(["#ffffff" if rotate_90 else "#fff7ef", "#f28e2b", "#8a5cf6"])
+        norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+
+    if figsize is None:
+        if rotate_90:
+            aspect_ratio = height / L
+            fig_w = max(11.0, min(18.0, 14.0 * (height / 2800.0)))
+            figsize = (fig_w, 5.0)
+        else:
+            figsize = (4.2, 9.0)
 
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize, facecolor="white", constrained_layout=True)
     else:
         fig = ax.figure
 
-    ax.set_facecolor("#fff7ef")
-    ax.imshow(
-        image,
-        origin="lower",
-        interpolation="none",
-        cmap=cmap,
-        norm=norm,
-        extent=(-0.5, L - 0.5, -0.5, height - 0.5),
-        rasterized=False,
-        aspect="equal",
-    )
+    ax.set_facecolor("#ffffff" if rotate_90 else "#fff7ef")
 
-    if mode == "frontier_y":
+    if rotate_90:
+        # Rotacionado 90 graus: horizontal é z (crescimento), vertical é x (transversal)
+        image_disp = image.T
+        extent_disp = (-0.5, height - 0.5, -0.5, L - 0.5)
+        ax.imshow(
+            image_disp,
+            origin="lower",
+            interpolation="none",
+            cmap=cmap,
+            norm=norm,
+            extent=extent_disp,
+            rasterized=True,
+            aspect="equal",
+            zorder=1,
+        )
+    else:
+        ax.imshow(
+            image,
+            origin="lower",
+            interpolation="none",
+            cmap=cmap,
+            norm=norm,
+            extent=(-0.5, L - 0.5, -0.5, height - 0.5),
+            rasterized=False,
+            aspect="equal",
+            zorder=1,
+        )
+
+    # Traçado das linhas de fronteira temporais (frontlines)
+    legend_handles = []
+    if show_frontlines and part is not None and "activation_time" in part:
+        act_time = part["activation_time"]
+        max_act = int(np.max(act_time))
+        t_stab_moment = float(part["t_stab"])
+
+        if t_frontlines is not None:
+            fl_times = list(t_frontlines)
+        elif frontline_spacing_from_teq:
+            # Requisito: primeira curva t=t_eq, demais t_eq + N * 2000
+            fl_times = [t_stab_moment]
+            n_step = 1
+            while t_stab_moment + n_step * t_frontline_step <= max_act:
+                fl_times.append(t_stab_moment + n_step * t_frontline_step)
+                n_step += 1
+        else:
+            fl_times = [t_stab_moment]
+            fl_cur = int(t_frontline_start)
+            while fl_cur <= max_act:
+                if not any(abs(fl_cur - t_prev) < 1e-4 for t_prev in fl_times):
+                    fl_times.append(fl_cur)
+                fl_cur += int(t_frontline_step)
+
+        for fl_t in fl_times:
+            mask_t = act_time <= fl_t
+            if not np.any(mask_t):
+                continue
+            h_t = np.full(L, -1, dtype=np.int64)
+            np.maximum.at(h_t, x[mask_t], z[mask_t])
+            if np.any(h_t < 0):
+                val = np.where(h_t >= 0)[0]
+                if len(val) > 0:
+                    h_t[h_t < 0] = np.interp(np.where(h_t < 0)[0], val, h_t[val]).astype(int)
+                else:
+                    h_t[:] = 0
+
+            if block_size > 1:
+                nb = L // block_size
+                hb = np.array([np.max(h_t[i * block_size : (i + 1) * block_size]) for i in range(nb)])
+                yb = np.arange(nb) * block_size + (block_size - 1) / 2.0
+            else:
+                hb = h_t
+                yb = np.arange(L)
+
+            is_teq = abs(fl_t - t_stab_moment) < 1e-4
+            if is_teq:
+                if not show_teq_line:
+                    continue
+                line_c = teq_line_color
+                line_w = teq_linewidth
+                line_z = 6
+            else:
+                line_c = frontline_color
+                line_w = frontline_linewidth
+                line_z = 5
+
+            if rotate_90:
+                ax.plot(hb, yb, color=line_c, linewidth=line_w, linestyle="-", zorder=line_z)
+            else:
+                ax.plot(yb, hb, color=line_c, linewidth=line_w, linestyle="-", zorder=line_z)
+
+        legend_handles = [
+            Patch(facecolor="#f28e2b", edgecolor="none", label=legend_label_stab or r"$t < t_{\mathrm{eq}}$"),
+            Patch(facecolor="#8a5cf6", edgecolor="none", label=legend_label_posstab or r"$t \geq t_{\mathrm{eq}}$"),
+            Line2D([0], [0], color=teq_line_color, linewidth=max(1.8, teq_linewidth), label=legend_label_teq or rf"$t = t_{{\mathrm{{eq}}}} = {t_stab_moment:g}$"),
+            Line2D([0], [0], color=frontline_color, linewidth=frontline_linewidth, label=legend_label_frontlines or rf"Frontlines ($t = t_{{\mathrm{{eq}}}} + N \times {t_frontline_step:g}$)"),
+        ]
+    elif mode == "frontier_y":
         if show_frontier_line:
             x_line = np.arange(L)
-            ax.plot(x_line, h_front, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+            if rotate_90:
+                ax.plot(h_front, x_line, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+            else:
+                ax.plot(x_line, h_front, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
 
         if show_frontier_text and z_stab_val is not None:
-            ax.text(
-                0.04 * L,
-                z_stab_val + max(10, 0.006 * height),
-                fr"$y_{{\mathrm{{stab}}}}={z_stab_val}$",
-                ha="left",
-                va="bottom",
-                color="#000000",
-                fontsize=fs_zstab,
-                bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
-            )
+            if rotate_90:
+                ax.text(
+                    z_stab_val + max(10, 0.006 * height),
+                    0.04 * L,
+                    fr"$x_{{\mathrm{{stab}}}}={z_stab_val}$",
+                    ha="left",
+                    va="bottom",
+                    color="#000000",
+                    fontsize=fs_zstab,
+                    bbox={"facecolor": "#ffffff", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+                )
+            else:
+                ax.text(
+                    0.04 * L,
+                    z_stab_val + max(10, 0.006 * height),
+                    fr"$y_{{\mathrm{{stab}}}}={z_stab_val}$",
+                    ha="left",
+                    va="bottom",
+                    color="#000000",
+                    fontsize=fs_zstab,
+                    bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+                )
 
         legend_handles = [
             Patch(facecolor="#f28e2b", edgecolor="none", label=legend_label_stab),
@@ -2732,19 +2919,34 @@ def plot_growth_test_network(
         )
     elif mode == "max_y":
         if show_frontier_line:
-            ax.axhline(max_y, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+            if rotate_90:
+                ax.axvline(max_y, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+            else:
+                ax.axhline(max_y, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
 
         if show_frontier_text:
-            ax.text(
-                0.04 * L,
-                max_y + max(10, 0.006 * height),
-                fr"$\max\left(y_{{\mathrm{{stab}}}}\right)={max_y}$",
-                ha="left",
-                va="bottom",
-                color="#000000",
-                fontsize=fs_zstab,
-                bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
-            )
+            if rotate_90:
+                ax.text(
+                    max_y + max(10, 0.006 * height),
+                    0.04 * L,
+                    fr"$\max\left(x_{{\mathrm{{stab}}}}\right)={max_y}$",
+                    ha="left",
+                    va="bottom",
+                    color="#000000",
+                    fontsize=fs_zstab,
+                    bbox={"facecolor": "#ffffff", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+                )
+            else:
+                ax.text(
+                    0.04 * L,
+                    max_y + max(10, 0.006 * height),
+                    fr"$\max\left(y_{{\mathrm{{stab}}}}\right)={max_y}$",
+                    ha="left",
+                    va="bottom",
+                    color="#000000",
+                    fontsize=fs_zstab,
+                    bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+                )
 
         legend_handles = [
             Patch(facecolor="#f28e2b", edgecolor="none", label=legend_label_stab),
@@ -2758,19 +2960,34 @@ def plot_growth_test_network(
         )
     else:  # legacy mode
         if show_frontier_line:
-            ax.axhline(z_stab, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+            if rotate_90:
+                ax.axvline(z_stab, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
+            else:
+                ax.axhline(z_stab, color=frontier_color, linewidth=frontier_linewidth, zorder=4)
 
         if show_frontier_text:
-            ax.text(
-                0.04 * L,
-                z_stab + max(10, 0.006 * height),
-                fr"$y_{{\mathrm{{stab}}}}={z_stab}$",
-                ha="left",
-                va="bottom",
-                color="#000000",
-                fontsize=fs_zstab,
-                bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
-            )
+            if rotate_90:
+                ax.text(
+                    z_stab + max(10, 0.006 * height),
+                    0.04 * L,
+                    fr"$x_{{\mathrm{{stab}}}}={z_stab}$",
+                    ha="left",
+                    va="bottom",
+                    color="#000000",
+                    fontsize=fs_zstab,
+                    bbox={"facecolor": "#ffffff", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+                )
+            else:
+                ax.text(
+                    0.04 * L,
+                    z_stab + max(10, 0.006 * height),
+                    fr"$y_{{\mathrm{{stab}}}}={z_stab}$",
+                    ha="left",
+                    va="bottom",
+                    color="#000000",
+                    fontsize=fs_zstab,
+                    bbox={"facecolor": "#fff7ef", "edgecolor": "none", "alpha": 0.92, "pad": 1.5},
+                )
 
         legend_handles = [
             Patch(facecolor="#f28e2b", edgecolor="none", label=f"{legend_label_stab}"),
@@ -2783,29 +3000,64 @@ def plot_growth_test_network(
             Patch(facecolor="#8a5cf6", edgecolor="none", label=f"{legend_label_posstab}"),
         )
 
-    ax.set_xlim(-0.5, L - 0.5)
-    ax.set_ylim(-0.5, height - 0.5)
-    ax.set_xlabel(f"{x_label}", fontsize=fs_labels, color="#263238")
-    ax.set_ylabel(f"{y_label}", fontsize=fs_labels, color="#263238")
-    # if title is not None:
-    #     ax.set_title(title, fontsize=fs_title, color="#263238", pad=8)
+    if rotate_90:
+        ax.set_xlim(-0.5, height - 0.5)
+        ax.set_ylim(-0.5, L - 0.5)
+        ax.set_xlabel(f"{x_label}", fontsize=fs_labels, color="#263238")
+        ax.set_ylabel(f"{y_label}", fontsize=fs_labels, color="#263238")
+        ax.set_yticks([0, L // 2, L])
+        ax.set_xticks(np.arange(0, height, L))
+        if ticks_all_sides:
+            from matplotlib.ticker import MultipleLocator
+            ax.xaxis.set_minor_locator(MultipleLocator(256))
+            ax.yaxis.set_minor_locator(MultipleLocator(256))
+    else:
+        ax.set_xlim(-0.5, L - 0.5)
+        ax.set_ylim(-0.5, height - 0.5)
+        ax.set_xlabel(f"{x_label}", fontsize=fs_labels, color="#263238")
+        ax.set_ylabel(f"{y_label}", fontsize=fs_labels, color="#263238")
+        ax.set_xticks(np.arange(0, L + 1, 250))
 
-    # Sincroniza a espessura dos ticks com o contorno da caixa (spines)
+    if title is not None:
+        ax.set_title(title, fontsize=fs_title, color="#263238", pad=10, loc="left" if rotate_90 else "center")
+
+    # Configuração dos ticks (sobrepostos à figura, apontando para dentro, fontsize maior)
+    if ticks_direction == "in" or ticks_all_sides:
+        ax.set_axisbelow(False)
+        ax.tick_params(
+            axis="both",
+            which="major",
+            direction="in",
+            top=True,
+            right=True,
+            length=10,
+            width=2.0 if tick_width is None else float(tick_width),
+            labelsize=fs_ticks,
+            pad=8,
+        )
+        ax.tick_params(
+            axis="both",
+            which="minor",
+            direction="in",
+            top=True,
+            right=True,
+            length=5,
+            width=1.4,
+        )
+    else:
+        ax.tick_params(axis="both", which="major", labelsize=fs_ticks)
+
     current_tick_width = None
     if tick_width is not None:
         current_tick_width = float(tick_width)
     elif hasattr(ax, "xaxis") and hasattr(ax.xaxis, "_major_tick_kw") and "width" in ax.xaxis._major_tick_kw:
         current_tick_width = float(ax.xaxis._major_tick_kw["width"])
 
-    if current_tick_width is not None:
-        spine_width = current_tick_width
-        ax.tick_params(axis="both", which="both", width=current_tick_width)
-    else:
-        spine_width = 0.9
-
+    spine_width = current_tick_width if current_tick_width is not None else 2.0
     for spine in ax.spines.values():
         spine.set_color("#263238")
         spine.set_linewidth(spine_width)
+        spine.set_zorder(10)
 
     # Garante que qualquer chamada subsequente a ax.tick_params(..., width=...) também atualize as spines
     orig_tick_params = ax.tick_params
@@ -2821,16 +3073,16 @@ def plot_growth_test_network(
 
     ax.tick_params = _synced_tick_params
 
-    ax.legend(
-        handles=legend_handles,
-        loc="upper right",
-        frameon=True,
-        facecolor="white",
-        edgecolor="none",
-        framealpha=0.88,
-        fontsize=fs_legend,
-    )
-    ax.set_xticks(np.arange(0, L + 1, 250))
+    if show_legend and legend_handles:
+        ax.legend(
+            handles=legend_handles,
+            loc="upper right",
+            frameon=True,
+            facecolor="white",
+            edgecolor="none",
+            framealpha=0.88,
+            fontsize=fs_legend,
+        )
 
     if save_path is not None:
         save_path = Path(save_path)
@@ -2840,6 +3092,172 @@ def plot_growth_test_network(
     if return_partition:
         return fig, ax, part
     return fig, ax
+
+
+def plot_growth_test_figure1(
+    json_path: str | Path,
+    *,
+    network_path: str | Path | None = None,
+    network_color: str = "#4682b4",
+    t_frontlines: list[int | float] = (2000, 4000, 6000, 8000),
+    t_max: float | int | None = 9000,
+    pt_color: str = "#b83a2c",
+    pt_linewidth: float = 1.5,
+    frontline_color: str = "#000000",
+    frontline_linewidth: float = 2.0,
+    pc: float | None = None,
+    block_size: int = 8,
+    fs_title: float = 22.0,
+    fs_labels: float = 24.0,
+    fs_ticks: float = 20.0,
+    tick_width: float = 2.0,
+    ylim_pt: tuple[float, float] | None = None,
+    figsize: tuple[float, float] = (15.0, 8.8),
+    save_path: str | Path | None = None,
+    save_pdf: str | Path | None = None,
+    save_svg: str | Path | None = None,
+    fig=None,
+    axes=None,
+):
+    """
+    Reproduz fielmente o gráfico da Figure 1 do manuscrito (main.pdf):
+      - Painel (a): Rede final rotacionada 90 graus (horizontal) com toda a rede na mesma cor
+        (network_color), sem marcação especial em t=t_eq, com linhas de fronteira sólidas
+        nos instantes t = 2000, 4000, 6000, 8000 (ou t_frontlines customizado) e deixando
+        o sistema correr um pouco mais (t_max, padrão 9000).
+      - Painel (b): Evolução temporal de p(t) para a mesma amostra, com linhas verticais
+        pretas sólidas nos instantes das fronteiras e reta horizontal pontilhada indicando
+        o limiar crítico p_c (0.50 para bond, 0.59275 para site).
+      - Eixos alinhados geometricamente com formatação uniforme de ticks e spines.
+    """
+    _patch_pdf_writer_safe()
+
+    created_fig = False
+    if fig is None or axes is None:
+        created_fig = True
+        fig = plt.figure(figsize=figsize, facecolor="white")
+        left = 0.08
+        right = 0.96
+        width = right - left
+        bottom_b = 0.10
+        height_b = 0.32
+        bottom_a = 0.52
+        height_a = 0.40
+        ax_a = fig.add_axes([left, bottom_a, width, height_a])
+        ax_b = fig.add_axes([left, bottom_b, width, height_b])
+    else:
+        ax_a, ax_b = axes
+
+    # Painel (a): Rede com toda a rede na mesma cor e frontlines sólidas
+    plot_growth_test_network(
+        json_path,
+        network_path=network_path,
+        ax=ax_a,
+        rotate_90=True,
+        uniform_color=True,
+        network_color=network_color,
+        show_frontlines=True,
+        t_frontlines=t_frontlines,
+        show_teq_line=False,
+        t_max=t_max,
+        frontline_color=frontline_color,
+        frontline_linewidth=frontline_linewidth,
+        block_size=block_size,
+        show_legend=False,
+        show_frontier_line=False,
+        show_frontier_text=False,
+        title=r"(a) Final cluster",
+        x_label=r"$x$",
+        y_label=r"$y$",
+        fs_title=fs_title,
+        fs_labels=fs_labels,
+        fs_ticks=fs_ticks,
+        tick_width=tick_width,
+        ticks_direction="in",
+        ticks_all_sides=True,
+    )
+
+    # Painel (b): p(t) e retas nos tempos correspondentes
+    series = load_growth_test_stabilization_series(json_path)
+    t_pt = np.asarray(series["time"], dtype=float)
+    p_t = np.asarray(series["p_t"], dtype=float)
+
+    if t_max is not None:
+        mask_t = t_pt <= float(t_max)
+        t_pt = t_pt[mask_t]
+        p_t = p_t[mask_t]
+
+    t_end = float(t_pt[-1]) if t_max is None else float(t_max)
+
+    ax_b.plot(t_pt, p_t, color=pt_color, lw=pt_linewidth, linestyle="-", zorder=3)
+
+    if pc is None:
+        p_str = str(json_path).lower()
+        if "node" in p_str or "site" in p_str:
+            resolved_pc = 0.592746
+        else:
+            resolved_pc = 0.50
+    else:
+        resolved_pc = float(pc)
+
+    ax_b.axhline(resolved_pc, color="#000000", linestyle=":", lw=1.8, zorder=2)
+
+    for fl_t in t_frontlines:
+        if fl_t <= t_end:
+            ax_b.axvline(fl_t, color=frontline_color, linestyle="-", lw=1.6, zorder=4)
+
+    ax_b.set_xlim(0, t_end)
+    if ylim_pt is not None:
+        ax_b.set_ylim(*ylim_pt)
+    else:
+        min_p = float(np.min(p_t))
+        max_p = float(np.max(p_t))
+        ax_b.set_ylim(max(0.0, min(0.44, min_p - 0.02)), min(1.0, max_p + 0.04))
+
+    ax_b.set_title(r"(b) Occupation probability", fontsize=fs_title, color="#263238", loc="left", pad=10)
+    ax_b.set_xlabel(r"$t$", fontsize=fs_labels, color="#263238")
+    ax_b.set_ylabel(r"$p(t)$", fontsize=fs_labels, color="#263238")
+
+    x_step = 2000
+    ax_b.set_xticks(np.arange(0, t_end + 1, x_step))
+    from matplotlib.ticker import MultipleLocator
+    ax_b.xaxis.set_minor_locator(MultipleLocator(500))
+    ax_b.yaxis.set_minor_locator(MultipleLocator(0.05))
+
+    ax_b.tick_params(
+        axis="both", which="major", direction="in", top=True, right=True,
+        length=10, width=tick_width, labelsize=fs_ticks, pad=8
+    )
+    ax_b.tick_params(
+        axis="both", which="minor", direction="in", top=True, right=True,
+        length=5, width=1.4
+    )
+    for spine in ax_b.spines.values():
+        spine.set_linewidth(tick_width)
+        spine.set_color("#263238")
+        spine.set_zorder(10)
+
+    # Alinhamento exato das caixas dos eixos
+    if created_fig:
+        fig.canvas.draw()
+        pos_a = ax_a.get_position()
+        pos_b = ax_b.get_position()
+        ax_b.set_position([pos_a.x0, pos_b.y0, pos_a.width, pos_b.height])
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, bbox_inches="tight", facecolor="white", dpi=300)
+    if save_pdf is not None:
+        save_pdf = Path(save_pdf)
+        save_pdf.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_pdf, bbox_inches="tight", facecolor="white")
+    if save_svg is not None:
+        save_svg = Path(save_svg)
+        save_svg.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_svg, format="svg", bbox_inches="tight", facecolor="white")
+
+    return fig, (ax_a, ax_b)
 
 
 import numpy as np
