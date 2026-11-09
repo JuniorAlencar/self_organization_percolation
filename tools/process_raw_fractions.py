@@ -439,10 +439,13 @@ def build_published_fractions_bundle(
 
 def process_fraction_group(task):
     (group, files, raw_root, published_root, manifests_root, pretty_json,
-     dry_run, clear, fingerprint_mode, detect_replaced_files, strict) = task
+     dry_run, clear, fingerprint_mode, detect_replaced_files, strict, require_manifests) = task
     rel_parent, P0, p0, base = group
     bundle_name = bundle_filename(P0, p0, base)
     out_path = published_root / rel_parent / bundle_name
+    if not require_manifests and out_path.exists() and not clear:
+        print(f"[skip:published] {out_path} (manifest not required)")
+        return out_path
     current_json_files = sorted(path.name for path in files)
     files_by_name = {path.name: path for path in files}
     manifest = load_manifest(manifests_root, rel_parent, bundle_name)
@@ -551,6 +554,7 @@ def process_raw_fractions(
     fingerprint_mode: str = "stat",
     detect_replaced_files: bool = False,
     strict: bool = True,
+    require_manifests: bool = True,
     jobs: int = 1,
 ) -> list[Path]:
     raw_root = sop_root / raw_dir
@@ -558,9 +562,15 @@ def process_raw_fractions(
     manifests_root = sop_root / manifests_dir
     groups = group_raw_fraction_files(raw_root)
 
+    if not groups and not require_manifests and published_root.exists():
+        existing_bundles = sorted(published_root.rglob("*.json.xz"))
+        if existing_bundles:
+            print(f"[published_fractions] adopted {len(existing_bundles)} existing bundle(s) from {published_root} (manifests not required)")
+            return existing_bundles
+
     tasks = (
         (group, files, raw_root, published_root, manifests_root, pretty_json,
-         dry_run, clear, fingerprint_mode, detect_replaced_files, strict)
+         dry_run, clear, fingerprint_mode, detect_replaced_files, strict, require_manifests)
         for group, files in sorted(groups.items())
     )
     written_paths = list(ordered_parallel_map(process_fraction_group, tasks, jobs))
@@ -583,6 +593,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pretty-json", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--clear", action="store_true", help="Ignore manifest cache and rebuild all bundles.")
+    parser.add_argument(
+        "--require-manifests",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require manifests to be up-to-date. When disabled, existing published bundles are preserved without checking manifests.",
+    )
     parser.add_argument(
         "--fingerprint-mode",
         choices=("stat", "hash"),
@@ -612,6 +628,7 @@ def main() -> None:
         fingerprint_mode=args.fingerprint_mode,
         detect_replaced_files=args.detect_replaced_files,
         strict=not args.no_strict,
+        require_manifests=args.require_manifests,
         jobs=args.jobs,
     )
     print(f"[published_fractions] processed {len(paths)} bundle(s)")

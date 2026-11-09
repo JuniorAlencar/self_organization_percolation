@@ -42,8 +42,63 @@ def rounded_value_error(value, error, max_decimals: int = 6) -> str:
     return f"{value:.{decimals}f} $\\pm$ {error:.{decimals}f}"
 
 
-def counts_root(path: str | Path = "../SOP_data/published_counts") -> Path:
-    return Path(path).expanduser().resolve()
+def counts_root(path: str | Path | None = None) -> Path:
+    if path is not None:
+        p = Path(path).expanduser()
+        if p.exists():
+            return p.resolve()
+    for base in (Path.cwd(), *Path.cwd().parents):
+        cand = base / "SOP_data" / "published_counts"
+        if cand.exists():
+            return cand.resolve()
+        cand = base / "published_counts"
+        if cand.exists():
+            return cand.resolve()
+    return Path("../SOP_data/published_counts").expanduser().resolve()
+
+
+def to_relative_counts_path(path: str | Path) -> str:
+    p_str = str(path).replace("\\", "/")
+    if "published_counts/" in p_str:
+        return p_str.split("published_counts/", 1)[1]
+    p = Path(path)
+    parts = p.parts
+    if "published_counts" in parts:
+        idx = parts.index("published_counts")
+        return str(Path(*parts[idx + 1:]))
+    return str(path)
+
+
+def resolve_counts_path(path: str | Path, root: str | Path | None = None) -> Path:
+    p = Path(path).expanduser()
+    if p.is_absolute() and p.exists():
+        return p
+
+    p_str = str(path).replace("\\", "/")
+    if "published_counts/" in p_str:
+        rel = p_str.split("published_counts/", 1)[1]
+    else:
+        parts = p.parts
+        if "published_counts" in parts:
+            idx = parts.index("published_counts")
+            rel = str(Path(*parts[idx + 1:]))
+        else:
+            rel = str(path)
+
+    base = counts_root(root)
+    cand = base / rel
+    if cand.exists():
+        return cand
+
+    for parent in (Path.cwd(), *Path.cwd().parents):
+        cand = parent / "SOP_data" / "published_counts" / rel
+        if cand.exists():
+            return cand
+        cand = parent / rel
+        if cand.exists():
+            return cand
+
+    return base / rel
 
 
 def list_counts_files(root: str | Path = "../SOP_data/published_counts") -> list[Path]:
@@ -79,9 +134,9 @@ def select_spanning_clusters(payload: dict, cluster_role: str = "largest_spannin
                      "n_selected_clusters": len(records)}, "samples": records}
 
 
-def read_counts_file(path: str | Path, cluster_role: str = "largest_spanning") -> dict:
-    path = Path(path).expanduser()
-    with path.open("r", encoding="utf-8") as fh:
+def read_counts_file(path: str | Path, cluster_role: str = "largest_spanning", root: str | Path | None = None) -> dict:
+    resolved_path = resolve_counts_path(path, root=root)
+    with resolved_path.open("r", encoding="utf-8") as fh:
         return select_spanning_clusters(json.load(fh), cluster_role)
 
 
@@ -90,7 +145,7 @@ def processed_counts_index(root: str | Path = "../SOP_data/published_counts") ->
     index_path = root / "split_outputs.csv"
     if index_path.exists():
         df = pd.read_csv(index_path)
-        df["path"] = df["path"].map(lambda p: str(Path(p).expanduser().resolve()))
+        df["path"] = df["path"].map(to_relative_counts_path)
         return df
 
     rows = []
@@ -110,7 +165,7 @@ def processed_counts_index(root: str | Path = "../SOP_data/published_counts") ->
                 "P0",
                 "p0",
             ]},
-            "path": str(path.resolve()),
+            "path": to_relative_counts_path(path),
             "n_count_files": meta.get("n_count_files"),
             "n_samples": meta.get("n_samples", len(payload.get("samples", []))),
         })

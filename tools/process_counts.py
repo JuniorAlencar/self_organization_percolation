@@ -628,8 +628,7 @@ def stat_signature(paths, root):
     signature = []
     for path in sorted(paths):
         stat = path.stat()
-        signature.append([str(path.relative_to(root)), stat.st_size,
-                          stat.st_mtime_ns, stat.st_ctime_ns])
+        signature.append([str(path.relative_to(root)), stat.st_size, stat.st_mtime_ns])
     return signature
 
 
@@ -647,8 +646,13 @@ def counts_input_state(args, raw_root, count_paths):
 
 
 def counts_output_state(out_root):
-    paths = [path for path in out_root.rglob("*")
-             if path.is_file() and path.name != ".counts_state.json"]
+    paths = [
+        path for path in out_root.rglob("*")
+        if path.is_file()
+        and not path.name.startswith(".counts_state")
+        and not path.name.startswith(".stfolder")
+        and not path.name.startswith(".syncthing")
+    ]
     return stat_signature(paths, out_root)
 
 
@@ -671,6 +675,35 @@ def process_counts(args: argparse.Namespace) -> dict[str, Any]:
     )
     input_state = counts_input_state(args, raw_root, count_paths)
     state_path = out_root / ".counts_state.json"
+    if not state_path.exists():
+        conflicts = sorted(out_root.glob(".counts_state.sync-conflict*.json"))
+        if conflicts:
+            state_path = conflicts[-1]
+
+    require_manifests = getattr(args, "require_manifests", True)
+    if not args.refresh and not require_manifests:
+        manifest_file = out_root / "manifest.json"
+        if manifest_file.exists():
+            try:
+                manifest = json.loads(manifest_file.read_text())
+                manifest["dry_run"] = args.dry_run
+                manifest["skipped_unchanged"] = True
+                print("[process_counts] adopted existing published counts from manifest; skipped reprocessing (manifests not required)")
+                if not args.dry_run and not (out_root / ".counts_state.json").exists():
+                    write_json_atomic(out_root / ".counts_state.json", {"inputs": input_state, "outputs": counts_output_state(out_root)})
+                return manifest
+            except Exception:
+                pass
+        elif (out_root / "split_outputs.csv").exists():
+            print("[process_counts] adopted existing split_outputs.csv; skipped reprocessing (manifests not required)")
+            return {
+                "processing": "counts",
+                "dry_run": args.dry_run,
+                "skipped_unchanged": True,
+                "n_raw_count_files_this_run": 0,
+                "n_parameter_sets": 0,
+            }
+
     if not args.refresh and state_path.exists():
         try:
             state = json.loads(state_path.read_text())
@@ -861,6 +894,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--box-epsilon-max", type=float, default=None)
     parser.add_argument("--chemical-r-min", type=float, default=None)
     parser.add_argument("--chemical-r-max", type=float, default=None)
+    parser.add_argument(
+        "--require-manifests",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require strict manifest and input state cache. When disabled, existing published counts are adopted directly without reprocessing.",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
