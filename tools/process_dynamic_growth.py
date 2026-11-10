@@ -49,9 +49,10 @@ PARAM_RE = re.compile(
 
 RE_P0 = re.compile(rf"(?:^|_)P0_(?P<P0>{FLOAT})(?:_|\.json$)")
 RE_p0 = re.compile(rf"(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)")
+RE_SAMPLE_LAYOUT = re.compile(r"(?:^|_)base_(?P<layout>[a-zA-Z0-9]+)(?:_|\.json|\.yts|$)")
 
 ALL_DATA_COLUMNS = [
-    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule",
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "initial_layout",
     "stat_window",
     "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
@@ -60,7 +61,7 @@ ALL_DATA_COLUMNS = [
 ]
 
 ALL_COLORS_COLUMNS = [
-    "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0", "control_rule",
+    "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0", "control_rule", "initial_layout",
     "N_samples", "rho", "nc", "nc_err", "nc_std", "stat_window",
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
@@ -75,11 +76,14 @@ ALL_DATA_LEGACY_COLUMNS = [
     "t_eq_validation", "t_eq_s_prime_threshold",
 ]
 
+ALL_DATA_PRE_LAYOUT_COLUMNS = [
+    column for column in ALL_DATA_COLUMNS if column != "initial_layout"
+]
 ALL_DATA_PRE_CONTROL_RULE_COLUMNS = [
-    column for column in ALL_DATA_COLUMNS if column != "control_rule"
+    column for column in ALL_DATA_PRE_LAYOUT_COLUMNS if column != "control_rule"
 ]
 ALL_DATA_GROUP_COLUMNS = (
-    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "stat_window"
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "initial_layout", "stat_window"
 )
 ALL_COLORS_LEGACY_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
@@ -87,11 +91,14 @@ ALL_COLORS_LEGACY_COLUMNS = [
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
+ALL_COLORS_PRE_LAYOUT_COLUMNS = [
+    column for column in ALL_COLORS_COLUMNS if column != "initial_layout"
+]
 ALL_COLORS_PRE_CONTROL_RULE_COLUMNS = [
-    column for column in ALL_COLORS_COLUMNS if column != "control_rule"
+    column for column in ALL_COLORS_PRE_LAYOUT_COLUMNS if column != "control_rule"
 ]
 ALL_COLORS_GROUP_COLUMNS = (
-    "type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "p0", "P0", "control_rule", "stat_window"
+    "type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "p0", "P0", "control_rule", "initial_layout", "stat_window"
 )
 DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window"}
 DAT_FLOAT_COLUMNS = {
@@ -193,6 +200,12 @@ def open_binary_auto(path: Path, mode: str, compresslevel: int = 6):
 
 
 def load_json_bundle(path: Path) -> dict[str, Any]:
+    if path.suffix == ".xz" and XZ_BIN:
+        proc = subprocess.run([XZ_BIN, "-dc", str(path)], stdout=subprocess.PIPE, check=True)
+        data = json.loads(proc.stdout.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"Invalid JSON bundle: {path}")
+        return data
     with open_text_auto(path, "rt") as f:
         data = json.load(f)
     if not isinstance(data, dict):
@@ -201,6 +214,18 @@ def load_json_bundle(path: Path) -> dict[str, Any]:
 
 
 def write_json_bundle(path: Path, data: dict[str, Any], pretty: bool = False, compresslevel: int = 6) -> None:
+    if path.suffix == ".xz" and XZ_BIN:
+        separators = None if pretty else (",", ":")
+        indent = 2 if pretty else None
+        json_bytes = json.dumps(json_safe(data), ensure_ascii=False, indent=indent, separators=separators).encode("utf-8") + b"\n"
+        with path.open("wb") as out_f:
+            subprocess.run(
+                [XZ_BIN, f"-{int(compresslevel)}", "-T1", "-c"],
+                input=json_bytes,
+                stdout=out_f,
+                check=True,
+            )
+        return
     with open_text_auto(path, "wt", compresslevel=compresslevel) as f:
         if pretty:
             json.dump(json_safe(data), f, ensure_ascii=False, indent=2)
@@ -320,18 +345,50 @@ def normalize_control_rule(value: Any, default: str = "relative") -> str:
     return rule
 
 
-def sample_control_rule(path: Path) -> str:
-    """Read only the sample metadata needed to separate aggregation rules."""
+def normalize_initial_layout(value: Any, default: str = "random") -> str:
+    layout = str(value if value is not None else default).strip().lower()
+    return layout if layout else default
+
+
+def extract_layout_from_filename(filename: str) -> str:
+    """Extract initial layout from sample filename using regex, defaulting to 'random'."""
+    fname = filename.split("::")[-1]
+    m = RE_SAMPLE_LAYOUT.search(fname)
+    if m:
+        return normalize_initial_layout(m.group("layout"))
+    return "random"
+
+
+def sample_group_metadata(path: Path) -> tuple[str, str]:
+    """Read control rule and initial layout needed to separate sample groups."""
+    layout = extract_layout_from_filename(path.name)
+    rule = "relative"
     try:
         with path.open("r", encoding="utf-8") as handle:
             sample = json.load(handle)
+        meta = sample.get("meta", {}) if isinstance(sample, dict) else {}
+        if not isinstance(meta, dict):
+            meta = {}
+        rule = normalize_control_rule(meta.get("feedback_control_rule"))
+        if layout == "random":
+            meta_layout = meta.get("initial_layout") or meta.get("initial_base_layout")
+            if meta_layout:
+                layout = normalize_initial_layout(meta_layout)
     except Exception as exc:
-        print(f"[warn] could not read control rule from {path}: {exc}")
-        return "relative"
-    meta = sample.get("meta", {}) if isinstance(sample, dict) else {}
-    if not isinstance(meta, dict):
-        meta = {}
-    return normalize_control_rule(meta.get("feedback_control_rule"))
+        print(f"[warn] could not read metadata from {path}: {exc}")
+    return rule, layout
+
+
+def sample_control_rule(path: Path) -> str:
+    """Read only the sample metadata needed to separate aggregation rules."""
+    rule, _ = sample_group_metadata(path)
+    return rule
+
+
+def sample_initial_layout(path: Path) -> str:
+    """Extract initial layout from sample file path."""
+    _, layout = sample_group_metadata(path)
+    return layout
 
 
 def sample_manifest_id(path: Path) -> str:
@@ -490,9 +547,17 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
             return []
         accepted_headers = [expected_columns]
         if expected_columns == ALL_DATA_COLUMNS:
-            accepted_headers.extend((ALL_DATA_PRE_CONTROL_RULE_COLUMNS, ALL_DATA_LEGACY_COLUMNS))
+            accepted_headers.extend((
+                ALL_DATA_PRE_LAYOUT_COLUMNS,
+                ALL_DATA_PRE_CONTROL_RULE_COLUMNS,
+                ALL_DATA_LEGACY_COLUMNS,
+            ))
         if expected_columns == ALL_COLORS_COLUMNS:
-            accepted_headers.extend((ALL_COLORS_PRE_CONTROL_RULE_COLUMNS, ALL_COLORS_LEGACY_COLUMNS))
+            accepted_headers.extend((
+                ALL_COLORS_PRE_LAYOUT_COLUMNS,
+                ALL_COLORS_PRE_CONTROL_RULE_COLUMNS,
+                ALL_COLORS_LEGACY_COLUMNS,
+            ))
         if header not in accepted_headers:
             raise ValueError(f"Unexpected header in {path}: {' '.join(header)}")
         rows: list[dict[str, Any]] = []
@@ -508,6 +573,8 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
                 row["stat_window"] = 0
             if "control_rule" not in row:
                 row["control_rule"] = "relative"
+            if "initial_layout" not in row:
+                row["initial_layout"] = "alternating"
             rows.append(row)
     return rows
 
@@ -590,21 +657,29 @@ def group_key(row: dict[str, Any], columns: tuple[str, ...]) -> tuple[Any, ...]:
 
 
 def all_data_group_key_from_params(
-    params: dict[str, Any], control_rule: str | None = None
+    params: dict[str, Any], control_rule: str | None = None, initial_layout: str | None = None
 ) -> tuple[Any, ...]:
     row = dict(params)
     if control_rule is not None:
         row["control_rule"] = control_rule
+    if initial_layout is not None:
+        row["initial_layout"] = initial_layout
+    elif "initial_layout" not in row:
+        row["initial_layout"] = "alternating"
     return group_key(row, ALL_DATA_GROUP_COLUMNS)
 
 
 def all_colors_group_key_from_params(
-    params: dict[str, Any], control_rule: str | None = None
+    params: dict[str, Any], control_rule: str | None = None, initial_layout: str | None = None
 ) -> tuple[Any, ...]:
     row = dict(params)
     row["num_colors"] = params.get("nc")
     if control_rule is not None:
         row["control_rule"] = control_rule
+    if initial_layout is not None:
+        row["initial_layout"] = initial_layout
+    elif "initial_layout" not in row:
+        row["initial_layout"] = "alternating"
     return group_key(row, ALL_COLORS_GROUP_COLUMNS)
 
 
@@ -1295,6 +1370,11 @@ def load_dynamic_sample(
     if not parsed_blocks:
         return []
 
+    sample_layout = extract_layout_from_filename(path.name)
+    meta_layout = meta.get("initial_layout") or meta.get("initial_base_layout")
+    if meta_layout:
+        sample_layout = normalize_initial_layout(meta_layout)
+
     result_t_eq_order = [float(d.get("t_eq_species")) for _, d in parsed_blocks]
     meta_t_eq = meta.get("t_eq_by_species", [])
     meta_zstat = meta.get("z_stat", [])
@@ -1326,6 +1406,8 @@ def load_dynamic_sample(
         row = {
             "order": order_pos,
             "color": color_1b,
+            "initial_layout": sample_layout,
+            "initial_base_layout": sample_layout,
             "t_eq_species": t_eq,
             "p_sample_mean": p_mean,
             "f_sample_mean": f_mean,
@@ -1354,12 +1436,15 @@ def process_one_sample_file(
     if not sample_orders:
         return [], 0.0
 
+    file_layout = extract_layout_from_filename(sample_path.name)
     rows: list[dict[str, Any]] = []
     for item in sample_orders:
         rows.append({
             "filename": sample_path.name,
             "order": int(item["order"]),
             "color": item.get("color"),
+            "initial_layout": item.get("initial_layout", file_layout),
+            "initial_base_layout": item.get("initial_base_layout", file_layout),
             "t_eq_species": item.get("t_eq_species"),
             "time": item.get("time"),
             "pt": item.get("pt"),
@@ -1601,6 +1686,13 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
         control_rule = normalize_control_rule(
             p0_group.get("feedback_control_rule", meta_rule)
         )
+        group_layout = p0_group.get("initial_layout") or meta.get("initial_layout", "random")
+        if isinstance(group_layout, list):
+            group_layout = group_layout[0] if group_layout else "random"
+        group_base_layout = p0_group.get("initial_base_layout") or group_layout
+        if isinstance(group_base_layout, list):
+            group_base_layout = group_base_layout[0] if group_base_layout else "random"
+
         processed = p0_group.get("num_samples_total", 0)
         colors = p0_group.get("colors", {})
         if not isinstance(colors, dict):
@@ -1608,6 +1700,8 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
 
         all_color_rows.append({
             **params,
+            "initial_layout": group_layout,
+            "initial_base_layout": group_base_layout,
             "num_colors": params["nc"],
             "p0": p0,
             "P0": P0,
@@ -1633,6 +1727,8 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
 
             all_rows.append({
                 **params,
+                "initial_layout": group_layout,
+                "initial_base_layout": group_base_layout,
                 "p0": p0,
                 "P0": P0,
                 "control_rule": control_rule,
@@ -2395,8 +2491,137 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     return merged
 
 
+def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
+    """Split a p0_group into multiple homogeneous groups if it contains samples with different initial layouts."""
+    if not isinstance(p0_group, dict):
+        return []
+
+    orders = p0_group.get("orders", [])
+    if not isinstance(orders, list) or not orders:
+        layout = p0_group.get("initial_layout") or "random"
+        if isinstance(layout, list):
+            layout = layout[0] if layout else "random"
+        base_layout = p0_group.get("initial_base_layout") or layout
+        if isinstance(base_layout, list):
+            base_layout = base_layout[0] if base_layout else layout
+        group_copy = dict(p0_group)
+        group_copy["initial_layout"] = layout
+        group_copy["initial_base_layout"] = base_layout
+        return [group_copy]
+
+    sample_layouts: set[str] = set()
+    for order in orders:
+        if isinstance(order, dict):
+            for s in order.get("samples", []):
+                if isinstance(s, dict):
+                    sl = s.get("initial_layout") or extract_layout_from_filename(s.get("filename", ""))
+                    sample_layouts.add(normalize_initial_layout(sl))
+
+    if len(sample_layouts) <= 1:
+        layout = list(sample_layouts)[0] if sample_layouts else (p0_group.get("initial_layout") or "random")
+        if isinstance(layout, list):
+            layout = layout[0] if layout else "random"
+        base_layout = p0_group.get("initial_base_layout") or layout
+        if isinstance(base_layout, list):
+            base_layout = base_layout[0] if base_layout else layout
+        group_copy = dict(p0_group)
+        group_copy["initial_layout"] = layout
+        group_copy["initial_base_layout"] = base_layout
+        return [group_copy]
+
+    split_groups: list[dict[str, Any]] = []
+    control_rule = normalize_control_rule(p0_group.get("feedback_control_rule"))
+    P0 = p0_group.get("P0_value")
+    p0 = p0_group.get("p0_value")
+
+    for layout in sorted(sample_layouts):
+        new_orders: list[dict[str, Any]] = []
+        samples_in_layout_total = 0
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            all_s = order.get("samples", [])
+            filtered_s = [
+                s for s in all_s
+                if isinstance(s, dict)
+                and normalize_initial_layout(s.get("initial_layout") or extract_layout_from_filename(s.get("filename", ""))) == layout
+            ]
+            if not filtered_s:
+                continue
+            samples_in_layout_total += len(filtered_s)
+            p_vals = [s["p_sample_mean"] for s in filtered_s if s.get("p_sample_mean") is not None]
+            f_vals = [s["f_sample_mean"] for s in filtered_s if s.get("f_sample_mean") is not None]
+            z_vals = [s["z_stat"] for s in filtered_s if s.get("z_stat") is not None]
+            teq_vals = [s["t_eq_species"] for s in filtered_s if s.get("t_eq_species") is not None]
+
+            p_summary = summary_with_values(p_vals)
+            f_summary = summary_with_values(f_vals)
+            z_summary = summary_with_values(z_vals)
+            teq_summary = summary_from_values(teq_vals)
+
+            existing_data = dict(order.get("data", {})) if isinstance(order.get("data", {}), dict) else {}
+            existing_data["p_tail_mean"] = p_summary.get("mean")
+            existing_data["p_tail_err"] = p_summary.get("err")
+            existing_data["p_tail_sample_values"] = p_summary.get("values", [])
+            existing_data["f_tail_mean"] = f_summary.get("mean")
+            existing_data["f_tail_err"] = f_summary.get("err")
+            existing_data["f_tail_sample_values"] = f_summary.get("values", [])
+            existing_data["z_stat_mean"] = z_summary.get("mean")
+            existing_data["z_stat_err"] = z_summary.get("err")
+            existing_data["z_stat_std"] = z_summary.get("std")
+            existing_data["z_stat_median"] = z_summary.get("median")
+            existing_data["z_stat_q25"] = z_summary.get("q25")
+            existing_data["z_stat_q75"] = z_summary.get("q75")
+            existing_data["z_stat_q90"] = z_summary.get("q90")
+            existing_data["z_stat_values"] = z_summary.get("values", [])
+            existing_data["n_samples_perc"] = len(filtered_s)
+            existing_data["n_samples_total"] = len(filtered_s)
+
+            order_block = {
+                "order": order.get("order"),
+                "N_samples": len(filtered_s),
+                "N_samples_perc": len(filtered_s),
+                "data": existing_data,
+                "t_eq_species": teq_summary,
+                "p": p_summary,
+                "f": f_summary,
+                "z_stat": z_summary,
+                "samples": filtered_s,
+            }
+            new_orders.append(order_block)
+
+        nc_summary = summary_from_values([float(len(new_orders))] * samples_in_layout_total) if samples_in_layout_total > 0 else {}
+        split_group = {
+            "feedback_control_rule": control_rule,
+            "initial_layout": layout,
+            "initial_base_layout": layout,
+            "P0_value": P0,
+            "p0_value": p0,
+            "num_samples_total": samples_in_layout_total,
+            "colors": summary_as_colors(nc_summary, samples_in_layout_total) if nc_summary else p0_group.get("colors", {}),
+            "orders": new_orders,
+        }
+        split_groups.append(split_group)
+
+    return split_groups
+
+
 def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) -> dict[str, Any]:
     merged = dict(existing_group)
+    layout = new_group.get("initial_layout") or existing_group.get("initial_layout") or "random"
+    if isinstance(layout, list):
+        layout = layout[0] if layout else "random"
+    base_layout = new_group.get("initial_base_layout") or existing_group.get("initial_base_layout") or layout
+    if isinstance(base_layout, list):
+        base_layout = base_layout[0] if base_layout else layout
+    rule = new_group.get("feedback_control_rule") or existing_group.get("feedback_control_rule") or "relative"
+    if isinstance(rule, list):
+        rule = rule[0] if rule else "relative"
+
+    merged["initial_layout"] = layout
+    merged["initial_base_layout"] = base_layout
+    merged["feedback_control_rule"] = rule
+
     existing_orders = {int(order.get("order")): order for order in existing_group.get("orders", []) if isinstance(order, dict) and order.get("order") is not None}
     new_orders = {int(order.get("order")): order for order in new_group.get("orders", []) if isinstance(order, dict) and order.get("order") is not None}
     total_samples = int(existing_group.get("num_samples_total", 0) or 0) + int(new_group.get("num_samples_total", 0) or 0)
@@ -2414,6 +2639,10 @@ def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) ->
         data = order_block.get("data")
         if isinstance(data, dict):
             data["n_samples_total"] = total_samples
+        for s in order_block.get("samples", []):
+            if isinstance(s, dict):
+                s.setdefault("initial_layout", layout)
+                s.setdefault("initial_base_layout", base_layout)
 
     merged["orders"] = merged_orders
     merged["num_samples_total"] = total_samples
@@ -2427,11 +2656,24 @@ def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) ->
     return merged
 
 
-def p0_group_key(group: dict[str, Any], default_rule: Any = "relative") -> tuple[str, float, float]:
+def p0_group_key(
+    group: dict[str, Any],
+    default_rule: Any = "relative",
+    default_layout: str = "random",
+) -> tuple[str, str, float, float]:
+    rule = normalize_control_rule(group.get("feedback_control_rule", default_rule))
+    layout_val = group.get("initial_layout")
+    if isinstance(layout_val, list):
+        layout = "_".join(sorted(str(x) for x in layout_val))
+    elif layout_val:
+        layout = normalize_initial_layout(layout_val, default=default_layout)
+    else:
+        layout = default_layout
     return (
-        normalize_control_rule(group.get("feedback_control_rule", default_rule)),
-        float(group.get("P0_value", 0.0) or 0.0),
-        float(group.get("p0_value", 0.0) or 0.0),
+        rule,
+        layout,
+        round(float(group.get("P0_value", 0.0) or 0.0), 6),
+        round(float(group.get("p0_value", 0.0) or 0.0), 6),
     )
 
 
@@ -2445,13 +2687,14 @@ def build_bundle_for_files(
     fingerprint_mode: str = "stat",
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     include_time_series = series_mode == "full"
-    groups: dict[tuple[str, float, float], list[Path]] = defaultdict(list)
+    groups: dict[tuple[str, str, float, float], list[Path]] = defaultdict(list)
     for fp in files:
         parsed_name = parse_sample_name(fp)
         if parsed_name is None:
             continue
         P0, p0 = parsed_name
-        groups[(sample_control_rule(fp), P0, p0)].append(fp)
+        rule, layout = sample_group_metadata(fp)
+        groups[(rule, layout, P0, p0)].append(fp)
 
     bundle: dict[str, Any] = {
         "meta": {
@@ -2468,8 +2711,8 @@ def build_bundle_for_files(
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
 
-    for (control_rule, P0, p0), group_files in sorted(
-        groups.items(), key=lambda x: (x[0][0], x[0][1], x[0][2])
+    for (control_rule, layout, P0, p0), group_files in sorted(
+        groups.items(), key=lambda x: (x[0][0], x[0][1], x[0][2], x[0][3])
     ):
         by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
         sample_rows, stabilized_counts = process_sample_files(
@@ -2491,6 +2734,8 @@ def build_bundle_for_files(
 
         p0_group = {
             "feedback_control_rule": control_rule,
+            "initial_layout": layout,
+            "initial_base_layout": layout,
             "P0_value": P0,
             "p0_value": p0,
             "num_samples_total": processed,
@@ -2501,6 +2746,8 @@ def build_bundle_for_files(
         all_color_rows.append({
             **params,
             "control_rule": control_rule,
+            "initial_layout": layout,
+            "initial_base_layout": layout,
             "num_colors": params["nc"],
             "p0": p0,
             "P0": P0,
@@ -2563,6 +2810,8 @@ def build_bundle_for_files(
                     {
                         "filename": x["filename"],
                         "color": x["color"],
+                        "initial_layout": x.get("initial_layout", layout),
+                        "initial_base_layout": x.get("initial_base_layout", layout),
                         "t_eq_species": x["t_eq_species"],
                         "p_sample_mean": x["p_sample_mean"],
                         "f_sample_mean": x["f_sample_mean"],
@@ -2581,6 +2830,8 @@ def build_bundle_for_files(
             all_rows.append({
                 **params,
                 "control_rule": control_rule,
+                "initial_layout": layout,
+                "initial_base_layout": layout,
                 "p0": p0,
                 "P0": P0,
                 "order": order,
@@ -2599,8 +2850,12 @@ def build_bundle_for_files(
 
         bundle["p0_groups"].append(p0_group)
 
-    rules = sorted({group["feedback_control_rule"] for group in bundle["p0_groups"]})
-    bundle["meta"]["feedback_control_rule"] = rules[0] if len(rules) == 1 else rules
+    rules = sorted({group["feedback_control_rule"] for group in bundle["p0_groups"] if group.get("feedback_control_rule")})
+    bundle["meta"]["feedback_control_rule"] = rules[0] if len(rules) == 1 else (rules if rules else "relative")
+    layouts = sorted({group["initial_layout"] for group in bundle["p0_groups"] if group.get("initial_layout") and not isinstance(group.get("initial_layout"), list)})
+    bundle["meta"]["initial_layout"] = layouts[0] if len(layouts) == 1 else (layouts if layouts else "random")
+    base_layouts = sorted({group["initial_base_layout"] for group in bundle["p0_groups"] if group.get("initial_base_layout") and not isinstance(group.get("initial_base_layout"), list)})
+    bundle["meta"]["initial_base_layout"] = base_layouts[0] if len(base_layouts) == 1 else (base_layouts if base_layouts else "random")
 
     return bundle, all_rows, all_color_rows
 
@@ -3290,27 +3545,35 @@ def process_group(
             sample_cache_dir=sample_cache_dir,
             fingerprint_mode=fingerprint_mode,
         )
-        merged_p0_groups: dict[tuple[str, float, float], dict[str, Any]] = {}
+        merged_p0_groups: dict[tuple[str, str, float, float], dict[str, Any]] = {}
         existing_meta_rule = existing_bundle.get("meta", {}).get("feedback_control_rule", "relative")
         if isinstance(existing_meta_rule, list):
             existing_meta_rule = "relative"
-        for p0_group in existing_bundle.get("p0_groups", []) if isinstance(existing_bundle.get("p0_groups", []), list) else []:
-            if not isinstance(p0_group, dict):
+        existing_meta_layout = existing_bundle.get("meta", {}).get("initial_layout", "random")
+        if isinstance(existing_meta_layout, list):
+            existing_meta_layout = "random"
+        for raw_group in existing_bundle.get("p0_groups", []) if isinstance(existing_bundle.get("p0_groups", []), list) else []:
+            if not isinstance(raw_group, dict):
                 continue
-            key = p0_group_key(p0_group, existing_meta_rule)
-            p0_group.setdefault("feedback_control_rule", key[0])
-            merged_p0_groups[key] = dict(p0_group)
-
-        for p0_group in batch_bundle.get("p0_groups", []) if isinstance(batch_bundle.get("p0_groups", []), list) else []:
-            if not isinstance(p0_group, dict):
-                continue
-            key = p0_group_key(p0_group)
-            if key in merged_p0_groups:
-                merged_p0_groups[key] = merge_p0_group(merged_p0_groups[key], p0_group)
-            else:
+            for p0_group in split_p0_group_by_layout(raw_group):
+                key = p0_group_key(p0_group, existing_meta_rule, existing_meta_layout)
+                p0_group.setdefault("feedback_control_rule", key[0])
+                p0_group.setdefault("initial_layout", key[1])
+                p0_group.setdefault("initial_base_layout", key[1])
                 merged_p0_groups[key] = dict(p0_group)
 
+        for raw_group in batch_bundle.get("p0_groups", []) if isinstance(batch_bundle.get("p0_groups", []), list) else []:
+            if not isinstance(raw_group, dict):
+                continue
+            for p0_group in split_p0_group_by_layout(raw_group):
+                key = p0_group_key(p0_group)
+                if key in merged_p0_groups:
+                    merged_p0_groups[key] = merge_p0_group(merged_p0_groups[key], p0_group)
+                else:
+                    merged_p0_groups[key] = dict(p0_group)
+
         merged_rules = sorted({key[0] for key in merged_p0_groups})
+        merged_layouts = sorted({key[1] for key in merged_p0_groups})
         merged_bundle = {
             "meta": {
                 **params,
@@ -3332,7 +3595,9 @@ def process_group(
                 "num_parseable_json_files": len(set(manifest_files) | set(current_json_files)),
                 "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
                 "series_mode": series_mode,
-                "feedback_control_rule": merged_rules[0] if len(merged_rules) == 1 else merged_rules,
+                "feedback_control_rule": merged_rules[0] if len(merged_rules) == 1 else (merged_rules if merged_rules else "relative"),
+                "initial_layout": merged_layouts[0] if len(merged_layouts) == 1 else (merged_layouts if merged_layouts else "random"),
+                "initial_base_layout": merged_layouts[0] if len(merged_layouts) == 1 else (merged_layouts if merged_layouts else "random"),
             },
             "p0_groups": [merged_p0_groups[key] for key in sorted(merged_p0_groups)],
         }
@@ -3348,16 +3613,24 @@ def process_group(
             fingerprint_mode=fingerprint_mode,
         )
         if existing_bundle and isinstance(existing_bundle, dict):
-            current_rules = {g.get("feedback_control_rule") for g in bundle.get("p0_groups", [])}
+            current_keys = {p0_group_key(g) for g in bundle.get("p0_groups", []) if isinstance(g, dict)}
             preserved_groups = []
             for eg in existing_bundle.get("p0_groups", []):
-                if isinstance(eg, dict) and eg.get("feedback_control_rule") not in current_rules:
-                    preserved_groups.append(eg)
+                if not isinstance(eg, dict):
+                    continue
+                for split_eg in split_p0_group_by_layout(eg):
+                    if p0_group_key(split_eg) not in current_keys:
+                        preserved_groups.append(split_eg)
             if preserved_groups:
                 bundle["p0_groups"].extend(preserved_groups)
                 bundle["p0_groups"].sort(key=p0_group_key)
-                all_rules = sorted({g["feedback_control_rule"] for g in bundle["p0_groups"]})
-                bundle["meta"]["feedback_control_rule"] = all_rules[0] if len(all_rules) == 1 else all_rules
+                all_rules = sorted({g.get("feedback_control_rule") for g in bundle["p0_groups"] if g.get("feedback_control_rule")})
+                if all_rules:
+                    bundle["meta"]["feedback_control_rule"] = all_rules[0] if len(all_rules) == 1 else all_rules
+                all_layouts = sorted({g.get("initial_layout") for g in bundle["p0_groups"] if g.get("initial_layout") and not isinstance(g.get("initial_layout"), list)})
+                if all_layouts:
+                    bundle["meta"]["initial_layout"] = all_layouts[0] if len(all_layouts) == 1 else all_layouts
+                    bundle["meta"]["initial_base_layout"] = all_layouts[0] if len(all_layouts) == 1 else all_layouts
 
     all_rows, all_color_rows = rows_from_bundle(bundle) if collect_rows else ([], [])
 
@@ -3492,7 +3765,8 @@ def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
         rows,
         key=lambda r: (
             r["type_perc"], r["dim"], r["nc"], r["rho"], r["c"], r["f_T"],
-            r["L"], r["P0"], r["p0"], r["control_rule"], r["stat_window"], r["order"],
+            r["L"], r["P0"], r["p0"], r["control_rule"], r.get("initial_layout") or "alternating",
+            r["stat_window"], r["order"],
         ),
     )
     with output_path.open("w", encoding="utf-8") as f:
@@ -3511,7 +3785,8 @@ def write_all_colors(rows: list[dict[str, Any]], output_path: Path) -> None:
         rows,
         key=lambda r: (
             r["type_perc"], r["dim"], r["num_colors"], r["rho"], r["c"],
-            r["f_T"], r["L"], r["P0"], r["p0"], r["control_rule"], r["stat_window"],
+            r["f_T"], r["L"], r["P0"], r["p0"], r["control_rule"], r.get("initial_layout") or "alternating",
+            r["stat_window"],
         ),
     )
     with output_path.open("w", encoding="utf-8") as f:
@@ -3572,14 +3847,25 @@ def compress_published_only(
     if rebuild_all_data:
         all_rows: list[dict[str, Any]] = []
         all_color_rows: list[dict[str, Any]] = []
-        bundle_paths = sorted(published_root.rglob("properties_dynamic_bundle.json.xz"))
-        for bundle_path in bundle_paths:
-            try:
-                rows, color_rows = rows_from_existing_bundle(bundle_path)
-                all_rows.extend(rows)
-                all_color_rows.extend(color_rows)
-            except Exception as exc:
-                print(f"[warn] failed to import {bundle_path}: {exc}")
+        bundle_paths = sorted(
+            set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+            | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+            | set(published_root.rglob("properties_dynamic_bundle.json"))
+        )
+        pool_workers = threads if threads > 1 else (os.cpu_count() or 4)
+        if pool_workers > 1 and len(bundle_paths) > 1:
+            with ProcessPoolExecutor(max_workers=min(pool_workers, 16)) as executor:
+                for rows, color_rows in executor.map(rows_from_existing_bundle, bundle_paths):
+                    all_rows.extend(rows)
+                    all_color_rows.extend(color_rows)
+        else:
+            for bundle_path in bundle_paths:
+                try:
+                    rows, color_rows = rows_from_existing_bundle(bundle_path)
+                    all_rows.extend(rows)
+                    all_color_rows.extend(color_rows)
+                except Exception as exc:
+                    print(f"[warn] failed to import {bundle_path}: {exc}")
 
         if all_rows:
             all_data_path = sop_root / all_data_name
