@@ -362,7 +362,9 @@ def plot_s_all_orders(results, include_p_all=True, figsize=(10, 7), fs=14):
     return fig, ax
 
 
-def read_dynamic_bundle(bundle_path):
+def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout=None):
+    if InitialLayout is not None:
+        initial_layout = InitialLayout
     bundle = _load_json_bundle(bundle_path)
 
     meta = bundle.get("meta", {})
@@ -379,6 +381,12 @@ def read_dynamic_bundle(bundle_path):
             "feedback_control_rule",
             meta.get("feedback_control_rule", "relative"),
         )
+        group_layout = p0_group.get("initial_layout") or meta.get("initial_layout", "alternating")
+        if isinstance(group_layout, list):
+            group_layout = group_layout[0] if group_layout else "alternating"
+        group_base_layout = p0_group.get("initial_base_layout") or meta.get("initial_base_layout", group_layout)
+        if isinstance(group_base_layout, list):
+            group_base_layout = group_base_layout[0] if group_base_layout else group_layout
         N_samples = p0_group.get("num_samples_total")
 
         colors = p0_group.get("colors", {})
@@ -403,6 +411,8 @@ def read_dynamic_bundle(bundle_path):
                 "stat_window": meta.get("stat_window"),
                 "series_mode": meta.get("series_mode", "full"),
                 "control_rule": control_rule,
+                "initial_layout": group_layout,
+                "initial_base_layout": group_base_layout,
 
                 "P0": P0,
                 "p0": p0,
@@ -513,12 +523,22 @@ def read_dynamic_bundle(bundle_path):
                 "min_support_fraction": data.get("min_support_fraction"),
             })
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty and initial_layout is not None and str(initial_layout).lower() != "all":
+        if "initial_layout" in df.columns:
+            matched = df["initial_layout"] == initial_layout
+            if not matched.any():
+                matched = df["initial_layout"].astype(str).str.lower() == str(initial_layout).lower()
+            if matched.any():
+                df = df[matched].reset_index(drop=True)
+            else:
+                df = df[matched].reset_index(drop=True)
+    return df
 
 
 def select_dynamic_bundle_row(
     bundle_df, p0=None, P0=None, order=None, control_rule="relative", tol=1e-12,
-    rule_update=None,
+    rule_update=None, initial_layout="alternating", InitialLayout=None,
 ):
     """
     Select one row from a dynamic properties bundle dataframe.
@@ -526,12 +546,19 @@ def select_dynamic_bundle_row(
     Float parameters are compared with np.isclose because values loaded from
     CSVs and JSON paths can differ in the last decimal places.
     """
+    if InitialLayout is not None:
+        initial_layout = InitialLayout
     if rule_update is not None:
         control_rule = rule_update
 
     data = bundle_df
     if control_rule is not None and "control_rule" in data.columns:
         data = data[data["control_rule"] == control_rule]
+    if initial_layout is not None and "initial_layout" in data.columns and str(initial_layout).lower() != "all":
+        matched = data["initial_layout"] == initial_layout
+        if not matched.any():
+            matched = data["initial_layout"].astype(str).str.lower() == str(initial_layout).lower()
+        data = data[matched]
     if p0 is not None:
         data = data[np.isclose(data["p0"].astype(float), float(p0), atol=tol, rtol=tol)]
     if P0 is not None:
@@ -548,6 +575,8 @@ def select_dynamic_bundle_row(
             details.append(f"order={order}")
         if control_rule is not None:
             details.append(f"control_rule={control_rule!r}")
+        if initial_layout is not None:
+            details.append(f"initial_layout={initial_layout!r}")
         raise ValueError("No dynamic bundle row found for " + ", ".join(details))
     return data.iloc[0]
 

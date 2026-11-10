@@ -24,7 +24,7 @@ seed = -1
 dim = 2
 nc = 1                      # Numero de cores (ex: 1, 2, 3, 4...)
 
-type_lst = ['node', 'bond']  # 'node' (site) e/ou 'bond' percolation
+type_lst = ['node']  # 'node' (site) e/ou 'bond' percolation
 
 # Lista de tamanhos L e orcamento de amostras por tamanho
 # Para L=16384 em modo fractions, cada run gera 'fraction_samples' (ex: 30) fatias gigantes;
@@ -33,14 +33,14 @@ L_lst = [16384]
 num_runs_lst = [50]
 num_runs_por_L = dict(zip(L_lst, num_runs_lst))
 
-c = 0.05
+c = 0.15
 multi = True
 Equilibration = 'false'
 Properties = 'false'
 
 # Modo e Layout para propriedades topologicas (d_bulk, d_min):
 Mode = 'growth_test'           # 'fractions' calcula fatias topologicas; use 'growth_test' para crescimento continuo
-InitialLayout = 'random'     # 'random' e o padrao para fracoes/topologia; 'clustered' para crescimento
+InitialLayout = 'alternating'     # 'random' e o padrao para fracoes/topologia; 'clustered' para crescimento
 ControlRule = 'linear'       # 'linear' ou 'relative'
 ForceTopologicalCounts = False
 
@@ -60,8 +60,8 @@ P0 = 0.2                     # 0.2 e o padrao nas analises topologicas
     #'bond': 0.0874002,
     #'node': 0.0720032,
 #}
-ft_lst = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-
+#ft_lst = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+ft_lst = [0.1]
 # =============================================================================
 # GERACAO DOS SCRIPTS SHELL
 # =============================================================================

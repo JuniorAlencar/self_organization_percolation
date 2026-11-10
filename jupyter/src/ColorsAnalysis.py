@@ -951,6 +951,8 @@ def get_ft_min_max(
     dim=2,
     P0=0.2,
     control_rule="linear",
+    initial_layout="alternating",
+    InitialLayout=None,
     from_plots=True,
 ):
     """
@@ -965,6 +967,8 @@ def get_ft_min_max(
     Salva os resultados em SOP_data/ft_min_max_2D_{type_perc}_{control_rule}.csv
     e retorna o DataFrame correspondente.
     """
+    if InitialLayout is not None:
+        initial_layout = InitialLayout
     if L_lst is None:
         L_lst = [512, 645, 813, 1024, 1448, 2048, 2896, 4096, 5793, 8192, 11585, 16384]
     if c_lst is None:
@@ -1024,8 +1028,8 @@ def get_ft_min_max(
                 pass
         return records
 
-    # Se df_series for necessario para c != 0.05 e nao foi fornecido, carrega all_data_dynamic.dat
-    if df_series is None and any(not np.isclose(float(c), 0.05) for c in c_lst):
+    # Se df_series nao foi fornecido, carrega all_data_dynamic.dat como fallback
+    if df_series is None:
         for dyn_p in [Path('../SOP_data/all_data_dynamic.dat'), Path('SOP_data/all_data_dynamic.dat')]:
             if dyn_p.exists():
                 df_series = pd.read_csv(dyn_p, sep=r'\s+')
@@ -1039,6 +1043,7 @@ def get_ft_min_max(
 
         data = {
             "L": [], "c": [], "type_perc": [], "control_rule": [],
+            "initial_layout": [],
             "f0": [], "p0": [], "nc": [], "rho": [], "f_T_min": [],
             "p_min": [], "p_min_err": [],
             "p_star": [], "p_star_err": [],
@@ -1078,6 +1083,8 @@ def get_ft_min_max(
 
                     if 'control_rule' in df_SUB.columns:
                         df_SUB = df_SUB[df_SUB['control_rule'] == control_rule].copy()
+                    if 'initial_layout' in df_SUB.columns and initial_layout is not None:
+                        df_SUB = df_SUB[df_SUB['initial_layout'] == initial_layout].copy()
 
                     if df_SUB.empty:
                         continue
@@ -1115,6 +1122,7 @@ def get_ft_min_max(
                 data["c"].append(c)
                 data["type_perc"].append(type_perc)
                 data["control_rule"].append(control_rule)
+                data["initial_layout"].append(initial_layout)
                 data["f0"].append(P0)
                 data["p0"].append(p0)
                 data["nc"].append(nc)
