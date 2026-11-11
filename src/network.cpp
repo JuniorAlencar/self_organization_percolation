@@ -2389,8 +2389,82 @@ std::vector<double> make_log_bin_edges(const double r_min,
     return edges;
 }
 
-std::vector<int> default_fractal_epsilons(const int dim)
+std::vector<int> generate_log_int_scales(const int vmin_in, const int vmax_in, const int target_n)
 {
+    const int vmin = std::max(1, vmin_in);
+    const int vmax = std::max(vmin, vmax_in);
+    const int total_possible = vmax - vmin + 1;
+    if (total_possible <= target_n) {
+        std::vector<int> all_vals(static_cast<std::size_t>(total_possible));
+        for (int i = 0; i < total_possible; ++i) all_vals[static_cast<std::size_t>(i)] = vmin + i;
+        return all_vals;
+    }
+
+    std::vector<int> rounded;
+    int curr_n = target_n;
+    while (curr_n <= 3 * target_n) {
+        rounded.clear();
+        const double ratio = std::pow(static_cast<double>(vmax) / static_cast<double>(vmin),
+                                      1.0 / static_cast<double>(curr_n - 1));
+        int prev = -1;
+        for (int i = 0; i < curr_n; ++i) {
+            const int val = static_cast<int>(std::llround(static_cast<double>(vmin) * std::pow(ratio, i)));
+            const int clamped = std::min(vmax, std::max(vmin, val));
+            if (clamped != prev) {
+                rounded.push_back(clamped);
+                prev = clamped;
+            }
+        }
+        if (static_cast<int>(rounded.size()) >= target_n ||
+            static_cast<int>(rounded.size()) == total_possible) {
+            break;
+        }
+        curr_n += 5;
+    }
+
+    if (static_cast<int>(rounded.size()) > target_n) {
+        std::vector<int> downsampled;
+        downsampled.reserve(static_cast<std::size_t>(target_n));
+        const double step = static_cast<double>(rounded.size() - 1) / static_cast<double>(target_n - 1);
+        int prev = -1;
+        for (int i = 0; i < target_n; ++i) {
+            const int idx = static_cast<int>(std::llround(i * step));
+            const int val = rounded[static_cast<std::size_t>(idx)];
+            if (val != prev) {
+                downsampled.push_back(val);
+                prev = val;
+            }
+        }
+        if (!downsampled.empty() && downsampled.back() != vmax) {
+            downsampled.back() = vmax;
+        }
+        return downsampled;
+    }
+
+    return rounded;
+}
+
+std::vector<int> default_box_counting_epsilons(const int dim, const int L)
+{
+    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_EPSILONS", 50);
+    const int eps_min = env_int_or_default("SOP_FRACTAL_EPSILON_MIN", 2);
+    const int eps_max = env_int_or_default("SOP_FRACTAL_EPSILON_MAX", std::max(eps_min, L / 4));
+    return generate_log_int_scales(eps_min, eps_max, target_n);
+}
+
+std::vector<int> default_shortest_path_radii(const int dim, const int L)
+{
+    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_RADII", 100);
+    const int r_min = env_int_or_default("SOP_FRACTAL_RADIUS_MIN", 2);
+    const int r_max = env_int_or_default("SOP_FRACTAL_RADIUS_MAX", std::max(r_min, L / 4));
+    return generate_log_int_scales(r_min, r_max, target_n);
+}
+
+std::vector<int> default_fractal_epsilons(const int dim, const int L = 0)
+{
+    if (L > 0) {
+        return default_box_counting_epsilons(dim, L);
+    }
     if (dim == 2) {
         return {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
     }
@@ -2913,9 +2987,10 @@ FractalClusterCounts compute_fractal_counts_2d(
         out.origins.push_back(std::move(origin));
     }
 
-    out.epsilons = default_fractal_epsilons(2);
+    out.epsilons = default_box_counting_epsilons(2, L);
+    const std::vector<int> radii = default_shortest_path_radii(2, L);
     out.minimum_path_yardstick = compute_minimum_path_yardstick_2d(
-        L, bottom, top, in_giant, can_traverse, out.epsilons);
+        L, bottom, top, in_giant, can_traverse, radii);
     out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
                                          seed + 2000003 * (sample_index + 1));
     const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);
@@ -3055,9 +3130,10 @@ FractalClusterCounts compute_fractal_counts_sparse(
         out.origins.push_back(std::move(origin));
     }
 
-    out.epsilons = default_fractal_epsilons(dim);
+    out.epsilons = default_box_counting_epsilons(dim, L);
+    const std::vector<int> radii = default_shortest_path_radii(dim, L);
     out.minimum_path_yardstick = compute_minimum_path_yardstick_sparse(
-        dim, L, bottom, top, is_node, in_giant, open_bonds, out.epsilons);
+        dim, L, bottom, top, is_node, in_giant, open_bonds, radii);
     out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
                                          seed + 2000003 * (sample_index + 1));
     const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);
