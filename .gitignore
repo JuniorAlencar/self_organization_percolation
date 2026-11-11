@@ -9,6 +9,7 @@
 *.csv
 *.gif
 /animate/*
+/docs/main.pdf
 /network
 /results
 /article
