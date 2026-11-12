@@ -3586,7 +3586,7 @@ RawFractionsSeries network::create_raw_fractions(
         out.z_stat_by_species.assign(static_cast<std::size_t>(num_colors), -1);
         out.stop_reason = "not_stopped";
 
-        const int cap_h = std::max(8, L + sample_stability_layers + 8);
+        const int cap_h = std::max(8, 10 * L + 128);
         const std::size_t layer_size = static_cast<std::size_t>(L);
         const std::size_t total_slots =
             static_cast<std::size_t>(cap_h) * layer_size;
@@ -4090,9 +4090,52 @@ RawFractionsSeries network::create_raw_fractions(
                                 "Failed writing fraction snapshot: " + snapshot_path.string());
                         }
 
-                        // Capture the L-sized slab immediately above sample 1.
-                        // This is the actual gap between the two stabilized samples.
+                        // Capture the base network from y = 0 to y = bottom - 1.
+                        // At this point (sample 1 collected), all columns have grown
+                        // past the stabilization height, so the base is 100% complete.
                         if (fractal_sample_index == 0) {
+                            const char* base_snapshot_env =
+                                std::getenv("SOP_FRACTION_BASE_SNAPSHOT");
+                            if (base_snapshot_env != nullptr && base_snapshot_env[0] != '\0') {
+                                const std::filesystem::path base_path(base_snapshot_env);
+                                if (!base_path.parent_path().empty()) {
+                                    std::filesystem::create_directories(base_path.parent_path());
+                                }
+                                std::ofstream base_snapshot(base_path,
+                                                            std::ios::binary | std::ios::trunc);
+                                if (!base_snapshot) {
+                                    throw std::runtime_error(
+                                        "Could not open base snapshot: " + base_path.string());
+                                }
+                                base_snapshot.write("SOPBASE1", 8);
+                                const std::uint32_t base_header[] = {
+                                    static_cast<std::uint32_t>(L),
+                                    static_cast<std::uint32_t>(bottom)
+                                };
+                                base_snapshot.write(
+                                    reinterpret_cast<const char*>(base_header),
+                                    sizeof(base_header));
+                                std::vector<unsigned char> row(static_cast<std::size_t>(L), 0u);
+                                for (int y = bottom - 1; y >= 0; --y) {
+                                    for (int x = 0; x < L; ++x) {
+                                        row[static_cast<std::size_t>(x)] =
+                                            get_site_2d(x, y) > 0 ? 1u : 0u;
+                                    }
+                                    base_snapshot.write(
+                                        reinterpret_cast<const char*>(row.data()),
+                                        static_cast<std::streamsize>(row.size()));
+                                }
+                                if (!base_snapshot) {
+                                    throw std::runtime_error(
+                                        "Failed writing base snapshot: " + base_path.string());
+                                }
+                            }
+                        }
+
+                        // Capture the gap slab immediately below sample 2.
+                        // At this point (sample 2 collected), all columns have grown
+                        // through the entire gap, so the gap is 100% complete.
+                        if (fractal_sample_index == 1) {
                             const char* gap_snapshot_env =
                                 std::getenv("SOP_FRACTION_GAP_SNAPSHOT");
                             if (gap_snapshot_env != nullptr && gap_snapshot_env[0] != '\0') {
@@ -4107,17 +4150,18 @@ RawFractionsSeries network::create_raw_fractions(
                                         "Could not open gap snapshot: " + gap_path.string());
                                 }
                                 gap_snapshot.write("SOPGAP1", 8);
+                                const int actual_gap_h = sample_gap_layers > 0 ? sample_gap_layers : L;
                                 const std::uint32_t gap_header[] = {
                                     static_cast<std::uint32_t>(L),
-                                    static_cast<std::uint32_t>(L)
+                                    static_cast<std::uint32_t>(actual_gap_h)
                                 };
                                 gap_snapshot.write(
                                     reinterpret_cast<const char*>(gap_header),
                                     sizeof(gap_header));
                                 std::vector<unsigned char> gap_row(
                                     static_cast<std::size_t>(L), 0u);
-                                const int gap_bottom = top + 1;
-                                const int gap_top = gap_bottom + L - 1;
+                                const int gap_top = bottom - 1;
+                                const int gap_bottom = bottom - actual_gap_h;
                                 for (int y = gap_top; y >= gap_bottom; --y) {
                                     for (int x = 0; x < L; ++x) {
                                         gap_row[static_cast<std::size_t>(x)] =
@@ -4130,6 +4174,57 @@ RawFractionsSeries network::create_raw_fractions(
                                 if (!gap_snapshot) {
                                     throw std::runtime_error(
                                         "Failed writing gap snapshot: " + gap_path.string());
+                                }
+                            }
+                        }
+
+                        // Capture the tail slab immediately above the last sample.
+                        if (fractal_sample_index == requested - 1) {
+                            const char* tail_snapshot_env =
+                                std::getenv("SOP_FRACTION_TAIL_SNAPSHOT");
+                            if (tail_snapshot_env != nullptr && tail_snapshot_env[0] != '\0') {
+                                const std::filesystem::path tail_path(tail_snapshot_env);
+                                if (!tail_path.parent_path().empty()) {
+                                    std::filesystem::create_directories(tail_path.parent_path());
+                                }
+                                std::ofstream tail_snapshot(tail_path,
+                                                           std::ios::binary | std::ios::trunc);
+                                if (!tail_snapshot) {
+                                    throw std::runtime_error(
+                                        "Could not open tail snapshot: " + tail_path.string());
+                                }
+                                tail_snapshot.write("SOPTAIL1", 8);
+                                double tail_over_L = 0.75;
+                                if (const char* tail_env = std::getenv("SOP_FRACTION_TAIL_OVER_L")) {
+                                    tail_over_L = std::max(0.0, std::stod(tail_env));
+                                }
+                                const int cur_z_max = *std::max_element(max_heights.begin(), max_heights.end());
+                                const int desired_tail_h = static_cast<int>(std::llround(tail_over_L * static_cast<double>(L)));
+                                const int tail_bottom = top + 1;
+                                const int available_h = std::max(0, cur_z_max - tail_bottom + 1);
+                                const int actual_tail_h = desired_tail_h > 0 ? std::min(desired_tail_h, available_h) : available_h;
+                                const std::uint32_t tail_header[] = {
+                                    static_cast<std::uint32_t>(L),
+                                    static_cast<std::uint32_t>(actual_tail_h)
+                                };
+                                tail_snapshot.write(
+                                    reinterpret_cast<const char*>(tail_header),
+                                    sizeof(tail_header));
+                                std::vector<unsigned char> tail_row(
+                                    static_cast<std::size_t>(L), 0u);
+                                const int tail_top = tail_bottom + actual_tail_h - 1;
+                                for (int y = tail_top; y >= tail_bottom; --y) {
+                                    for (int x = 0; x < L; ++x) {
+                                        tail_row[static_cast<std::size_t>(x)] =
+                                            get_site_2d(x, y) > 0 ? 1u : 0u;
+                                    }
+                                    tail_snapshot.write(
+                                        reinterpret_cast<const char*>(tail_row.data()),
+                                        static_cast<std::streamsize>(tail_row.size()));
+                                }
+                                if (!tail_snapshot) {
+                                    throw std::runtime_error(
+                                        "Failed writing tail snapshot: " + tail_path.string());
                                 }
                             }
                         }
@@ -4332,46 +4427,8 @@ RawFractionsSeries network::create_raw_fractions(
                                                out.z_stat_by_species.end());
                     out.z_stab = anchor;
 
-                    // Optional visualization snapshot of the actual network from
-                    // the base up to z_stat. This is captured before the 2D
-                    // rolling layer buffer overwrites any lower heights.
-                    if (const char* base_snapshot_env =
-                            std::getenv("SOP_FRACTION_BASE_SNAPSHOT")) {
-                        if (base_snapshot_env[0] != '\0') {
-                            const std::filesystem::path base_path(base_snapshot_env);
-                            if (!base_path.parent_path().empty()) {
-                                std::filesystem::create_directories(base_path.parent_path());
-                            }
-                            std::ofstream base_snapshot(base_path,
-                                                        std::ios::binary | std::ios::trunc);
-                            if (!base_snapshot) {
-                                throw std::runtime_error(
-                                    "Could not open base snapshot: " + base_path.string());
-                            }
-                            base_snapshot.write("SOPBASE1", 8);
-                            const std::uint32_t base_header[] = {
-                                static_cast<std::uint32_t>(L),
-                                static_cast<std::uint32_t>(anchor)
-                            };
-                            base_snapshot.write(
-                                reinterpret_cast<const char*>(base_header),
-                                sizeof(base_header));
-                            std::vector<unsigned char> row(static_cast<std::size_t>(L), 0u);
-                            for (int y = anchor - 1; y >= 0; --y) {
-                                for (int x = 0; x < L; ++x) {
-                                    row[static_cast<std::size_t>(x)] =
-                                        get_site_2d(x, y) > 0 ? 1u : 0u;
-                                }
-                                base_snapshot.write(
-                                    reinterpret_cast<const char*>(row.data()),
-                                    static_cast<std::streamsize>(row.size()));
-                            }
-                            if (!base_snapshot) {
-                                throw std::runtime_error(
-                                    "Failed writing base snapshot: " + base_path.string());
-                            }
-                        }
-                    }
+                    // Note: base_snapshot is captured during compute_slab_2d for sample 1,
+                    // ensuring all columns have fully grown past z_stat before writing.
                     if (!run_fractal_counts) {
                         std::cout << "[fractions] stabilized"
                                   << " t=" << t
