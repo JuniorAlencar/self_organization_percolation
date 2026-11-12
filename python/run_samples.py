@@ -24,7 +24,7 @@ seed = -1
 dim = 2
 nc = 1                      # Numero de cores (ex: 1, 2, 3, 4...)
 
-type_lst = ['bond', 'node']  # 'node' (site) e/ou 'bond' percolation
+type_lst = ['node']  # 'node' (site) e/ou 'bond' percolation
 #L_lst = [512, 1024, 1448, 2048, 2896, 4096, 5793, 8192, 11585, 16384]
 #num_runs_lst = [1400, 1000, 900, 800, 600, 400, 300, 200, 150, 100]
 
@@ -42,8 +42,8 @@ type_lst = ['bond', 'node']  # 'node' (site) e/ou 'bond' percolation
 # Lista de tamanhos L e orcamento de amostras por tamanho
 # Para L=16384 em modo fractions, cada run gera 'fraction_samples' (ex: 30) fatias gigantes;
 # recomenda-se 3 a 5 runs por script.
-L_lst = [16384]
-num_runs_lst = [30]
+L_lst = [8192, 16384]
+num_runs_lst = [200, 100]
 num_runs_por_L = dict(zip(L_lst, num_runs_lst))
 
 c = 0.05
@@ -52,7 +52,7 @@ Equilibration = 'false'
 Properties = 'false'
 
 # Modo e Layout para propriedades topologicas (d_bulk, d_min):
-Mode = 'fractions'           # 'fractions' calcula fatias topologicas; use 'growth_test' para crescimento continuo
+Mode = 'growth_test'           # 'fractions' calcula fatias topologicas; use 'growth_test' para crescimento continuo
 InitialLayout = 'alternating'     # 'random' e o padrao para fracoes/topologia; 'clustered' para crescimento
 ControlRule = 'linear'       # 'linear' ou 'relative'
 ForceTopologicalCounts = False
@@ -75,7 +75,8 @@ P0 = 0.2                     # 0.2 e o padrao nas analises topologicas
 #}
 #ft_lst = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 #ft_lst = [0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19, 0.2, 0.25, 0.3, 0.4]
-ft_lst = [0.1, 0.2, 0.3, 0.4]
+#ft_lst = np.linspace(0.4, 0.5, 11)
+ft_lst = [0.2]
 # =============================================================================
 # GERACAO DOS SCRIPTS SHELL
 # =============================================================================

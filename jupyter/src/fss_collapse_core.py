@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from scipy.optimize import least_squares
-
+from scipy.optimize import curve_fit
 
 # ============================================================
 # 1. Funções básicas
@@ -1056,3 +1056,39 @@ def label(i):
         i -= 1
 
     return fr"$({letters})$"
+
+
+# Model: y = A + B * L**(-1/nu)
+def model_fss_fixed(L, A, B):
+    return A + B * (L ** (-3.0 / 4.0))
+
+def fss_adjustment(L, p, p_err,  L_min_cutoff=1024):
+        fit_results = {}
+        
+        x_max = max(L ** (-3.0 / 4.0)) * 1.05
+        x_pred = np.linspace(0.0, x_max, 300)
+        
+        # Ajuste ignorando L < L_min_cutoff
+        mask = L >= L_min_cutoff
+        popt, pcov = curve_fit(
+            model_fss_fixed,
+            L[mask],
+            p[mask],
+            p0=[p[-1], 0.5],
+            sigma=p_err[mask],
+            absolute_sigma=True,
+        )
+        perr = np.sqrt(np.diag(pcov))
+        A, B = popt
+        A_err, B_err = perr
+
+        # Como x = L**(-3/4), a reta ajustada em x_pred é simplesmente y = A + B * x
+        y_pred = A + B * x_pred
+
+        fit_results = {
+            'A': A, 'A_err': A_err,
+            'x_pred': x_pred,
+            'y_pred': y_pred
+        }
+
+        return fit_results

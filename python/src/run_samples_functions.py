@@ -35,6 +35,8 @@ def shell_data(
     snapshot_dir: str | None = None,
     base_snapshot: str | None = None,
     gap_snapshot: str | None = None,
+    tail_snapshot: str | None = None,
+    tail_over_L: float | None = None,
     **kwargs,
 ):
     """
@@ -152,6 +154,10 @@ def shell_data(
         snapshot_exports.append(f'export SOP_FRACTION_BASE_SNAPSHOT="${{SOP_FRACTION_BASE_SNAPSHOT:-{base_snapshot}}}"')
     if gap_snapshot:
         snapshot_exports.append(f'export SOP_FRACTION_GAP_SNAPSHOT="${{SOP_FRACTION_GAP_SNAPSHOT:-{gap_snapshot}}}"')
+    if tail_snapshot:
+        snapshot_exports.append(f'export SOP_FRACTION_TAIL_SNAPSHOT="${{SOP_FRACTION_TAIL_SNAPSHOT:-{tail_snapshot}}}"')
+    if tail_over_L is not None:
+        snapshot_exports.append(f'export SOP_FRACTION_TAIL_OVER_L="${{SOP_FRACTION_TAIL_OVER_L:-{tail_over_L}}}"')
     snapshot_export_str = "\n".join(snapshot_exports)
     if snapshot_export_str:
         snapshot_export_str = "\n" + snapshot_export_str
