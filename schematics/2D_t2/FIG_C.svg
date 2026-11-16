@@ -2,9 +2,9 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="685.36017"
-   height="702.75372"
-   viewBox="0 0 181.33487 185.93692"
+   width="655.16901"
+   height="700.75348"
+   viewBox="0 0 173.34679 185.40769"
    version="1.1"
    id="svg5"
    inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
@@ -29,35 +29,16 @@
      inkscape:document-units="mm"
      showgrid="false"
      inkscape:zoom="1.0935553"
-     inkscape:cx="106.99047"
-     inkscape:cy="361.66438"
-     inkscape:window-width="1854"
-     inkscape:window-height="1011"
+     inkscape:cx="93.273747"
+     inkscape:cy="365.32217"
+     inkscape:window-width="1920"
+     inkscape:window-height="1043"
      inkscape:window-x="0"
      inkscape:window-y="0"
      inkscape:window-maximized="1"
-     inkscape:current-layer="layer-bonds" />
+     inkscape:current-layer="svg5" />
   <defs
      id="defs2">
-    <marker
-       style="overflow:visible"
-       id="Arrow2"
-       refX="0"
-       refY="0"
-       orient="auto-start-reverse"
-       inkscape:stockid="Arrow2"
-       markerWidth="4.8125"
-       markerHeight="3.5"
-       viewBox="0 0 7.7 5.6"
-       inkscape:isstock="true"
-       inkscape:collect="always"
-       preserveAspectRatio="xMidYMid">
-      <path
-         transform="scale(0.7)"
-         d="M -2,-4 9,0 -2,4 c 2,-2.33 2,-5.66 0,-8 z"
-         style="fill:context-stroke;fill-rule:evenodd;stroke:none"
-         id="arrow2L" />
-    </marker>
     <clipPath
        id="clipPath9632">
       <path
@@ -112,7 +93,7 @@
      id="layer-bonds"
      inkscape:label="BONDS"
      inkscape:groupmode="layer"
-     transform="translate(10.292288,11.544402)"
+     transform="translate(2.304221,11.015179)"
      style="fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round">
     <g
        id="bonds-column-1"
@@ -188,7 +169,7 @@
          y2="101.33253"
          data-type="horizontal"
          id="line10"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
       <line
          x1="27.672621"
@@ -224,7 +205,7 @@
          y2="153.55797"
          data-type="horizontal"
          id="line14"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
       <line
          x1="27.672621"
@@ -278,7 +259,7 @@
          y2="127.44525"
          data-type="vertical"
          id="line22"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:#000000;fill-opacity:1;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -296,7 +277,7 @@
          y2="3.409821"
          data-type="upper-boundary"
          id="line26"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:#000000;fill-opacity:1;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -305,7 +286,7 @@
          y2="173.14252"
          data-type="lower-boundary"
          id="outline-line28"
-         style="display:inline;fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;stroke-dasharray:none"
+         style="display:inline;fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -314,7 +295,7 @@
          y2="173.14252"
          data-type="lower-boundary"
          id="line28"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:#000000;fill-opacity:1;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
     </g>
     <g
@@ -479,7 +460,7 @@
          data-type="horizontal"
          id="line35"
          data-state="unchecked"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1" />
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="101.33253"
@@ -515,7 +496,7 @@
          data-type="horizontal"
          id="line39"
          data-state="unchecked"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1" />
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="153.55797"
@@ -533,8 +514,7 @@
          data-type="horizontal"
          id="line41"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-         inkscape:label="line41" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="22.994362"
@@ -552,7 +532,7 @@
          data-type="vertical"
          id="line43"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="49.107082"
@@ -588,7 +568,7 @@
          data-type="vertical"
          id="line47"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="101.33253"
@@ -642,7 +622,7 @@
          data-type="upper-boundary"
          id="line53"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="153.55797"
@@ -660,7 +640,7 @@
          data-type="lower-boundary"
          id="line55"
          data-state="unchecked"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1" />
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
     </g>
     <g
        id="g7662"
@@ -1410,7 +1390,7 @@
      inkscape:label="NODES"
      inkscape:groupmode="layer"
      id="layer1"
-     transform="translate(10.292288,11.544402)">
+     transform="translate(2.304221,11.015179)">
     <g
        id="g2838"
        inkscape:label="Layer_1">
@@ -1673,34 +1653,19 @@
   </g>
   <path
      style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:1.48455;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-     d="M 24.605665,15.238701 V 184.40254"
+     d="M 0.742275,14.709275 V 183.87311"
      id="path439" />
   <text
      xml:space="preserve"
-     style="font-size:12.3472px;font-family:Arial;-inkscape-font-specification:'Arial, Normal';fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-     x="-0.11454922"
-     y="100.82402"
-     id="text1104"><tspan
-       sodipodi:role="line"
-       id="tspan1102"
-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12.3472px;font-family:Arial;-inkscape-font-specification:'Arial, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1.5"
-       x="-0.11454922"
-       y="100.82402">fluid</tspan></text>
-  <path
-     style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Arrow2);paint-order:markers fill stroke"
-     d="m 3.106402,105.18121 h 10.27472"
-     id="path1210" />
-  <text
-     xml:space="preserve"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12.3472px;font-family:Arial;-inkscape-font-specification:'Arial, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;fill-opacity:1;stroke:none;stroke-width:0.799999;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
-     x="29.843481"
-     y="9.5182657"
+     x="0.73741621"
+     y="8.9890995"
      id="text834"
-     inkscape:label="label"><tspan
+     inkscape:label="title"><tspan
        sodipodi:role="line"
        id="tspan1876"
-       x="29.843481"
-       y="9.5182657">(b) <tspan
+       x="0.73741621"
+       y="8.9890995">(c) <tspan
    style="font-style:italic"
-   id="tspan2954">t=1, f(1) = 7/6, p(2)=0.4</tspan></tspan></text>
+   id="tspan2954">t=2, f(2) = 3/6, p(2)=0.54</tspan></tspan></text>
 </svg>

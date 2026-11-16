@@ -29,8 +29,8 @@
      inkscape:document-units="mm"
      showgrid="false"
      inkscape:zoom="1.0935553"
-     inkscape:cx="136.25283"
-     inkscape:cy="359.83548"
+     inkscape:cx="163.68628"
+     inkscape:cy="358.92103"
      inkscape:window-width="1920"
      inkscape:window-height="1043"
      inkscape:window-x="0"
@@ -93,7 +93,7 @@
      id="layer-bonds"
      inkscape:label="BONDS"
      inkscape:groupmode="layer"
-     transform="translate(10.292288,11.544402)"
+     transform="translate(26.167221,11.015179)"
      style="fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round">
     <g
        id="bonds-column-1"
@@ -115,7 +115,7 @@
          y2="22.994362"
          data-type="horizontal"
          id="line4"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -133,7 +133,7 @@
          y2="49.107082"
          data-type="horizontal"
          id="line6"
-         style="display:inline;fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
       <line
          x1="27.672621"
@@ -151,7 +151,7 @@
          y2="75.219803"
          data-type="horizontal"
          id="line8"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -169,7 +169,7 @@
          y2="101.33253"
          data-type="horizontal"
          id="line10"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
       <line
          x1="27.672621"
@@ -187,7 +187,7 @@
          y2="127.44525"
          data-type="horizontal"
          id="line12"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -205,7 +205,7 @@
          y2="153.55797"
          data-type="horizontal"
          id="line14"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
       <line
          x1="27.672621"
@@ -223,7 +223,7 @@
          y2="75.219803"
          data-type="vertical"
          id="line18"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;fill-opacity:1;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -241,7 +241,7 @@
          y2="101.33253"
          data-type="vertical"
          id="line20"
-         style="display:inline;fill:none;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -259,7 +259,7 @@
          y2="127.44525"
          data-type="vertical"
          id="line22"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -277,7 +277,7 @@
          y2="3.409821"
          data-type="upper-boundary"
          id="line26"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -286,7 +286,7 @@
          y2="173.14252"
          data-type="lower-boundary"
          id="outline-line28"
-         style="display:inline;fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;stroke-dasharray:none"
+         style="display:inline;fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -295,49 +295,35 @@
          y2="173.14252"
          data-type="lower-boundary"
          id="line28"
-         style="display:inline;fill:#000000;stroke:#0b07ef;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
-    </g>
-    <g
-       id="rejected-bond-markers"
-       inkscape:label="X - checked / not formed - initial"
-       style="display:inline;fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round"
-       transform="translate(-0.08072191,-0.77411923)">
       <g
-         id="g5432"
-         transform="translate(-34.07975,-128.07364)"
-         style="display:inline;fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round">
+         id="rejected-bond-markers"
+         inkscape:label="X - checked / not formed">
         <line
-           x1="61.67165"
-           y1="153.55797"
-           x2="61.67165"
-           y2="173.14252"
-           data-type="lower-boundary"
-           id="line5428"
+           x1="27.672621"
+           y1="22.994362"
+           x2="27.672621"
+           y2="49.107082"
+           data-type="vertical"
+           id="outline-line16"
            style="display:inline;fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-           data-state="completed"
-           transform="translate(0.08072187,0.77411936)" />
+           data-state="active" />
         <line
-           x1="61.67165"
-           y1="153.55797"
-           x2="61.67165"
-           y2="173.14252"
-           data-type="lower-boundary"
-           id="line5430"
-           data-state="unchecked"
+           x1="27.672621"
+           y1="22.994362"
+           x2="27.672621"
+           y2="49.107082"
+           data-type="vertical"
+           id="line16"
            style="display:inline;fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-           transform="translate(0.08072187,0.77411936)" />
-      </g>
-      <g
-         id="g5445"
-         transform="translate(0,0.52916667)"
-         inkscape:label="cross-symbol">
+           data-state="checked-rejected" />
         <circle
            id="background-x-line16"
            cx="27.672621"
            cy="36.05072"
            r="2.55"
-           style="fill:#ffffff;stroke:none" />
+           style="display:inline;fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round" />
         <line
            id="x-line16-1"
            x1="25.472622"
@@ -352,55 +338,44 @@
            x2="29.872622"
            y2="33.850723"
            style="stroke:#000000;stroke-width:0.95;stroke-linecap:round" />
-      </g>
-      <g
-         id="g3838"
-         transform="translate(-34.07975,-23.622752)">
         <line
-           x1="61.67165"
-           y1="153.55797"
-           x2="61.67165"
-           y2="173.14252"
-           data-type="lower-boundary"
-           id="line3828"
+           x1="27.672621"
+           y1="127.44525"
+           x2="27.672621"
+           y2="153.55797"
+           data-type="vertical"
+           id="outline-line24"
            style="display:inline;fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-           data-state="completed"
-           transform="translate(0.08072187,0.77411936)" />
+           data-state="active" />
         <line
-           x1="61.67165"
-           y1="153.55797"
-           x2="61.67165"
-           y2="173.14252"
-           data-type="lower-boundary"
-           id="line3830"
-           data-state="unchecked"
+           x1="27.672621"
+           y1="127.44525"
+           x2="27.672621"
+           y2="153.55797"
+           data-type="vertical"
+           id="line24"
            style="display:inline;fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-           transform="translate(0.08072187,0.77411936)" />
-      </g>
-      <g
-         id="g5230"
-         transform="translate(0,0.52916667)"
-         inkscape:label="cross-symbol">
+           data-state="checked-rejected" />
         <circle
            id="background-x-line24"
            cx="27.672621"
            cy="140.50162"
            r="2.55"
-           style="display:inline;fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round" />
+           style="fill:#ffffff;stroke:none" />
         <line
            id="x-line24-1"
            x1="25.472622"
            y1="138.30161"
            x2="29.872622"
            y2="142.70161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
+           style="stroke:#000000;stroke-width:0.95;stroke-linecap:round" />
         <line
            id="x-line24-2"
            x1="25.472622"
            y1="142.70161"
            x2="29.872622"
            y2="138.30161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
+           style="stroke:#000000;stroke-width:0.95;stroke-linecap:round" />
       </g>
     </g>
     <g
@@ -424,7 +399,7 @@
          data-type="horizontal"
          id="line31"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="49.107082"
@@ -460,7 +435,7 @@
          data-type="horizontal"
          id="line35"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="101.33253"
@@ -496,7 +471,7 @@
          data-type="horizontal"
          id="line39"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="153.55797"
@@ -532,7 +507,7 @@
          data-type="vertical"
          id="line43"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="49.107082"
@@ -550,7 +525,7 @@
          data-type="vertical"
          id="line45"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="75.219803"
@@ -568,7 +543,7 @@
          data-type="vertical"
          id="line47"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="101.33253"
@@ -586,7 +561,7 @@
          data-type="vertical"
          id="line49"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="127.44525"
@@ -604,7 +579,7 @@
          data-type="vertical"
          id="line51"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="22.994362"
@@ -622,7 +597,7 @@
          data-type="upper-boundary"
          id="line53"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
       <line
          x1="61.67165"
          y1="153.55797"
@@ -640,141 +615,7 @@
          data-type="lower-boundary"
          id="line55"
          data-state="unchecked"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
-    </g>
-    <g
-       id="g7662"
-       inkscape:label="X - checked / not formed - t = 0">
-      <g
-         id="g7652"
-         transform="translate(16.999514,-91.394527)"
-         style="display:inline;fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round"
-         inkscape:label="cross-symbol">
-        <circle
-           id="circle7646"
-           cx="27.672621"
-           cy="140.50162"
-           r="2.55"
-           style="display:inline;fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7648"
-           x1="25.472622"
-           y1="138.30161"
-           x2="29.872622"
-           y2="142.70161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7650"
-           x1="25.472622"
-           y1="142.70161"
-           x2="29.872622"
-           y2="138.30161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-      </g>
-      <g
-         id="g7670"
-         transform="translate(33.999028)"
-         style="display:inline;fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round"
-         inkscape:label="cross-symbol">
-        <circle
-           id="circle7664"
-           cx="27.672621"
-           cy="140.50162"
-           r="2.55"
-           style="display:inline;fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7666"
-           x1="25.472622"
-           y1="138.30161"
-           x2="29.872622"
-           y2="142.70161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7668"
-           x1="25.472622"
-           y1="142.70161"
-           x2="29.872622"
-           y2="138.30161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-      </g>
-      <g
-         id="g7678"
-         transform="translate(33.999028,-26.11272)"
-         style="display:inline;fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round"
-         inkscape:label="cross-symbol">
-        <circle
-           id="circle7672"
-           cx="27.672621"
-           cy="140.50162"
-           r="2.55"
-           style="display:inline;fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7674"
-           x1="25.472622"
-           y1="138.30161"
-           x2="29.872622"
-           y2="142.70161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7676"
-           x1="25.472622"
-           y1="142.70161"
-           x2="29.872622"
-           y2="138.30161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-      </g>
-      <g
-         id="g7686"
-         transform="translate(50.998546,-117.50725)"
-         style="display:inline;fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round"
-         inkscape:label="cross-symbol">
-        <circle
-           id="circle7680"
-           cx="27.672621"
-           cy="140.50162"
-           r="2.55"
-           style="display:inline;fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7682"
-           x1="25.472622"
-           y1="138.30161"
-           x2="29.872622"
-           y2="142.70161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7684"
-           x1="25.472622"
-           y1="142.70161"
-           x2="29.872622"
-           y2="138.30161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-      </g>
-      <g
-         id="g7694"
-         transform="translate(33.999028,-78.338167)"
-         style="display:inline;fill:none;stroke:#555555;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round"
-         inkscape:label="cross-symbol">
-        <circle
-           id="circle7688"
-           cx="27.672621"
-           cy="140.50162"
-           r="2.55"
-           style="display:inline;fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7690"
-           x1="25.472622"
-           y1="138.30161"
-           x2="29.872622"
-           y2="142.70161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-        <line
-           id="line7692"
-           x1="25.472622"
-           y1="142.70161"
-           x2="29.872622"
-           y2="138.30161"
-           style="display:inline;fill:none;stroke:#000000;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round" />
-      </g>
+         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" />
     </g>
     <g
        id="bonds-column-3"
@@ -1390,7 +1231,7 @@
      inkscape:label="NODES"
      inkscape:groupmode="layer"
      id="layer1"
-     transform="translate(10.292288,11.544402)">
+     transform="translate(26.167221,11.015179)">
     <g
        id="g2838"
        inkscape:label="Layer_1">
@@ -1653,19 +1494,19 @@
   </g>
   <path
      style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:1.48455;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-     d="M 24.605665,15.238701 V 184.40254"
+     d="M 24.605275,14.709275 V 183.87311"
      id="path439" />
   <text
      xml:space="preserve"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12.3472px;font-family:Arial;-inkscape-font-specification:'Arial, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;fill-opacity:1;stroke:none;stroke-width:0.799999;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:0;stroke-opacity:1;paint-order:markers fill stroke"
-     x="29.843481"
-     y="9.5182657"
+     x="24.600416"
+     y="8.9890995"
      id="text834"
-     inkscape:label="label"><tspan
+     inkscape:label="title"><tspan
        sodipodi:role="line"
        id="tspan1876"
-       x="29.843481"
-       y="9.5182657">(b) <tspan
+       x="24.600416"
+       y="8.9890995">(b) <tspan
    style="font-style:italic"
-   id="tspan2954">t=0, f(0) = 7/6, p(1)=0.6</tspan></tspan></text>
+   id="tspan12066">t=1,  f(1)=7/6, p(1)=0.77</tspan></tspan></text>
 </svg>
