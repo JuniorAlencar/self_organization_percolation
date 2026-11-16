@@ -1062,33 +1062,130 @@ def label(i):
 def model_fss_fixed(L, A, B):
     return A + B * (L ** (-3.0 / 4.0))
 
-def fss_adjustment(L, p, p_err,  L_min_cutoff=1024):
-        fit_results = {}
-        
-        x_max = max(L ** (-3.0 / 4.0)) * 1.05
+
+def model_fss_free(L, A, B, nu):
+    return A + B * (L ** (-1.0 / nu))
+
+
+def fss_adjustment(L, p, p_err, L_min_cutoff=1024, fix_nu=True, nu_fixed=4.0 / 3.0):
+    r"""
+    Ajuste de Finite-Size Scaling (FSS):
+        p*(L) = A + B * L^(-1/nu)
+
+    Parâmetros:
+    -----------
+    L : array-like
+        Tamanhos lineares da rede.
+    p : array-like
+        Valores de p* (ex: p_mean).
+    p_err : array-like
+        Incertezas de p* (ex: p_err).
+    L_min_cutoff : float, default=1024
+        Corte mínimo de L para o ajuste.
+    fix_nu : bool, default=True
+        Se True, fixa nu = nu_fixed (default 4/3 => 1/nu = 3/4).
+        Se False, estima nu livremente juntamente com A e B.
+    nu_fixed : float, default=4.0/3.0
+        Valor fixado para nu quando fix_nu=True.
+
+    Retorna:
+    --------
+    dict com:
+        'A', 'A_err': estimativa e erro de A (p_inf)
+        'B', 'B_err': amplitude da correção
+        'nu', 'nu_err': expoente nu e sua incerteza
+        'x_pred', 'y_pred': curva ajustada para plotagem
+    """
+    L = np.asarray(L, dtype=float)
+    p = np.asarray(p, dtype=float)
+    p_err = np.asarray(p_err, dtype=float)
+
+    mask = L >= L_min_cutoff
+    L_m = L[mask]
+    p_m = p[mask]
+    p_err_m = np.asarray(p_err)[mask].astype(float)
+    # Protecao contra incertezas nulas ou invalidas
+    valid_err = p_err_m[np.isfinite(p_err_m) & (p_err_m > 0)]
+    default_err = np.median(valid_err) if len(valid_err) > 0 else 1e-4
+    p_err_m = np.where(np.isfinite(p_err_m) & (p_err_m > 0), p_err_m, default_err)
+
+    if fix_nu:
+        x_max = max(L ** (-1.0 / nu_fixed)) * 1.05
         x_pred = np.linspace(0.0, x_max, 300)
-        
-        # Ajuste ignorando L < L_min_cutoff
-        mask = L >= L_min_cutoff
+
+        def _model_fixed(l_val, a, b):
+            return a + b * (l_val ** (-1.0 / nu_fixed))
+
         popt, pcov = curve_fit(
-            model_fss_fixed,
-            L[mask],
-            p[mask],
-            p0=[p[-1], 0.5],
-            sigma=p_err[mask],
+            _model_fixed,
+            L_m,
+            p_m,
+            p0=[p_m[-1], 0.5],
+            sigma=p_err_m,
             absolute_sigma=True,
         )
         perr = np.sqrt(np.diag(pcov))
         A, B = popt
         A_err, B_err = perr
-
-        # Como x = L**(-3/4), a reta ajustada em x_pred é simplesmente y = A + B * x
         y_pred = A + B * x_pred
 
-        fit_results = {
+        return {
             'A': A, 'A_err': A_err,
+            'B': B, 'B_err': B_err,
+            'nu': nu_fixed, 'nu_err': 0.0,
+            'x_pred': x_pred,
+            'y_pred': y_pred
+        }
+    else:
+        if len(L_m) < 4:
+            raise ValueError(f"Pontos insuficientes ({len(L_m)}) com L >= {L_min_cutoff} para ajuste com nu livre. Mínimo 4.")
+
+        w = 1.0 / (p_err_m ** 2)
+        W = np.sum(w)
+        pb = np.sum(w * p_m) / W
+        best_chi2 = np.inf
+        best_p0 = [float(p_m[-1]), 0.5, float(nu_fixed)]
+
+        for nu_try in np.linspace(0.2, 3.0, 300):
+            x = L_m ** (-1.0 / nu_try)
+            xb = np.sum(w * x) / W
+            denom = np.sum(w * (x - xb) ** 2)
+            if denom <= 0:
+                continue
+            B_val = np.sum(w * (x - xb) * (p_m - pb)) / denom
+            A_val = pb - B_val * xb
+            chi2 = np.sum(w * (p_m - (A_val + B_val * x)) ** 2)
+            if chi2 < best_chi2:
+                best_chi2 = chi2
+                best_p0 = [float(A_val), float(B_val), float(nu_try)]
+
+        popt, pcov = curve_fit(
+            model_fss_free,
+            L_m,
+            p_m,
+            p0=best_p0,
+            sigma=p_err_m,
+            absolute_sigma=True,
+            maxfev=20000,
+            bounds=([-np.inf, -np.inf, 0.05], [np.inf, np.inf, 10.0])
+        )
+        perr = np.sqrt(np.diag(pcov))
+        A, B, nu = popt
+        A_err, B_err, nu_err = perr
+
+        x_max = max(L ** (-1.0 / nu)) * 1.05
+        x_pred = np.linspace(0.0, x_max, 300)
+        y_pred = A + B * x_pred
+
+        return {
+            'A': A, 'A_err': A_err,
+            'B': B, 'B_err': B_err,
+            'nu': nu, 'nu_err': nu_err,
             'x_pred': x_pred,
             'y_pred': y_pred
         }
 
-        return fit_results
+
+def fss_adjustment_free_nu(L, p, p_err, L_min_cutoff=1024):
+    r"""Atalho para fss_adjustment com fix_nu=False."""
+    return fss_adjustment(L, p, p_err, L_min_cutoff=L_min_cutoff, fix_nu=False)
