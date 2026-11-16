@@ -2446,7 +2446,7 @@ std::vector<int> generate_log_int_scales(const int vmin_in, const int vmax_in, c
 
 std::vector<int> default_box_counting_epsilons(const int dim, const int L)
 {
-    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_EPSILONS", 50);
+    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_EPSILONS", 15);
     const int eps_min = env_int_or_default("SOP_FRACTAL_EPSILON_MIN", 2);
     const int eps_max = env_int_or_default("SOP_FRACTAL_EPSILON_MAX", std::max(eps_min, L / 4));
     return generate_log_int_scales(eps_min, eps_max, target_n);
@@ -2454,7 +2454,7 @@ std::vector<int> default_box_counting_epsilons(const int dim, const int L)
 
 std::vector<int> default_shortest_path_radii(const int dim, const int L)
 {
-    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_RADII", 100);
+    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_RADII", 15);
     const int r_min = env_int_or_default("SOP_FRACTAL_RADIUS_MIN", 2);
     const int r_max = env_int_or_default("SOP_FRACTAL_RADIUS_MAX", std::max(r_min, L / 4));
     return generate_log_int_scales(r_min, r_max, target_n);

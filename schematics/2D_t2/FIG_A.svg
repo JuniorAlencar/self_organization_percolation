@@ -29,14 +29,14 @@
      inkscape:document-units="mm"
      showgrid="false"
      inkscape:zoom="1.0935553"
-     inkscape:cx="267.47619"
-     inkscape:cy="351.60545"
-     inkscape:window-width="1854"
-     inkscape:window-height="1011"
-     inkscape:window-x="66"
-     inkscape:window-y="32"
+     inkscape:cx="178.31746"
+     inkscape:cy="353.43434"
+     inkscape:window-width="1920"
+     inkscape:window-height="1043"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
      inkscape:window-maximized="1"
-     inkscape:current-layer="svg5" />
+     inkscape:current-layer="rejected-bond-markers" />
   <defs
      id="defs2">
     <marker
@@ -228,24 +228,6 @@
          data-state="unchecked" />
       <line
          x1="27.672621"
-         y1="22.994362"
-         x2="27.672621"
-         y2="49.107082"
-         data-type="vertical"
-         id="outline-line16"
-         style="display:inline;fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-         data-state="active" />
-      <line
-         x1="27.672621"
-         y1="22.994362"
-         x2="27.672621"
-         y2="49.107082"
-         data-type="vertical"
-         id="line16"
-         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-         data-state="checked-rejected" />
-      <line
-         x1="27.672621"
          y1="49.107082"
          x2="27.672621"
          y2="75.219803"
@@ -260,7 +242,7 @@
          y2="75.219803"
          data-type="vertical"
          id="line18"
-         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1;fill-opacity:1"
          data-state="active" />
       <line
          x1="27.672621"
@@ -300,24 +282,6 @@
          data-state="active" />
       <line
          x1="27.672621"
-         y1="127.44525"
-         x2="27.672621"
-         y2="153.55797"
-         data-type="vertical"
-         id="outline-line24"
-         style="display:inline;fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-         data-state="active" />
-      <line
-         x1="27.672621"
-         y1="127.44525"
-         x2="27.672621"
-         y2="153.55797"
-         data-type="vertical"
-         id="line24"
-         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
-         data-state="checked-rejected" />
-      <line
-         x1="27.672621"
          y1="22.994362"
          x2="27.672621"
          y2="3.409821"
@@ -350,17 +314,35 @@
          y2="173.14252"
          data-type="lower-boundary"
          id="line28"
-         style="display:inline;fill:none;stroke:#d2d2d2;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+         style="display:inline;fill:none;stroke:#00f61f;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
          data-state="unchecked" />
       <g
          id="rejected-bond-markers"
          inkscape:label="X - checked / not formed">
+        <line
+           x1="27.672621"
+           y1="22.994362"
+           x2="27.672621"
+           y2="49.107082"
+           data-type="vertical"
+           id="outline-line16"
+           style="fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;display:inline;stroke-opacity:1"
+           data-state="active" />
+        <line
+           x1="27.672621"
+           y1="22.994362"
+           x2="27.672621"
+           y2="49.107082"
+           data-type="vertical"
+           id="line16"
+           style="fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;display:inline;stroke-opacity:1"
+           data-state="checked-rejected" />
         <circle
            id="background-x-line16"
            cx="27.672621"
            cy="36.05072"
            r="2.55"
-           style="fill:#ffffff;stroke:none" />
+           style="fill:#ffffff;stroke:none;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;display:inline" />
         <line
            id="x-line16-1"
            x1="25.472622"
@@ -375,6 +357,24 @@
            x2="29.872622"
            y2="33.850723"
            style="stroke:#000000;stroke-width:0.95;stroke-linecap:round" />
+        <line
+           x1="27.672621"
+           y1="127.44525"
+           x2="27.672621"
+           y2="153.55797"
+           data-type="vertical"
+           id="outline-line24"
+           style="fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;display:inline;stroke-opacity:1"
+           data-state="active" />
+        <line
+           x1="27.672621"
+           y1="127.44525"
+           x2="27.672621"
+           y2="153.55797"
+           data-type="vertical"
+           id="line24"
+           style="fill:none;stroke:#ee0000;stroke-width:0.9;stroke-linecap:round;stroke-linejoin:round;display:inline;stroke-opacity:1"
+           data-state="checked-rejected" />
         <circle
            id="background-x-line24"
            cx="27.672621"
