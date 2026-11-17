@@ -3920,7 +3920,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--rebuild-all-data",
         action="store_true",
-        help="With --compress-published-only, also rebuild all_data/all_colors from compressed properties bundles.",
+        help="Rebuild all_data/all_colors from published properties bundles, ignoring existing .dat files.",
     )
     parser.add_argument(
         "--write-all-data",
@@ -4058,9 +4058,14 @@ def main(argv: list[str] | None = None) -> int:
     all_colors_path = sop_root / args.all_colors_name
     if args.write_all_data_outputs:
         migrate_dynamic_dat_files_missing_P0_once(all_data_path, all_colors_path)
+    force_rebuild_all_data = (
+        args.clear
+        or args.rebuild_all_data
+        or (not args.migrate_control_rules)
+    )
     incremental_all_data = (
         args.write_all_data_outputs
-        and not args.clear
+        and not force_rebuild_all_data
         and all_data_path.exists()
         and all_colors_path.exists()
     )
@@ -4288,6 +4293,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"[dynamic] building all-data from {len(bundle_paths)} published bundles "
                 f"({len(remaining_bundle_paths)} imported from disk)"
             )
+            n_cached = 0
+            n_imported = 0
             for bundle_path in remaining_bundle_paths:
                 try:
                     rows, color_rows, from_cache = rows_from_published_bundle_cached(
@@ -4298,12 +4305,18 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     if rows:
                         all_rows.extend(rows)
-                        action = "cache" if from_cache else "import"
-                        print(f"[{action}] {bundle_path} ({len(rows)} rows)")
                     if color_rows:
                         all_color_rows.extend(color_rows)
+                    if from_cache:
+                        n_cached += 1
+                    else:
+                        n_imported += 1
+                        print(f"[import] {bundle_path} ({len(rows)} rows)")
                 except Exception as exc:
                     print(f"[warn] failed to import {bundle_path}: {exc}")
+
+            if n_cached > 0:
+                print(f"[cache] loaded {n_cached} published bundles from manifest cache")
 
         write_all_data(all_rows, all_data_path)
         print(f"[write] {all_data_path} ({len(all_rows)} rows)")

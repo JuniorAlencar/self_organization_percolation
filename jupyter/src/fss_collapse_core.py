@@ -1129,10 +1129,21 @@ def fss_adjustment(L, p, p_err, L_min_cutoff=1024, fix_nu=True, nu_fixed=4.0 / 3
         A_err, B_err = perr
         y_pred = A + B * x_pred
 
+        y_fit_m = A + B * (L_m ** (-1.0 / nu_fixed))
+        residuals = p_m - y_fit_m
+        chi2 = float(np.sum((residuals / p_err_m) ** 2))
+        dof = int(len(L_m) - 2)
+        chi2_red = float(chi2 / dof) if dof > 0 else np.nan
+        ss_res = float(np.sum(residuals ** 2))
+        ss_tot = float(np.sum((p_m - np.mean(p_m)) ** 2))
+        r2 = float(1.0 - (ss_res / ss_tot)) if ss_tot > 0 else np.nan
+
         return {
             'A': A, 'A_err': A_err,
             'B': B, 'B_err': B_err,
             'nu': nu_fixed, 'nu_err': 0.0,
+            'chi2': chi2, 'dof': dof,
+            'chi2_red': chi2_red, 'r2': r2,
             'x_pred': x_pred,
             'y_pred': y_pred
         }
@@ -1177,10 +1188,21 @@ def fss_adjustment(L, p, p_err, L_min_cutoff=1024, fix_nu=True, nu_fixed=4.0 / 3
         x_pred = np.linspace(0.0, x_max, 300)
         y_pred = A + B * x_pred
 
+        y_fit_m = A + B * (L_m ** (-1.0 / nu))
+        residuals = p_m - y_fit_m
+        chi2 = float(np.sum((residuals / p_err_m) ** 2))
+        dof = int(len(L_m) - 3)
+        chi2_red = float(chi2 / dof) if dof > 0 else np.nan
+        ss_res = float(np.sum(residuals ** 2))
+        ss_tot = float(np.sum((p_m - np.mean(p_m)) ** 2))
+        r2 = float(1.0 - (ss_res / ss_tot)) if ss_tot > 0 else np.nan
+
         return {
             'A': A, 'A_err': A_err,
             'B': B, 'B_err': B_err,
             'nu': nu, 'nu_err': nu_err,
+            'chi2': chi2, 'dof': dof,
+            'chi2_red': chi2_red, 'r2': r2,
             'x_pred': x_pred,
             'y_pred': y_pred
         }
