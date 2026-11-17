@@ -1,70 +1,76 @@
 # ==============================================================================
-# ESTILO VISUAL PADRÃO - PERCOLATION & SELF-ORGANIZATION (PADRÃO ARTIGO / MAIN.PDF)
+# ESTILO VISUAL PADRÃO - EXTRAÍDO DE docs/main.pdf (FIGURAS 3 E 5 - MAKIE)
 # ==============================================================================
 
-# ---- Cores e Ciclo de Propriedades (Wong / Nature Color Universal Design) ----
-# 0072B2: Azul (Site) | D55E00: Laranja avermelhado (Bond) | 009E73: Verde azulado
-axes.prop_cycle : cycler('color', ['0072B2', 'D55E00', '009E73', 'F0E442', '56B4E9', 'E69F00', 'CC79A7', '000000'])
+# ---- Cores e Ciclo de Propriedades (extraídas das Figs. 3 e 5 do main.pdf) ----
+# 2A78D6: Azul (Site) | EB6834: Laranja (Bond) | 5EBB00: Verde | 30123B: Roxo | C42503: Vermelho | 3A3936: Cinza escuro
+axes.prop_cycle : cycler('color', ['2A78D6', 'EB6834', '5EBB00', '30123B', 'C42503', '3A3936', '000000'])
 
-# ---- Dimensões de Figura e Exportação ----
-figure.figsize : 14, 11
+# ---- Dimensões de Figura e Exportação (Fig. 3: 412.4 x 299.5 pt = 5.73 x 4.16 in; Fig. 5: 5.56 x 3.27 in) ----
+figure.figsize : 5.73, 4.16
 figure.autolayout : False
 savefig.dpi : 300
 savefig.bbox : tight
 savefig.pad_inches : 0.05
 
-# ---- Moldura / Spines (Open box: sem bordas superior e direita) ----
+# ---- Moldura / Spines (Open box: sem bordas superior e direita; medido 0.969 pt) ----
 axes.spines.top : False
 axes.spines.right : False
 axes.spines.bottom : True
 axes.spines.left : True
-axes.linewidth : 1.2
+axes.linewidth : 0.97
 
-# ---- Ticks do Eixo X (Graduações voltadas para fora, sem topo) ----
+# ---- Ticks do Eixo X (Voltados para fora, sem topo; comprimento 3.88 pt, largura 0.969 pt) ----
 xtick.direction : out
 xtick.top : False
 xtick.bottom : True
-xtick.major.size : 6.0
-xtick.major.width : 1.2
-xtick.major.pad : 6
+xtick.major.size : 3.88
+xtick.major.width : 0.97
+xtick.major.pad : 4.0
 xtick.minor.visible : False
-xtick.minor.size : 3.5
-xtick.minor.width : 0.9
+xtick.minor.size : 2.42
+xtick.minor.width : 0.78
 
-# ---- Ticks do Eixo Y (Graduações voltadas para fora, sem direita) ----
+# ---- Ticks do Eixo Y (Voltados para fora, sem direita; comprimento 3.88 pt, largura 0.969 pt) ----
 ytick.direction : out
 ytick.right : False
 ytick.left : True
-ytick.major.size : 6.0
-ytick.major.width : 1.2
-ytick.major.pad : 6
+ytick.major.size : 3.88
+ytick.major.width : 0.97
+ytick.major.pad : 4.0
 ytick.minor.visible : False
-ytick.minor.size : 3.5
-ytick.minor.width : 0.9
+ytick.minor.size : 2.42
+ytick.minor.width : 0.78
 
-# ---- Linhas e Marcadores (Contorno preto nítido nos marcadores) ----
-lines.linewidth : 1.8
-lines.markersize : 7.0
-lines.markeredgewidth : 1.0
+# ---- Linhas e Marcadores (Curvas 1.163 pt; marcadores 3.67 pt; contorno 0.581 pt) ----
+lines.linewidth : 1.16
+lines.markersize : 3.67
+lines.markeredgewidth : 0.58
 lines.markeredgecolor : black
 lines.solid_capstyle : round
 
-# ---- Tipografia e Tamanho de Fontes ----
+# ---- Tipografia e Tamanho de Fontes (TeX Gyre Heros: títulos/eixos/ticks 10.66 pt, legenda 8.72 pt) ----
 text.usetex : False
-font.family : serif
-mathtext.fontset : cm
-font.size : 18
-axes.titlesize : 18
+font.family : sans-serif
+font.sans-serif : TeX Gyre Heros, Helvetica, Arial, DejaVu Sans
+mathtext.fontset : custom
+mathtext.rm : TeX Gyre Heros
+mathtext.it : TeX Gyre Heros:italic
+mathtext.bf : TeX Gyre Heros:bold
+mathtext.sf : TeX Gyre Heros
+mathtext.fallback : stixsans
+font.size : 10.66
+axes.titlesize : 10.66
 axes.titlelocation : left
 axes.titleweight : normal
-axes.labelsize : 20
-xtick.labelsize : 16
-ytick.labelsize : 16
+axes.labelsize : 10.66
+xtick.labelsize : 10.66
+ytick.labelsize : 10.66
 
-# ---- Legenda (Sem caixa/frame, espaçamento limpo) ----
+# ---- Legenda (Sem caixa/frame; fonte 8.72 pt) ----
 legend.frameon : False
-legend.fontsize : 15
-legend.title_fontsize : 16
+legend.fontsize : 8.72
+legend.title_fontsize : 8.72
 legend.handlelength : 1.5
 legend.handletextpad : 0.5
 legend.labelspacing : 0.4

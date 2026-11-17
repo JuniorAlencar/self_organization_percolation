@@ -91,6 +91,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_HEIGHT=0
       shift
       ;;
+    --rebuild-all-data)
+      PASSTHROUGH_ARGS+=(--rebuild-all-data)
+      shift
+      ;;
     --height-min-count)
       HEIGHT_MIN_COUNT="$2"
       shift 2
@@ -134,6 +138,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --raw-dir DIR           Raw data directory (default: raw_growth_test_dynamic tests_data)"
       echo "  --raw-dirs DIRS...      One or more raw data directories"
       echo "  -j, --jobs N            Number of worker processes for dynamic processing (default: auto, up to 10)"
+      echo "  --rebuild-all-data      Force rebuilding all_data/all_colors from published bundles"
       echo "  --skip-dynamic          Skip dynamic growth JSON processing"
       echo "  --skip-height           Skip both height timeseries steps (default)"
       echo "  --with-height           Enable height processing alongside dynamic JSON"
@@ -236,7 +241,7 @@ else
 fi
 
 if [[ "${DYNAMIC_MIGRATE_CONTROL_RULES}" == "0" || "${DYNAMIC_MIGRATE_CONTROL_RULES}" == "false" ]]; then
-  EXTRA_ARGS+=(--no-migrate-control-rules)
+  EXTRA_ARGS+=(--no-migrate-control-rules --rebuild-all-data)
 else
   EXTRA_ARGS+=(--migrate-control-rules)
 fi
