@@ -5466,6 +5466,9 @@ NetworkPattern network::create_network(
     // Guarda a ordem bruta de chegada ao topo, mas só escreve no ps_out no final
     std::vector<int> percolation_rank(num_colors, -1);
 
+    std::string growth_test_stop_reason = "not_stopped";
+    int growth_test_stop_time = -1;
+
     auto finalize_time_series_only = [&]()
     {
         ps_out.color_percolation.clear();
@@ -5499,7 +5502,7 @@ NetworkPattern network::create_network(
             ps_out.percolation_order.push_back(++valid_order_ctr);
             included[static_cast<std::size_t>(vp.color_idx)] = 1;
         }
-        if (stop_config.hard_max_steps > 0) {
+        if (growth_test_stop_reason == "hard_max_steps") {
             for (int c = 0; c < num_colors; ++c) {
                 if (included[static_cast<std::size_t>(c)]) continue;
                 ps_out.color_percolation.push_back(c + 1);
@@ -5760,8 +5763,6 @@ NetworkPattern network::create_network(
         static_cast<std::size_t>(num_colors));
     std::vector<std::vector<int>> previous_surface_heights_by_species(
         static_cast<std::size_t>(num_colors));
-    std::string growth_test_stop_reason = "not_stopped";
-    int growth_test_stop_time = -1;
     std::deque<double> error_window;
     std::deque<double> derivative_window;
     std::vector<std::deque<double>> control_derivative_windows(
@@ -6309,6 +6310,23 @@ NetworkPattern network::create_network(
                 );
             }
 
+            if (growth_test_stop_reason == "hard_max_steps") {
+                std::vector<char> included(static_cast<std::size_t>(num_colors), 0);
+                for (const auto& vp : valid_percs) {
+                    included[static_cast<std::size_t>(vp.color_idx)] = 1;
+                }
+                for (int c = 0; c < num_colors; ++c) {
+                    if (included[static_cast<std::size_t>(c)]) continue;
+                    ps_out.color_percolation.push_back(c + 1);
+                    ps_out.percolation_order.push_back(++valid_order_ctr);
+                    ps_out.M_size_at_perc.push_back(
+                        is_node
+                            ? largest_component_single_color(c)
+                            : largest_open_component_single_color(c)
+                    );
+                }
+            }
+
             break;
         }
 
@@ -6432,7 +6450,7 @@ NetworkPattern network::create_network(
         set_species_order_from_t_eq(
             ps_out,
             ps_out.t_eq_by_species,
-            stop_config.hard_max_steps > 0);
+            growth_test_stop_reason == "hard_max_steps");
     }
 
     if (stop_config.stop_at_equilibrium && stop_config.save_surface_observables) {
@@ -6991,6 +7009,8 @@ NetworkPattern network::animate_network(
     std::vector<bool> died(num_colors, false);
     std::vector<bool> finished(num_colors, false);
     std::vector<int>  percolation_rank(num_colors, -1);
+    std::string growth_test_stop_reason = "not_stopped";
+    int growth_test_stop_time = -1;
     std::vector<int> equilibrium_stable_run_by_species(
         static_cast<std::size_t>(num_colors), 0);
     std::vector<bool> species_equilibrated(
@@ -7290,6 +7310,19 @@ NetworkPattern network::animate_network(
             ps_out.M_size_at_perc.push_back(largest_comp_cache[c].size);
         }
 
+        if (growth_test_stop_reason == "hard_max_steps") {
+            std::vector<char> included(static_cast<std::size_t>(num_colors), 0);
+            for (const auto& vp : valid_percs) {
+                included[static_cast<std::size_t>(vp.color_idx)] = 1;
+            }
+            for (int c = 0; c < num_colors; ++c) {
+                if (included[static_cast<std::size_t>(c)]) continue;
+                ps_out.color_percolation.push_back(c + 1);
+                ps_out.percolation_order.push_back(++valid_order_ctr);
+                ps_out.M_size_at_perc.push_back(largest_comp_cache[c].size);
+            }
+        }
+
         global_metrics_finalized = true;
     };
 
@@ -7326,7 +7359,7 @@ NetworkPattern network::animate_network(
             ps_out.percolation_order.push_back(++valid_order_ctr);
             included[static_cast<std::size_t>(vp.color_idx)] = 1;
         }
-        if (stop_config.hard_max_steps > 0) {
+        if (growth_test_stop_reason == "hard_max_steps") {
             for (int c = 0; c < num_colors; ++c) {
                 if (included[static_cast<std::size_t>(c)]) continue;
                 ps_out.color_percolation.push_back(c + 1);
@@ -7823,6 +7856,20 @@ NetworkPattern network::animate_network(
         if (stop_all_dead || stop_all_percolated ||
             stop_partial_percolation || stop_equilibrated ||
             stop_stationary_dynamics || stop_hard_limit) {
+            growth_test_stop_time = t;
+            if (stop_all_dead) {
+                growth_test_stop_reason = all_dead ? "all_dead" : "all_finished";
+            } else if (stop_all_percolated) {
+                growth_test_stop_reason = "all_percolated";
+            } else if (stop_partial_percolation) {
+                growth_test_stop_reason = "partial_percolation";
+            } else if (stop_equilibrated) {
+                growth_test_stop_reason = "post_equilibrium_height_reached";
+            } else if (stop_stationary_dynamics) {
+                growth_test_stop_reason = "stationary_dynamics";
+            } else if (stop_hard_limit) {
+                growth_test_stop_reason = "hard_max_steps";
+            }
             if (calculate_detailed_properties) {
                 finalize_global_metrics();
             } else {
@@ -7895,7 +7942,7 @@ NetworkPattern network::animate_network(
         set_species_order_from_t_eq(
             ps_out,
             ps_out.t_eq_by_species,
-            stop_config.hard_max_steps > 0);
+            growth_test_stop_reason == "hard_max_steps");
     }
 
     if (stop_config.stop_at_equilibrium && stop_config.save_surface_observables) {
@@ -8067,6 +8114,8 @@ NetworkPattern network::animate_network(
                 ps_out.species_final_status[static_cast<std::size_t>(c)] = -1;
             }
         }
+        ps_out.growth_test_stop_reason = growth_test_stop_reason;
+        ps_out.growth_test_stop_time = growth_test_stop_time;
         ps_out.equilibrium_consecutive_steps =
             stop_config.equilibrium_consecutive_steps;
         ps_out.dynamics_window_steps = stop_config.dynamics_window_steps;
@@ -8081,6 +8130,8 @@ NetworkPattern network::animate_network(
         ps_out.z_max_final.clear();
         ps_out.z_stat_by_species.clear();
         ps_out.species_final_status.clear();
+        ps_out.growth_test_stop_reason.clear();
+        ps_out.growth_test_stop_time = -1;
         ps_out.equilibrium_consecutive_steps = -1;
         ps_out.dynamics_window_steps = -1;
         ps_out.post_equilibrium_extra_steps = -1;

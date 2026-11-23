@@ -214,8 +214,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Allow either zero-argument (use defaults) or a parameterized run with
-    // optional arguments through HeightTimeseries (18 arguments after argv[0]).
-    if (argc != 1 && (argc < 11 || argc > 19)) {
+    // optional arguments through MaxSteps (19 arguments after argv[0]).
+    if (argc != 1 && (argc < 12 || argc > 20)) {
         std::cerr << "[ERROR] Invalid number of arguments (" << argc - 1 << ").\n";
         helpers::print_help(argv[0]);
         return 1;
@@ -389,7 +389,7 @@ int main(int argc, char* argv[]) {
         std::vector<double> p0(num_colors, pp0);
 
         int N_samples = teste ? std::max(100000, 20 * L) : 100000;
-        if (max_steps > 0 && !return_encoded_network) {
+        if (max_steps > 0) {
             N_samples = std::max(N_samples, max_steps + 1);
         }
         GrowthStopConfig stop_config;
