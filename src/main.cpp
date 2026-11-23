@@ -242,6 +242,7 @@ int main(int argc, char* argv[]) {
         bool save_animation_window_only = false;
         std::string control_rule_name = "linear";
         bool calculate_height_timeseries = false;
+        int max_steps = -1;
         int fraction_samples = 30;
         double sample_gap_over_L = 1.0;
         
@@ -277,6 +278,16 @@ int main(int argc, char* argv[]) {
             }
             if (argc >= 19) {
                 calculate_height_timeseries = helpers::parse_bool(argv[18]);
+            }
+            if (argc >= 20) {
+                max_steps = std::stoi(argv[19]);
+            }
+        }
+        if (max_steps <= 0) {
+            if (const char* env_max_steps = std::getenv("SOP_MAX_STEPS")) {
+                if (*env_max_steps != '\0') {
+                    max_steps = std::stoi(env_max_steps);
+                }
             }
         }
         if (const char* env_samples = std::getenv("SOP_FRACTION_SAMPLES")) {
@@ -378,9 +389,15 @@ int main(int argc, char* argv[]) {
         std::vector<double> p0(num_colors, pp0);
 
         int N_samples = teste ? std::max(100000, 20 * L) : 100000;
+        if (max_steps > 0 && !return_encoded_network) {
+            N_samples = std::max(N_samples, max_steps + 1);
+        }
         GrowthStopConfig stop_config;
         stop_config.initial_base_layout = initial_base_layout;
         stop_config.feedback_control_rule = feedback_control_rule;
+        if (max_steps > 0) {
+            stop_config.hard_max_steps = max_steps;
+        }
         if (teste) {
             stop_config.height_multiplier = HEIGHT_STOP_MULTIPLIER;
             stop_config.dynamic_height = true;

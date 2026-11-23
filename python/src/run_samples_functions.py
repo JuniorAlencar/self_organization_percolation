@@ -37,6 +37,7 @@ def shell_data(
     gap_snapshot: str | None = None,
     tail_snapshot: str | None = None,
     tail_over_L: float | None = None,
+    max_steps: int | None = None,
     **kwargs,
 ):
     """
@@ -158,6 +159,12 @@ def shell_data(
         snapshot_exports.append(f'export SOP_FRACTION_TAIL_SNAPSHOT="${{SOP_FRACTION_TAIL_SNAPSHOT:-{tail_snapshot}}}"')
     if tail_over_L is not None:
         snapshot_exports.append(f'export SOP_FRACTION_TAIL_OVER_L="${{SOP_FRACTION_TAIL_OVER_L:-{tail_over_L}}}"')
+    if max_steps is None and ("TMAX" in kwargs or "tmax" in kwargs):
+        max_steps = kwargs.get("TMAX", kwargs.get("tmax"))
+    if max_steps is not None:
+        max_steps = int(max_steps)
+        if max_steps > 0:
+            snapshot_exports.append(f'export SOP_MAX_STEPS="${{SOP_MAX_STEPS:-{max_steps}}}"')
     snapshot_export_str = "\n".join(snapshot_exports)
     if snapshot_export_str:
         snapshot_export_str = "\n" + snapshot_export_str

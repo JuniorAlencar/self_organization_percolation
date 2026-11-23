@@ -3416,17 +3416,19 @@ inline bool any_value_finite(const std::vector<double>& values)
 }
 
 inline void set_species_order_from_t_eq(PercolationSeries& ps,
-                                        const std::vector<double>& t_eq_by_species)
+                                        const std::vector<double>& t_eq_by_species,
+                                        const bool include_unequilibrated = false)
 {
     ps.color_percolation.clear();
     ps.percolation_order.clear();
     ps.M_size_at_perc.clear();
 
-    if (!any_value_finite(t_eq_by_species)) {
+    if (!include_unequilibrated && !any_value_finite(t_eq_by_species)) {
         return;
     }
 
     struct SpeciesEq {
+        bool is_finite;
         double t_eq;
         int color_idx;
     };
@@ -3434,15 +3436,18 @@ inline void set_species_order_from_t_eq(PercolationSeries& ps,
     std::vector<SpeciesEq> ordered;
     ordered.reserve(t_eq_by_species.size());
     for (int c = 0; c < static_cast<int>(t_eq_by_species.size()); ++c) {
-        if (!std::isfinite(t_eq_by_species[static_cast<std::size_t>(c)])) {
+        const double val = t_eq_by_species[static_cast<std::size_t>(c)];
+        const bool finite = std::isfinite(val);
+        if (!include_unequilibrated && !finite) {
             continue;
         }
-        ordered.push_back({t_eq_by_species[static_cast<std::size_t>(c)], c});
+        ordered.push_back({finite, val, c});
     }
 
     std::sort(ordered.begin(), ordered.end(),
               [](const SpeciesEq& a, const SpeciesEq& b) {
-                  if (a.t_eq != b.t_eq) return a.t_eq < b.t_eq;
+                  if (a.is_finite != b.is_finite) return a.is_finite > b.is_finite;
+                  if (a.is_finite && a.t_eq != b.t_eq) return a.t_eq < b.t_eq;
                   return a.color_idx < b.color_idx;
               });
 
@@ -4323,7 +4328,6 @@ RawFractionsSeries network::create_raw_fractions(
                             if (rng.uniform_real(0.0, 1.0) <
                                 p_curr[static_cast<std::size_t>(color)]) {
                                 set_open_bond_2d(x, y, nx, ny);
-                                ++N_current[static_cast<std::size_t>(color)];
                             }
                             continue;
                         }
@@ -4350,11 +4354,11 @@ RawFractionsSeries network::create_raw_fractions(
                     for (const auto& cand : list) {
                         if (cand.color != winning_color) continue;
                         set_open_bond_2d(cand.x_from, cand.y_from, x, y);
-                        ++N_current[static_cast<std::size_t>(winning_color)];
                     }
 
                     set_site_2d(x, y, color_to_active_value(num_colors, winning_color));
                     next_frontier.push_back(kv.first);
+                    ++N_current[static_cast<std::size_t>(winning_color)];
                     max_heights[static_cast<std::size_t>(winning_color)] =
                         std::max(max_heights[static_cast<std::size_t>(winning_color)], y);
                 }
@@ -4890,7 +4894,6 @@ RawFractionsSeries network::create_raw_fractions(
                         if (neigh_color != color) continue;
                         if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(color)]) {
                             open_bonds.insert(bkey);
-                            ++N_current[static_cast<std::size_t>(color)];
                         }
                         continue;
                     }
@@ -4912,11 +4915,11 @@ RawFractionsSeries network::create_raw_fractions(
                 for (const auto& cand : list) {
                     if (cand.color != winning_color) continue;
                     open_bonds.insert(cand.bond);
-                    ++N_current[static_cast<std::size_t>(winning_color)];
                 }
 
                 set_site(kv.first, color_to_active_value(num_colors, winning_color));
                 next_frontier.push_back(kv.first);
+                ++N_current[static_cast<std::size_t>(winning_color)];
                 max_heights[static_cast<std::size_t>(winning_color)] =
                     std::max(max_heights[static_cast<std::size_t>(winning_color)],
                              abs_grow_coord_from_key(kv.first, dim));
@@ -5490,9 +5493,18 @@ NetworkPattern network::create_network(
                   });
 
         int valid_order_ctr = 0;
+        std::vector<char> included(static_cast<std::size_t>(num_colors), 0);
         for (const auto& vp : valid_percs) {
             ps_out.color_percolation.push_back(vp.color_idx + 1);
             ps_out.percolation_order.push_back(++valid_order_ctr);
+            included[static_cast<std::size_t>(vp.color_idx)] = 1;
+        }
+        if (stop_config.hard_max_steps > 0) {
+            for (int c = 0; c < num_colors; ++c) {
+                if (included[static_cast<std::size_t>(c)]) continue;
+                ps_out.color_percolation.push_back(c + 1);
+                ps_out.percolation_order.push_back(++valid_order_ctr);
+            }
         }
     };
 
@@ -5870,7 +5882,6 @@ NetworkPattern network::create_network(
 
                         if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
                             open_bond(idx, viz_idx, edge_bit);
-                            ++N_current[cor_idx];
                         }
                         continue;
                     }
@@ -5950,6 +5961,7 @@ NetworkPattern network::create_network(
                 set_site(viz, new_val);
                 dsu_make_active(viz);
                 next_frontier.push_back(viz);
+                ++N_current[cor_idx];
                 set_activation_time(viz, static_cast<uint32_t>(t));
                 record_height_activation(cor_idx, viz);
 
@@ -5969,7 +5981,6 @@ NetworkPattern network::create_network(
                     const FrontCandidate fc = front_candidates.candidate(slot, i);
                     if (fc.color_idx != cor_idx) continue;
                     open_bond(fc.activator, viz, fc.edge_bit);
-                    ++N_current[cor_idx];
                 }
             }
         }
@@ -6210,7 +6221,7 @@ NetworkPattern network::create_network(
         }
 
         const bool stop_hard_limit =
-            stop_config.stop_at_equilibrium &&
+            (stop_config.stop_at_equilibrium || stop_config.hard_max_steps > 0) &&
             (t >= hard_max_steps);
         bool stop_stationary_dynamics = false;
 
@@ -6418,7 +6429,10 @@ NetworkPattern network::create_network(
     ps_out.t_eq = ts_out.t_eq;
 
     if (stop_config.stop_at_equilibrium && !stop_config.stop_at_percolation) {
-        set_species_order_from_t_eq(ps_out, ps_out.t_eq_by_species);
+        set_species_order_from_t_eq(
+            ps_out,
+            ps_out.t_eq_by_species,
+            stop_config.hard_max_steps > 0);
     }
 
     if (stop_config.stop_at_equilibrium && stop_config.save_surface_observables) {
@@ -7306,9 +7320,18 @@ NetworkPattern network::animate_network(
                   });
 
         int valid_order_ctr = 0;
+        std::vector<char> included(static_cast<std::size_t>(num_colors), 0);
         for (const auto& vp : valid_percs) {
             ps_out.color_percolation.push_back(vp.color_idx + 1);
             ps_out.percolation_order.push_back(++valid_order_ctr);
+            included[static_cast<std::size_t>(vp.color_idx)] = 1;
+        }
+        if (stop_config.hard_max_steps > 0) {
+            for (int c = 0; c < num_colors; ++c) {
+                if (included[static_cast<std::size_t>(c)]) continue;
+                ps_out.color_percolation.push_back(c + 1);
+                ps_out.percolation_order.push_back(++valid_order_ctr);
+            }
         }
 
         global_metrics_finalized = true;
@@ -7475,7 +7498,6 @@ NetworkPattern network::animate_network(
                                                     static_cast<uint32_t>(viz_idx));
                             edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
                                                     static_cast<uint32_t>(idx));
-                            ++N_current[cor_idx];
                         }
                         continue;
                     }
@@ -7547,6 +7569,7 @@ NetworkPattern network::animate_network(
                 activation_code[static_cast<std::size_t>(viz)] =
                     static_cast<NetworkPattern::state_t>(color_mul[cor_idx] + t);
                 next_frontier.push_back(viz);
+                ++N_current[cor_idx];
                 record_height_activation(cor_idx, viz);
 
                 const int h = grid.grow_coord(viz);
@@ -7568,7 +7591,6 @@ NetworkPattern network::animate_network(
                                             static_cast<uint32_t>(viz));
                     edge_pairs.emplace_back(static_cast<uint32_t>(viz),
                                             static_cast<uint32_t>(fc.activator));
-                    ++N_current[cor_idx];
                 }
             }
         }
@@ -7794,7 +7816,7 @@ NetworkPattern network::animate_network(
         }
 
         const bool stop_hard_limit =
-            stop_config.stop_at_equilibrium &&
+            (stop_config.stop_at_equilibrium || stop_config.hard_max_steps > 0) &&
             (t >= hard_max_steps);
         bool stop_stationary_dynamics = false;
 
@@ -7870,7 +7892,10 @@ NetworkPattern network::animate_network(
     ps_out.t_eq = ts_out.t_eq;
 
     if (stop_config.stop_at_equilibrium && !stop_config.stop_at_percolation) {
-        set_species_order_from_t_eq(ps_out, ps_out.t_eq_by_species);
+        set_species_order_from_t_eq(
+            ps_out,
+            ps_out.t_eq_by_species,
+            stop_config.hard_max_steps > 0);
     }
 
     if (stop_config.stop_at_equilibrium && stop_config.save_surface_observables) {
