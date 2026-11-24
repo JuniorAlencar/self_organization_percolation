@@ -512,11 +512,17 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             ofs << "    \"growth_test_t_eq_validation_window_steps\": "
                 << std::max(std::max(0, ps.post_equilibrium_extra_steps), 200)
                 << ",\n";
-            ofs << "    \"growth_test_t_eq_validation\": \"global_tail_drift_validation_of_blocked_pt_variation\",\n";
+            const bool is_c_zero = (std::abs(ps.feedback_control_param) <= 1e-12);
+            ofs << "    \"growth_test_t_eq_validation\": \""
+                << (is_c_zero ? "global_tail_drift_validation_of_blocked_nt_variation"
+                              : "global_tail_drift_validation_of_blocked_pt_variation")
+                << "\",\n";
             ofs << "    \"growth_test_t_eq_s_prime_threshold\": 0.00001,\n";
-            ofs << "    \"growth_test_t_eq_series\": \"pt\",\n";
+            ofs << "    \"growth_test_t_eq_series\": \""
+                << (is_c_zero ? "nt" : "pt") << "\",\n";
             ofs << "    \"growth_test_t_eq_requires_target\": false,\n";
-            ofs << "    \"growth_test_t_eq_requires_global_height\": true,\n";
+            ofs << "    \"growth_test_t_eq_requires_global_height\": "
+                << (is_c_zero ? "false" : "true") << ",\n";
         }
         if (std::isfinite(ps.equilibrium_rel_tol)) {
             ofs << "    \"growth_test_equilibrium_rel_tol\": "

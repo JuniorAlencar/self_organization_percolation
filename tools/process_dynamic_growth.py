@@ -2434,6 +2434,10 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
     merged["p"] = combine_summary_dicts(p_old, p_new)
     p_mean = merged["p"]["mean"]
     p_err = merged["p"]["err"]
+    if (not math.isfinite(float(p_old.get("err", 0.0) if p_old.get("err") is not None else 0.0))) or (not math.isfinite(float(p_new.get("err", 0.0) if p_new.get("err") is not None else 0.0))):
+        p_err = math.nan
+        merged["p"]["err"] = math.nan
+        merged["p"]["std"] = math.nan
     merged_data["p_tail_mean"] = p_mean
     merged_data["p_tail_err"] = p_err
     merged_data["p_tail_sample_values"] = merged["p"].get("values", [])
@@ -2558,10 +2562,16 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
             f_summary = summary_with_values(f_vals)
             z_summary = summary_with_values(z_vals)
             teq_summary = summary_from_values(teq_vals)
+            p_mean = p_summary.get("mean")
+            p_err = p_summary.get("err")
+            if p_mean is not None and (p_err == 0.0 or math.isclose(float(p0_group.get("c", 1.0) if "c" in p0_group else 1.0), 0.0, abs_tol=1e-12)):
+                p_err = math.nan
+                p_summary["err"] = math.nan
+                p_summary["std"] = math.nan
 
             existing_data = dict(order.get("data", {})) if isinstance(order.get("data", {}), dict) else {}
-            existing_data["p_tail_mean"] = p_summary.get("mean")
-            existing_data["p_tail_err"] = p_summary.get("err")
+            existing_data["p_tail_mean"] = p_mean
+            existing_data["p_tail_err"] = p_err
             existing_data["p_tail_sample_values"] = p_summary.get("values", [])
             existing_data["f_tail_mean"] = f_summary.get("mean")
             existing_data["f_tail_err"] = f_summary.get("err")
@@ -2770,6 +2780,10 @@ def build_bundle_for_files(
             teq_summary = summary_from_values(teq_vals)
             p_mean = p_summary["mean"]
             p_err = p_summary["err"]
+            if math.isclose(float(params.get("c", 1.0)), 0.0, abs_tol=1e-12):
+                p_err = math.nan
+                p_summary["err"] = math.nan
+                p_summary["std"] = math.nan
             f_mean = f_summary["mean"]
             f_err = f_summary["err"]
             z_stat_mean = z_stat_summary["mean"]

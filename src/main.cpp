@@ -540,7 +540,7 @@ int main(int argc, char* argv[]) {
 
         std::cout << "seed = " << seed << std::endl;
         ps.feedback_control_rule = control_rule_name;
-        ps.feedback_control_param = 0.0;
+        ps.feedback_control_param = c;
         ps.feedback_log_epsilon = 0.0;
 
         const std::string machine_name = helpers::get_machine_name();
