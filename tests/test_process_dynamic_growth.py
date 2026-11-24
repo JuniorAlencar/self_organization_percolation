@@ -1183,6 +1183,122 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             lines = all_data.read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 3)
 
+    def test_load_dynamic_sample_c0_ft0_estimates_from_nt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            data_dir = (
+                root
+                / "SOP_data"
+                / "raw_growth_test_dynamic"
+                / "linear"
+                / "bond_percolation"
+                / "num_colors_1"
+                / "dim_2"
+                / "L_16"
+                / "fT_constant"
+                / "fT_0.000000e+00"
+                / "c_0.000000e+00"
+                / "rho_1.0000e+00"
+                / "data"
+            )
+            data_dir.mkdir(parents=True, exist_ok=True)
+            n_steps = 300
+            times = list(range(n_steps))
+            # nt rises and stabilizes at 0.4
+            nt = [0.1 * min(1.0, t / 20.0) if t < 20 else 0.4 for t in times]
+            pt = [0.75] * n_steps
+
+            sample_path = data_dir / "sample_P0_1.00_p0_0.75_base_alternating.json"
+            sample_path.write_text(
+                json.dumps({
+                    "meta": {
+                        "num_colors": 1,
+                        "t_eq": None,
+                        "t_eq_by_species": [None],
+                        "growth_test_t_eq_window_block": 10,
+                        "growth_test_t_eq_validation_window_steps": 50,
+                    },
+                    "results": {
+                        "order_percolation 0": {
+                            "data": {
+                                "color": 1,
+                                "time": times,
+                                "pt": pt,
+                                "nt": nt,
+                                "t_eq_species": None,
+                            }
+                        }
+                    }
+                }),
+                encoding="utf-8"
+            )
+
+            rows = PROCESS_DYNAMIC_GROWTH.load_dynamic_sample(sample_path)
+            self.assertIsNotNone(rows)
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertIsNotNone(row["t_eq_species"])
+            self.assertAlmostEqual(row["p_sample_mean"], 0.75)
+            self.assertAlmostEqual(row["f_sample_mean"], 0.4, places=4)
+
+    def test_load_dynamic_sample_nonzero_c_estimates_from_pt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            data_dir = (
+                root
+                / "SOP_data"
+                / "raw_growth_test_dynamic"
+                / "linear"
+                / "bond_percolation"
+                / "num_colors_1"
+                / "dim_2"
+                / "L_16"
+                / "fT_constant"
+                / "fT_2.500000e-01"
+                / "c_5.000000e-02"
+                / "rho_1.0000e+00"
+                / "data"
+            )
+            data_dir.mkdir(parents=True, exist_ok=True)
+            n_steps = 300
+            times = list(range(n_steps))
+            # pt converges to 0.5
+            pt = [0.8 - 0.3 * min(1.0, t / 30.0) if t < 30 else 0.5 for t in times]
+            nt = [0.25] * n_steps
+
+            sample_path = data_dir / "sample_P0_0.20_p0_0.80_base_alternating.json"
+            sample_path.write_text(
+                json.dumps({
+                    "meta": {
+                        "num_colors": 1,
+                        "t_eq": None,
+                        "t_eq_by_species": [None],
+                        "growth_test_t_eq_window_block": 10,
+                        "growth_test_t_eq_validation_window_steps": 50,
+                    },
+                    "results": {
+                        "order_percolation 0": {
+                            "data": {
+                                "color": 1,
+                                "time": times,
+                                "pt": pt,
+                                "nt": nt,
+                                "t_eq_species": None,
+                            }
+                        }
+                    }
+                }),
+                encoding="utf-8"
+            )
+
+            rows = PROCESS_DYNAMIC_GROWTH.load_dynamic_sample(sample_path)
+            self.assertIsNotNone(rows)
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertIsNotNone(row["t_eq_species"])
+            self.assertAlmostEqual(row["p_sample_mean"], 0.5, places=4)
+            self.assertAlmostEqual(row["f_sample_mean"], 0.25, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

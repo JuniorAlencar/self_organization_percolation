@@ -102,7 +102,7 @@ p0_2D = 0.8
 p0_3D = 0.5
 p0 = p0_2D if dim == 2 else p0_3D
 #p0_lst = np.linspace(0.01, 1.0, 40)
-ft_lst = np.linspace(0.01, 0.4, 40)
+ft_lst = np.linspace(0.41, 0.5, 10)
 type_perc_lst = ['bond', 'node']
 
 count = 0

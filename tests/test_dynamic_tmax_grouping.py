@@ -247,6 +247,30 @@ class DynamicTmaxGroupingTest(unittest.TestCase):
             self.assertEqual(sorted(r["TMAX"] for r in all_data_rows), [0, 1500])
             self.assertEqual(sorted(r["TMAX"] for r in all_colors_rows), [0, 1500, 1500])
 
+    def test_all_dead_sibling_ft_group_uses_nearby_hard_stop_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, _, _, _, target_dir = self._make_sop_root(Path(tmpdir))
+            sibling_dir = target_dir.parents[3] / "fT_0.16" / target_dir.relative_to(target_dir.parents[2])
+            sibling_dir.mkdir(parents=True)
+
+            target = self._write_sample(
+                target_dir,
+                "light_seed_1_ts_20261124T152500_P0_0.20_p0_0.80_base_alternating.json",
+                None,
+                stop_reason="all_dead",
+                stop_time=48,
+            )
+            self._write_sample(
+                sibling_dir,
+                "light_seed_2_ts_20261124T152501_P0_0.20_p0_0.80_base_alternating.json",
+                [0.5, 0.5, 0.5, 0.5],
+                stop_reason="hard_max_steps",
+                stop_time=1500,
+            )
+
+            aligned = PROCESS_DYNAMIC_GROWTH.align_tmax_across_files([target])
+            self.assertEqual(aligned[target][2], 1500)
+
 
 if __name__ == "__main__":
     unittest.main()

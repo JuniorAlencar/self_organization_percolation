@@ -11,6 +11,7 @@ import math
 import os
 import re
 import shutil
+import statistics
 import subprocess
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -22,7 +23,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 23
+DYNAMIC_PROCESSING_VERSION = 25
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
 SUMMARY_FILE_FINGERPRINT_KEY = "summary_file_fingerprint"
 DATA_DIR_FINGERPRINT_KEY = "data_dir_fingerprint"
@@ -508,8 +509,13 @@ def classify_raw_meta_tmax(meta: dict[str, Any]) -> tuple[int | None, str | None
     return None, stop_reason, raw_stop_time
 
 
-def _infer_sibling_fT_tmax(data_dir: Path, target_machines: set[str], cache: dict[tuple[Path, tuple[str, ...]], int]) -> int:
-    """When an entire data_dir has only 'all_dead' runs, check sibling fT_* dirs under the same fT_constant parent."""
+def _infer_sibling_fT_tmax(
+    data_dir: Path,
+    target_machines: set[str],
+    target_timestamps: list[int],
+    cache: dict[tuple[Path, tuple[str, ...], int], int],
+) -> int:
+    """Infer the cap for an all-dead set from sibling fT runs in the same batch."""
     ft_const_parent: Path | None = None
     for anc in data_dir.parents:
         if anc.name == "fT_constant":
@@ -518,14 +524,18 @@ def _infer_sibling_fT_tmax(data_dir: Path, target_machines: set[str], cache: dic
     if ft_const_parent is None or not ft_const_parent.is_dir():
         return 0
 
-    cache_key = (ft_const_parent.resolve(), tuple(sorted(m for m in target_machines if m)))
+    target_ts = int(statistics.median(ts for ts in target_timestamps if ts > 0)) if any(ts > 0 for ts in target_timestamps) else 0
+    # A batch bucket prevents an old run on the same host from contaminating a
+    # newly generated all-dead-only fT directory.
+    batch_bucket = target_ts // (6 * 60 * 60) if target_ts else 0
+    cache_key = (ft_const_parent.resolve(), tuple(sorted(m for m in target_machines if m)), batch_bucket)
     if cache_key in cache:
         return cache[cache_key]
 
-    hard_times_same_machine: set[int] = set()
-    free_same_machine = False
-    hard_times_any: set[int] = set()
-    free_any = False
+    nearby_hard: list[tuple[int, int]] = []
+    nearby_free = False
+    fallback_hard: list[int] = []
+    batch_window_seconds = 6 * 60 * 60
 
     for sib_ft in sorted(ft_const_parent.glob("fT_*")):
         if not sib_ft.is_dir():
@@ -533,27 +543,38 @@ def _infer_sibling_fT_tmax(data_dir: Path, target_machines: set[str], cache: dic
         for sib_data in sib_ft.rglob("data"):
             if not sib_data.is_dir() or sib_data.resolve() == data_dir.resolve():
                 continue
-            for idx, fp in enumerate(sib_data.glob("*.json")):
-                if idx >= 20:
-                    break
+            for fp in sib_data.glob("*.json"):
+                mach, ts_sec = parse_machine_and_ts(fp.name)
+                same_machine = bool(mach and mach in target_machines)
+                nearby = same_machine and (
+                    target_ts <= 0 or (ts_sec > 0 and abs(ts_sec - target_ts) <= batch_window_seconds)
+                )
+                # Avoid parsing large time-series payloads outside the target
+                # host/time batch.  No arbitrary first-N sample cap: that was
+                # the source of missed recent hard_max_steps anchors.
+                if target_machines and not same_machine:
+                    continue
+                if target_ts > 0 and same_machine and not nearby:
+                    continue
                 meta = read_sample_meta_fast(fp)
                 known_t, reason, _ = classify_raw_meta_tmax(meta)
-                mach, _ = parse_machine_and_ts(fp.name)
                 if known_t is not None and known_t > 0:
-                    hard_times_any.add(known_t)
-                    if mach and mach in target_machines:
-                        hard_times_same_machine.add(known_t)
+                    if nearby:
+                        nearby_hard.append((abs(ts_sec - target_ts), known_t))
+                    else:
+                        fallback_hard.append(known_t)
                 elif reason in {"post_equilibrium_height_reached", "all_percolated", "partial_percolation", "stationary_dynamics"}:
-                    free_any = True
-                    if mach and mach in target_machines:
-                        free_same_machine = True
+                    if nearby:
+                        nearby_free = True
 
-    if len(hard_times_same_machine) == 1 and not free_same_machine:
-        inferred = next(iter(hard_times_same_machine))
-    elif not hard_times_same_machine and free_same_machine:
+    if nearby_hard:
+        # A dead run inherits the cap of the closest hard-stop sibling.  A
+        # dynamically stabilized sibling is not evidence of a free cap.
+        inferred = min(nearby_hard, key=lambda item: item[0])[1]
+    elif nearby_free:
         inferred = 0
-    elif len(hard_times_any) == 1 and not free_any:
-        inferred = next(iter(hard_times_any))
+    elif len(set(fallback_hard)) == 1:
+        inferred = fallback_hard[0]
     else:
         inferred = 0
 
@@ -666,7 +687,7 @@ def align_tmax_across_files(
 
     # Pass 2: Resolve all_dead-only sets from resolved sibling (P0, p0) sets in the same data_dir,
     # or from sibling fT_* directories under the same fT_constant parent.
-    sibling_ft_cache: dict[tuple[Path, tuple[str, ...]], int] = {}
+    sibling_ft_cache: dict[tuple[Path, tuple[str, ...], int], int] = {}
     for set_key in unresolved_dead_sets:
         d_dir, rule, layout, _, _ = set_key
         set_recs = [records[p] for p in by_set[set_key]]
@@ -690,7 +711,10 @@ def align_tmax_across_files(
                     r["aligned_t"] = int(best["aligned_t"])
         else:
             target_machines = {r["machine"] for r in set_recs if r["machine"]}
-            inferred_t = _infer_sibling_fT_tmax(d_dir, target_machines, sibling_ft_cache)
+            target_timestamps = [int(r["ts_sec"]) for r in set_recs if int(r["ts_sec"]) > 0]
+            inferred_t = _infer_sibling_fT_tmax(
+                d_dir, target_machines, target_timestamps, sibling_ft_cache
+            )
             for r in set_recs:
                 r["aligned_t"] = inferred_t
 
@@ -1191,6 +1215,169 @@ def tail_mean_after_t_eq(time: Any, values: Any, t_eq: float) -> float | None:
     if not np.any(mask):
         return None
     return float(np.mean(y[mask]))
+
+
+def estimate_t_eq_species(
+    time: Any,
+    series: Any,
+    *,
+    window_roll: int = 15,
+    window_block: int = 10,
+    min_stable_steps: int = 100,
+    rel_tol: float = 0.025,
+    abs_tol: float = 1e-6,
+    s_prime_threshold: float = 1e-5,
+    validation_window_steps: int = 200,
+    meta: dict[str, Any] | None = None,
+) -> float | None:
+    """Estimate equilibration time (t_eq_species) using C++ criteria from src/network.cpp."""
+    if time is None or series is None:
+        return None
+    try:
+        t_arr = np.asarray(time, dtype=np.float64)
+        p_arr = np.asarray(series, dtype=np.float64)
+    except Exception:
+        return None
+
+    n = min(len(t_arr), len(p_arr))
+    if n < 3:
+        return None
+    t_arr = t_arr[:n]
+    p_arr = p_arr[:n]
+
+    if meta:
+        if "growth_test_t_eq_smoothing_window" in meta:
+            try:
+                window_roll = int(meta["growth_test_t_eq_smoothing_window"])
+            except Exception:
+                pass
+        if "growth_test_t_eq_window_block" in meta:
+            try:
+                window_block = int(meta["growth_test_t_eq_window_block"])
+            except Exception:
+                pass
+        if "growth_test_t_eq_min_stable_steps" in meta:
+            try:
+                min_stable_steps = int(meta["growth_test_t_eq_min_stable_steps"])
+            except Exception:
+                pass
+        if "growth_test_t_eq_validation_window_steps" in meta:
+            try:
+                validation_window_steps = int(meta["growth_test_t_eq_validation_window_steps"])
+            except Exception:
+                pass
+        if "growth_test_equilibrium_effective_rel_tol" in meta:
+            try:
+                rel_tol = float(meta["growth_test_equilibrium_effective_rel_tol"])
+            except Exception:
+                pass
+        elif "growth_test_equilibrium_rel_tol" in meta:
+            try:
+                rel_tol = float(meta["growth_test_equilibrium_rel_tol"])
+            except Exception:
+                pass
+        if "growth_test_equilibrium_abs_tol" in meta:
+            try:
+                abs_tol = float(meta["growth_test_equilibrium_abs_tol"])
+            except Exception:
+                pass
+        if "growth_test_t_eq_s_prime_threshold" in meta:
+            try:
+                s_prime_threshold = float(meta["growth_test_t_eq_s_prime_threshold"])
+            except Exception:
+                pass
+
+    half_left = window_roll // 2
+    half_right = window_roll - half_left - 1
+    prefix = np.zeros(n + 1, dtype=np.float64)
+    np.cumsum(p_arr, out=prefix[1:])
+    idx = np.arange(n)
+    a = np.maximum(0, idx - half_left)
+    b = np.minimum(n, idx + half_right + 1)
+    p_smoothed = (prefix[b] - prefix[a]) / (b - a)
+
+    n_blocks = n // window_block
+    if n_blocks < 3:
+        return None
+
+    reshaped_t = t_arr[:n_blocks * window_block].reshape(n_blocks, window_block)
+    reshaped_p = p_smoothed[:n_blocks * window_block].reshape(n_blocks, window_block)
+    t_j = reshaped_t.mean(axis=1)
+    j_w = reshaped_p.mean(axis=1)
+
+    validation_links_required = (
+        max(1, int(math.ceil(validation_window_steps / max(1, window_block))))
+        if validation_window_steps > 0
+        else 0
+    )
+
+    def check_stat(first_pt: int, last_pt: int) -> bool:
+        n_pts = last_pt - first_pt + 1
+        if n_pts < 3:
+            return False
+        edge_cnt = max(1, n_pts // 3)
+        first_m = float(j_w[first_pt : first_pt + edge_cnt].mean())
+        last_m = float(j_w[last_pt - edge_cnt + 1 : last_pt + 1].mean())
+        drift_scale = max(max(abs(first_m), abs(last_m)), 1e-12)
+        drift_thresh = max(abs_tol, rel_tol * drift_scale)
+        if abs(last_m - first_m) > drift_thresh:
+            return False
+        x = t_j[first_pt : last_pt + 1] - t_j[first_pt]
+        y = j_w[first_pt : last_pt + 1]
+        sum_x = float(x.sum())
+        sum_y = float(y.sum())
+        sum_xx = float((x * x).sum())
+        sum_xy = float((x * y).sum())
+        denom = n_pts * sum_xx - sum_x * sum_x
+        if denom > 0:
+            slope = (n_pts * sum_xy - sum_x * sum_y) / denom
+            proj_drift = abs(slope) * (t_j[last_pt] - t_j[first_pt])
+            if proj_drift > drift_thresh:
+                return False
+        return True
+
+    if validation_links_required > 0:
+        tail_last_pt = n_blocks - 1
+        for first_pt in range(n_blocks - validation_links_required):
+            last_pt = first_pt + validation_links_required
+            if check_stat(first_pt, last_pt) and check_stat(first_pt, tail_last_pt):
+                return float(t_j[first_pt])
+        return None
+
+    ns = len(j_w) - 1
+    if ns < 2:
+        return None
+    s = np.abs(j_w[1:] - j_w[:-1])
+    t_s = 0.5 * (t_j[:-1] + t_j[1:])
+    stable_links_required = max(1, int(math.ceil(min_stable_steps / max(1, window_block))))
+    stable_run = 0
+    for i in range(ns):
+        if i == 0:
+            dt = t_s[1] - t_s[0]
+            sp = (s[1] - s[0]) / dt if dt != 0 else math.nan
+        elif i == ns - 1:
+            dt = t_s[i] - t_s[i - 1]
+            sp = (s[i] - s[i - 1]) / dt if dt != 0 else math.nan
+        else:
+            dt = t_s[i + 1] - t_s[i - 1]
+            sp = (s[i + 1] - s[i - 1]) / dt if dt != 0 else math.nan
+
+        p_scale = max(abs(j_w[i]), abs(j_w[i + 1]))
+        s_threshold = max(abs_tol, rel_tol * p_scale)
+        stable = (
+            math.isfinite(sp)
+            and abs(sp) < s_prime_threshold
+            and s[i] <= s_threshold
+        )
+        if stable:
+            stable_run += 1
+            if stable_run >= stable_links_required:
+                first_stable = i - stable_run + 1
+                return float(t_s[first_stable])
+        else:
+            stable_run = 0
+
+    return None
 
 
 def min_support_count(n_seeds: int, fraction: float = DEFAULT_MIN_SUPPORT_FRACTION) -> int:
@@ -1701,6 +1888,24 @@ def load_dynamic_sample(
 
     candidate_blocks.sort(key=lambda x: x[0])
 
+    data_params = parse_data_dir(path.parent)
+    if data_params is None:
+        m_param = PARAM_RE.search(path.as_posix())
+        if m_param:
+            g = m_param.groupdict()
+            data_params = {
+                "c": float(g["c"]),
+                "f_T": float(g["fT"]),
+            }
+
+    c_val = float(data_params["c"]) if data_params and "c" in data_params else None
+    f_T_val = float(data_params["f_T"]) if data_params and "f_T" in data_params else None
+
+    is_c0 = (c_val is not None and math.isclose(c_val, 0.0, abs_tol=1e-12))
+
+    m_p0 = RE_p0.search(path.name)
+    p0_from_file = float(m_p0.group("p0")) if m_p0 else None
+
     parsed_blocks: list[tuple[int, dict[str, Any]]] = []
     for order_pos, (raw_order, data) in enumerate(candidate_blocks):
         t_eq = finite_float(data.get("t_eq_species"))
@@ -1708,6 +1913,19 @@ def load_dynamic_sample(
             t_eq = finite_float(data.get("t_eq"))
         if t_eq is None and order_pos < len(meta_t_eq_for_fallback):
             t_eq = finite_float(meta_t_eq_for_fallback[order_pos])
+
+        if t_eq is None:
+            times = data.get("time")
+            if times is not None and len(times) > 0:
+                if is_c0:
+                    nt_series = data.get("nt")
+                    if nt_series is not None:
+                        t_eq = estimate_t_eq_species(times, nt_series, meta=meta)
+                else:
+                    pt_series = data.get("pt")
+                    if pt_series is not None:
+                        t_eq = estimate_t_eq_species(times, pt_series, meta=meta)
+
         if t_eq is None:
             continue
         data["t_eq_species"] = t_eq
@@ -1730,7 +1948,18 @@ def load_dynamic_sample(
         except Exception:
             color_1b = None
 
-        p_mean = tail_mean_after_t_eq(data.get("time"), data.get("pt"), t_eq)
+        if is_c0:
+            sample_p = p0_from_file
+            if sample_p is None:
+                pt_data = data.get("pt")
+                if pt_data and len(pt_data) > 0:
+                    sample_p = float(pt_data[0])
+            if sample_p is None:
+                sample_p = tail_mean_after_t_eq(data.get("time"), data.get("pt"), t_eq)
+            p_mean = sample_p
+        else:
+            p_mean = tail_mean_after_t_eq(data.get("time"), data.get("pt"), t_eq)
+
         f_mean = tail_mean_after_t_eq(data.get("time"), data.get("nt"), t_eq)
         row = {
             "order": order_pos,
@@ -3048,6 +3277,9 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
             p_mean = p_summary.get("mean")
             p_err = p_summary.get("err")
             if p_mean is not None and (p_err == 0.0 or math.isclose(float(p0_group.get("c", 1.0) if "c" in p0_group else 1.0), 0.0, abs_tol=1e-12)):
+                if p0 is not None:
+                    p_mean = p0
+                    p_summary["mean"] = p0
                 p_err = math.nan
                 p_summary["err"] = math.nan
                 p_summary["std"] = math.nan
@@ -3269,6 +3501,9 @@ def build_bundle_for_files(
             p_mean = p_summary["mean"]
             p_err = p_summary["err"]
             if math.isclose(float(params.get("c", 1.0)), 0.0, abs_tol=1e-12):
+                if p0 is not None:
+                    p_mean = p0
+                    p_summary["mean"] = p0
                 p_err = math.nan
                 p_summary["err"] = math.nan
                 p_summary["std"] = math.nan
