@@ -604,7 +604,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
         self.assertEqual(stats["pt_min_support_count"], 2)
         self.assertEqual(stats["ft_N_per_t"], [2, 2, 2, 1, 1])
 
-    def test_average_dynamic_time_series_adds_flz_height_mean(self) -> None:
+    def test_average_dynamic_time_series_ignores_retired_flz_profiles(self) -> None:
         stats = PROCESS_DYNAMIC_GROWTH.average_dynamic_time_series([
             {
                 "t_eq_species": 1.0,
@@ -622,15 +622,9 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             },
         ])
 
-        self.assertEqual(stats["fL_z_z"], [0, 1, 2])
-        self.assertEqual(stats["fL_z_N_per_z"], [2, 2, 1])
-        self.assertEqual(stats["fL_z_mean"], [0.375, 0.375, 0.0])
-        self.assertEqual(stats["fL_z_common_z"], [0, 1])
-        self.assertEqual(stats["fL_z_common_mean"], [0.375, 0.375])
-        self.assertEqual(stats["fL_z_supported_z"], [0, 1])
-        self.assertEqual(stats["fL_z_supported_mean"], [0.375, 0.375])
+        self.assertFalse(any(key.startswith("fL_z") for key in stats))
 
-    def test_process_group_writes_flz_height_mean(self) -> None:
+    def test_process_group_does_not_write_retired_flz_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
@@ -647,13 +641,9 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
 
             bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
             order_data = bundle["p0_groups"][0]["orders"][0]["data"]
-            self.assertEqual(order_data["fL_z_z"], [0, 1, 2])
-            self.assertEqual(order_data["fL_z_N_per_z"], [2, 2, 1])
-            self.assertEqual(order_data["fL_z_mean"], [0.375, 0.375, 0.0])
-            self.assertEqual(order_data["fL_z_supported_z"], [0, 1])
-            self.assertEqual(order_data["fL_z_supported_mean"], [0.375, 0.375])
+            self.assertFalse(any(key.startswith("fL_z") for key in order_data))
 
-    def test_process_group_writes_zmax_values(self) -> None:
+    def test_process_group_does_not_write_retired_z_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
@@ -670,20 +660,11 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
 
             bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(out_path)
             order = bundle["p0_groups"][0]["orders"][0]
-            self.assertEqual(order["z_max"]["values"], [3.0, 5.0])
-            self.assertEqual(order["z_max"]["median"], 4.0)
-            self.assertEqual(order["z_max"]["q75"], 4.5)
-            self.assertEqual(order["z_max"]["q90"], 4.8)
-            self.assertEqual(order["data"]["z_max_values"], [3.0, 5.0])
-            self.assertEqual(order["data"]["z_max_median"], 4.0)
-            self.assertEqual(order["data"]["z_max_q75"], 4.5)
-            self.assertEqual(order["data"]["z_max_q90"], 4.8)
-            self.assertAlmostEqual(order["data"]["z_max_mean"], 4.0)
-            self.assertEqual(all_rows[0]["z_max_median"], 4.0)
-            self.assertEqual(all_rows[0]["z_max_q75"], 4.5)
-            self.assertEqual(all_rows[0]["z_max_q90"], 4.8)
+            self.assertFalse(any(key.startswith("z_") for key in order))
+            self.assertFalse(any(key.startswith("z_") for key in order["data"]))
+            self.assertFalse(any(key.startswith("z_") for key in all_rows[0]))
 
-    def test_all_data_header_uses_zmax_quantiles_without_removed_columns(self) -> None:
+    def test_all_data_header_omits_retired_z_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "all_data_dynamic.dat"
             rows = [
@@ -726,18 +707,12 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             header = lines[0].split()
             data = lines[1].split()
 
-            self.assertIn("z_max_median", header)
-            self.assertIn("z_max_q75", header)
-            self.assertIn("z_max_q90", header)
-            self.assertNotIn("z_stat_mean", header)
-            self.assertNotIn("z_stat_err", header)
-            self.assertNotIn("stat_window", header)
+            self.assertFalse(any(column.startswith("z_") for column in header))
+            self.assertIn("stat_window", header)
             self.assertNotIn("stop_criterion", header)
             self.assertNotIn("equilibrium_effective_rel_tol", header)
             self.assertNotIn("post_equilibrium_extra_steps", header)
-            self.assertEqual(data[header.index("z_max_median")], "4")
-            self.assertEqual(data[header.index("z_max_q75")], "4.5")
-            self.assertEqual(data[header.index("z_max_q90")], "4.8")
+            self.assertEqual(len(data), len(header))
 
     def test_process_group_writes_per_sample_p_tail_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -765,7 +740,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             )
             self.assertAlmostEqual(data["p_tail_mean"], 0.6)
 
-    def test_process_group_profiles_mode_skips_time_series_but_keeps_profiles(self) -> None:
+    def test_process_group_profiles_mode_skips_time_series_and_retired_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             raw_root, published_root, manifests_root, data_dir = self._make_data_dir(root)
@@ -784,7 +759,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             data = bundle["p0_groups"][0]["orders"][0]["data"]
             self.assertEqual(bundle["meta"]["series_mode"], "profiles")
             self.assertEqual(data["pt_mean"], [])
-            self.assertEqual(data["fL_z_mean"], [0.25, 0.5])
+            self.assertFalse(any(key.startswith("fL_z") for key in data))
             self.assertAlmostEqual(data["p_tail_mean"], 0.4)
 
     def test_incremental_processing_separates_feedback_control_rules(self) -> None:
@@ -988,13 +963,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(row["series_mode"], "full")
             self.assertEqual(row["pt_N_per_t"], [2, 2, 1])
             self.assertEqual(row["ft_time"], [1.0, 2.0])
-            self.assertEqual(row["fL_z_z"], [0, 1, 2])
-            self.assertEqual(row["fL_z_mean"], [0.25, 0.5, 0.0])
-            self.assertEqual(row["fL_z_supported_z"], [0, 1])
-            self.assertEqual(row["z_max_median"], 4.0)
-            self.assertEqual(row["z_max_q75"], 4.5)
-            self.assertEqual(row["z_max_q90"], 4.8)
-            self.assertEqual(row["z_max_values"], [3.0, 5.0])
+            self.assertFalse(any(key.startswith("fL_z") or key.startswith("z_") for key in row.index))
             self.assertEqual(row["p_tail_sample_values"], [0.4, 0.8])
 
     def test_compress_published_only_migrates_without_raw(self) -> None:
@@ -1026,7 +995,7 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(group_dir / "properties_dynamic_bundle.json.xz")
             self.assertEqual(bundle["meta"]["L"], 8)
 
-    def test_compress_published_only_updates_zmax_q90_from_values(self) -> None:
+    def test_compress_published_only_removes_retired_z_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             published_root = root / "SOP_data" / "published_dynamic"
@@ -1081,15 +1050,13 @@ class ProcessDynamicGrowthTest(unittest.TestCase):
             self.assertEqual(dynamic_n, 1)
             bundle = PROCESS_DYNAMIC_GROWTH.load_json_bundle(group_dir / "properties_dynamic_bundle.json.xz")
             order = bundle["p0_groups"][0]["orders"][0]
-            self.assertAlmostEqual(order["z_max"]["q90"], 7.8)
-            self.assertAlmostEqual(order["data"]["z_max_q90"], 7.8)
+            self.assertFalse(any(key.startswith("z_") for key in order))
+            self.assertFalse(any(key.startswith("z_") for key in order["data"]))
 
             all_data = root / "SOP_data" / "all_data_dynamic.dat"
             lines = all_data.read_text(encoding="utf-8").splitlines()
             header = lines[0].split()
-            data = lines[1].split()
-            self.assertIn("z_max_q90", header)
-            self.assertEqual(data[header.index("z_max_q90")], "7.8")
+            self.assertFalse(any(column.startswith("z_") for column in header))
 
     def test_process_sample_files_uses_multiple_workers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

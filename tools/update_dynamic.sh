@@ -26,6 +26,7 @@ DYNAMIC_SERIES_MODE="${DYNAMIC_SERIES_MODE:-full}"
 DYNAMIC_WRITE_ALL_DATA="${DYNAMIC_WRITE_ALL_DATA:-1}"
 DYNAMIC_MIGRATE_PUBLISHED="${DYNAMIC_MIGRATE_PUBLISHED:-0}"
 DYNAMIC_MIGRATE_CONTROL_RULES="${DYNAMIC_MIGRATE_CONTROL_RULES:-1}"
+DYNAMIC_MIGRATE_TMAX="${DYNAMIC_MIGRATE_TMAX:-1}"
 
 SKIP_DYNAMIC="${DYNAMIC_SKIP_DYNAMIC_GROWTH:-${SKIP_DYNAMIC:-0}}"
 SKIP_HEIGHT_SAMPLES="${DYNAMIC_SKIP_HEIGHT_SAMPLES:-${SKIP_HEIGHT_SAMPLES:-0}}"
@@ -246,8 +247,14 @@ else
   EXTRA_ARGS+=(--migrate-control-rules)
 fi
 
+if [[ "${DYNAMIC_MIGRATE_TMAX}" == "0" || "${DYNAMIC_MIGRATE_TMAX}" == "false" ]]; then
+  EXTRA_ARGS+=(--no-migrate-tmax --rebuild-all-data)
+else
+  EXTRA_ARGS+=(--migrate-tmax)
+fi
+
 echo "[update_dynamic] SOP_ROOT=${SOP_ROOT}"
-echo "[update_dynamic] Config: raw_dirs=${RAW_DIRS_ARRAY[*]} jobs=${DYNAMIC_JOBS} series_mode=${DYNAMIC_SERIES_MODE} all_data=${DYNAMIC_WRITE_ALL_DATA} migrate=${DYNAMIC_MIGRATE_PUBLISHED} migrate_control_rules=${DYNAMIC_MIGRATE_CONTROL_RULES}"
+echo "[update_dynamic] Config: raw_dirs=${RAW_DIRS_ARRAY[*]} jobs=${DYNAMIC_JOBS} series_mode=${DYNAMIC_SERIES_MODE} all_data=${DYNAMIC_WRITE_ALL_DATA} migrate=${DYNAMIC_MIGRATE_PUBLISHED} migrate_control_rules=${DYNAMIC_MIGRATE_CONTROL_RULES} migrate_tmax=${DYNAMIC_MIGRATE_TMAX}"
 echo "[update_dynamic] Stages: dynamic_growth=$(( 1 - SKIP_DYNAMIC )) height_samples=$(( 1 - SKIP_HEIGHT_SAMPLES )) height_ensemble=$(( 1 - SKIP_HEIGHT_ENSEMBLE ))"
 
 HEIGHT_DIRTY_MARKER="${SOP_ROOT}/.height_yts_dirty"

@@ -22,7 +22,7 @@ import numpy as np
 XZ_BIN = shutil.which("xz")
 
 
-DYNAMIC_PROCESSING_VERSION = 21
+DYNAMIC_PROCESSING_VERSION = 23
 DEFAULT_MIN_SUPPORT_FRACTION = 0.8
 SUMMARY_FILE_FINGERPRINT_KEY = "summary_file_fingerprint"
 DATA_DIR_FINGERPRINT_KEY = "data_dir_fingerprint"
@@ -50,18 +50,19 @@ PARAM_RE = re.compile(
 RE_P0 = re.compile(rf"(?:^|_)P0_(?P<P0>{FLOAT})(?:_|\.json$)")
 RE_p0 = re.compile(rf"(?:^|_)p0_(?P<p0>{FLOAT})(?:_|\.json$)")
 RE_SAMPLE_LAYOUT = re.compile(r"(?:^|_)base_(?P<layout>[a-zA-Z0-9]+)(?:_|\.json|\.yts|$)")
+RE_SAMPLE_MACHINE_TS = re.compile(r"^(?P<machine>.+?)_seed_-?\d+_ts_(?P<ts>\d{8}T\d{6})")
 
 ALL_DATA_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "initial_layout",
-    "stat_window",
+    "TMAX", "stat_window",
     "order", "N_samples", "N_samples_perc",
-    "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
-    "z_stat_median", "z_stat_q75", "z_stat_q90",
+    "p_mean", "p_err", "f_mean", "f_err",
     "t_eq_validation", "t_eq_s_prime_threshold",
 ]
 
 ALL_COLORS_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0", "control_rule", "initial_layout",
+    "TMAX",
     "N_samples", "rho", "nc", "nc_err", "nc_std", "stat_window",
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
@@ -71,19 +72,32 @@ ALL_DATA_LEGACY_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0",
     "control_param", "epsilon",
     "order", "N_samples", "N_samples_perc",
+    "p_mean", "p_err", "f_mean", "f_err",
+    "t_eq_validation", "t_eq_s_prime_threshold",
+]
+
+# Catalog schema used before z-statistics were retired.  It remains readable so
+# a normal update can rewrite it using the current, smaller schema.
+ALL_DATA_WITH_Z_STAT_COLUMNS = [
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "initial_layout",
+    "TMAX", "stat_window",
+    "order", "N_samples", "N_samples_perc",
     "p_mean", "p_err", "f_mean", "f_err", "z_stat_mean", "z_stat_err",
     "z_stat_median", "z_stat_q75", "z_stat_q90",
     "t_eq_validation", "t_eq_s_prime_threshold",
 ]
 
+ALL_DATA_PRE_TMAX_COLUMNS = [
+    column for column in ALL_DATA_COLUMNS if column != "TMAX"
+]
 ALL_DATA_PRE_LAYOUT_COLUMNS = [
-    column for column in ALL_DATA_COLUMNS if column != "initial_layout"
+    column for column in ALL_DATA_PRE_TMAX_COLUMNS if column != "initial_layout"
 ]
 ALL_DATA_PRE_CONTROL_RULE_COLUMNS = [
     column for column in ALL_DATA_PRE_LAYOUT_COLUMNS if column != "control_rule"
 ]
 ALL_DATA_GROUP_COLUMNS = (
-    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "initial_layout", "stat_window"
+    "type_perc", "dim", "L", "f_T", "c", "nc", "rho", "p0", "P0", "control_rule", "initial_layout", "TMAX", "stat_window"
 )
 ALL_COLORS_LEGACY_COLUMNS = [
     "type_perc", "dim", "L", "f_T", "c", "num_colors", "P0", "p0",
@@ -91,19 +105,21 @@ ALL_COLORS_LEGACY_COLUMNS = [
     "stop_criterion", "t_eq_validation", "t_eq_s_prime_threshold",
     "equilibrium_effective_rel_tol", "post_equilibrium_extra_steps",
 ]
+ALL_COLORS_PRE_TMAX_COLUMNS = [
+    column for column in ALL_COLORS_COLUMNS if column != "TMAX"
+]
 ALL_COLORS_PRE_LAYOUT_COLUMNS = [
-    column for column in ALL_COLORS_COLUMNS if column != "initial_layout"
+    column for column in ALL_COLORS_PRE_TMAX_COLUMNS if column != "initial_layout"
 ]
 ALL_COLORS_PRE_CONTROL_RULE_COLUMNS = [
     column for column in ALL_COLORS_PRE_LAYOUT_COLUMNS if column != "control_rule"
 ]
 ALL_COLORS_GROUP_COLUMNS = (
-    "type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "p0", "P0", "control_rule", "initial_layout", "stat_window"
+    "type_perc", "dim", "L", "f_T", "c", "num_colors", "rho", "p0", "P0", "control_rule", "initial_layout", "TMAX", "stat_window"
 )
-DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window"}
+DAT_INT_COLUMNS = {"dim", "L", "num_colors", "order", "N_samples", "N_samples_perc", "stat_window", "TMAX"}
 DAT_FLOAT_COLUMNS = {
     "f_T", "c", "rho", "control_param", "epsilon", "p0", "P0", "p_mean", "p_err", "f_mean", "f_err",
-    "z_stat_mean", "z_stat_err", "z_stat_median", "z_stat_q75", "z_stat_q90",
     "t_eq_s_prime_threshold", "nc", "nc_err", "nc_std",
     "equilibrium_effective_rel_tol",
 }
@@ -359,23 +375,347 @@ def extract_layout_from_filename(filename: str) -> str:
     return "random"
 
 
-def sample_group_metadata(path: Path) -> tuple[str, str]:
-    """Read control rule and initial layout needed to separate sample groups."""
-    layout = extract_layout_from_filename(path.name)
-    rule = "relative"
+def normalize_stop_time_tmax(value: Any) -> int:
+    """Normalize TMAX / growth_test_stop_time to non-negative int (0 means 'free')."""
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        stripped = value.strip().lower()
+        if not stripped or stripped in {"free", "livre", "none", "null", "nan"}:
+            return 0
+        try:
+            num = int(round(float(stripped)))
+            return num if num > 0 else 0
+        except Exception:
+            return 0
     try:
+        fval = float(value)
+        if not math.isfinite(fval):
+            return 0
+        num = int(round(fval))
+        return num if num > 0 else 0
+    except Exception:
+        return 0
+
+
+def format_tmax_flag(stop_time_tmax: Any) -> str | int:
+    """Return 'free' when stop_time_tmax <= 0, otherwise the positive integer TMAX."""
+    val = normalize_stop_time_tmax(stop_time_tmax)
+    return "free" if val <= 0 else val
+
+
+def p0_group_stop_time_tmax(group: dict[str, Any], default_tmax: Any = 0) -> int:
+    if "growth_test_stop_time" in group and group["growth_test_stop_time"] is not None:
+        val = group["growth_test_stop_time"]
+        if isinstance(val, list):
+            return normalize_stop_time_tmax(val[0] if val else default_tmax)
+        return normalize_stop_time_tmax(val)
+    if "TMAX" in group and group["TMAX"] is not None:
+        val = group["TMAX"]
+        if isinstance(val, list):
+            return normalize_stop_time_tmax(val[0] if val else default_tmax)
+        return normalize_stop_time_tmax(val)
+    return normalize_stop_time_tmax(default_tmax)
+
+
+def parse_machine_and_ts(filename: str) -> tuple[str, int]:
+    fname = filename.split("::")[-1]
+    m = RE_SAMPLE_MACHINE_TS.match(fname)
+    if not m:
+        return "", 0
+    machine = m.group("machine")
+    ts_str = m.group("ts")
+    try:
+        dt = datetime.strptime(ts_str, "%Y%m%dT%H%M%S")
+        return machine, int(dt.timestamp())
+    except Exception:
+        return machine, 0
+
+
+def read_sample_meta_fast(path: Path) -> dict[str, Any]:
+    """Read the top-level 'meta' JSON object quickly without parsing full time-series arrays."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            chunk = handle.read(65536)
+        meta_idx = chunk.find('"meta"')
+        if meta_idx != -1:
+            brace_start = chunk.find("{", meta_idx + 6)
+            if brace_start != -1:
+                depth = 0
+                in_str = False
+                esc = False
+                end_idx = -1
+                for i in range(brace_start, len(chunk)):
+                    ch = chunk[i]
+                    if in_str:
+                        if esc:
+                            esc = False
+                        elif ch == "\\":
+                            esc = True
+                        elif ch == '"':
+                            in_str = False
+                    else:
+                        if ch == '"':
+                            in_str = True
+                        elif ch == "{":
+                            depth += 1
+                        elif ch == "}":
+                            depth -= 1
+                            if depth == 0:
+                                end_idx = i + 1
+                                break
+                if end_idx != -1:
+                    parsed = json.loads(chunk[brace_start:end_idx])
+                    if isinstance(parsed, dict):
+                        return parsed
         with path.open("r", encoding="utf-8") as handle:
             sample = json.load(handle)
         meta = sample.get("meta", {}) if isinstance(sample, dict) else {}
-        if not isinstance(meta, dict):
-            meta = {}
-        rule = normalize_control_rule(meta.get("feedback_control_rule"))
+        return meta if isinstance(meta, dict) else {}
+    except Exception as exc:
+        print(f"[warn] could not read metadata from {path}: {exc}")
+        return {}
+
+
+def classify_raw_meta_tmax(meta: dict[str, Any]) -> tuple[int | None, str | None, int | None]:
+    """
+    Classify raw sample TMAX from meta:
+      returns (known_tmax_or_None, stop_reason_or_None, raw_stop_time_or_None)
+    - known_tmax_or_None is an int (0 for 'free', >0 for numeric TMAX) when unambiguous from this file alone,
+      or None when set-level alignment is required (e.g. 'all_dead' or 'post_equilibrium_height_reached').
+    """
+    if "TMAX" in meta and meta.get("TMAX") is not None:
+        t_val = normalize_stop_time_tmax(meta.get("TMAX"))
+        return t_val, "explicit_tmax", t_val
+
+    stop_reason_raw = meta.get("growth_test_stop_reason_actual")
+    stop_reason = str(stop_reason_raw).strip() if stop_reason_raw is not None else None
+    raw_st_val = meta.get("growth_test_stop_time")
+    raw_stop_time: int | None = None
+    if raw_st_val is not None:
+        f_st = finite_float(raw_st_val)
+        if f_st is not None:
+            raw_stop_time = int(round(f_st))
+
+    if stop_reason == "hard_max_steps" and raw_stop_time is not None and raw_stop_time > 0:
+        return raw_stop_time, stop_reason, raw_stop_time
+
+    if stop_reason is None:
+        if raw_stop_time is not None:
+            return normalize_stop_time_tmax(raw_stop_time), None, raw_stop_time
+        return 0, None, None
+
+    return None, stop_reason, raw_stop_time
+
+
+def _infer_sibling_fT_tmax(data_dir: Path, target_machines: set[str], cache: dict[tuple[Path, tuple[str, ...]], int]) -> int:
+    """When an entire data_dir has only 'all_dead' runs, check sibling fT_* dirs under the same fT_constant parent."""
+    ft_const_parent: Path | None = None
+    for anc in data_dir.parents:
+        if anc.name == "fT_constant":
+            ft_const_parent = anc
+            break
+    if ft_const_parent is None or not ft_const_parent.is_dir():
+        return 0
+
+    cache_key = (ft_const_parent.resolve(), tuple(sorted(m for m in target_machines if m)))
+    if cache_key in cache:
+        return cache[cache_key]
+
+    hard_times_same_machine: set[int] = set()
+    free_same_machine = False
+    hard_times_any: set[int] = set()
+    free_any = False
+
+    for sib_ft in sorted(ft_const_parent.glob("fT_*")):
+        if not sib_ft.is_dir():
+            continue
+        for sib_data in sib_ft.rglob("data"):
+            if not sib_data.is_dir() or sib_data.resolve() == data_dir.resolve():
+                continue
+            for idx, fp in enumerate(sib_data.glob("*.json")):
+                if idx >= 20:
+                    break
+                meta = read_sample_meta_fast(fp)
+                known_t, reason, _ = classify_raw_meta_tmax(meta)
+                mach, _ = parse_machine_and_ts(fp.name)
+                if known_t is not None and known_t > 0:
+                    hard_times_any.add(known_t)
+                    if mach and mach in target_machines:
+                        hard_times_same_machine.add(known_t)
+                elif reason in {"post_equilibrium_height_reached", "all_percolated", "partial_percolation", "stationary_dynamics"}:
+                    free_any = True
+                    if mach and mach in target_machines:
+                        free_same_machine = True
+
+    if len(hard_times_same_machine) == 1 and not free_same_machine:
+        inferred = next(iter(hard_times_same_machine))
+    elif not hard_times_same_machine and free_same_machine:
+        inferred = 0
+    elif len(hard_times_any) == 1 and not free_any:
+        inferred = next(iter(hard_times_any))
+    else:
+        inferred = 0
+
+    cache[cache_key] = inferred
+    return inferred
+
+
+def align_tmax_across_files(
+    target_files: list[Path],
+    context_files: list[Path] | None = None,
+) -> dict[Path, tuple[str, str, int, float, float]]:
+    """
+    Read metadata and align growth_test_stop_time / TMAX across samples belonging to the same set.
+    Returns mapping: path -> (control_rule, initial_layout, aligned_stop_time_tmax, P0, p0).
+    """
+    all_paths = sorted(set(target_files) | set(context_files or []))
+    records: dict[Path, dict[str, Any]] = {}
+    by_set: dict[tuple[Path, str, str, float, float], list[Path]] = defaultdict(list)
+    by_dir_rule_layout: dict[tuple[Path, str, str], list[Path]] = defaultdict(list)
+
+    for fp in all_paths:
+        parsed_name = parse_sample_name(fp)
+        if parsed_name is None:
+            continue
+        P0, p0 = parsed_name
+        layout = extract_layout_from_filename(fp.name)
+        meta = read_sample_meta_fast(fp)
+        try:
+            rule = normalize_control_rule(meta.get("feedback_control_rule"))
+        except Exception:
+            rule = "relative"
         if layout == "random":
             meta_layout = meta.get("initial_layout") or meta.get("initial_base_layout")
             if meta_layout:
                 layout = normalize_initial_layout(meta_layout)
-    except Exception as exc:
-        print(f"[warn] could not read metadata from {path}: {exc}")
+        known_t, stop_reason, raw_st = classify_raw_meta_tmax(meta)
+        machine, ts_sec = parse_machine_and_ts(fp.name)
+        rec = {
+            "path": fp,
+            "dir": fp.parent,
+            "rule": rule,
+            "layout": layout,
+            "P0": P0,
+            "p0": p0,
+            "P0_r": round(float(P0), 6),
+            "p0_r": round(float(p0), 6),
+            "known_t": known_t,
+            "stop_reason": stop_reason,
+            "raw_st": raw_st,
+            "machine": machine,
+            "ts_sec": ts_sec,
+            "aligned_t": known_t,
+        }
+        records[fp] = rec
+        by_set[(fp.parent, rule, layout, rec["P0_r"], rec["p0_r"])].append(fp)
+        by_dir_rule_layout[(fp.parent, rule, layout)].append(fp)
+
+    DYNAMIC_STOP_REASONS = {
+        "post_equilibrium_height_reached",
+        "all_percolated",
+        "partial_percolation",
+        "stationary_dynamics",
+    }
+
+    # Pass 1: Resolve sets that have at least one definite TMAX anchor or dynamic equilibrium stop.
+    unresolved_dead_sets: list[tuple[Path, str, str, float, float]] = []
+    for set_key, set_paths in by_set.items():
+        recs = [records[p] for p in set_paths]
+        anchors = [r for r in recs if r["known_t"] is not None]
+        if anchors:
+            unique_known = sorted({int(r["known_t"]) for r in anchors})
+            machines_with_anchors = {r["machine"] for r in anchors if r["machine"]}
+            machines_with_dyn_stop = {
+                r["machine"] for r in recs
+                if r["machine"] and r["stop_reason"] in DYNAMIC_STOP_REASONS
+            }
+            for r in recs:
+                if r["aligned_t"] is not None:
+                    continue
+                mach = r["machine"]
+                raw_st = r["raw_st"]
+                # Machine that only stopped dynamically while another machine had hard_max_steps -> free (0)
+                if mach and mach not in machines_with_anchors and mach in machines_with_dyn_stop and machines_with_anchors:
+                    r["aligned_t"] = 0
+                    continue
+                if len(unique_known) == 1:
+                    t_only = unique_known[0]
+                    if t_only > 0 and raw_st is not None and raw_st > t_only:
+                        r["aligned_t"] = 0
+                    else:
+                        r["aligned_t"] = t_only
+                else:
+                    cand_anchors = [a for a in anchors if a["machine"] == mach] if (mach and mach in machines_with_anchors) else anchors
+                    valid_cands = [
+                        a for a in cand_anchors
+                        if a["known_t"] == 0 or raw_st is None or raw_st <= a["known_t"]
+                    ]
+                    if not valid_cands:
+                        r["aligned_t"] = 0
+                    else:
+                        best = min(valid_cands, key=lambda a: abs(int(r["ts_sec"]) - int(a["ts_sec"])))
+                        r["aligned_t"] = int(best["known_t"])
+        else:
+            has_dyn_stop = any(r["stop_reason"] in DYNAMIC_STOP_REASONS for r in recs)
+            if has_dyn_stop:
+                for r in recs:
+                    r["aligned_t"] = 0
+            else:
+                unresolved_dead_sets.append(set_key)
+
+    # Pass 2: Resolve all_dead-only sets from resolved sibling (P0, p0) sets in the same data_dir,
+    # or from sibling fT_* directories under the same fT_constant parent.
+    sibling_ft_cache: dict[tuple[Path, tuple[str, ...]], int] = {}
+    for set_key in unresolved_dead_sets:
+        d_dir, rule, layout, _, _ = set_key
+        set_recs = [records[p] for p in by_set[set_key]]
+        dir_resolved = [
+            records[p]
+            for p in by_dir_rule_layout[(d_dir, rule, layout)]
+            if records[p]["aligned_t"] is not None
+        ]
+        if dir_resolved:
+            unique_dir_t = sorted({int(r["aligned_t"]) for r in dir_resolved})
+            if len(unique_dir_t) == 1:
+                t_val = unique_dir_t[0]
+                for r in set_recs:
+                    r["aligned_t"] = t_val
+            else:
+                for r in set_recs:
+                    mach = r["machine"]
+                    same_m = [a for a in dir_resolved if a["machine"] == mach] if mach else []
+                    pool = same_m if same_m else dir_resolved
+                    best = min(pool, key=lambda a: abs(int(r["ts_sec"]) - int(a["ts_sec"])))
+                    r["aligned_t"] = int(best["aligned_t"])
+        else:
+            target_machines = {r["machine"] for r in set_recs if r["machine"]}
+            inferred_t = _infer_sibling_fT_tmax(d_dir, target_machines, sibling_ft_cache)
+            for r in set_recs:
+                r["aligned_t"] = inferred_t
+
+    out: dict[Path, tuple[str, str, int, float, float]] = {}
+    for fp in target_files:
+        rec = records.get(fp)
+        if rec is None:
+            continue
+        t_aligned = int(rec["aligned_t"]) if rec["aligned_t"] is not None else 0
+        out[fp] = (rec["rule"], rec["layout"], t_aligned, rec["P0"], rec["p0"])
+    return out
+
+
+def sample_group_metadata(path: Path) -> tuple[str, str]:
+    """Read control rule and initial layout needed to separate sample groups."""
+    layout = extract_layout_from_filename(path.name)
+    meta = read_sample_meta_fast(path)
+    try:
+        rule = normalize_control_rule(meta.get("feedback_control_rule"))
+    except Exception:
+        rule = "relative"
+    if layout == "random":
+        meta_layout = meta.get("initial_layout") or meta.get("initial_base_layout")
+        if meta_layout:
+            layout = normalize_initial_layout(meta_layout)
     return rule, layout
 
 
@@ -548,12 +888,15 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
         accepted_headers = [expected_columns]
         if expected_columns == ALL_DATA_COLUMNS:
             accepted_headers.extend((
+                ALL_DATA_WITH_Z_STAT_COLUMNS,
+                ALL_DATA_PRE_TMAX_COLUMNS,
                 ALL_DATA_PRE_LAYOUT_COLUMNS,
                 ALL_DATA_PRE_CONTROL_RULE_COLUMNS,
                 ALL_DATA_LEGACY_COLUMNS,
             ))
         if expected_columns == ALL_COLORS_COLUMNS:
             accepted_headers.extend((
+                ALL_COLORS_PRE_TMAX_COLUMNS,
                 ALL_COLORS_PRE_LAYOUT_COLUMNS,
                 ALL_COLORS_PRE_CONTROL_RULE_COLUMNS,
                 ALL_COLORS_LEGACY_COLUMNS,
@@ -575,6 +918,10 @@ def read_dat_rows(path: Path, expected_columns: list[str]) -> list[dict[str, Any
                 row["control_rule"] = "relative"
             if "initial_layout" not in row:
                 row["initial_layout"] = "alternating"
+            if "TMAX" not in row:
+                row["TMAX"] = 0
+            else:
+                row["TMAX"] = normalize_stop_time_tmax(row["TMAX"])
             rows.append(row)
     return rows
 
@@ -627,6 +974,37 @@ def migrate_missing_P0_from_f_T_once(path: Path, *, insert_after: str) -> bool:
     return True
 
 
+def migrate_missing_TMAX_once(path: Path, *, insert_after: str = "initial_layout") -> bool:
+    """One-time .dat migration: add TMAX=0 when legacy .dat files lack the TMAX column."""
+    if not path.exists():
+        return False
+
+    with path.open("r", encoding="utf-8") as handle:
+        lines = handle.readlines()
+    if not lines:
+        return False
+
+    header = lines[0].split()
+    if not header or "TMAX" in header or insert_after not in header:
+        return False
+
+    insert_idx = header.index(insert_after) + 1
+    migrated_header = header[:insert_idx] + ["TMAX"] + header[insert_idx:]
+    migrated_lines = [" ".join(migrated_header) + "\n"]
+    for line in lines[1:]:
+        parts = line.split()
+        if not parts:
+            continue
+        migrated_parts = parts[:insert_idx] + ["0"] + parts[insert_idx:]
+        migrated_lines.append(" ".join(migrated_parts) + "\n")
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        handle.writelines(migrated_lines)
+    tmp_path.replace(path)
+    return True
+
+
 def migrate_dynamic_dat_files_missing_P0_once(all_data_path: Path, all_colors_path: Path) -> None:
     migrated = []
     if migrate_missing_P0_from_f_T_once(all_data_path, insert_after="p0"):
@@ -635,6 +1013,13 @@ def migrate_dynamic_dat_files_missing_P0_once(all_data_path: Path, all_colors_pa
         migrated.append(all_colors_path)
     for path in migrated:
         print(f"[migrate] added legacy P0 column from f_T in {path}")
+    migrated_tmax = []
+    if migrate_missing_TMAX_once(all_data_path, insert_after="initial_layout"):
+        migrated_tmax.append(all_data_path)
+    if migrate_missing_TMAX_once(all_colors_path, insert_after="initial_layout"):
+        migrated_tmax.append(all_colors_path)
+    for path in migrated_tmax:
+        print(f"[migrate] added TMAX=0 column in {path}")
 
 
 def dat_has_current_headers(all_data_path: Path, all_colors_path: Path) -> bool:
@@ -657,7 +1042,10 @@ def group_key(row: dict[str, Any], columns: tuple[str, ...]) -> tuple[Any, ...]:
 
 
 def all_data_group_key_from_params(
-    params: dict[str, Any], control_rule: str | None = None, initial_layout: str | None = None
+    params: dict[str, Any],
+    control_rule: str | None = None,
+    initial_layout: str | None = None,
+    tmax: int = 0,
 ) -> tuple[Any, ...]:
     row = dict(params)
     if control_rule is not None:
@@ -666,11 +1054,15 @@ def all_data_group_key_from_params(
         row["initial_layout"] = initial_layout
     elif "initial_layout" not in row:
         row["initial_layout"] = "alternating"
+    row.setdefault("TMAX", normalize_stop_time_tmax(tmax))
     return group_key(row, ALL_DATA_GROUP_COLUMNS)
 
 
 def all_colors_group_key_from_params(
-    params: dict[str, Any], control_rule: str | None = None, initial_layout: str | None = None
+    params: dict[str, Any],
+    control_rule: str | None = None,
+    initial_layout: str | None = None,
+    tmax: int = 0,
 ) -> tuple[Any, ...]:
     row = dict(params)
     row["num_colors"] = params.get("nc")
@@ -680,6 +1072,7 @@ def all_colors_group_key_from_params(
         row["initial_layout"] = initial_layout
     elif "initial_layout" not in row:
         row["initial_layout"] = "alternating"
+    row.setdefault("TMAX", normalize_stop_time_tmax(tmax))
     return group_key(row, ALL_COLORS_GROUP_COLUMNS)
 
 
@@ -1275,53 +1668,6 @@ def average_dynamic_time_series(items: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def meta_value_for_order(
-    *,
-    order_pos: int,
-    color_1b: int | None,
-    t_eq_species: float,
-    result_t_eq_order: list[float],
-    meta_t_eq: list[Any],
-    meta_values: list[Any],
-) -> float | None:
-    if not meta_values:
-        return None
-
-    # New/fixed raw format: meta.t_eq_by_species is already ordered by
-    # stabilization and nulls are trailing; values are aligned to that order.
-    ordered_prefix = True
-    if len(meta_t_eq) >= len(result_t_eq_order):
-        for a, b in zip(meta_t_eq[:len(result_t_eq_order)], result_t_eq_order):
-            fa = finite_float(a)
-            if fa is None or not math.isclose(fa, b, rel_tol=1e-12, abs_tol=1e-12):
-                ordered_prefix = False
-                break
-    else:
-        ordered_prefix = False
-
-    if ordered_prefix and order_pos < len(meta_values):
-        return finite_float(meta_values[order_pos])
-
-    # Older raw files were species-indexed. Fall back to color when available.
-    if color_1b is not None:
-        idx = int(color_1b) - 1
-        if 0 <= idx < len(meta_values):
-            return finite_float(meta_values[idx])
-
-    # Last resort: pair the finite t_eq entries with values by position, skipping
-    # null t_eq values. This implements the dynamic-order convention requested.
-    finite_positions = [
-        i for i, v in enumerate(meta_t_eq)
-        if finite_float(v) is not None and i < len(meta_values)
-    ]
-    if order_pos < len(finite_positions):
-        return finite_float(meta_values[finite_positions[order_pos]])
-
-    if order_pos < len(meta_values):
-        return finite_float(meta_values[order_pos])
-    return None
-
-
 def load_dynamic_sample(
     path: Path,
     *,
@@ -1375,14 +1721,6 @@ def load_dynamic_sample(
     if meta_layout:
         sample_layout = normalize_initial_layout(meta_layout)
 
-    result_t_eq_order = [float(d.get("t_eq_species")) for _, d in parsed_blocks]
-    meta_t_eq = meta.get("t_eq_by_species", [])
-    meta_zstat = meta.get("z_stat", [])
-    if not isinstance(meta_t_eq, list):
-        meta_t_eq = []
-    if not isinstance(meta_zstat, list):
-        meta_zstat = []
-
     out: list[dict[str, Any]] = []
     for order_pos, (_, data) in enumerate(parsed_blocks):
         t_eq = float(data["t_eq_species"])
@@ -1394,15 +1732,6 @@ def load_dynamic_sample(
 
         p_mean = tail_mean_after_t_eq(data.get("time"), data.get("pt"), t_eq)
         f_mean = tail_mean_after_t_eq(data.get("time"), data.get("nt"), t_eq)
-        z_stat = meta_value_for_order(
-            order_pos=order_pos,
-            color_1b=color_1b,
-            t_eq_species=t_eq,
-            result_t_eq_order=result_t_eq_order,
-            meta_t_eq=meta_t_eq,
-            meta_values=meta_zstat,
-        )
-
         row = {
             "order": order_pos,
             "color": color_1b,
@@ -1411,7 +1740,6 @@ def load_dynamic_sample(
             "t_eq_species": t_eq,
             "p_sample_mean": p_mean,
             "f_sample_mean": f_mean,
-            "z_stat": z_stat,
             **criterion_meta,
         }
         if include_time_series:
@@ -1451,7 +1779,6 @@ def process_one_sample_file(
             "ft": item.get("ft"),
             "p_sample_mean": item.get("p_sample_mean"),
             "f_sample_mean": item.get("f_sample_mean"),
-            "z_stat": item.get("z_stat"),
             "stop_criterion": item.get("stop_criterion"),
             "t_eq_validation": item.get("t_eq_validation"),
             "t_eq_s_prime_threshold": item.get("t_eq_s_prime_threshold"),
@@ -1676,6 +2003,10 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
         "initial_base_layout": meta.get("initial_base_layout"),
     }
 
+    meta_tmax_default = meta.get("growth_test_stop_time", meta.get("TMAX", 0))
+    if isinstance(meta_tmax_default, list):
+        meta_tmax_default = 0
+
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
     for p0_group in bundle.get("p0_groups", []):
@@ -1692,6 +2023,7 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
         group_base_layout = p0_group.get("initial_base_layout") or group_layout
         if isinstance(group_base_layout, list):
             group_base_layout = group_base_layout[0] if group_base_layout else "random"
+        group_tmax = p0_group_stop_time_tmax(p0_group, meta_tmax_default)
 
         processed = p0_group.get("num_samples_total", 0)
         colors = p0_group.get("colors", {})
@@ -1702,6 +2034,7 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
             **params,
             "initial_layout": group_layout,
             "initial_base_layout": group_base_layout,
+            "TMAX": group_tmax,
             "num_colors": params["nc"],
             "p0": p0,
             "P0": P0,
@@ -1717,18 +2050,16 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
                 continue
             p_stats = order_block.get("p", {})
             f_stats = order_block.get("f", {})
-            z_stat_stats = order_block.get("z_stat", {})
             if not isinstance(p_stats, dict):
                 p_stats = {}
             if not isinstance(f_stats, dict):
                 f_stats = {}
-            if not isinstance(z_stat_stats, dict):
-                z_stat_stats = {}
 
             all_rows.append({
                 **params,
                 "initial_layout": group_layout,
                 "initial_base_layout": group_base_layout,
+                "TMAX": group_tmax,
                 "p0": p0,
                 "P0": P0,
                 "control_rule": control_rule,
@@ -1739,11 +2070,6 @@ def rows_from_bundle(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], list
                 "p_err": p_stats.get("err"),
                 "f_mean": f_stats.get("mean"),
                 "f_err": f_stats.get("err"),
-                "z_stat_mean": z_stat_stats.get("mean"),
-                "z_stat_err": z_stat_stats.get("err"),
-                "z_stat_median": summary_field(z_stat_stats, "median"),
-                "z_stat_q75": summary_field(z_stat_stats, "q75"),
-                "z_stat_q90": summary_field(z_stat_stats, "q90"),
             })
 
     return all_rows, all_color_rows
@@ -1846,65 +2172,20 @@ def values_differ(left: Any, right: Any, tol: float = 1.0e-12) -> bool:
     return abs(left_float - right_float) > tol
 
 
-def update_dynamic_bundle_zstat_quantiles(bundle: dict[str, Any]) -> bool:
+def remove_z_and_flz_fields(value: Any) -> bool:
+    """Remove retired z_* and fL_z fields from a published dynamic bundle."""
     changed = False
-    p0_groups = bundle.get("p0_groups", [])
-    if not isinstance(p0_groups, list):
-        return False
-
-    for p0_group in p0_groups:
-        if not isinstance(p0_group, dict):
-            continue
-        orders = p0_group.get("orders", [])
-        if not isinstance(orders, list):
-            continue
-        for order in orders:
-            if not isinstance(order, dict):
-                continue
-            data = order.get("data", {})
-            if not isinstance(data, dict):
-                data = {}
-                order["data"] = data
+    if isinstance(value, dict):
+        for key in list(value):
+            if key.startswith("z_") or key.startswith("fL_z"):
+                del value[key]
                 changed = True
-            z_stats = order.get("z_stat", {})
-            if not isinstance(z_stats, dict):
-                z_stats = {}
-                order["z_stat"] = z_stats
+            elif remove_z_and_flz_fields(value[key]):
                 changed = True
-
-            values = data.get("z_stat_values")
-            if not isinstance(values, list) or not values:
-                values = z_stats.get("values")
-            if not isinstance(values, list) or not values:
-                continue
-
-            summary = summary_from_values(values)
-            for key in ("median", "q25", "q75", "q90", "min", "max"):
-                new_value = summary.get(key)
-                if finite_float(new_value) is None:
-                    continue
-                if values_differ(z_stats.get(key), new_value):
-                    z_stats[key] = new_value
-                    changed = True
-
-            data_quantile_keys = {
-                "z_stat_median": "median",
-                "z_stat_q25": "q25",
-                "z_stat_q75": "q75",
-                "z_stat_q90": "q90",
-            }
-            for data_key, summary_key in data_quantile_keys.items():
-                new_value = summary.get(summary_key)
-                if finite_float(new_value) is None:
-                    continue
-                if values_differ(data.get(data_key), new_value):
-                    data[data_key] = new_value
-                    changed = True
-
-    if changed:
-        meta = bundle.setdefault("meta", {})
-        if isinstance(meta, dict):
-            meta["dynamic_processing_version"] = DYNAMIC_PROCESSING_VERSION
+    elif isinstance(value, list):
+        for item in value:
+            if remove_z_and_flz_fields(item):
+                changed = True
     return changed
 
 
@@ -1931,6 +2212,210 @@ def update_dynamic_bundle_control_rules(bundle: dict[str, Any]) -> bool:
             p0_group["feedback_control_rule"] = normalize_control_rule(default_rule)
             changed = True
     return changed
+
+
+def update_bundle_meta_tmax(bundle: dict[str, Any]) -> None:
+    meta = bundle.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        bundle["meta"] = meta
+    p0_groups = bundle.get("p0_groups", [])
+    stop_times: list[int] = sorted({
+        p0_group_stop_time_tmax(g, 0)
+        for g in p0_groups
+        if isinstance(g, dict)
+    })
+    if not stop_times:
+        meta["growth_test_stop_time"] = 0
+        meta["TMAX"] = "free"
+    elif len(stop_times) == 1:
+        meta["growth_test_stop_time"] = stop_times[0]
+        meta["TMAX"] = format_tmax_flag(stop_times[0])
+    else:
+        meta["growth_test_stop_time"] = stop_times
+        meta["TMAX"] = [format_tmax_flag(t) for t in stop_times]
+
+
+def update_dynamic_bundle_tmax(bundle: dict[str, Any]) -> bool:
+    """Add TMAX='free' and growth_test_stop_time=0 to already-published subsets lacking them."""
+    changed = False
+    meta = bundle.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        bundle["meta"] = meta
+        changed = True
+
+    default_tmax = 0
+    if "growth_test_stop_time" in meta and not isinstance(meta["growth_test_stop_time"], list):
+        default_tmax = normalize_stop_time_tmax(meta["growth_test_stop_time"])
+    elif "TMAX" in meta and not isinstance(meta["TMAX"], list):
+        default_tmax = normalize_stop_time_tmax(meta["TMAX"])
+
+    for p0_group in bundle.get("p0_groups", []):
+        if not isinstance(p0_group, dict):
+            continue
+        had_st = "growth_test_stop_time" in p0_group and p0_group["growth_test_stop_time"] is not None
+        had_tmax = "TMAX" in p0_group and p0_group["TMAX"] is not None
+        grp_t = p0_group_stop_time_tmax(p0_group, default_tmax)
+        grp_flag = format_tmax_flag(grp_t)
+        if not had_st or p0_group.get("growth_test_stop_time") != grp_t:
+            p0_group["growth_test_stop_time"] = grp_t
+            changed = True
+        if not had_tmax or p0_group.get("TMAX") != grp_flag:
+            p0_group["TMAX"] = grp_flag
+            changed = True
+        for order_block in p0_group.get("orders", []):
+            if not isinstance(order_block, dict):
+                continue
+            for sample in order_block.get("samples", []):
+                if not isinstance(sample, dict):
+                    continue
+                if sample.get("growth_test_stop_time") != grp_t:
+                    sample["growth_test_stop_time"] = grp_t
+                    changed = True
+                if sample.get("TMAX") != grp_flag:
+                    sample["TMAX"] = grp_flag
+                    changed = True
+
+    old_meta_st = meta.get("growth_test_stop_time")
+    old_meta_tmax = meta.get("TMAX")
+    update_bundle_meta_tmax(bundle)
+    if meta.get("growth_test_stop_time") != old_meta_st or meta.get("TMAX") != old_meta_tmax:
+        changed = True
+    if changed:
+        meta["dynamic_processing_version"] = DYNAMIC_PROCESSING_VERSION
+    return changed
+
+
+def _write_clean_bundle_fast_atomic(path: Path, bundle: dict[str, Any]) -> None:
+    """Fast C-level json.dumps + xz -1 atomic writer for already-clean loaded bundles."""
+    tmp_path = path.with_name(f"{path.stem}.tmp{path.suffix}")
+    try:
+        try:
+            raw_bytes = (
+                json.dumps(bundle, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+                + b"\n"
+            )
+        except ValueError:
+            raw_bytes = (
+                json.dumps(json_safe(bundle), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                + b"\n"
+            )
+        if path.suffix == ".xz" and XZ_BIN:
+            with tmp_path.open("wb") as out_f:
+                subprocess.run(
+                    [XZ_BIN, "-1", "-T1", "-c"],
+                    input=raw_bytes,
+                    stdout=out_f,
+                    check=True,
+                )
+        else:
+            write_json_bundle(tmp_path, bundle, pretty=False, compresslevel=1)
+        tmp_path.replace(path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _migrate_single_bundle_tmax_worker(
+    args: tuple[Path, Path, Path, bool],
+) -> tuple[bool, list[dict[str, Any]], list[dict[str, Any]]]:
+    bundle_path, published_root, manifests_root, force = args
+    rel_group = bundle_path.parent.relative_to(published_root)
+    cur_fp = file_stat_fingerprint(bundle_path)
+    manifest = load_manifest(manifests_root, rel_group)
+
+    if (
+        not force
+        and int(manifest.get("dynamic_processing_version", 0) or 0) == DYNAMIC_PROCESSING_VERSION
+        and manifest.get(SUMMARY_FILE_FINGERPRINT_KEY) == cur_fp
+        and isinstance(manifest.get("all_rows_cache"), list)
+        and isinstance(manifest.get("all_color_rows_cache"), list)
+        and all("TMAX" in r for r in manifest.get("all_rows_cache", []) if isinstance(r, dict))
+        and all("TMAX" in r for r in manifest.get("all_color_rows_cache", []) if isinstance(r, dict))
+    ):
+        return False, list(manifest["all_rows_cache"]), list(manifest["all_color_rows_cache"])
+
+    bundle = load_json_bundle(bundle_path)
+    bundle_changed = remove_z_and_flz_fields(bundle)
+    bundle_changed = update_dynamic_bundle_tmax(bundle) or bundle_changed
+    if bundle_changed:
+        _write_clean_bundle_fast_atomic(bundle_path, bundle)
+        cur_fp = file_stat_fingerprint(bundle_path)
+
+    rows, color_rows = rows_from_bundle(bundle)
+    try:
+        manifest.update({
+            "group_relpath": rel_group.as_posix(),
+            "summary_file": bundle_path.as_posix(),
+            SUMMARY_FILE_FINGERPRINT_KEY: cur_fp,
+            "dynamic_processing_version": DYNAMIC_PROCESSING_VERSION,
+            "last_update": datetime.now(timezone.utc).isoformat(),
+        })
+        manifest.update(manifest_rows_cache_payload(rows, color_rows))
+        save_manifest(manifests_root, rel_group, manifest)
+    except Exception:
+        pass
+    return bundle_changed, rows, color_rows
+
+
+def migrate_published_tmax_once(
+    published_root: Path,
+    manifests_root: Path,
+    *,
+    force: bool = False,
+    jobs: int = 1,
+    collect_rows: bool = False,
+) -> int | tuple[int, list[dict[str, Any]], list[dict[str, Any]]]:
+    # v2 also removes the retired z/fL_z fields from already-published bundles.
+    marker = manifests_root / ".tmax_schema_v2"
+    if marker.exists() and not force and not collect_rows:
+        return 0
+
+    bundle_paths = sorted(
+        set(published_root.rglob("properties_dynamic_bundle.json.xz"))
+        | set(published_root.rglob("properties_dynamic_bundle.json.gz"))
+        | set(published_root.rglob("properties_dynamic_bundle.json"))
+    )
+    updated = 0
+    all_rows: list[dict[str, Any]] = []
+    all_color_rows: list[dict[str, Any]] = []
+    total = len(bundle_paths)
+    if bundle_paths:
+        tasks = [(bp, published_root, manifests_root, force) for bp in bundle_paths]
+        workers = max(1, min(int(jobs), total, 16))
+        if workers <= 1 or total < 4:
+            for t in tasks:
+                b_chg, r_rows, c_rows = _migrate_single_bundle_tmax_worker(t)
+                if b_chg:
+                    updated += 1
+                if collect_rows:
+                    all_rows.extend(r_rows)
+                    all_color_rows.extend(c_rows)
+        else:
+            done = 0
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(_migrate_single_bundle_tmax_worker, t) for t in tasks]
+                for fut in as_completed(futures):
+                    b_chg, r_rows, c_rows = fut.result()
+                    done += 1
+                    if b_chg:
+                        updated += 1
+                    if collect_rows:
+                        all_rows.extend(r_rows)
+                        all_color_rows.extend(c_rows)
+                    if done % 400 == 0 or done == total:
+                        print(f"[migrate] TMAX progress: {done}/{total} (updated={updated})", flush=True)
+
+    ensure_dir(marker.parent)
+    marker.write_text(
+        f"migrated={updated}\ncompleted={datetime.now(timezone.utc).isoformat()}\n",
+        encoding="utf-8",
+    )
+    print(f"[migrate] TMAX/growth_test_stop_time: updated {updated}/{total} bundles", flush=True)
+    if collect_rows:
+        return updated, all_rows, all_color_rows
+    return updated
 
 
 def migrate_published_control_rules_once(
@@ -2470,19 +2955,6 @@ def merge_order_block(existing_order: dict[str, Any], new_order: dict[str, Any])
         merged_data["t_eq_max"] = max(maxs)
         merged_data["t_eq"] = max(maxs)
 
-    z_stat_old = existing_order.get("z_stat", {}) if isinstance(existing_order.get("z_stat", {}), dict) else {}
-    z_stat_new = new_order.get("z_stat", {}) if isinstance(new_order.get("z_stat", {}), dict) else {}
-    merged["z_stat"] = combine_summary_dicts(z_stat_old, z_stat_new)
-    z_stat_mean = merged["z_stat"]["mean"]
-    z_stat_err = merged["z_stat"]["err"]
-    merged_data["z_stat_mean"] = z_stat_mean
-    merged_data["z_stat_err"] = z_stat_err
-    merged_data["z_stat_std"] = merged["z_stat"].get("std")
-    merged_data["z_stat_median"] = merged["z_stat"].get("median")
-    merged_data["z_stat_q25"] = merged["z_stat"].get("q25")
-    merged_data["z_stat_q75"] = merged["z_stat"].get("q75")
-    merged_data["z_stat_q90"] = merged["z_stat"].get("q90")
-    merged_data["z_stat_values"] = merged["z_stat"].get("values", [])
     merged_data["n_samples_perc"] = merged["N_samples_perc"]
     merged_data["n_samples_total"] = merged["N_samples"]
 
@@ -2500,6 +2972,7 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(p0_group, dict):
         return []
 
+    default_tmax = p0_group_stop_time_tmax(p0_group, 0)
     orders = p0_group.get("orders", [])
     if not isinstance(orders, list) or not orders:
         layout = p0_group.get("initial_layout") or "random"
@@ -2511,18 +2984,27 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
         group_copy = dict(p0_group)
         group_copy["initial_layout"] = layout
         group_copy["initial_base_layout"] = base_layout
+        group_copy["growth_test_stop_time"] = default_tmax
+        group_copy["TMAX"] = format_tmax_flag(default_tmax)
         return [group_copy]
 
-    sample_layouts: set[str] = set()
+    sample_pairs: set[tuple[str, int]] = set()
     for order in orders:
         if isinstance(order, dict):
             for s in order.get("samples", []):
                 if isinstance(s, dict):
                     sl = s.get("initial_layout") or extract_layout_from_filename(s.get("filename", ""))
-                    sample_layouts.add(normalize_initial_layout(sl))
+                    st = normalize_stop_time_tmax(
+                        s.get("growth_test_stop_time", s.get("TMAX", default_tmax))
+                    )
+                    sample_pairs.add((normalize_initial_layout(sl), st))
 
-    if len(sample_layouts) <= 1:
-        layout = list(sample_layouts)[0] if sample_layouts else (p0_group.get("initial_layout") or "random")
+    if len(sample_pairs) <= 1:
+        if sample_pairs:
+            layout, grp_tmax = next(iter(sample_pairs))
+        else:
+            layout = p0_group.get("initial_layout") or "random"
+            grp_tmax = default_tmax
         if isinstance(layout, list):
             layout = layout[0] if layout else "random"
         base_layout = p0_group.get("initial_base_layout") or layout
@@ -2531,6 +3013,8 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
         group_copy = dict(p0_group)
         group_copy["initial_layout"] = layout
         group_copy["initial_base_layout"] = base_layout
+        group_copy["growth_test_stop_time"] = grp_tmax
+        group_copy["TMAX"] = format_tmax_flag(grp_tmax)
         return [group_copy]
 
     split_groups: list[dict[str, Any]] = []
@@ -2538,7 +3022,7 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
     P0 = p0_group.get("P0_value")
     p0 = p0_group.get("p0_value")
 
-    for layout in sorted(sample_layouts):
+    for layout, grp_tmax in sorted(sample_pairs):
         new_orders: list[dict[str, Any]] = []
         samples_in_layout_total = 0
         for order in orders:
@@ -2549,18 +3033,17 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
                 s for s in all_s
                 if isinstance(s, dict)
                 and normalize_initial_layout(s.get("initial_layout") or extract_layout_from_filename(s.get("filename", ""))) == layout
+                and normalize_stop_time_tmax(s.get("growth_test_stop_time", s.get("TMAX", default_tmax))) == grp_tmax
             ]
             if not filtered_s:
                 continue
             samples_in_layout_total += len(filtered_s)
             p_vals = [s["p_sample_mean"] for s in filtered_s if s.get("p_sample_mean") is not None]
             f_vals = [s["f_sample_mean"] for s in filtered_s if s.get("f_sample_mean") is not None]
-            z_vals = [s["z_stat"] for s in filtered_s if s.get("z_stat") is not None]
             teq_vals = [s["t_eq_species"] for s in filtered_s if s.get("t_eq_species") is not None]
 
             p_summary = summary_with_values(p_vals)
             f_summary = summary_with_values(f_vals)
-            z_summary = summary_with_values(z_vals)
             teq_summary = summary_from_values(teq_vals)
             p_mean = p_summary.get("mean")
             p_err = p_summary.get("err")
@@ -2576,14 +3059,6 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
             existing_data["f_tail_mean"] = f_summary.get("mean")
             existing_data["f_tail_err"] = f_summary.get("err")
             existing_data["f_tail_sample_values"] = f_summary.get("values", [])
-            existing_data["z_stat_mean"] = z_summary.get("mean")
-            existing_data["z_stat_err"] = z_summary.get("err")
-            existing_data["z_stat_std"] = z_summary.get("std")
-            existing_data["z_stat_median"] = z_summary.get("median")
-            existing_data["z_stat_q25"] = z_summary.get("q25")
-            existing_data["z_stat_q75"] = z_summary.get("q75")
-            existing_data["z_stat_q90"] = z_summary.get("q90")
-            existing_data["z_stat_values"] = z_summary.get("values", [])
             existing_data["n_samples_perc"] = len(filtered_s)
             existing_data["n_samples_total"] = len(filtered_s)
 
@@ -2595,7 +3070,6 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
                 "t_eq_species": teq_summary,
                 "p": p_summary,
                 "f": f_summary,
-                "z_stat": z_summary,
                 "samples": filtered_s,
             }
             new_orders.append(order_block)
@@ -2605,6 +3079,8 @@ def split_p0_group_by_layout(p0_group: dict[str, Any]) -> list[dict[str, Any]]:
             "feedback_control_rule": control_rule,
             "initial_layout": layout,
             "initial_base_layout": layout,
+            "TMAX": format_tmax_flag(grp_tmax),
+            "growth_test_stop_time": grp_tmax,
             "P0_value": P0,
             "p0_value": p0,
             "num_samples_total": samples_in_layout_total,
@@ -2627,10 +3103,14 @@ def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) ->
     rule = new_group.get("feedback_control_rule") or existing_group.get("feedback_control_rule") or "relative"
     if isinstance(rule, list):
         rule = rule[0] if rule else "relative"
+    grp_tmax = p0_group_stop_time_tmax(new_group, p0_group_stop_time_tmax(existing_group, 0))
+    grp_flag = format_tmax_flag(grp_tmax)
 
     merged["initial_layout"] = layout
     merged["initial_base_layout"] = base_layout
     merged["feedback_control_rule"] = rule
+    merged["growth_test_stop_time"] = grp_tmax
+    merged["TMAX"] = grp_flag
 
     existing_orders = {int(order.get("order")): order for order in existing_group.get("orders", []) if isinstance(order, dict) and order.get("order") is not None}
     new_orders = {int(order.get("order")): order for order in new_group.get("orders", []) if isinstance(order, dict) and order.get("order") is not None}
@@ -2653,6 +3133,8 @@ def merge_p0_group(existing_group: dict[str, Any], new_group: dict[str, Any]) ->
             if isinstance(s, dict):
                 s.setdefault("initial_layout", layout)
                 s.setdefault("initial_base_layout", base_layout)
+                s.setdefault("growth_test_stop_time", grp_tmax)
+                s.setdefault("TMAX", grp_flag)
 
     merged["orders"] = merged_orders
     merged["num_samples_total"] = total_samples
@@ -2670,7 +3152,8 @@ def p0_group_key(
     group: dict[str, Any],
     default_rule: Any = "relative",
     default_layout: str = "random",
-) -> tuple[str, str, float, float]:
+    default_tmax: Any = 0,
+) -> tuple[str, str, int, float, float]:
     rule = normalize_control_rule(group.get("feedback_control_rule", default_rule))
     layout_val = group.get("initial_layout")
     if isinstance(layout_val, list):
@@ -2679,9 +3162,11 @@ def p0_group_key(
         layout = normalize_initial_layout(layout_val, default=default_layout)
     else:
         layout = default_layout
+    grp_tmax = p0_group_stop_time_tmax(group, default_tmax)
     return (
         rule,
         layout,
+        grp_tmax,
         round(float(group.get("P0_value", 0.0) or 0.0), 6),
         round(float(group.get("p0_value", 0.0) or 0.0), 6),
     )
@@ -2695,16 +3180,17 @@ def build_bundle_for_files(
     series_mode: str = "full",
     sample_cache_dir: Path | None = None,
     fingerprint_mode: str = "stat",
+    context_files: list[Path] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     include_time_series = series_mode == "full"
-    groups: dict[tuple[str, str, float, float], list[Path]] = defaultdict(list)
+    aligned_meta = align_tmax_across_files(files, context_files=context_files)
+    groups: dict[tuple[str, str, int, float, float], list[Path]] = defaultdict(list)
     for fp in files:
-        parsed_name = parse_sample_name(fp)
-        if parsed_name is None:
+        aligned_entry = aligned_meta.get(fp)
+        if aligned_entry is None:
             continue
-        P0, p0 = parsed_name
-        rule, layout = sample_group_metadata(fp)
-        groups[(rule, layout, P0, p0)].append(fp)
+        rule, layout, grp_tmax, P0, p0 = aligned_entry
+        groups[(rule, layout, grp_tmax, P0, p0)].append(fp)
 
     bundle: dict[str, Any] = {
         "meta": {
@@ -2721,9 +3207,10 @@ def build_bundle_for_files(
     all_rows: list[dict[str, Any]] = []
     all_color_rows: list[dict[str, Any]] = []
 
-    for (control_rule, layout, P0, p0), group_files in sorted(
-        groups.items(), key=lambda x: (x[0][0], x[0][1], x[0][2], x[0][3])
+    for (control_rule, layout, grp_tmax, P0, p0), group_files in sorted(
+        groups.items(), key=lambda x: (x[0][0], x[0][1], x[0][2], x[0][3], x[0][4])
     ):
+        grp_flag = format_tmax_flag(grp_tmax)
         by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
         sample_rows, stabilized_counts = process_sample_files(
             group_files,
@@ -2746,6 +3233,8 @@ def build_bundle_for_files(
             "feedback_control_rule": control_rule,
             "initial_layout": layout,
             "initial_base_layout": layout,
+            "TMAX": grp_flag,
+            "growth_test_stop_time": grp_tmax,
             "P0_value": P0,
             "p0_value": p0,
             "num_samples_total": processed,
@@ -2758,6 +3247,7 @@ def build_bundle_for_files(
             "control_rule": control_rule,
             "initial_layout": layout,
             "initial_base_layout": layout,
+            "TMAX": grp_tmax,
             "num_colors": params["nc"],
             "p0": p0,
             "P0": P0,
@@ -2771,12 +3261,10 @@ def build_bundle_for_files(
             items = by_order[order]
             p_vals = [x["p_sample_mean"] for x in items if x["p_sample_mean"] is not None]
             f_vals = [x["f_sample_mean"] for x in items if x["f_sample_mean"] is not None]
-            z_stat_vals = [x["z_stat"] for x in items if x["z_stat"] is not None]
             teq_vals = [x["t_eq_species"] for x in items if x["t_eq_species"] is not None]
 
             p_summary = summary_with_values(p_vals)
             f_summary = summary_with_values(f_vals)
-            z_stat_summary = summary_with_values(z_stat_vals)
             teq_summary = summary_from_values(teq_vals)
             p_mean = p_summary["mean"]
             p_err = p_summary["err"]
@@ -2786,8 +3274,6 @@ def build_bundle_for_files(
                 p_summary["std"] = math.nan
             f_mean = f_summary["mean"]
             f_err = f_summary["err"]
-            z_stat_mean = z_stat_summary["mean"]
-            z_stat_err = z_stat_summary["err"]
             series_data = average_dynamic_time_series(items)
 
             N_samples_perc = len(items)
@@ -2805,31 +3291,23 @@ def build_bundle_for_files(
                     "f_tail_err": f_err,
                     "f_tail_sample_values": f_summary.get("values", []),
                     "f_tail_estimator": "mean_of_per_sample_tail_means_after_each_sample_t_eq",
-                    "z_stat_mean": z_stat_mean,
-                    "z_stat_err": z_stat_err,
-                    "z_stat_std": z_stat_summary["std"],
-                    "z_stat_median": z_stat_summary["median"],
-                    "z_stat_q25": z_stat_summary["q25"],
-                    "z_stat_q75": z_stat_summary["q75"],
-                    "z_stat_q90": z_stat_summary["q90"],
-                    "z_stat_values": z_stat_summary.get("values", []),
                     "n_samples_perc": N_samples_perc,
                     "n_samples_total": processed,
                 },
                 "t_eq_species": teq_summary,
                 "p": p_summary,
                 "f": f_summary,
-                "z_stat": z_stat_summary,
                 "samples": [
                     {
                         "filename": x["filename"],
                         "color": x["color"],
                         "initial_layout": x.get("initial_layout", layout),
                         "initial_base_layout": x.get("initial_base_layout", layout),
+                        "TMAX": grp_flag,
+                        "growth_test_stop_time": grp_tmax,
                         "t_eq_species": x["t_eq_species"],
                         "p_sample_mean": x["p_sample_mean"],
                         "f_sample_mean": x["f_sample_mean"],
-                        "z_stat": x["z_stat"],
                         "stop_criterion": x.get("stop_criterion"),
                         "t_eq_validation": x.get("t_eq_validation"),
                         "t_eq_s_prime_threshold": x.get("t_eq_s_prime_threshold"),
@@ -2846,6 +3324,7 @@ def build_bundle_for_files(
                 "control_rule": control_rule,
                 "initial_layout": layout,
                 "initial_base_layout": layout,
+                "TMAX": grp_tmax,
                 "p0": p0,
                 "P0": P0,
                 "order": order,
@@ -2855,11 +3334,6 @@ def build_bundle_for_files(
                 "p_err": p_err,
                 "f_mean": f_mean,
                 "f_err": f_err,
-                "z_stat_mean": z_stat_mean,
-                "z_stat_err": z_stat_err,
-                "z_stat_median": z_stat_summary["median"],
-                "z_stat_q75": z_stat_summary["q75"],
-                "z_stat_q90": z_stat_summary["q90"],
             })
 
         bundle["p0_groups"].append(p0_group)
@@ -2870,6 +3344,7 @@ def build_bundle_for_files(
     bundle["meta"]["initial_layout"] = layouts[0] if len(layouts) == 1 else (layouts if layouts else "random")
     base_layouts = sorted({group["initial_base_layout"] for group in bundle["p0_groups"] if group.get("initial_base_layout") and not isinstance(group.get("initial_base_layout"), list)})
     bundle["meta"]["initial_base_layout"] = base_layouts[0] if len(base_layouts) == 1 else (base_layouts if base_layouts else "random")
+    update_bundle_meta_tmax(bundle)
 
     return bundle, all_rows, all_color_rows
 
@@ -3558,22 +4033,30 @@ def process_group(
             series_mode=series_mode,
             sample_cache_dir=sample_cache_dir,
             fingerprint_mode=fingerprint_mode,
+            context_files=json_files,
         )
-        merged_p0_groups: dict[tuple[str, str, float, float], dict[str, Any]] = {}
+        merged_p0_groups: dict[tuple[str, str, int, float, float], dict[str, Any]] = {}
         existing_meta_rule = existing_bundle.get("meta", {}).get("feedback_control_rule", "relative")
         if isinstance(existing_meta_rule, list):
             existing_meta_rule = "relative"
         existing_meta_layout = existing_bundle.get("meta", {}).get("initial_layout", "random")
         if isinstance(existing_meta_layout, list):
             existing_meta_layout = "random"
+        existing_meta_tmax = existing_bundle.get("meta", {}).get(
+            "growth_test_stop_time", existing_bundle.get("meta", {}).get("TMAX", 0)
+        )
+        if isinstance(existing_meta_tmax, list):
+            existing_meta_tmax = 0
         for raw_group in existing_bundle.get("p0_groups", []) if isinstance(existing_bundle.get("p0_groups", []), list) else []:
             if not isinstance(raw_group, dict):
                 continue
             for p0_group in split_p0_group_by_layout(raw_group):
-                key = p0_group_key(p0_group, existing_meta_rule, existing_meta_layout)
+                key = p0_group_key(p0_group, existing_meta_rule, existing_meta_layout, existing_meta_tmax)
                 p0_group.setdefault("feedback_control_rule", key[0])
                 p0_group.setdefault("initial_layout", key[1])
                 p0_group.setdefault("initial_base_layout", key[1])
+                p0_group["growth_test_stop_time"] = key[2]
+                p0_group["TMAX"] = format_tmax_flag(key[2])
                 merged_p0_groups[key] = dict(p0_group)
 
         for raw_group in batch_bundle.get("p0_groups", []) if isinstance(batch_bundle.get("p0_groups", []), list) else []:
@@ -3615,6 +4098,7 @@ def process_group(
             },
             "p0_groups": [merged_p0_groups[key] for key in sorted(merged_p0_groups)],
         }
+        update_bundle_meta_tmax(merged_bundle)
         bundle = merged_bundle
     else:
         bundle, _, _ = build_bundle_for_files(
@@ -3645,6 +4129,7 @@ def process_group(
                 if all_layouts:
                     bundle["meta"]["initial_layout"] = all_layouts[0] if len(all_layouts) == 1 else all_layouts
                     bundle["meta"]["initial_base_layout"] = all_layouts[0] if len(all_layouts) == 1 else all_layouts
+                update_bundle_meta_tmax(bundle)
 
     all_rows, all_color_rows = rows_from_bundle(bundle) if collect_rows else ([], [])
 
@@ -3772,7 +4257,11 @@ def _process_group_worker(
 def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
     ensure_dir(output_path.parent)
     rows = [
-        {**row, "control_rule": row.get("control_rule") or "relative"}
+        {
+            **row,
+            "control_rule": row.get("control_rule") or "relative",
+            "TMAX": normalize_stop_time_tmax(row.get("TMAX", 0)),
+        }
         for row in rows
     ]
     rows = sorted(
@@ -3780,7 +4269,7 @@ def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
         key=lambda r: (
             r["type_perc"], r["dim"], r["nc"], r["rho"], r["c"], r["f_T"],
             r["L"], r["P0"], r["p0"], r["control_rule"], r.get("initial_layout") or "alternating",
-            r["stat_window"], r["order"],
+            r["TMAX"], r["stat_window"], r["order"],
         ),
     )
     with output_path.open("w", encoding="utf-8") as f:
@@ -3792,7 +4281,11 @@ def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
 def write_all_colors(rows: list[dict[str, Any]], output_path: Path) -> None:
     ensure_dir(output_path.parent)
     rows = [
-        {**row, "control_rule": row.get("control_rule") or "relative"}
+        {
+            **row,
+            "control_rule": row.get("control_rule") or "relative",
+            "TMAX": normalize_stop_time_tmax(row.get("TMAX", 0)),
+        }
         for row in rows
     ]
     rows = sorted(
@@ -3800,7 +4293,7 @@ def write_all_colors(rows: list[dict[str, Any]], output_path: Path) -> None:
         key=lambda r: (
             r["type_perc"], r["dim"], r["num_colors"], r["rho"], r["c"],
             r["f_T"], r["L"], r["P0"], r["p0"], r["control_rule"], r.get("initial_layout") or "alternating",
-            r["stat_window"],
+            r["TMAX"], r["stat_window"],
         ),
     )
     with output_path.open("w", encoding="utf-8") as f:
@@ -3843,13 +4336,14 @@ def compress_published_only(
             schema_updated = False
             try:
                 bundle = load_json_bundle(after_dynamic)
-                schema_updated = update_dynamic_bundle_zstat_quantiles(bundle)
+                schema_updated = remove_z_and_flz_fields(bundle)
                 schema_updated = update_dynamic_bundle_control_rules(bundle) or schema_updated
+                schema_updated = update_dynamic_bundle_tmax(bundle) or schema_updated
                 if schema_updated:
                     write_json_bundle_atomic(after_dynamic, bundle, compresslevel=compresslevel)
                     print(f"[update] dynamic schema -> {after_dynamic}")
             except Exception as exc:
-                print(f"[warn] failed to update z_stat q90 in {after_dynamic}: {exc}")
+                print(f"[warn] failed to remove retired z/fL_z fields in {after_dynamic}: {exc}")
             if converted:
                 dynamic_converted += 1
                 print(f"[compress] {before_dynamic} -> {after_dynamic}")
@@ -4012,6 +4506,17 @@ def main(argv: list[str] | None = None) -> int:
         default=True,
         help="Add feedback_control_rule='relative' to legacy published bundles once.",
     )
+    parser.add_argument(
+        "--migrate-tmax",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Add TMAX='free' and growth_test_stop_time=0 to already-published bundles once.",
+    )
+    parser.add_argument(
+        "--migrate-tmax-only",
+        action="store_true",
+        help="Migrate existing published bundles to TMAX='free' / growth_test_stop_time=0 and rebuild .dat files without scanning raw dirs.",
+    )
     args = parser.parse_args(argv)
 
     sop_root = Path(args.sop_root).expanduser().resolve()
@@ -4042,6 +4547,31 @@ def main(argv: list[str] | None = None) -> int:
             published_root,
             manifests_root,
             force=args.clear,
+        )
+    if args.migrate_tmax_only:
+        _, m_rows, m_color_rows = migrate_published_tmax_once(
+            published_root,
+            manifests_root,
+            force=args.clear,
+            jobs=jobs,
+            collect_rows=True,
+        )
+        if args.write_all_data_outputs:
+            all_data_path = sop_root / args.all_data_name
+            all_colors_path = sop_root / args.all_colors_name
+            if m_rows:
+                write_all_data(m_rows, all_data_path)
+                print(f"[write] {all_data_path} ({len(m_rows)} rows)")
+            if m_color_rows:
+                write_all_colors(m_color_rows, all_colors_path)
+                print(f"[write] {all_colors_path} ({len(m_color_rows)} rows)")
+        return 0
+    if args.migrate_tmax:
+        migrate_published_tmax_once(
+            published_root,
+            manifests_root,
+            force=args.clear,
+            jobs=jobs,
         )
 
     if args.compress_published_only:

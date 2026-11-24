@@ -39,8 +39,8 @@ os.chdir(Path(__file__).resolve().parent)
 # =============================================================================
 seed = -1
 dim = 2
-nc = 2
-c = 0.00
+nc = 1
+c = 0.05
 f_T = 0.0
 P0 = 0.2
 
@@ -53,27 +53,29 @@ InitialLayout = 'alternating'
 ControlRule = 'linear'
 
 # Configuração otimizada para cálculo das médias das caudas (DIM = 2)
+# CONFIG_2D = {
+#     #   L:    (N_samples, max_steps)
+#       512:  (1400,  1500),
+#      1024:  (1000,  2000),
+#      1448:  ( 900,  2400),
+#      2048:  ( 800,  3000),
+#      2896:  ( 600,  3800),
+#      4096:  ( 400,  4500),
+#      4598:  ( 360,  4800),
+#      5161:  ( 330,  5200),
+#      5793:  ( 300,  5600),
+#      6502:  ( 265,  6000),
+#      7298:  ( 230,  6500),
+#      8192:  ( 200,  7000),
+#      9742:  ( 175,  7800),
+#     11585:  ( 150,  8800),
+#     13777:  ( 125,  9800),
+#     16384:  ( 100, 11000),
+# }
 CONFIG_2D = {
     #   L:    (N_samples, max_steps)
-      512:  (1400,  1500),
-     1024:  (1000,  2000),
-     1448:  ( 900,  2400),
-     2048:  ( 800,  3000),
-     2896:  ( 600,  3800),
-     4096:  ( 400,  4500),
-     4598:  ( 360,  4800),
-     5161:  ( 330,  5200),
-     5793:  ( 300,  5600),
-     6502:  ( 265,  6000),
-     7298:  ( 230,  6500),
-     8192:  ( 200,  7000),
-     9742:  ( 175,  7800),
-    11585:  ( 150,  8800),
-    13777:  ( 125,  9800),
     16384:  ( 100, 11000),
 }
-
-# Configuração otimizada para cálculo das médias das caudas (DIM = 3)
 # Configuração otimizada para cálculo das médias das caudas (DIM = 3)
 CONFIG_3D = {
     #    L:    (N_samples, max_steps)
@@ -99,16 +101,16 @@ config = CONFIG_2D if dim == 2 else CONFIG_3D
 p0_2D = 0.8
 p0_3D = 0.5
 p0 = p0_2D if dim == 2 else p0_3D
-p0_lst = np.linspace(0.01, 1.0, 40)
-#ft_lst = np.linspace(0.01, 0.5, 40)
+#p0_lst = np.linspace(0.01, 1.0, 40)
+ft_lst = np.linspace(0.01, 0.4, 40)
 type_perc_lst = ['bond', 'node']
 
 count = 0
 
 for type_perc in type_perc_lst:
     for L, (num_runs, max_steps) in config.items():
-#        for f_T in ft_lst:
-        for p0 in p0_lst:
+        for f_T in ft_lst:
+#        for p0 in p0_lst:
             p0_val = float(p0)
             exec_name = (
                 f"L_{L}_ft_{f_T:.4g}_c_{c}_nc_{nc}_dim_{dim}"

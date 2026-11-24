@@ -192,10 +192,55 @@ inline long long compute_base_size(const GridRegular& grid) {
 std::vector<std::int64_t> base_candidates_for_color(const GridRegular& grid,
                                                     const int num_colors,
                                                     const int color_idx,
-                                                    const InitialBaseLayout layout)
+                                                    const InitialBaseLayout layout,
+                                                    const int quota)
 {
     std::vector<std::int64_t> out;
     if (color_idx < 0 || color_idx >= num_colors) return out;
+
+    const long long base_size = compute_base_size(grid);
+    const bool has_gray_sites =
+        static_cast<long long>(quota) * static_cast<long long>(num_colors) < base_size;
+
+    // For two colors with unoccupied base sites, make the prescribed patterns
+    // directly instead of spreading each color over its old candidate sector.
+    // The ordering for dim=3 is x-major (a full y column before moving in x),
+    // so "left / center / right" is visually a left-to-right base pattern.
+    auto site_from_base_order = [&](const long long order) -> std::int64_t {
+        if (grid.dim == 2) return grid.lin_index(static_cast<int>(order), 0, 0);
+        const int x = static_cast<int>(order / grid.SY);
+        const int y = static_cast<int>(order % grid.SY);
+        return grid.lin_index(x, y, 0);
+    };
+    if (num_colors == 2 && has_gray_sites && quota > 0) {
+        if (layout == InitialBaseLayout::Blocks) {
+            out.reserve(static_cast<std::size_t>(quota));
+            for (int k = 0; k < quota; ++k) {
+                const long long order = (color_idx == 0) ? k : (base_size - 1 - k);
+                out.push_back(site_from_base_order(order));
+            }
+            return out;
+        }
+        if (layout == InitialBaseLayout::Alternating && grid.dim == 2) {
+            const long long gray_count = base_size - 2LL * quota;
+            out.reserve(static_cast<std::size_t>(quota));
+            // Spread gray sites as evenly as possible through the n+1 gaps
+            // around the ordered (s1,s2) pairs.  For L=8, quota=2 and four
+            // gray sites this yields: gray, s1, s2, gray, s1, s2, gray, gray.
+            long long position = 0;
+            for (long long pair = 0; pair <= quota; ++pair) {
+                const long long gray_before =
+                    ((pair + 1LL) * gray_count) / (quota + 1LL)
+                    - (pair * gray_count) / (quota + 1LL);
+                position += gray_before;
+                if (pair < quota) {
+                    out.push_back(site_from_base_order(position + color_idx));
+                    position += 2LL;
+                }
+            }
+            return out;
+        }
+    }
 
     if (layout == InitialBaseLayout::Blocks) {
         if (grid.dim == 2) {
@@ -247,7 +292,10 @@ std::vector<std::int64_t> base_candidates_for_color(const GridRegular& grid,
             (static_cast<std::int64_t>(grid.SX) * grid.SY + num_colors - 1) / num_colors));
         for (int y = 0; y < grid.SY; ++y) {
             for (int x = 0; x < grid.SX; ++x) {
-                if (((x + static_cast<std::int64_t>(grid.SX) * y) % num_colors) == color_idx) {
+                // Spatial parity gives a checkerboard in dim=3.  The former
+                // linear-index rule (x + SX*y) degenerates into stripes when
+                // SX is divisible by num_colors.
+                if (((x + y) % num_colors) == color_idx) {
                     out.push_back(grid.lin_index(x, y, 0));
                 }
             }
@@ -268,7 +316,7 @@ int activate_deterministic_base_sites(const GridRegular& grid,
     if (quota <= 0) return 0;
 
     const std::vector<std::int64_t> candidates =
-        base_candidates_for_color(grid, num_colors, color_idx, layout);
+        base_candidates_for_color(grid, num_colors, color_idx, layout, quota);
     if (candidates.empty()) return 0;
 
     const int n_activate = std::min<int>(quota, candidates.size());

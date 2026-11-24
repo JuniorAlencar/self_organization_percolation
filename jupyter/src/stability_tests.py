@@ -362,9 +362,11 @@ def plot_s_all_orders(results, include_p_all=True, figsize=(10, 7), fs=14):
     return fig, ax
 
 
-def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout=None):
+def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout=None, tmax=None, TMAX=None):
     if InitialLayout is not None:
         initial_layout = InitialLayout
+    if TMAX is not None:
+        tmax = TMAX
     bundle = _load_json_bundle(bundle_path)
 
     meta = bundle.get("meta", {})
@@ -387,6 +389,15 @@ def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout
         group_base_layout = p0_group.get("initial_base_layout") or meta.get("initial_base_layout", group_layout)
         if isinstance(group_base_layout, list):
             group_base_layout = group_base_layout[0] if group_base_layout else group_layout
+        group_stop_time = p0_group.get("growth_test_stop_time")
+        if group_stop_time is None:
+            raw_tmax = p0_group.get("TMAX", meta.get("growth_test_stop_time", meta.get("TMAX", 0)))
+            if isinstance(raw_tmax, list):
+                raw_tmax = raw_tmax[0] if raw_tmax else 0
+            group_stop_time = 0 if str(raw_tmax).strip().lower() in {"", "free", "0", "none"} else int(raw_tmax)
+        else:
+            group_stop_time = int(group_stop_time)
+        group_tmax_flag = p0_group.get("TMAX", "free" if group_stop_time <= 0 else group_stop_time)
         N_samples = p0_group.get("num_samples_total")
 
         colors = p0_group.get("colors", {})
@@ -397,8 +408,6 @@ def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout
             t_eq_stats = order_block.get("t_eq_species", {})
             p_stats = order_block.get("p", {})
             f_stats = order_block.get("f", {})
-            z_stats = order_block.get("z_max", {})
-            z_stat_stats = order_block.get("z_stat", {})
 
             rows.append({
                 "type_perc": meta.get("type_perc"),
@@ -413,6 +422,8 @@ def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout
                 "control_rule": control_rule,
                 "initial_layout": group_layout,
                 "initial_base_layout": group_base_layout,
+                "TMAX": group_tmax_flag,
+                "growth_test_stop_time": group_stop_time,
 
                 "P0": P0,
                 "p0": p0,
@@ -445,18 +456,6 @@ def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout
                 "f_tail_err": data.get("f_tail_err"),
                 "f_tail_sample_values": data_value(data, "f_tail_sample_values", []),
                 "f_tail_estimator": data.get("f_tail_estimator"),
-
-                "z_max_mean": z_stats.get("mean"),
-                "z_max_err": z_stats.get("err"),
-                "z_max_std": z_stats.get("std"),
-                "z_max_median": data_value(data, "z_max_median", z_stats.get("median")),
-                "z_max_q25": data_value(data, "z_max_q25", z_stats.get("q25")),
-                "z_max_q75": data_value(data, "z_max_q75", z_stats.get("q75")),
-                "z_max_q90": data_value(data, "z_max_q90", z_stats.get("q90")),
-                "z_max_values": data_value(data, "z_max_values", z_stats.get("values", [])),
-                "z_stat_mean": z_stat_stats.get("mean"),
-                "z_stat_err": z_stat_stats.get("err"),
-                "z_stat_std": z_stat_stats.get("std"),
 
                 "time": data_value(data, "time", []),
                 "pt_mean": data_value(data, "pt_mean", []),
@@ -500,26 +499,6 @@ def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout
                 "ft_common_support_policy": data.get("ft_common_support_policy"),
                 "ft_supported_support_policy": data.get("ft_supported_support_policy"),
 
-                "fL_z_z": data_value(data, "fL_z_z", []),
-                "fL_z_mean": data_value(data, "fL_z_mean", []),
-                "fL_z_std": data_value(data, "fL_z_std", []),
-                "fL_z_sem": data_value(data, "fL_z_sem", []),
-                "fL_z_N_per_z": data_value(data, "fL_z_N_per_z", []),
-                "n_seeds_fL_z": data.get("n_seeds_fL_z"),
-                "fL_z_common_z": data_value(data, "fL_z_common_z", []),
-                "fL_z_common_mean": data_value(data, "fL_z_common_mean", []),
-                "fL_z_common_std": data_value(data, "fL_z_common_std", []),
-                "fL_z_common_sem": data_value(data, "fL_z_common_sem", []),
-                "fL_z_common_N_per_z": data_value(data, "fL_z_common_N_per_z", []),
-                "fL_z_supported_z": data_value(data, "fL_z_supported_z", []),
-                "fL_z_supported_mean": data_value(data, "fL_z_supported_mean", []),
-                "fL_z_supported_std": data_value(data, "fL_z_supported_std", []),
-                "fL_z_supported_sem": data_value(data, "fL_z_supported_sem", []),
-                "fL_z_supported_N_per_z": data_value(data, "fL_z_supported_N_per_z", []),
-                "fL_z_min_support_count": data.get("fL_z_min_support_count"),
-                "fL_z_support_policy": data.get("fL_z_support_policy"),
-                "fL_z_common_support_policy": data.get("fL_z_common_support_policy"),
-                "fL_z_supported_support_policy": data.get("fL_z_supported_support_policy"),
                 "min_support_fraction": data.get("min_support_fraction"),
             })
 
@@ -529,16 +508,18 @@ def read_dynamic_bundle(bundle_path, initial_layout="alternating", InitialLayout
             matched = df["initial_layout"] == initial_layout
             if not matched.any():
                 matched = df["initial_layout"].astype(str).str.lower() == str(initial_layout).lower()
-            if matched.any():
-                df = df[matched].reset_index(drop=True)
-            else:
-                df = df[matched].reset_index(drop=True)
+            df = df[matched].reset_index(drop=True)
+    if not df.empty and tmax is not None and str(tmax).lower() != "all":
+        target_st = 0 if str(tmax).strip().lower() in {"free", "0"} else int(tmax)
+        if "growth_test_stop_time" in df.columns:
+            df = df[df["growth_test_stop_time"].astype(int) == target_st].reset_index(drop=True)
     return df
 
 
 def select_dynamic_bundle_row(
     bundle_df, p0=None, P0=None, order=None, control_rule="relative", tol=1e-12,
     rule_update=None, initial_layout="alternating", InitialLayout=None,
+    tmax=None, TMAX=None,
 ):
     """
     Select one row from a dynamic properties bundle dataframe.
@@ -548,6 +529,8 @@ def select_dynamic_bundle_row(
     """
     if InitialLayout is not None:
         initial_layout = InitialLayout
+    if TMAX is not None:
+        tmax = TMAX
     if rule_update is not None:
         control_rule = rule_update
 
@@ -559,6 +542,9 @@ def select_dynamic_bundle_row(
         if not matched.any():
             matched = data["initial_layout"].astype(str).str.lower() == str(initial_layout).lower()
         data = data[matched]
+    if tmax is not None and "growth_test_stop_time" in data.columns and str(tmax).lower() != "all":
+        target_st = 0 if str(tmax).strip().lower() in {"free", "0"} else int(tmax)
+        data = data[data["growth_test_stop_time"].astype(int) == target_st]
     if p0 is not None:
         data = data[np.isclose(data["p0"].astype(float), float(p0), atol=tol, rtol=tol)]
     if P0 is not None:
