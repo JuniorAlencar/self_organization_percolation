@@ -8,6 +8,10 @@
 *.zip
 *.csv
 *.gif
+*.npz
+*.bak
+.ipynb_checkpoints/
+/animation/
 /animate/*
 /docs/main.pdf
 /network
