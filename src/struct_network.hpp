@@ -216,9 +216,11 @@ struct FractalMinimumPathYardstick {
 struct FractalClusterCounts {
     bool eligible = false;
     int sample_index = -1;
+    int species = 1;
     int dim = 0;
     int L = 0;
     int anchor_z = -1;
+    int slab_top_z = -1;
     int t_stab = -1;
     std::string type_percolation;
     std::vector<std::string> boundary_conditions;
@@ -226,19 +228,11 @@ struct FractalClusterCounts {
     long long total_active_bonds = 0;
     long long largest_component_sites = 0;
     long long largest_component_bonds = 0;
+    long long hull_length = 0;
+    long long full_boundary_length = 0;
+    long long interspecies_boundary_length = 0;
+    int shortest_path_edges = -1;
     std::uint64_t largest_component_seed = 0;
-
-    int chemical_seed = 0;
-    int requested_origins = 0;
-    int effective_origins = 0;
-    int max_chemical_distance = -1;
-    double r_min = 0.0;
-    double r_max = 0.0;
-    int num_bins = 0;
-    std::vector<double> bin_edges;
-    long long total_pairs_processed = 0;
-    long long pairs_discarded_out_of_range = 0;
-    std::vector<FractalOriginDistances> origins;
 
     std::vector<int> epsilons;
     int offset_seed = 0;
@@ -249,7 +243,12 @@ struct FractalClusterCounts {
 struct FractalCountsSample {
     int sample_index = -1;
     int anchor_z = -1;
+    int slab_top_z = -1;
     int t_stab = -1;
+    long long interspecies_contact_bonds = 0;
+    long long interspecies_contact_sites = 0;
+    long long spanning_interspecies_bonds = 0;
+    long long spanning_interspecies_sites = 0;
     std::vector<FractalClusterCounts> spanning_clusters;
 };
 
@@ -273,22 +272,30 @@ struct RawFractionsSeries {
     std::vector<double> rho;
     std::vector<double> t_eq_by_species;
     std::vector<int> z_stat_by_species;
-    std::vector<double> p_inst_bond;
-    std::vector<double> p_inst_node;
-    std::vector<int> S_inst;
-    std::vector<long long> E_inst;
-    std::vector<int> SP_inst;
     std::vector<double> p_stab_bond;
     std::vector<double> p_stab_node;
-    std::vector<int> S_stab;
+    std::vector<std::vector<double>> p_stab_bond_by_species;
+    std::vector<std::vector<double>> p_stab_node_by_species;
+    std::vector<int> num_spanning_clusters;
+    std::vector<long long> S_stab;
     std::vector<long long> E_stab;
     std::vector<int> SP_stab;
     std::vector<long long> hull_length;
     std::vector<long long> full_boundary_length;
-    std::vector<long long> external_perimeter_length;
-    std::vector<std::map<long long, long long>> hole_size_counts;
+    std::vector<int> largest_spanning_species;
+    std::vector<long long> largest_spanning_interspecies_bonds;
+    std::vector<std::vector<long long>> other_spanning_sites;
+    std::vector<std::vector<long long>> other_spanning_bonds;
+    std::vector<std::vector<int>> other_spanning_sp;
+    std::vector<std::vector<long long>> other_spanning_hull;
+    std::vector<std::vector<int>> other_spanning_species;
+    std::vector<std::vector<long long>> other_spanning_interspecies_bonds;
+    std::vector<long long> interspecies_contact_bonds;
+    std::vector<long long> interspecies_contact_sites;
+    std::vector<long long> spanning_interspecies_bonds;
+    std::vector<long long> spanning_interspecies_sites;
     std::vector<int> anchor_z;
-    std::vector<int> t_inst;
+    std::vector<int> slab_top_z;
     std::vector<int> t_stab;
     std::vector<FractalCountsSample> fractal_counts;
 };

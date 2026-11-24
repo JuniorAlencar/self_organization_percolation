@@ -23,6 +23,9 @@
 #include <fstream>
 #include <cstdio>
 #include <climits>
+#if defined(__linux__) && defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace {
 
@@ -2023,1132 +2026,243 @@ inline void collect_abs_neighbors(const int dim,
     out[count++] = abs_site_key(x, y, z + 1);
 }
 
+struct PackedBitset {
+    std::vector<std::uint64_t> words;
+
+    explicit PackedBitset(const std::uint64_t nbits = 0)
+        : words(static_cast<std::size_t>((nbits + 63ULL) >> 6), 0ULL) {}
+
+    inline void clear() {
+        std::fill(words.begin(), words.end(), 0ULL);
+    }
+
+    inline bool test(const std::uint64_t idx) const {
+        return ((words[static_cast<std::size_t>(idx >> 6)] >> (idx & 63ULL)) & 1ULL) != 0ULL;
+    }
+
+    inline void set(const std::uint64_t idx) {
+        words[static_cast<std::size_t>(idx >> 6)] |= (1ULL << (idx & 63ULL));
+    }
+
+    inline bool test_and_set(const std::uint64_t idx) {
+        std::uint64_t& w = words[static_cast<std::size_t>(idx >> 6)];
+        const std::uint64_t m = (1ULL << (idx & 63ULL));
+        if ((w & m) != 0ULL) return false;
+        w |= m;
+        return true;
+    }
+};
+
+struct SlidingSlabGrid {
+    int dim = 2;
+    int L = 1;
+    int SY_lat = 1;
+    bool is_node = false;
+    std::size_t layer_sites = 1;
+    int min_retained_h = 0;
+
+    struct Layer {
+        std::vector<std::int8_t> state;
+        std::vector<std::uint8_t> bonds;
+    };
+    std::deque<Layer> layers;
+
+    SlidingSlabGrid(const int dim_, const int L_, const bool is_node_)
+        : dim(dim_),
+          L(L_),
+          SY_lat(dim_ == 2 ? 1 : L_),
+          is_node(is_node_),
+          layer_sites(static_cast<std::size_t>(L_) *
+                      static_cast<std::size_t>(dim_ == 2 ? 1 : L_)),
+          min_retained_h(0) {}
+
+    inline std::size_t lat_index(const int x, const int y_lat = 0) const {
+        return static_cast<std::size_t>(y_lat) * static_cast<std::size_t>(L) +
+               static_cast<std::size_t>(x);
+    }
+
+    inline void decode_lat(const std::size_t lat, int& x, int& y_lat) const {
+        const std::size_t l_sz = static_cast<std::size_t>(L);
+        x = static_cast<int>(lat % l_sz);
+        y_lat = (dim == 3) ? static_cast<int>(lat / l_sz) : 0;
+    }
+
+    inline std::int64_t encode_key(const int h, const std::size_t lat) const {
+        return static_cast<std::int64_t>(h) * static_cast<std::int64_t>(layer_sites) +
+               static_cast<std::int64_t>(lat);
+    }
+
+    inline std::int64_t encode_coords(const int x, const int y_lat, const int h) const {
+        return encode_key(h, lat_index(x, y_lat));
+    }
+
+    inline void decode_key(const std::int64_t key, int& h, std::size_t& lat) const {
+        const std::int64_t ls = static_cast<std::int64_t>(layer_sites);
+        h = static_cast<int>(key / ls);
+        lat = static_cast<std::size_t>(key % ls);
+    }
+
+    inline int grow_coord(const std::int64_t key) const {
+        return static_cast<int>(key / static_cast<std::int64_t>(layer_sites));
+    }
+
+    static inline std::uint64_t pack_bond_ref(const int owner_h,
+                                              const std::size_t owner_lat,
+                                              const int dir) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(owner_h)) << 34) |
+               ((static_cast<std::uint64_t>(owner_lat) & 0xffffffffULL) << 2) |
+               static_cast<std::uint64_t>(dir & 3);
+    }
+
+    static inline void unpack_bond_ref(const std::uint64_t ref,
+                                       int& owner_h,
+                                       std::size_t& owner_lat,
+                                       int& dir) {
+        dir = static_cast<int>(ref & 3ULL);
+        owner_lat = static_cast<std::size_t>((ref >> 2) & 0xffffffffULL);
+        owner_h = static_cast<int>(ref >> 34);
+    }
+
+    inline int get_site(const int h, const std::size_t lat) const {
+        if (h < min_retained_h) return 0; // discarded history or h < 0 acts as blocked
+        const std::size_t rel = static_cast<std::size_t>(h - min_retained_h);
+        if (rel >= layers.size()) return -1;
+        const Layer& lyr = layers[rel];
+        if (lyr.state.empty()) return -1;
+        return static_cast<int>(lyr.state[lat]);
+    }
+
+    inline int get_site_key(const std::int64_t key) const {
+        if (key < 0) return 0;
+        int h = 0;
+        std::size_t lat = 0;
+        decode_key(key, h, lat);
+        return get_site(h, lat);
+    }
+
+    inline void set_site(const int h, const std::size_t lat, const int value) {
+        if (h < min_retained_h) return;
+        const std::size_t rel = static_cast<std::size_t>(h - min_retained_h);
+        if (rel >= layers.size()) {
+            layers.resize(rel + 1u);
+        }
+        Layer& lyr = layers[rel];
+        if (lyr.state.empty()) {
+            lyr.state.assign(layer_sites, static_cast<std::int8_t>(-1));
+        }
+        lyr.state[lat] = static_cast<std::int8_t>(value);
+    }
+
+    inline void set_site_key(const std::int64_t key, const int value) {
+        if (key < 0) return;
+        int h = 0;
+        std::size_t lat = 0;
+        decode_key(key, h, lat);
+        set_site(h, lat, value);
+    }
+
+    inline bool mark_tested_bond_packed(const std::uint64_t ref) {
+        if (is_node) return true;
+        int owner_h = 0, dir = 0;
+        std::size_t owner_lat = 0;
+        unpack_bond_ref(ref, owner_h, owner_lat, dir);
+        if (owner_h < min_retained_h) return false;
+        const std::size_t rel = static_cast<std::size_t>(owner_h - min_retained_h);
+        if (rel >= layers.size()) {
+            layers.resize(rel + 1u);
+        }
+        Layer& lyr = layers[rel];
+        if (lyr.bonds.empty()) {
+            lyr.bonds.assign(layer_sites, 0u);
+        }
+        const std::uint8_t bit = static_cast<std::uint8_t>(1u << dir);
+        std::uint8_t& cell = lyr.bonds[owner_lat];
+        if ((cell & bit) != 0u) return false;
+        cell |= bit;
+        return true;
+    }
+
+    inline void set_open_bond_packed(const std::uint64_t ref) {
+        if (is_node) return;
+        int owner_h = 0, dir = 0;
+        std::size_t owner_lat = 0;
+        unpack_bond_ref(ref, owner_h, owner_lat, dir);
+        if (owner_h < min_retained_h) return;
+        const std::size_t rel = static_cast<std::size_t>(owner_h - min_retained_h);
+        if (rel >= layers.size()) {
+            layers.resize(rel + 1u);
+        }
+        Layer& lyr = layers[rel];
+        if (lyr.bonds.empty()) {
+            lyr.bonds.assign(layer_sites, 0u);
+        }
+        lyr.bonds[owner_lat] |= static_cast<std::uint8_t>(1u << (dir + 3));
+    }
+
+    inline void set_open_bond_dir(const int owner_h,
+                                  const std::size_t owner_lat,
+                                  const int dir) {
+        set_open_bond_packed(pack_bond_ref(owner_h, owner_lat, dir));
+    }
+
+    inline bool is_open_bond(const int owner_h,
+                             const std::size_t owner_lat,
+                             const int dir) const {
+        if (is_node || owner_h < min_retained_h) return false;
+        const std::size_t rel = static_cast<std::size_t>(owner_h - min_retained_h);
+        if (rel >= layers.size()) return false;
+        const Layer& lyr = layers[rel];
+        if (lyr.bonds.empty()) return false;
+        return (lyr.bonds[owner_lat] & static_cast<std::uint8_t>(1u << (dir + 3))) != 0u;
+    }
+
+    void discard_below(const int target_min_h, const bool trim_heap = false) {
+        if (target_min_h <= min_retained_h) return;
+        bool freed_any = false;
+        while (min_retained_h < target_min_h && !layers.empty()) {
+            layers.pop_front();
+            ++min_retained_h;
+            freed_any = true;
+        }
+        if (layers.empty() && min_retained_h < target_min_h) {
+            min_retained_h = target_min_h;
+        }
+#if defined(__linux__) && defined(__GLIBC__)
+        if (trim_heap && freed_any) {
+            malloc_trim(0);
+        }
+#else
+        (void)trim_heap;
+        (void)freed_any;
+#endif
+    }
+};
+
 struct SlabFractionResult {
     double p_node = 0.0;
     double p_bond = 0.0;
-    int largest_component = 0;
-    long long largest_component_edges = 0;
-    int shortest_path_edges = -1;
-    long long hull_length = 0;
-    long long full_boundary_length = 0;
-    long long external_perimeter_length = 0;
-    std::map<long long, long long> hole_size_counts;
-    bool has_fractal_counts = false;
+    std::vector<double> p_node_by_species;
+    std::vector<double> p_bond_by_species;
+    int num_spanning_clusters = 0;
+    long long largest_spanning_sites = 0;
+    long long largest_spanning_bonds = 0;
+    int largest_spanning_sp = -1;
+    long long largest_spanning_hull = 0;
+    long long largest_spanning_full_boundary = 0;
+    int largest_spanning_species = 0;
+    long long largest_spanning_interspecies_bonds = 0;
+    std::vector<long long> other_spanning_sites;
+    std::vector<long long> other_spanning_bonds;
+    std::vector<int> other_spanning_sp;
+    std::vector<long long> other_spanning_hull;
+    std::vector<int> other_spanning_species;
+    std::vector<long long> other_spanning_interspecies_bonds;
+    long long interspecies_contact_bonds = 0;
+    long long interspecies_contact_sites = 0;
+    long long spanning_interspecies_bonds = 0;
+    long long spanning_interspecies_sites = 0;
     FractalCountsSample fractal_counts;
 };
-
-struct SlabHullHoleResult {
-    long long hull_length = 0;
-    long long full_boundary_length = 0;
-    long long external_perimeter_length = 0;
-    std::map<long long, long long> hole_size_counts;
-};
-
-SlabHullHoleResult compute_cylindrical_slab_hull_holes_2d(
-    const int L,
-    const int height,
-    const std::vector<unsigned char>& in_giant)
-{
-    SlabHullHoleResult result;
-    if (L <= 0 || height <= 0) return result;
-    const std::size_t grid_size =
-        static_cast<std::size_t>(L) * static_cast<std::size_t>(height);
-    if (in_giant.size() != grid_size) return result;
-
-    auto idx = [&](const int x, const int y) -> std::uint32_t {
-        return static_cast<std::uint32_t>(y * L + x);
-    };
-
-    std::vector<unsigned char> exterior(grid_size, 0u);
-    std::vector<unsigned char> seen(grid_size, 0u);
-    std::vector<std::uint32_t> queue;
-    queue.reserve(grid_size);
-
-    auto push_exterior_seed = [&](const int x, const int y) {
-        const std::uint32_t seed = idx(x, y);
-        if (in_giant[seed] || exterior[seed]) return;
-        exterior[seed] = 1u;
-        queue.push_back(seed);
-    };
-
-    for (int x = 0; x < L; ++x) {
-        push_exterior_seed(x, 0);
-        if (height > 1) push_exterior_seed(x, height - 1);
-    }
-
-    for (std::size_t head = 0; head < queue.size(); ++head) {
-        const std::uint32_t cur = queue[head];
-        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-        const int cy = static_cast<int>(cur / static_cast<std::uint32_t>(L));
-        const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
-        const int ny_values[4] = {cy, cy, cy - 1, cy + 1};
-        for (int ni = 0; ni < 4; ++ni) {
-            const int ny = ny_values[ni];
-            if (ny < 0 || ny >= height) continue;
-            const std::uint32_t nidx = idx(nx_values[ni], ny);
-            if (in_giant[nidx] || exterior[nidx]) continue;
-            exterior[nidx] = 1u;
-            queue.push_back(nidx);
-        }
-    }
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < L; ++x) {
-            const std::uint32_t seed = idx(x, y);
-            if (in_giant[seed] || exterior[seed] || seen[seed]) continue;
-
-            long long area = 0;
-            bool wraps_periodic_x = false;
-            seen[seed] = 1u;
-            queue.clear();
-            queue.push_back(seed);
-
-            for (std::size_t head = 0; head < queue.size(); ++head) {
-                const std::uint32_t cur = queue[head];
-                const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-                const int cy = static_cast<int>(cur / static_cast<std::uint32_t>(L));
-                ++area;
-
-                const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
-                const int ny_values[4] = {cy, cy, cy - 1, cy + 1};
-                for (int ni = 0; ni < 4; ++ni) {
-                    const int nx = nx_values[ni];
-                    const int ny = ny_values[ni];
-                    if (ny < 0 || ny >= height) continue;
-                    if ((cx == 0 && nx == L - 1) || (cx == L - 1 && nx == 0)) {
-                        wraps_periodic_x = true;
-                    }
-                    const std::uint32_t nidx = idx(nx, ny);
-                    if (in_giant[nidx] || exterior[nidx] || seen[nidx]) continue;
-                    seen[nidx] = 1u;
-                    queue.push_back(nidx);
-                }
-            }
-
-            if (!wraps_periodic_x) {
-                ++result.hole_size_counts[area];
-            }
-        }
-    }
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < L; ++x) {
-            const std::uint32_t cur = idx(x, y);
-            if (!in_giant[cur]) continue;
-
-            const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
-            const int ny_values[4] = {y, y, y - 1, y + 1};
-            for (int ni = 0; ni < 4; ++ni) {
-                const int ny = ny_values[ni];
-                if (ny < 0 || ny >= height) {
-                    ++result.full_boundary_length;
-                    ++result.hull_length;
-                    ++result.external_perimeter_length;
-                    continue;
-                }
-                const std::uint32_t nidx = idx(nx_values[ni], ny);
-                if (!in_giant[nidx]) {
-                    ++result.full_boundary_length;
-                    if (exterior[nidx]) {
-                        ++result.hull_length;
-                        ++result.external_perimeter_length;
-                    }
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
-SlabHullHoleResult compute_abs_slab_hull_holes(
-    const int dim,
-    const int L,
-    const int bottom,
-    const int top,
-    const std::unordered_set<std::uint64_t, AbsSiteKeyHash>& in_giant)
-{
-    SlabHullHoleResult result;
-    if ((dim != 2 && dim != 3) || L <= 0 || top < bottom || in_giant.empty()) {
-        return result;
-    }
-
-    auto in_bounds = [&](const int x, const int y, const int z) -> bool {
-        if (x < 0 || x >= L) return false;
-        if (dim == 2) return y >= bottom && y <= top && z == 0;
-        return y >= 0 && y < L && z >= bottom && z <= top;
-    };
-    auto make_key = [&](const int x, const int y, const int z) -> std::uint64_t {
-        return dim == 2 ? abs_site_key(x, y, 0) : abs_site_key(x, y, z);
-    };
-    auto collect_complement_neighbors =
-        [&](const std::uint64_t key, std::uint64_t out[6], int& count) {
-            int x = 0, y = 0, z = 0;
-            decode_abs_site_key(key, x, y, z);
-            count = 0;
-
-            out[count++] = make_key((x + L - 1) % L, y, z);
-            out[count++] = make_key((x + 1) % L, y, z);
-            if (dim == 2) {
-                if (y > bottom) out[count++] = make_key(x, y - 1, 0);
-                if (y < top) out[count++] = make_key(x, y + 1, 0);
-                return;
-            }
-
-            out[count++] = make_key(x, (y + L - 1) % L, z);
-            out[count++] = make_key(x, (y + 1) % L, z);
-            if (z > bottom) out[count++] = make_key(x, y, z - 1);
-            if (z < top) out[count++] = make_key(x, y, z + 1);
-        };
-
-    std::unordered_set<std::uint64_t, AbsSiteKeyHash> exterior;
-    std::vector<std::uint64_t> queue;
-    queue.reserve(1024);
-    auto push_exterior_seed = [&](const int x, const int y, const int z) {
-        if (!in_bounds(x, y, z)) return;
-        const std::uint64_t key = make_key(x, y, z);
-        if (in_giant.find(key) != in_giant.end()) return;
-        if (exterior.insert(key).second) {
-            queue.push_back(key);
-        }
-    };
-
-    if (dim == 2) {
-        for (int x = 0; x < L; ++x) {
-            push_exterior_seed(x, bottom, 0);
-            if (top > bottom) push_exterior_seed(x, top, 0);
-        }
-    } else {
-        for (int y = 0; y < L; ++y) {
-            for (int x = 0; x < L; ++x) {
-                push_exterior_seed(x, y, bottom);
-                if (top > bottom) push_exterior_seed(x, y, top);
-            }
-        }
-    }
-
-    std::uint64_t neigh[6];
-    int nneigh = 0;
-    for (std::size_t head = 0; head < queue.size(); ++head) {
-        collect_complement_neighbors(queue[head], neigh, nneigh);
-        for (int ni = 0; ni < nneigh; ++ni) {
-            if (in_giant.find(neigh[ni]) != in_giant.end()) continue;
-            if (exterior.insert(neigh[ni]).second) {
-                queue.push_back(neigh[ni]);
-            }
-        }
-    }
-
-    std::unordered_set<std::uint64_t, AbsSiteKeyHash> seen_void;
-    seen_void.reserve(exterior.size());
-    auto visit_void_component = [&](const std::uint64_t seed) {
-        long long volume = 0;
-        queue.clear();
-        queue.push_back(seed);
-        seen_void.insert(seed);
-        for (std::size_t head = 0; head < queue.size(); ++head) {
-            ++volume;
-            collect_complement_neighbors(queue[head], neigh, nneigh);
-            for (int ni = 0; ni < nneigh; ++ni) {
-                const std::uint64_t next = neigh[ni];
-                if (in_giant.find(next) != in_giant.end() ||
-                    exterior.find(next) != exterior.end() ||
-                    seen_void.find(next) != seen_void.end()) {
-                    continue;
-                }
-                seen_void.insert(next);
-                queue.push_back(next);
-            }
-        }
-        return volume;
-    };
-
-    if (dim == 2) {
-        for (int y = bottom; y <= top; ++y) {
-            for (int x = 0; x < L; ++x) {
-                const std::uint64_t key = make_key(x, y, 0);
-                if (in_giant.find(key) != in_giant.end() ||
-                    exterior.find(key) != exterior.end() ||
-                    seen_void.find(key) != seen_void.end()) {
-                    continue;
-                }
-                ++result.hole_size_counts[visit_void_component(key)];
-            }
-        }
-    } else {
-        for (int z = bottom; z <= top; ++z) {
-            for (int y = 0; y < L; ++y) {
-                for (int x = 0; x < L; ++x) {
-                    const std::uint64_t key = make_key(x, y, z);
-                    if (in_giant.find(key) != in_giant.end() ||
-                        exterior.find(key) != exterior.end() ||
-                        seen_void.find(key) != seen_void.end()) {
-                        continue;
-                    }
-                    ++result.hole_size_counts[visit_void_component(key)];
-                }
-            }
-        }
-    }
-
-    for (const std::uint64_t key : in_giant) {
-        int x = 0, y = 0, z = 0;
-        decode_abs_site_key(key, x, y, z);
-        if (dim == 2) {
-            const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
-            const int ny_values[4] = {y, y, y - 1, y + 1};
-            for (int ni = 0; ni < 4; ++ni) {
-                const int ny = ny_values[ni];
-                if (ny < bottom || ny > top) {
-                    ++result.full_boundary_length;
-                    ++result.hull_length;
-                    ++result.external_perimeter_length;
-                    continue;
-                }
-                const std::uint64_t nkey = make_key(nx_values[ni], ny, 0);
-                if (in_giant.find(nkey) == in_giant.end()) {
-                    ++result.full_boundary_length;
-                    if (exterior.find(nkey) != exterior.end()) {
-                        ++result.hull_length;
-                        ++result.external_perimeter_length;
-                    }
-                }
-            }
-        } else {
-            const int nx_values[6] = {(x + L - 1) % L, (x + 1) % L, x, x, x, x};
-            const int ny_values[6] = {y, y, (y + L - 1) % L, (y + 1) % L, y, y};
-            const int nz_values[6] = {z, z, z, z, z - 1, z + 1};
-            for (int ni = 0; ni < 6; ++ni) {
-                const int nz = nz_values[ni];
-                if (nz < bottom || nz > top) {
-                    ++result.full_boundary_length;
-                    ++result.hull_length;
-                    ++result.external_perimeter_length;
-                    continue;
-                }
-                const std::uint64_t nkey = make_key(nx_values[ni], ny_values[ni], nz);
-                if (in_giant.find(nkey) == in_giant.end()) {
-                    ++result.full_boundary_length;
-                    if (exterior.find(nkey) != exterior.end()) {
-                        ++result.hull_length;
-                        ++result.external_perimeter_length;
-                    }
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
-bool fractal_counts_eligible(const int dim, const int L)
-{
-    if (const char* force = std::getenv("SOP_FRACTAL_FORCE_COUNTS")) {
-        if (std::string(force) == "1" || std::string(force) == "true") {
-            return true;
-        }
-    }
-    return (dim == 2 && L >= 16384) || (dim == 3 && L >= 1024);
-}
-
-int env_int_or_default(const char* name, const int fallback)
-{
-    if (const char* value = std::getenv(name)) {
-        return std::stoi(value);
-    }
-    return fallback;
-}
-
-double env_double_or_default(const char* name, const double fallback)
-{
-    if (const char* value = std::getenv(name)) {
-        return std::stod(value);
-    }
-    return fallback;
-}
-
-std::uint64_t box_key3(const int bx, const int by, const int bz)
-{
-    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(bz)) << 42) ^
-           (static_cast<std::uint64_t>(static_cast<std::uint32_t>(by)) << 21) ^
-           static_cast<std::uint64_t>(static_cast<std::uint32_t>(bx));
-}
-
-std::vector<double> make_log_bin_edges(const double r_min,
-                                       const double r_max,
-                                       const int num_bins)
-{
-    std::vector<double> edges(static_cast<std::size_t>(num_bins) + 1u, r_min);
-    if (num_bins <= 0 || r_min <= 0.0 || r_max <= r_min) return edges;
-    const double ratio = std::pow(r_max / r_min, 1.0 / static_cast<double>(num_bins));
-    for (int i = 0; i <= num_bins; ++i) {
-        edges[static_cast<std::size_t>(i)] = r_min * std::pow(ratio, i);
-    }
-    edges.back() = r_max;
-    return edges;
-}
-
-std::vector<int> generate_log_int_scales(const int vmin_in, const int vmax_in, const int target_n)
-{
-    const int vmin = std::max(1, vmin_in);
-    const int vmax = std::max(vmin, vmax_in);
-    const int total_possible = vmax - vmin + 1;
-    if (total_possible <= target_n) {
-        std::vector<int> all_vals(static_cast<std::size_t>(total_possible));
-        for (int i = 0; i < total_possible; ++i) all_vals[static_cast<std::size_t>(i)] = vmin + i;
-        return all_vals;
-    }
-
-    std::vector<int> rounded;
-    int curr_n = target_n;
-    while (curr_n <= 3 * target_n) {
-        rounded.clear();
-        const double ratio = std::pow(static_cast<double>(vmax) / static_cast<double>(vmin),
-                                      1.0 / static_cast<double>(curr_n - 1));
-        int prev = -1;
-        for (int i = 0; i < curr_n; ++i) {
-            const int val = static_cast<int>(std::llround(static_cast<double>(vmin) * std::pow(ratio, i)));
-            const int clamped = std::min(vmax, std::max(vmin, val));
-            if (clamped != prev) {
-                rounded.push_back(clamped);
-                prev = clamped;
-            }
-        }
-        if (static_cast<int>(rounded.size()) >= target_n ||
-            static_cast<int>(rounded.size()) == total_possible) {
-            break;
-        }
-        curr_n += 5;
-    }
-
-    if (static_cast<int>(rounded.size()) > target_n) {
-        std::vector<int> downsampled;
-        downsampled.reserve(static_cast<std::size_t>(target_n));
-        const double step = static_cast<double>(rounded.size() - 1) / static_cast<double>(target_n - 1);
-        int prev = -1;
-        for (int i = 0; i < target_n; ++i) {
-            const int idx = static_cast<int>(std::llround(i * step));
-            const int val = rounded[static_cast<std::size_t>(idx)];
-            if (val != prev) {
-                downsampled.push_back(val);
-                prev = val;
-            }
-        }
-        if (!downsampled.empty() && downsampled.back() != vmax) {
-            downsampled.back() = vmax;
-        }
-        return downsampled;
-    }
-
-    return rounded;
-}
-
-std::vector<int> default_box_counting_epsilons(const int dim, const int L)
-{
-    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_EPSILONS", 15);
-    const int eps_min = env_int_or_default("SOP_FRACTAL_EPSILON_MIN", 2);
-    const int eps_max = env_int_or_default("SOP_FRACTAL_EPSILON_MAX", std::max(eps_min, L / 4));
-    return generate_log_int_scales(eps_min, eps_max, target_n);
-}
-
-std::vector<int> default_shortest_path_radii(const int dim, const int L)
-{
-    const int target_n = env_int_or_default("SOP_FRACTAL_NUM_RADII", 15);
-    const int r_min = env_int_or_default("SOP_FRACTAL_RADIUS_MIN", 2);
-    const int r_max = env_int_or_default("SOP_FRACTAL_RADIUS_MAX", std::max(r_min, L / 4));
-    return generate_log_int_scales(r_min, r_max, target_n);
-}
-
-std::vector<int> default_fractal_epsilons(const int dim, const int L = 0)
-{
-    if (L > 0) {
-        return default_box_counting_epsilons(dim, L);
-    }
-    if (dim == 2) {
-        return {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
-    }
-    return {2, 4, 8, 16, 32, 64, 128, 256};
-}
-
-std::vector<std::vector<int>> make_fractal_offsets(const int dim,
-                                                   const int epsilon,
-                                                   const int n_offsets,
-                                                   std::mt19937& rng)
-{
-    std::vector<std::vector<int>> offsets;
-    offsets.reserve(static_cast<std::size_t>(std::max(1, n_offsets)));
-    offsets.push_back(std::vector<int>(static_cast<std::size_t>(dim), 0));
-    std::uniform_int_distribution<int> dist(0, std::max(0, epsilon - 1));
-    while (static_cast<int>(offsets.size()) < n_offsets) {
-        std::vector<int> row(static_cast<std::size_t>(dim), 0);
-        for (int d = 0; d < dim; ++d) row[static_cast<std::size_t>(d)] = dist(rng);
-        offsets.push_back(std::move(row));
-    }
-    return offsets;
-}
-
-void init_distance_bins(FractalOriginDistances& origin,
-                        const std::vector<double>& edges)
-{
-    const int n = std::max(0, static_cast<int>(edges.size()) - 1);
-    origin.bins.assign(static_cast<std::size_t>(n), {});
-    for (int i = 0; i < n; ++i) {
-        auto& bin = origin.bins[static_cast<std::size_t>(i)];
-        bin.r_lower = edges[static_cast<std::size_t>(i)];
-        bin.r_upper = edges[static_cast<std::size_t>(i + 1)];
-        bin.r_center = std::sqrt(bin.r_lower * bin.r_upper);
-    }
-}
-
-int find_bin_index(const std::vector<double>& edges, const double r)
-{
-    if (edges.size() < 2 || r < edges.front() || r > edges.back()) return -1;
-    if (r == edges.back()) return static_cast<int>(edges.size()) - 2;
-    const auto it = std::upper_bound(edges.begin(), edges.end(), r);
-    const int idx = static_cast<int>(std::distance(edges.begin(), it)) - 1;
-    return (idx >= 0 && idx + 1 < static_cast<int>(edges.size())) ? idx : -1;
-}
-
-void accumulate_distance_bin(FractalDistanceBin& bin,
-                             const double r,
-                             const int ell)
-{
-    ++bin.count;
-    bin.sum_r += r;
-    bin.sum_r2 += r * r;
-    bin.sum_ell += static_cast<double>(ell);
-    bin.sum_ell2 += static_cast<double>(ell) * static_cast<double>(ell);
-    bin.sum_r_ell += r * static_cast<double>(ell);
-    bin.min_r = std::min(bin.min_r, r);
-    bin.max_r = std::max(bin.max_r, r);
-    if (ell < bin.min_ell ||
-        (ell == bin.min_ell &&
-         (!std::isfinite(bin.r_at_min_ell) || r < bin.r_at_min_ell))) {
-        bin.min_ell = ell;
-        bin.r_at_min_ell = r;
-    }
-    bin.max_ell = std::max(bin.max_ell, ell);
-}
-
-long long count_boxes_2d_local_indices(const int L,
-                                       const int epsilon,
-                                       const std::vector<int>& offset,
-                                       const std::vector<std::uint32_t>& indices)
-{
-    const int nx_boxes = (L + epsilon - 1) / epsilon;
-    const int ny_boxes = (L + 2 * epsilon - 2) / epsilon;
-    std::vector<unsigned char> marked(
-        static_cast<std::size_t>(nx_boxes) * static_cast<std::size_t>(ny_boxes), 0u);
-    std::vector<std::uint32_t> touched;
-    touched.reserve(std::min<std::size_t>(indices.size(), 1024u * 1024u));
-    long long count = 0;
-
-    for (std::uint32_t idx : indices) {
-        const int x = static_cast<int>(idx % static_cast<std::uint32_t>(L));
-        const int y = static_cast<int>(idx / static_cast<std::uint32_t>(L));
-        const int bx = ((x + offset[0]) % L) / epsilon;
-        const int by = (y + offset[1]) / epsilon;
-        const std::uint32_t box = static_cast<std::uint32_t>(by * nx_boxes + bx);
-        if (!marked[box]) {
-            marked[box] = 1u;
-            touched.push_back(box);
-            ++count;
-        }
-    }
-
-    return count;
-}
-
-long long count_boxes_abs_keys(const int dim,
-                               const int L,
-                               const int bottom,
-                               const int epsilon,
-                               const std::vector<int>& offset,
-                               const std::vector<std::uint64_t>& keys)
-{
-    const int boxes_x = (L + epsilon - 1) / epsilon;
-    const int boxes_y = dim == 2 ? ((L + 2 * epsilon - 2) / epsilon) : boxes_x;
-    const int boxes_z = (dim == 2) ? 1 : ((L + 2 * epsilon - 2) / epsilon);
-    std::vector<unsigned char> marked(
-        static_cast<std::size_t>(boxes_x) *
-        static_cast<std::size_t>(boxes_y) *
-        static_cast<std::size_t>(boxes_z), 0u);
-    long long count = 0;
-
-    for (const std::uint64_t key : keys) {
-        int x = 0, y = 0, z = 0;
-        decode_abs_site_key(key, x, y, z);
-        const int bx = ((x + offset[0]) % L) / epsilon;
-        int by = 0;
-        int bz = 0;
-        if (dim == 2) {
-            by = (y - bottom + offset[1]) / epsilon;
-        } else {
-            by = ((y + offset[1]) % L) / epsilon;
-            bz = (z - bottom + offset[2]) / epsilon;
-        }
-        const std::size_t box =
-            static_cast<std::size_t>(bx) +
-            static_cast<std::size_t>(boxes_x) *
-                (static_cast<std::size_t>(by) +
-                 static_cast<std::size_t>(boxes_y) * static_cast<std::size_t>(bz));
-        if (!marked[box]) {
-            marked[box] = 1u;
-            ++count;
-        }
-    }
-
-    return count;
-}
-
-double path_point_distance_2d(const int L,
-                              const std::uint32_t a,
-                              const std::uint32_t b)
-{
-    const int ax = static_cast<int>(a % static_cast<std::uint32_t>(L));
-    const int ay = static_cast<int>(a / static_cast<std::uint32_t>(L));
-    const int bx = static_cast<int>(b % static_cast<std::uint32_t>(L));
-    const int by = static_cast<int>(b / static_cast<std::uint32_t>(L));
-    const int dx_raw = std::abs(ax - bx);
-    const int dx = std::min(dx_raw, L - dx_raw);
-    const int dy = std::abs(ay - by);
-    return std::sqrt(static_cast<double>(dx * dx + dy * dy));
-}
-
-double path_point_distance_abs(const int dim,
-                               const int L,
-                               const std::uint64_t a,
-                               const std::uint64_t b)
-{
-    int ax = 0, ay = 0, az = 0;
-    int bx = 0, by = 0, bz = 0;
-    decode_abs_site_key(a, ax, ay, az);
-    decode_abs_site_key(b, bx, by, bz);
-    const int dx_raw = std::abs(ax - bx);
-    const int dx = std::min(dx_raw, L - dx_raw);
-    double r2 = static_cast<double>(dx * dx);
-    if (dim == 2) {
-        const int dy = std::abs(ay - by);
-        r2 += static_cast<double>(dy * dy);
-    } else {
-        const int dy_raw = std::abs(ay - by);
-        const int dy = std::min(dy_raw, L - dy_raw);
-        const int dz = std::abs(az - bz);
-        r2 += static_cast<double>(dy * dy + dz * dz);
-    }
-    return std::sqrt(r2);
-}
-
-long long count_yardsticks_2d(const int L,
-                              const std::vector<std::uint32_t>& path,
-                              const int R)
-{
-    if (R <= 0 || path.size() < 2) return 0;
-    long long count = 0;
-    std::size_t pos = 0;
-    while (pos + 1 < path.size()) {
-        std::size_t next = pos + 1;
-        while (next < path.size() &&
-               path_point_distance_2d(L, path[pos], path[next]) < static_cast<double>(R)) {
-            ++next;
-        }
-        ++count;
-        if (next >= path.size()) break;
-        pos = next;
-    }
-    return count;
-}
-
-long long count_yardsticks_abs(const int dim,
-                               const int L,
-                               const std::vector<std::uint64_t>& path,
-                               const int R)
-{
-    if (R <= 0 || path.size() < 2) return 0;
-    long long count = 0;
-    std::size_t pos = 0;
-    while (pos + 1 < path.size()) {
-        std::size_t next = pos + 1;
-        while (next < path.size() &&
-               path_point_distance_abs(dim, L, path[pos], path[next]) < static_cast<double>(R)) {
-            ++next;
-        }
-        ++count;
-        if (next >= path.size()) break;
-        pos = next;
-    }
-    return count;
-}
-
-FractalMinimumPathYardstick compute_minimum_path_yardstick_2d(
-    const int L,
-    const int bottom,
-    const int top,
-    const std::vector<unsigned char>& in_giant,
-    const std::function<bool(int, int, int, int)>& can_traverse,
-    const std::vector<int>& radii)
-{
-    FractalMinimumPathYardstick out;
-    const int h_count = top - bottom + 1;
-    if (h_count != L || in_giant.empty()) {
-        out.reason_if_undefined = "invalid_window_or_empty_component";
-        return out;
-    }
-
-    const std::uint32_t none = std::numeric_limits<std::uint32_t>::max();
-    std::vector<int> dist(in_giant.size(), -1);
-    std::vector<std::uint32_t> parent(in_giant.size(), none);
-    std::vector<std::uint32_t> queue;
-    queue.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
-
-    for (int x = 0; x < L; ++x) {
-        const std::uint32_t idx = static_cast<std::uint32_t>(x);
-        if (!in_giant[idx]) continue;
-        dist[idx] = 0;
-        parent[idx] = idx;
-        queue.push_back(idx);
-    }
-    if (queue.empty()) {
-        out.reason_if_undefined = "largest_component_does_not_touch_base";
-        return out;
-    }
-
-    std::uint32_t target = none;
-    for (std::size_t head = 0; head < queue.size() && target == none; ++head) {
-        const std::uint32_t cur = queue[head];
-        const int cy_local = static_cast<int>(cur / static_cast<std::uint32_t>(L));
-        if (cy_local == h_count - 1) {
-            target = cur;
-            break;
-        }
-        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-        const int cy_abs = bottom + cy_local;
-        const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
-        const int ny_values[4] = {cy_abs, cy_abs, cy_abs - 1, cy_abs + 1};
-        for (int ni = 0; ni < 4; ++ni) {
-            const int ny_abs = ny_values[ni];
-            if (ny_abs < bottom || ny_abs > top) continue;
-            if (!can_traverse(cx, cy_abs, nx_values[ni], ny_abs)) continue;
-            const std::uint32_t nidx = static_cast<std::uint32_t>(
-                (ny_abs - bottom) * L + nx_values[ni]);
-            if (!in_giant[nidx] || dist[nidx] >= 0) continue;
-            dist[nidx] = dist[cur] + 1;
-            parent[nidx] = cur;
-            queue.push_back(nidx);
-        }
-    }
-
-    if (target == none) {
-        out.reason_if_undefined = "largest_component_does_not_touch_top";
-        return out;
-    }
-
-    std::vector<std::uint32_t> path;
-    for (std::uint32_t cur = target; ; cur = parent[cur]) {
-        path.push_back(cur);
-        if (parent[cur] == cur) break;
-    }
-    std::reverse(path.begin(), path.end());
-
-    const std::uint32_t base = path.front();
-    out.defined = true;
-    out.path_length = static_cast<int>(path.size()) - 1;
-    out.base_site = base;
-    out.top_site = target;
-    out.base_coordinates = {
-        static_cast<int>(base % static_cast<std::uint32_t>(L)),
-        bottom + static_cast<int>(base / static_cast<std::uint32_t>(L))
-    };
-    out.top_coordinates = {
-        static_cast<int>(target % static_cast<std::uint32_t>(L)),
-        bottom + static_cast<int>(target / static_cast<std::uint32_t>(L))
-    };
-    out.counts.reserve(radii.size());
-    for (const int R : radii) {
-        out.counts.push_back({R, count_yardsticks_2d(L, path, R)});
-    }
-    return out;
-}
-
-FractalMinimumPathYardstick compute_minimum_path_yardstick_sparse(
-    const int dim,
-    const int L,
-    const int bottom,
-    const int top,
-    const bool is_node,
-    const std::unordered_set<std::uint64_t, AbsSiteKeyHash>& in_giant,
-    const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds,
-    const std::vector<int>& radii)
-{
-    FractalMinimumPathYardstick out;
-    if (top < bottom || in_giant.empty()) {
-        out.reason_if_undefined = "invalid_window_or_empty_component";
-        return out;
-    }
-
-    std::unordered_map<std::uint64_t, int, AbsSiteKeyHash> dist;
-    std::unordered_map<std::uint64_t, std::uint64_t, AbsSiteKeyHash> parent;
-    dist.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
-    parent.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
-    std::vector<std::uint64_t> queue;
-    queue.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
-
-    for (const std::uint64_t key : in_giant) {
-        if (abs_grow_coord_from_key(key, dim) != bottom) continue;
-        dist.emplace(key, 0);
-        parent.emplace(key, key);
-        queue.push_back(key);
-    }
-    if (queue.empty()) {
-        out.reason_if_undefined = "largest_component_does_not_touch_base";
-        return out;
-    }
-
-    std::uint64_t target = 0;
-    bool found = false;
-    std::uint64_t neigh[6];
-    int nneigh = 0;
-    for (std::size_t head = 0; head < queue.size() && !found; ++head) {
-        const std::uint64_t u = queue[head];
-        if (abs_grow_coord_from_key(u, dim) == top) {
-            target = u;
-            found = true;
-            break;
-        }
-        collect_abs_neighbors(dim, L, u, neigh, nneigh);
-        for (int ni = 0; ni < nneigh; ++ni) {
-            const std::uint64_t v = neigh[ni];
-            const int hv = abs_grow_coord_from_key(v, dim);
-            if (hv < bottom || hv > top) continue;
-            if (in_giant.find(v) == in_giant.end()) continue;
-            if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
-                continue;
-            }
-            if (dist.find(v) != dist.end()) continue;
-            dist.emplace(v, dist[u] + 1);
-            parent.emplace(v, u);
-            queue.push_back(v);
-        }
-    }
-
-    if (!found) {
-        out.reason_if_undefined = "largest_component_does_not_touch_top";
-        return out;
-    }
-
-    std::vector<std::uint64_t> path;
-    for (std::uint64_t cur = target; ; cur = parent[cur]) {
-        path.push_back(cur);
-        if (parent[cur] == cur) break;
-    }
-    std::reverse(path.begin(), path.end());
-
-    int bx = 0, by = 0, bz = 0;
-    int tx = 0, ty = 0, tz = 0;
-    decode_abs_site_key(path.front(), bx, by, bz);
-    decode_abs_site_key(target, tx, ty, tz);
-    out.defined = true;
-    out.path_length = static_cast<int>(path.size()) - 1;
-    out.base_site = path.front();
-    out.top_site = target;
-    out.base_coordinates = dim == 2
-        ? std::vector<int>{bx, by}
-        : std::vector<int>{bx, by, bz};
-    out.top_coordinates = dim == 2
-        ? std::vector<int>{tx, ty}
-        : std::vector<int>{tx, ty, tz};
-    out.counts.reserve(radii.size());
-    for (const int R : radii) {
-        out.counts.push_back({R, count_yardsticks_abs(dim, L, path, R)});
-    }
-    return out;
-}
-
-FractalClusterCounts compute_fractal_counts_2d(
-    const int L,
-    const int bottom,
-    const int top,
-    const bool is_node,
-    const int seed,
-    const int sample_index,
-    const int t_stab,
-    const long long total_occupied_sites,
-    const long long total_active_bonds,
-    const long long largest_edges,
-    const std::vector<unsigned char>& in_giant,
-    const std::function<bool(int, int, int, int)>& can_traverse)
-{
-    FractalClusterCounts out;
-    const int h_count = top - bottom + 1;
-    if (!fractal_counts_eligible(2, L) || h_count != L || in_giant.empty()) {
-        return out;
-    }
-
-    out.eligible = true;
-    out.sample_index = sample_index;
-    out.dim = 2;
-    out.L = L;
-    out.anchor_z = bottom;
-    out.t_stab = t_stab;
-    out.type_percolation = is_node ? "node" : "bond";
-    out.boundary_conditions = {"x:periodic", "y:open"};
-    out.total_occupied_sites = total_occupied_sites;
-    out.total_active_bonds = total_active_bonds;
-    out.largest_component_bonds = largest_edges;
-
-    std::vector<std::uint32_t> giant_sites;
-    giant_sites.reserve(in_giant.size() / 2u);
-    for (std::uint32_t idx = 0; idx < in_giant.size(); ++idx) {
-        if (in_giant[static_cast<std::size_t>(idx)]) {
-            giant_sites.push_back(idx);
-        }
-    }
-    out.largest_component_sites = static_cast<long long>(giant_sites.size());
-    if (!giant_sites.empty()) out.largest_component_seed = giant_sites.front();
-
-    const int requested_origins_default = 64;
-    out.requested_origins = env_int_or_default("SOP_FRACTAL_ORIGINS", requested_origins_default);
-    out.r_min = env_double_or_default("SOP_FRACTAL_R_MIN", 4.0);
-    out.r_max = env_double_or_default("SOP_FRACTAL_R_MAX", static_cast<double>(L) / 4.0);
-    out.num_bins = env_int_or_default("SOP_FRACTAL_NUM_BINS", 30);
-    out.max_chemical_distance = env_int_or_default(
-        "SOP_FRACTAL_MAX_ELL",
-        std::max(1, static_cast<int>(std::ceil(4.0 * out.r_max))));
-    out.chemical_seed = env_int_or_default("SOP_FRACTAL_CHEMICAL_SEED",
-                                           seed + 1000003 * (sample_index + 1));
-    out.bin_edges = make_log_bin_edges(out.r_min, out.r_max, out.num_bins);
-
-    std::mt19937 chem_rng(static_cast<std::uint32_t>(out.chemical_seed));
-    std::shuffle(giant_sites.begin(), giant_sites.end(), chem_rng);
-    out.effective_origins = std::min(
-        std::max(0, out.requested_origins),
-        static_cast<int>(giant_sites.size()));
-
-    std::vector<int> dist(in_giant.size(), -1);
-    std::vector<std::uint32_t> queue;
-    std::vector<std::uint32_t> touched;
-    queue.reserve(std::min<std::size_t>(giant_sites.size(), 1024u * 1024u));
-    touched.reserve(std::min<std::size_t>(giant_sites.size(), 1024u * 1024u));
-
-    for (int oi = 0; oi < out.effective_origins; ++oi) {
-        const std::uint32_t origin_idx = giant_sites[static_cast<std::size_t>(oi)];
-        const int ox = static_cast<int>(origin_idx % static_cast<std::uint32_t>(L));
-        const int oy_local = static_cast<int>(origin_idx / static_cast<std::uint32_t>(L));
-        FractalOriginDistances origin;
-        origin.site_id = origin_idx;
-        origin.coordinates = {ox, bottom + oy_local};
-        init_distance_bins(origin, out.bin_edges);
-
-        queue.clear();
-        touched.clear();
-        queue.push_back(origin_idx);
-        touched.push_back(origin_idx);
-        dist[origin_idx] = 0;
-        for (std::size_t head = 0; head < queue.size(); ++head) {
-            const std::uint32_t cur = queue[head];
-            if (dist[cur] >= out.max_chemical_distance) continue;
-            const int cy_local = static_cast<int>(cur / static_cast<std::uint32_t>(L));
-            const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-            const int cy_abs = bottom + cy_local;
-            const int nx_values[4] = {(cx + L - 1) % L, (cx + 1) % L, cx, cx};
-            const int ny_values[4] = {cy_abs, cy_abs, cy_abs - 1, cy_abs + 1};
-            for (int ni = 0; ni < 4; ++ni) {
-                const int ny_abs = ny_values[ni];
-                if (ny_abs < bottom || ny_abs > top) continue;
-                if (!can_traverse(cx, cy_abs, nx_values[ni], ny_abs)) continue;
-                const std::uint32_t nidx = static_cast<std::uint32_t>(
-                    (ny_abs - bottom) * L + nx_values[ni]);
-                if (!in_giant[nidx] || dist[nidx] >= 0) continue;
-                dist[nidx] = dist[cur] + 1;
-                touched.push_back(nidx);
-                queue.push_back(nidx);
-            }
-        }
-
-        for (const std::uint32_t idx : touched) {
-            const int ell = dist[idx];
-            if (ell <= 0) continue;
-            const int x = static_cast<int>(idx % static_cast<std::uint32_t>(L));
-            const int y_local = static_cast<int>(idx / static_cast<std::uint32_t>(L));
-            const int dx_raw = std::abs(x - ox);
-            const int dx = std::min(dx_raw, L - dx_raw);
-            const int dy = std::abs(y_local - oy_local);
-            const double r = std::sqrt(static_cast<double>(dx * dx + dy * dy));
-            const int bin_idx = find_bin_index(out.bin_edges, r);
-            if (bin_idx < 0) {
-                ++out.pairs_discarded_out_of_range;
-                continue;
-            }
-            ++out.total_pairs_processed;
-            accumulate_distance_bin(origin.bins[static_cast<std::size_t>(bin_idx)], r, ell);
-        }
-        for (const std::uint32_t idx : touched) dist[idx] = -1;
-        out.origins.push_back(std::move(origin));
-    }
-
-    out.epsilons = default_box_counting_epsilons(2, L);
-    const std::vector<int> radii = default_shortest_path_radii(2, L);
-    out.minimum_path_yardstick = compute_minimum_path_yardstick_2d(
-        L, bottom, top, in_giant, can_traverse, radii);
-    out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
-                                         seed + 2000003 * (sample_index + 1));
-    const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);
-    std::mt19937 offset_rng(static_cast<std::uint32_t>(out.offset_seed));
-    for (const int eps : out.epsilons) {
-        const auto offsets = make_fractal_offsets(2, eps, n_offsets, offset_rng);
-        for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
-            const auto& off = offsets[static_cast<std::size_t>(offset_id)];
-            out.component_box_counts.push_back({eps, offset_id, off,
-                                                count_boxes_2d_local_indices(
-                                                    L, eps, off, giant_sites)});
-        }
-    }
-
-    return out;
-}
-
-FractalClusterCounts compute_fractal_counts_sparse(
-    const int dim,
-    const int L,
-    const int bottom,
-    const int top,
-    const bool is_node,
-    const int seed,
-    const int sample_index,
-    const int t_stab,
-    const long long total_occupied_sites,
-    const long long total_active_bonds,
-    const long long largest_edges,
-    const std::unordered_set<std::uint64_t, AbsSiteKeyHash>& in_giant,
-    const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds)
-{
-    FractalClusterCounts out;
-    if (!fractal_counts_eligible(dim, L) || top < bottom || in_giant.empty()) {
-        return out;
-    }
-
-    out.eligible = true;
-    out.sample_index = sample_index;
-    out.dim = dim;
-    out.L = L;
-    out.anchor_z = bottom;
-    out.t_stab = t_stab;
-    out.type_percolation = is_node ? "node" : "bond";
-    out.boundary_conditions = dim == 2
-        ? std::vector<std::string>{"x:periodic", "y:open"}
-        : std::vector<std::string>{"x:periodic", "y:periodic", "z:open"};
-    out.total_occupied_sites = total_occupied_sites;
-    out.total_active_bonds = total_active_bonds;
-    out.largest_component_sites = static_cast<long long>(in_giant.size());
-    out.largest_component_bonds = largest_edges;
-    out.largest_component_seed = *std::min_element(in_giant.begin(), in_giant.end());
-
-    std::vector<std::uint64_t> giant_sites(in_giant.begin(), in_giant.end());
-    std::sort(giant_sites.begin(), giant_sites.end());
-    out.requested_origins = env_int_or_default("SOP_FRACTAL_ORIGINS", dim == 2 ? 64 : 32);
-    out.r_min = env_double_or_default("SOP_FRACTAL_R_MIN", 4.0);
-    out.r_max = env_double_or_default("SOP_FRACTAL_R_MAX", static_cast<double>(L) / 4.0);
-    out.num_bins = env_int_or_default("SOP_FRACTAL_NUM_BINS", dim == 2 ? 30 : 24);
-    out.max_chemical_distance = env_int_or_default(
-        "SOP_FRACTAL_MAX_ELL",
-        std::max(1, static_cast<int>(std::ceil(4.0 * out.r_max))));
-    out.chemical_seed = env_int_or_default("SOP_FRACTAL_CHEMICAL_SEED",
-                                           seed + 1000003 * (sample_index + 1));
-    out.bin_edges = make_log_bin_edges(out.r_min, out.r_max, out.num_bins);
-
-    std::mt19937 chem_rng(static_cast<std::uint32_t>(out.chemical_seed));
-    std::shuffle(giant_sites.begin(), giant_sites.end(), chem_rng);
-    out.effective_origins = std::min(
-        std::max(0, out.requested_origins),
-        static_cast<int>(giant_sites.size()));
-
-    std::uint64_t neigh[6];
-    int nneigh = 0;
-    for (int oi = 0; oi < out.effective_origins; ++oi) {
-        const std::uint64_t origin_key = giant_sites[static_cast<std::size_t>(oi)];
-        int ox = 0, oy = 0, oz = 0;
-        decode_abs_site_key(origin_key, ox, oy, oz);
-        FractalOriginDistances origin;
-        origin.site_id = origin_key;
-        origin.coordinates = dim == 2
-            ? std::vector<int>{ox, oy}
-            : std::vector<int>{ox, oy, oz};
-        init_distance_bins(origin, out.bin_edges);
-
-        std::unordered_map<std::uint64_t, int, AbsSiteKeyHash> dist;
-        dist.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
-        std::vector<std::uint64_t> queue;
-        queue.reserve(std::min<std::size_t>(in_giant.size(), 1024u * 1024u));
-        queue.push_back(origin_key);
-        dist.emplace(origin_key, 0);
-        for (std::size_t head = 0; head < queue.size(); ++head) {
-            const std::uint64_t u = queue[head];
-            const int du = dist[u];
-            if (du >= out.max_chemical_distance) continue;
-            collect_abs_neighbors(dim, L, u, neigh, nneigh);
-            for (int ni = 0; ni < nneigh; ++ni) {
-                const std::uint64_t v = neigh[ni];
-                const int hv = abs_grow_coord_from_key(v, dim);
-                if (hv < bottom || hv > top) continue;
-                if (in_giant.find(v) == in_giant.end()) continue;
-                if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
-                    continue;
-                }
-                if (dist.find(v) != dist.end()) continue;
-                dist.emplace(v, du + 1);
-                queue.push_back(v);
-            }
-        }
-
-        for (const auto& kv : dist) {
-            const int ell = kv.second;
-            if (ell <= 0) continue;
-            int x = 0, y = 0, z = 0;
-            decode_abs_site_key(kv.first, x, y, z);
-            const int dx_raw = std::abs(x - ox);
-            const int dx = std::min(dx_raw, L - dx_raw);
-            double r2 = static_cast<double>(dx * dx);
-            if (dim == 2) {
-                const int dy = std::abs(y - oy);
-                r2 += static_cast<double>(dy * dy);
-            } else {
-                const int dy_raw = std::abs(y - oy);
-                const int dy = std::min(dy_raw, L - dy_raw);
-                const int dz = std::abs(z - oz);
-                r2 += static_cast<double>(dy * dy + dz * dz);
-            }
-            const double r = std::sqrt(r2);
-            const int bin_idx = find_bin_index(out.bin_edges, r);
-            if (bin_idx < 0) {
-                ++out.pairs_discarded_out_of_range;
-                continue;
-            }
-            ++out.total_pairs_processed;
-            accumulate_distance_bin(origin.bins[static_cast<std::size_t>(bin_idx)], r, ell);
-        }
-        out.origins.push_back(std::move(origin));
-    }
-
-    out.epsilons = default_box_counting_epsilons(dim, L);
-    const std::vector<int> radii = default_shortest_path_radii(dim, L);
-    out.minimum_path_yardstick = compute_minimum_path_yardstick_sparse(
-        dim, L, bottom, top, is_node, in_giant, open_bonds, radii);
-    out.offset_seed = env_int_or_default("SOP_FRACTAL_OFFSET_SEED",
-                                         seed + 2000003 * (sample_index + 1));
-    const int n_offsets = env_int_or_default("SOP_FRACTAL_NUM_OFFSETS", 16);
-    std::mt19937 offset_rng(static_cast<std::uint32_t>(out.offset_seed));
-    for (const int eps : out.epsilons) {
-        const auto offsets = make_fractal_offsets(dim, eps, n_offsets, offset_rng);
-        for (int offset_id = 0; offset_id < static_cast<int>(offsets.size()); ++offset_id) {
-            const auto& off = offsets[static_cast<std::size_t>(offset_id)];
-            out.component_box_counts.push_back({eps, offset_id, off,
-                                                count_boxes_abs_keys(
-                                                    dim, L, bottom, eps, off, giant_sites)});
-        }
-    }
-
-    return out;
-}
 
 void sort_spanning_clusters(FractalCountsSample& sample)
 {
@@ -3156,245 +2270,633 @@ void sort_spanning_clusters(FractalCountsSample& sample)
               [](const FractalClusterCounts& a, const FractalClusterCounts& b) {
         if (a.largest_component_sites != b.largest_component_sites)
             return a.largest_component_sites > b.largest_component_sites;
+        if (a.largest_component_bonds != b.largest_component_bonds)
+            return a.largest_component_bonds > b.largest_component_bonds;
         return a.largest_component_seed < b.largest_component_seed;
     });
 }
 
-SlabFractionResult compute_abs_slab_fractions(
-    const int dim,
-    const int L,
-    const std::unordered_map<std::uint64_t, std::int8_t, AbsSiteKeyHash>& site_state,
-    const std::unordered_set<AbsBondKey, AbsBondKeyHash>& open_bonds,
+// Computes stabilized slab metrics on [bottom, top] (where top = bottom + L - 1):
+// - Box counting, yardstick sphere covering, and chemical distance origins are OFF for all sizes.
+// - Monochromatic spanning clusters (touching both bottom and top, strictly separated by species)
+//   are detected for all lattice sizes L in 2D and 3D using 1-bit-per-site packed bitsets.
+// - Computes: largest spanning cluster size, other spanning cluster sizes (if any),
+//   accessible exterior perimeter (Hull total), and shortest path of the spanning cluster(s).
+SlabFractionResult compute_slab_stabilized(
+    const SlidingSlabGrid& grid,
+    const int num_colors,
     const int bottom,
     const int top,
-    const bool is_node,
-    const bool compute_fractal_counts = false,
-    const int fractal_seed = 0,
-    const int fractal_sample_index = -1,
-    const int fractal_t_stab = -1)
+    const int sample_index,
+    const int t_stab)
 {
-    if (top < bottom) return {};
+    SlabFractionResult res;
+    res.p_node_by_species.assign(static_cast<std::size_t>(std::max(1, num_colors)), 0.0);
+    res.p_bond_by_species.assign(static_cast<std::size_t>(std::max(1, num_colors)), 0.0);
+    if (top < bottom || grid.L <= 0) {
+        return res;
+    }
 
-    const long long lateral_area = (dim == 2)
-        ? static_cast<long long>(L)
-        : static_cast<long long>(L) * static_cast<long long>(L);
-    const long long height = static_cast<long long>(top - bottom + 1);
-    const long long total_sites = lateral_area * height;
+    const int dim = grid.dim;
+    const int L = grid.L;
+    const bool is_node = grid.is_node;
+    const int h_count = top - bottom + 1;
+    const std::size_t layer_sites = grid.layer_sites;
+    const std::uint64_t slab_sites =
+        static_cast<std::uint64_t>(h_count) * static_cast<std::uint64_t>(layer_sites);
+
+    const long long total_sites = static_cast<long long>(slab_sites);
+    const long long lateral_area = static_cast<long long>(layer_sites);
+    const long long total_bonds = (dim == 2)
+        ? (lateral_area * static_cast<long long>(h_count) +
+           lateral_area * static_cast<long long>(std::max(0, h_count - 1)))
+        : (2LL * lateral_area * static_cast<long long>(h_count) +
+           lateral_area * static_cast<long long>(std::max(0, h_count - 1)));
 
     long long occupied_sites = 0;
     long long open_bonds_in_slab = 0;
-    const long long total_bonds = (dim == 2)
-        ? (static_cast<long long>(L) * height +
-           static_cast<long long>(L) * std::max<long long>(0, height - 1))
-        : (2LL * static_cast<long long>(L) * static_cast<long long>(L) * height +
-           static_cast<long long>(L) * static_cast<long long>(L) *
-               std::max<long long>(0, height - 1));
+    long long interspecies_contact_bonds = 0;
+    long long interspecies_contact_sites = 0;
+    std::vector<long long> occ_by_sp(static_cast<std::size_t>(num_colors), 0);
+    std::vector<long long> bonds_by_sp(static_cast<std::size_t>(num_colors), 0);
 
-    for (const auto& kv : site_state) {
-        if (kv.second <= 0) continue;
-        const int h = abs_grow_coord_from_key(kv.first, dim);
-        if (h < bottom || h > top) continue;
-        ++occupied_sites;
-    }
-
-    std::unordered_set<std::uint64_t, AbsSiteKeyHash> visited;
-    visited.reserve(static_cast<std::size_t>(std::max<long long>(1, occupied_sites)));
-    std::vector<std::uint64_t> stack;
-    stack.reserve(1024);
-    std::uint64_t neigh[6];
-    int nneigh = 0;
-    int largest = 0;
-    long long largest_edges = 0;
-    std::uint64_t largest_seed = std::numeric_limits<std::uint64_t>::max();
-
-    std::vector<std::pair<std::unordered_set<std::uint64_t, AbsSiteKeyHash>, long long>> spanning;
-    for (const auto& kv : site_state) {
-        if (kv.second <= 0) continue;
-        const std::uint64_t seed = kv.first;
-        const int h0 = abs_grow_coord_from_key(seed, dim);
-        if (h0 < bottom || h0 > top) continue;
-        if (visited.find(seed) != visited.end()) continue;
-
-        bool touches_bottom = false, touches_top = false;
-        std::unordered_set<std::uint64_t, AbsSiteKeyHash> members;
-        int component = 0;
-        long long component_edge_visits = 0;
-        visited.insert(seed);
-        stack.clear();
-        stack.push_back(seed);
-
-        while (!stack.empty()) {
-            const std::uint64_t u = stack.back();
-            stack.pop_back();
-            ++component;
-            const int hu = abs_grow_coord_from_key(u, dim);
-            touches_bottom |= hu == bottom;
-            touches_top |= hu == top;
-            if (compute_fractal_counts) members.insert(u);
-
-            collect_abs_neighbors(dim, L, u, neigh, nneigh);
-            for (int ni = 0; ni < nneigh; ++ni) {
-                const std::uint64_t v = neigh[ni];
-                const int hv = abs_grow_coord_from_key(v, dim);
-                if (hv < bottom || hv > top) continue;
-
-                const auto itv = site_state.find(v);
-                if (itv == site_state.end() || itv->second <= 0) continue;
-                if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
-                    continue;
-                }
-                ++component_edge_visits;
-                if (visited.insert(v).second) {
-                    stack.push_back(v);
-                }
+    for (int h = bottom; h <= top; ++h) {
+        for (std::size_t lat = 0; lat < layer_sites; ++lat) {
+            const int val = grid.get_site(h, lat);
+            if (val <= 0) continue;
+            ++occupied_sites;
+            const int c = value_to_color_index(num_colors, val);
+            if (c >= 0 && c < num_colors) {
+                ++occ_by_sp[static_cast<std::size_t>(c)];
             }
-        }
-
-        if (compute_fractal_counts && touches_bottom && touches_top)
-            spanning.emplace_back(std::move(members), component_edge_visits / 2);
-        if (component > largest) {
-            largest = component;
-            largest_edges = component_edge_visits / 2;
-            largest_seed = seed;
-        }
-    }
-
-    int shortest_path_edges = -1;
-    long long hull_length = 0;
-    long long full_boundary_length = 0;
-    long long external_perimeter_length = 0;
-    std::map<long long, long long> hole_size_counts;
-    bool has_fractal_counts = false;
-    FractalCountsSample fractal_counts;
-
-    if (!is_node) {
-        for (const auto& kv : site_state) {
-            if (kv.second <= 0) continue;
-            const std::uint64_t u = kv.first;
-            const int hu = abs_grow_coord_from_key(u, dim);
-            if (hu < bottom || hu > top) continue;
-
-            collect_abs_neighbors(dim, L, u, neigh, nneigh);
-            for (int ni = 0; ni < nneigh; ++ni) {
-                const std::uint64_t v = neigh[ni];
-                if (v < u) continue;
-                const int hv = abs_grow_coord_from_key(v, dim);
-                if (hv < bottom || hv > top) continue;
-                const auto itv = site_state.find(v);
-                if (itv == site_state.end() || itv->second <= 0) continue;
-                if (open_bonds.find(make_abs_bond_key(u, v)) != open_bonds.end()) {
+            if (!is_node || num_colors > 1) {
+                int x = 0, y_lat = 0;
+                grid.decode_lat(lat, x, y_lat);
+                const std::size_t lat_xp = grid.lat_index((x + 1 == L) ? 0 : (x + 1), y_lat);
+                const int v_xp = grid.get_site(h, lat_xp);
+                if (!is_node && grid.is_open_bond(h, lat, 0) && v_xp == val) {
                     ++open_bonds_in_slab;
+                    if (c >= 0 && c < num_colors) ++bonds_by_sp[static_cast<std::size_t>(c)];
+                }
+                int v_yp = -1;
+                if (dim == 3) {
+                    const std::size_t lat_yp = grid.lat_index(x, (y_lat + 1 == L) ? 0 : (y_lat + 1));
+                    v_yp = grid.get_site(h, lat_yp);
+                    if (!is_node && grid.is_open_bond(h, lat, 1) && v_yp == val) {
+                        ++open_bonds_in_slab;
+                        if (c >= 0 && c < num_colors) ++bonds_by_sp[static_cast<std::size_t>(c)];
+                    }
+                }
+                const int v_hp = (h < top) ? grid.get_site(h + 1, lat) : -1;
+                if (!is_node && h < top && grid.is_open_bond(h, lat, 2) && v_hp == val) {
+                    ++open_bonds_in_slab;
+                    if (c >= 0 && c < num_colors) ++bonds_by_sp[static_cast<std::size_t>(c)];
+                }
+
+                if (num_colors > 1) {
+                    bool touches_other_sp = false;
+                    if (L > 1) {
+                        if (v_xp > 0 && v_xp != val) {
+                            ++interspecies_contact_bonds;
+                            touches_other_sp = true;
+                        }
+                        const int v_xm = grid.get_site(h, grid.lat_index((x == 0) ? (L - 1) : (x - 1), y_lat));
+                        if (v_xm > 0 && v_xm != val) touches_other_sp = true;
+                        if (dim == 3) {
+                            if (v_yp > 0 && v_yp != val) {
+                                ++interspecies_contact_bonds;
+                                touches_other_sp = true;
+                            }
+                            const int v_ym = grid.get_site(h, grid.lat_index(x, (y_lat == 0) ? (L - 1) : (y_lat - 1)));
+                            if (v_ym > 0 && v_ym != val) touches_other_sp = true;
+                        }
+                    }
+                    if (h < top && v_hp > 0 && v_hp != val) {
+                        ++interspecies_contact_bonds;
+                        touches_other_sp = true;
+                    }
+                    if (h > bottom) {
+                        const int v_hm = grid.get_site(h - 1, lat);
+                        if (v_hm > 0 && v_hm != val) touches_other_sp = true;
+                    }
+                    if (touches_other_sp) {
+                        ++interspecies_contact_sites;
+                    }
                 }
             }
         }
     }
 
-    if (largest_seed != std::numeric_limits<std::uint64_t>::max()) {
-        std::unordered_set<std::uint64_t, AbsSiteKeyHash> in_giant;
-        in_giant.reserve(static_cast<std::size_t>(std::max(1, largest)));
-        std::vector<std::uint64_t> bottom_sources;
+    res.interspecies_contact_bonds = interspecies_contact_bonds;
+    res.interspecies_contact_sites = interspecies_contact_sites;
 
-        stack.clear();
-        stack.push_back(largest_seed);
-        in_giant.insert(largest_seed);
-        for (std::size_t head = 0; head < stack.size(); ++head) {
-            const std::uint64_t u = stack[head];
-            const int hu = abs_grow_coord_from_key(u, dim);
-            if (hu == bottom) bottom_sources.push_back(u);
+    res.p_node = total_sites > 0
+        ? static_cast<double>(occupied_sites) / static_cast<double>(total_sites)
+        : 0.0;
+    res.p_bond = total_bonds > 0
+        ? static_cast<double>(open_bonds_in_slab) / static_cast<double>(total_bonds)
+        : 0.0;
+    for (int c = 0; c < num_colors; ++c) {
+        res.p_node_by_species[static_cast<std::size_t>(c)] = total_sites > 0
+            ? static_cast<double>(occ_by_sp[static_cast<std::size_t>(c)]) /
+              static_cast<double>(total_sites)
+            : 0.0;
+        res.p_bond_by_species[static_cast<std::size_t>(c)] = total_bonds > 0
+            ? static_cast<double>(bonds_by_sp[static_cast<std::size_t>(c)]) /
+              static_cast<double>(total_bonds)
+            : 0.0;
+    }
 
-            collect_abs_neighbors(dim, L, u, neigh, nneigh);
-            for (int ni = 0; ni < nneigh; ++ni) {
-                const std::uint64_t v = neigh[ni];
-                const int hv = abs_grow_coord_from_key(v, dim);
-                if (hv < bottom || hv > top) continue;
+    auto for_each_connected_neighbor = [&](const std::uint64_t u_local,
+                                           const int target_val,
+                                           auto&& fn) {
+        const int h_local = static_cast<int>(u_local / layer_sites);
+        const std::size_t lat = static_cast<std::size_t>(u_local % layer_sites);
+        const int h = bottom + h_local;
+        int x = 0, y_lat = 0;
+        grid.decode_lat(lat, x, y_lat);
+        const std::uint64_t layer_base = static_cast<std::uint64_t>(h_local) * layer_sites;
 
-                const auto itv = site_state.find(v);
-                if (itv == site_state.end() || itv->second <= 0) continue;
-                if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
-                    continue;
+        // -x
+        {
+            const int nx = (x == 0) ? (L - 1) : (x - 1);
+            const std::size_t nlat = grid.lat_index(nx, y_lat);
+            if (grid.get_site(h, nlat) == target_val &&
+                (is_node || grid.is_open_bond(h, nlat, 0))) {
+                fn(layer_base + nlat, h_local);
+            }
+        }
+        // +x
+        if (L > 1) {
+            const int nx = (x + 1 == L) ? 0 : (x + 1);
+            const std::size_t nlat = grid.lat_index(nx, y_lat);
+            if (grid.get_site(h, nlat) == target_val &&
+                (is_node || grid.is_open_bond(h, lat, 0))) {
+                fn(layer_base + nlat, h_local);
+            }
+        }
+        if (dim == 3) {
+            // -y
+            {
+                const int ny = (y_lat == 0) ? (L - 1) : (y_lat - 1);
+                const std::size_t nlat = grid.lat_index(x, ny);
+                if (grid.get_site(h, nlat) == target_val &&
+                    (is_node || grid.is_open_bond(h, nlat, 1))) {
+                    fn(layer_base + nlat, h_local);
                 }
-                if (in_giant.insert(v).second) {
-                    stack.push_back(v);
+            }
+            // +y
+            if (L > 1) {
+                const int ny = (y_lat + 1 == L) ? 0 : (y_lat + 1);
+                const std::size_t nlat = grid.lat_index(x, ny);
+                if (grid.get_site(h, nlat) == target_val &&
+                    (is_node || grid.is_open_bond(h, lat, 1))) {
+                    fn(layer_base + nlat, h_local);
                 }
             }
         }
-
-        if (!bottom_sources.empty()) {
-            std::unordered_set<std::uint64_t, AbsSiteKeyHash> reached;
-            reached.reserve(in_giant.size());
-            std::vector<std::uint64_t> current;
-            std::vector<std::uint64_t> next;
-            current.reserve(bottom_sources.size());
-            next.reserve(bottom_sources.size());
-            for (const std::uint64_t src : bottom_sources) {
-                reached.insert(src);
-                current.push_back(src);
+        // -h
+        if (h_local > 0) {
+            if (grid.get_site(h - 1, lat) == target_val &&
+                (is_node || grid.is_open_bond(h - 1, lat, 2))) {
+                fn(u_local - layer_sites, h_local - 1);
             }
+        }
+        // +h
+        if (h_local + 1 < h_count) {
+            if (grid.get_site(h + 1, lat) == target_val &&
+                (is_node || grid.is_open_bond(h, lat, 2))) {
+                fn(u_local + layer_sites, h_local + 1);
+            }
+        }
+    };
 
-            int distance = 0;
-            while (!current.empty() && shortest_path_edges < 0) {
-                next.clear();
-                for (const std::uint64_t u : current) {
-                    if (abs_grow_coord_from_key(u, dim) == top) {
-                        shortest_path_edges = distance;
+    struct SpanningCandidate {
+        std::uint64_t seed_local = 0;
+        int active_val = 0;
+        int species = 1;
+        long long num_sites = 0;
+        long long num_bonds = 0;
+    };
+
+    PackedBitset bits_a(slab_sites);
+    std::vector<std::uint64_t> curr_wave;
+    std::vector<std::uint64_t> next_wave;
+    curr_wave.reserve(std::min<std::size_t>(layer_sites, 1024u * 1024u));
+    next_wave.reserve(std::min<std::size_t>(layer_sites, 1024u * 1024u));
+
+    std::vector<SpanningCandidate> spanning_candidates;
+
+    // Every spanning cluster must touch z = bottom (h_local = 0).
+    // Seeding exclusively on z = bottom discovers 100% of spanning clusters
+    // across all species while skipping non-spanning interior components.
+    for (std::size_t lat = 0; lat < layer_sites; ++lat) {
+        const int seed_val = grid.get_site(bottom, lat);
+        if (seed_val <= 0) continue;
+        const std::uint64_t seed_local = static_cast<std::uint64_t>(lat);
+        if (!bits_a.test_and_set(seed_local)) continue;
+
+        const int c_idx = value_to_color_index(num_colors, seed_val);
+        if (c_idx < 0 || c_idx >= num_colors) continue;
+
+        long long comp_sites = 0;
+        long long comp_edge_visits = 0;
+        bool touches_top = (h_count == 1);
+
+        curr_wave.clear();
+        curr_wave.push_back(seed_local);
+        while (!curr_wave.empty()) {
+            next_wave.clear();
+            for (const std::uint64_t u : curr_wave) {
+                ++comp_sites;
+                const int uh = static_cast<int>(u / layer_sites);
+                if (uh == h_count - 1) touches_top = true;
+
+                for_each_connected_neighbor(
+                    u, seed_val, [&](const std::uint64_t v, const int vh) {
+                        ++comp_edge_visits;
+                        if (vh == h_count - 1) touches_top = true;
+                        if (bits_a.test_and_set(v)) {
+                            next_wave.push_back(v);
+                        }
+                    });
+            }
+            curr_wave.swap(next_wave);
+        }
+
+        if (touches_top) {
+            spanning_candidates.push_back({
+                seed_local,
+                seed_val,
+                c_idx + 1,
+                comp_sites,
+                comp_edge_visits / 2
+            });
+        }
+    }
+
+    std::sort(spanning_candidates.begin(), spanning_candidates.end(),
+              [](const SpanningCandidate& a, const SpanningCandidate& b) {
+                  if (a.num_sites != b.num_sites) return a.num_sites > b.num_sites;
+                  if (a.num_bonds != b.num_bonds) return a.num_bonds > b.num_bonds;
+                  return a.seed_local < b.seed_local;
+              });
+
+    res.fractal_counts.sample_index = sample_index;
+    res.fractal_counts.anchor_z = bottom;
+    res.fractal_counts.slab_top_z = top;
+    res.fractal_counts.t_stab = t_stab;
+    res.fractal_counts.interspecies_contact_bonds = interspecies_contact_bonds;
+    res.fractal_counts.interspecies_contact_sites = interspecies_contact_sites;
+    res.num_spanning_clusters = static_cast<int>(spanning_candidates.size());
+
+    if (spanning_candidates.empty()) {
+        return res;
+    }
+
+    PackedBitset bits_b(slab_sites);
+    std::vector<std::uint64_t> bottom_sources;
+    bottom_sources.reserve(layer_sites);
+
+    for (std::size_t ci = 0; ci < spanning_candidates.size(); ++ci) {
+        const SpanningCandidate& cand = spanning_candidates[ci];
+
+        // 1. Mark cluster membership in bits_a and collect all bottom-plane sources.
+        bits_a.clear();
+        bottom_sources.clear();
+        bits_a.set(cand.seed_local);
+        curr_wave.clear();
+        curr_wave.push_back(cand.seed_local);
+        while (!curr_wave.empty()) {
+            next_wave.clear();
+            for (const std::uint64_t u : curr_wave) {
+                if (u < layer_sites) {
+                    bottom_sources.push_back(u);
+                }
+                for_each_connected_neighbor(
+                    u, cand.active_val, [&](const std::uint64_t v, const int /*vh*/) {
+                        if (bits_a.test_and_set(v)) {
+                            next_wave.push_back(v);
+                        }
+                    });
+            }
+            curr_wave.swap(next_wave);
+        }
+
+        // 2. Shortest path (in edges) from z = bottom to z = top inside this spanning cluster.
+        int sp_edges = -1;
+        std::uint64_t top_reached_local = cand.seed_local;
+        if (!bottom_sources.empty()) {
+            bits_b.clear();
+            curr_wave.clear();
+            for (const std::uint64_t src : bottom_sources) {
+                if (bits_b.test_and_set(src)) {
+                    curr_wave.push_back(src);
+                }
+            }
+            int dist = 0;
+            while (!curr_wave.empty() && sp_edges < 0) {
+                next_wave.clear();
+                for (const std::uint64_t u : curr_wave) {
+                    const int uh = static_cast<int>(u / layer_sites);
+                    if (uh == h_count - 1) {
+                        sp_edges = dist;
+                        top_reached_local = u;
                         break;
                     }
-
-                    collect_abs_neighbors(dim, L, u, neigh, nneigh);
-                    for (int ni = 0; ni < nneigh; ++ni) {
-                        const std::uint64_t v = neigh[ni];
-                        const int hv = abs_grow_coord_from_key(v, dim);
-                        if (hv < bottom || hv > top) continue;
-                        if (in_giant.find(v) == in_giant.end()) continue;
-                        if (!is_node && open_bonds.find(make_abs_bond_key(u, v)) == open_bonds.end()) {
-                            continue;
-                        }
-                        if (reached.insert(v).second) {
-                            next.push_back(v);
-                        }
-                    }
+                    for_each_connected_neighbor(
+                        u, cand.active_val, [&](const std::uint64_t v, const int /*vh*/) {
+                            if (bits_a.test(v) && bits_b.test_and_set(v)) {
+                                next_wave.push_back(v);
+                            }
+                        });
                 }
-                current.swap(next);
-                ++distance;
+                curr_wave.swap(next_wave);
+                ++dist;
             }
         }
 
-        const SlabHullHoleResult geometry =
-            compute_abs_slab_hull_holes(dim, L, bottom, top, in_giant);
-        hull_length = geometry.hull_length;
-        full_boundary_length = geometry.full_boundary_length;
-        external_perimeter_length = geometry.external_perimeter_length;
-        hole_size_counts = geometry.hole_size_counts;
-
-    }
-
-    if (compute_fractal_counts && fractal_counts_eligible(dim, L)) {
-        has_fractal_counts = true;
-        fractal_counts.sample_index = fractal_sample_index;
-        fractal_counts.anchor_z = bottom;
-        fractal_counts.t_stab = fractal_t_stab;
-        for (const auto& cluster : spanning) {
-            fractal_counts.spanning_clusters.push_back(compute_fractal_counts_sparse(
-                dim, L, bottom, top, is_node, fractal_seed, fractal_sample_index,
-                fractal_t_stab, occupied_sites, open_bonds_in_slab, cluster.second,
-                cluster.first, open_bonds));
+        // 3. Accessible exterior perimeter (Hull total) via exterior complement flood-fill.
+        bits_b.clear();
+        curr_wave.clear();
+        const std::uint64_t top_layer_offset =
+            static_cast<std::uint64_t>(h_count - 1) * static_cast<std::uint64_t>(layer_sites);
+        for (std::size_t lat = 0; lat < layer_sites; ++lat) {
+            const std::uint64_t b_idx = static_cast<std::uint64_t>(lat);
+            if (!bits_a.test(b_idx) && bits_b.test_and_set(b_idx)) {
+                curr_wave.push_back(b_idx);
+            }
+            if (h_count > 1) {
+                const std::uint64_t t_idx = top_layer_offset + static_cast<std::uint64_t>(lat);
+                if (!bits_a.test(t_idx) && bits_b.test_and_set(t_idx)) {
+                    curr_wave.push_back(t_idx);
+                }
+            }
         }
-        sort_spanning_clusters(fractal_counts);
+
+        while (!curr_wave.empty()) {
+            next_wave.clear();
+            for (const std::uint64_t u : curr_wave) {
+                const int h_local = static_cast<int>(u / layer_sites);
+                const std::size_t lat = static_cast<std::size_t>(u % layer_sites);
+                int x = 0, y_lat = 0;
+                grid.decode_lat(lat, x, y_lat);
+                const std::uint64_t lbase = static_cast<std::uint64_t>(h_local) * layer_sites;
+
+                const std::uint64_t v_xm = lbase + grid.lat_index((x == 0) ? (L - 1) : (x - 1), y_lat);
+                if (!bits_a.test(v_xm) && bits_b.test_and_set(v_xm)) next_wave.push_back(v_xm);
+
+                const std::uint64_t v_xp = lbase + grid.lat_index((x + 1 == L) ? 0 : (x + 1), y_lat);
+                if (!bits_a.test(v_xp) && bits_b.test_and_set(v_xp)) next_wave.push_back(v_xp);
+
+                if (dim == 3) {
+                    const std::uint64_t v_ym = lbase + grid.lat_index(x, (y_lat == 0) ? (L - 1) : (y_lat - 1));
+                    if (!bits_a.test(v_ym) && bits_b.test_and_set(v_ym)) next_wave.push_back(v_ym);
+
+                    const std::uint64_t v_yp = lbase + grid.lat_index(x, (y_lat + 1 == L) ? 0 : (y_lat + 1));
+                    if (!bits_a.test(v_yp) && bits_b.test_and_set(v_yp)) next_wave.push_back(v_yp);
+                }
+
+                if (h_local > 0) {
+                    const std::uint64_t v_hm = u - layer_sites;
+                    if (!bits_a.test(v_hm) && bits_b.test_and_set(v_hm)) next_wave.push_back(v_hm);
+                }
+                if (h_local + 1 < h_count) {
+                    const std::uint64_t v_hp = u + layer_sites;
+                    if (!bits_a.test(v_hp) && bits_b.test_and_set(v_hp)) next_wave.push_back(v_hp);
+                }
+            }
+            curr_wave.swap(next_wave);
+        }
+
+        long long cluster_hull = 0;
+        long long cluster_full_boundary = 0;
+        long long cluster_interspecies_boundary = 0;
+        for (std::size_t wi = 0; wi < bits_a.words.size(); ++wi) {
+            std::uint64_t word = bits_a.words[wi];
+            if (word == 0ULL) continue;
+            const std::uint64_t base_idx = static_cast<std::uint64_t>(wi) << 6;
+            while (word != 0ULL) {
+                const int b = __builtin_ctzll(word);
+                word &= (word - 1ULL);
+                const std::uint64_t u = base_idx + static_cast<std::uint64_t>(b);
+                if (u >= slab_sites) break;
+
+                const int h_local = static_cast<int>(u / layer_sites);
+                const std::size_t lat = static_cast<std::size_t>(u % layer_sites);
+                const int h = bottom + h_local;
+                int x = 0, y_lat = 0;
+                grid.decode_lat(lat, x, y_lat);
+                const std::uint64_t lbase = static_cast<std::uint64_t>(h_local) * layer_sites;
+
+                auto check_neighbor_face = [&](const std::uint64_t v,
+                                               const int nh,
+                                               const std::size_t nlat) {
+                    if (!bits_a.test(v)) {
+                        ++cluster_full_boundary;
+                        if (bits_b.test(v)) {
+                            ++cluster_hull;
+                        }
+                        if (num_colors > 1) {
+                            const int nv = grid.get_site(nh, nlat);
+                            if (nv > 0 && nv != cand.active_val) {
+                                ++cluster_interspecies_boundary;
+                            }
+                        }
+                    }
+                };
+
+                {
+                    const std::size_t nlat = grid.lat_index((x == 0) ? (L - 1) : (x - 1), y_lat);
+                    check_neighbor_face(lbase + nlat, h, nlat);
+                }
+                {
+                    const std::size_t nlat = grid.lat_index((x + 1 == L) ? 0 : (x + 1), y_lat);
+                    check_neighbor_face(lbase + nlat, h, nlat);
+                }
+                if (dim == 3) {
+                    {
+                        const std::size_t nlat = grid.lat_index(x, (y_lat == 0) ? (L - 1) : (y_lat - 1));
+                        check_neighbor_face(lbase + nlat, h, nlat);
+                    }
+                    {
+                        const std::size_t nlat = grid.lat_index(x, (y_lat + 1 == L) ? 0 : (y_lat + 1));
+                        check_neighbor_face(lbase + nlat, h, nlat);
+                    }
+                }
+
+                if (h_local == 0) {
+                    ++cluster_full_boundary;
+                    ++cluster_hull;
+                } else {
+                    check_neighbor_face(u - layer_sites, h - 1, lat);
+                }
+
+                if (h_local == h_count - 1) {
+                    ++cluster_full_boundary;
+                    ++cluster_hull;
+                } else {
+                    check_neighbor_face(u + layer_sites, h + 1, lat);
+                }
+            }
+        }
+
+        FractalClusterCounts fc;
+        fc.eligible = true;
+        fc.sample_index = sample_index;
+        fc.species = cand.species;
+        fc.dim = dim;
+        fc.L = L;
+        fc.anchor_z = bottom;
+        fc.slab_top_z = top;
+        fc.t_stab = t_stab;
+        fc.type_percolation = is_node ? "node" : "bond";
+        fc.boundary_conditions = (dim == 2)
+            ? std::vector<std::string>{"x:periodic", "y:open"}
+            : std::vector<std::string>{"x:periodic", "y:periodic", "z:open"};
+        fc.total_occupied_sites = occupied_sites;
+        fc.total_active_bonds = open_bonds_in_slab;
+        fc.largest_component_sites = cand.num_sites;
+        fc.largest_component_bonds = cand.num_bonds;
+        fc.hull_length = cluster_hull;
+        fc.full_boundary_length = cluster_full_boundary;
+        fc.interspecies_boundary_length = cluster_interspecies_boundary;
+        fc.shortest_path_edges = sp_edges;
+        fc.largest_component_seed = cand.seed_local;
+
+        int bx = 0, by = 0, tx = 0, ty = 0;
+        grid.decode_lat(static_cast<std::size_t>(cand.seed_local % layer_sites), bx, by);
+        grid.decode_lat(static_cast<std::size_t>(top_reached_local % layer_sites), tx, ty);
+        fc.minimum_path_yardstick.defined = (sp_edges >= 0);
+        fc.minimum_path_yardstick.reason_if_undefined =
+            (sp_edges >= 0) ? "" : "no_spanning_path";
+        fc.minimum_path_yardstick.path_length = sp_edges;
+        fc.minimum_path_yardstick.base_site = cand.seed_local;
+        fc.minimum_path_yardstick.top_site = top_reached_local;
+        fc.minimum_path_yardstick.base_coordinates = (dim == 2)
+            ? std::vector<int>{bx, bottom}
+            : std::vector<int>{bx, by, bottom};
+        fc.minimum_path_yardstick.top_coordinates = (dim == 2)
+            ? std::vector<int>{tx, top}
+            : std::vector<int>{tx, ty, top};
+
+        res.fractal_counts.spanning_clusters.push_back(std::move(fc));
+
+        if (ci == 0) {
+            res.largest_spanning_sites = cand.num_sites;
+            res.largest_spanning_bonds = cand.num_bonds;
+            res.largest_spanning_sp = sp_edges;
+            res.largest_spanning_hull = cluster_hull;
+            res.largest_spanning_full_boundary = cluster_full_boundary;
+            res.largest_spanning_species = cand.species;
+            res.largest_spanning_interspecies_bonds = cluster_interspecies_boundary;
+        } else {
+            res.other_spanning_sites.push_back(cand.num_sites);
+            res.other_spanning_bonds.push_back(cand.num_bonds);
+            res.other_spanning_sp.push_back(sp_edges);
+            res.other_spanning_hull.push_back(cluster_hull);
+            res.other_spanning_species.push_back(cand.species);
+            res.other_spanning_interspecies_bonds.push_back(cluster_interspecies_boundary);
+        }
     }
 
-    return {
-        total_sites > 0 ? static_cast<double>(occupied_sites) / static_cast<double>(total_sites) : 0.0,
-        total_bonds > 0 ? static_cast<double>(open_bonds_in_slab) / static_cast<double>(total_bonds) : 0.0,
-        largest,
-        largest_edges,
-        shortest_path_edges,
-        hull_length,
-        full_boundary_length,
-        external_perimeter_length,
-        std::move(hole_size_counts),
-        has_fractal_counts,
-        std::move(fractal_counts)
-    };
+    // 4. Direct intersection between spanning clusters of different species (0 extra memory).
+    if (num_colors > 1 && spanning_candidates.size() >= 2) {
+        bool has_multiple_spanning_species = false;
+        const int first_sp = spanning_candidates[0].species;
+        for (std::size_t ci = 1; ci < spanning_candidates.size(); ++ci) {
+            if (spanning_candidates[ci].species != first_sp) {
+                has_multiple_spanning_species = true;
+                break;
+            }
+        }
+        if (has_multiple_spanning_species) {
+            // bits_a currently holds the last spanning cluster; add all remaining spanning clusters.
+            for (const auto& cand : spanning_candidates) {
+                if (!bits_a.test_and_set(cand.seed_local)) continue;
+                curr_wave.clear();
+                curr_wave.push_back(cand.seed_local);
+                while (!curr_wave.empty()) {
+                    next_wave.clear();
+                    for (const std::uint64_t u : curr_wave) {
+                        for_each_connected_neighbor(
+                            u, cand.active_val, [&](const std::uint64_t v, const int /*vh*/) {
+                                if (bits_a.test_and_set(v)) {
+                                    next_wave.push_back(v);
+                                }
+                            });
+                    }
+                    curr_wave.swap(next_wave);
+                }
+            }
+
+            long long span_inter_bonds = 0;
+            long long span_inter_sites = 0;
+            for (std::size_t wi = 0; wi < bits_a.words.size(); ++wi) {
+                std::uint64_t word = bits_a.words[wi];
+                if (word == 0ULL) continue;
+                const std::uint64_t base_idx = static_cast<std::uint64_t>(wi) << 6;
+                while (word != 0ULL) {
+                    const int b = __builtin_ctzll(word);
+                    word &= (word - 1ULL);
+                    const std::uint64_t u = base_idx + static_cast<std::uint64_t>(b);
+                    if (u >= slab_sites) break;
+
+                    const int h_local = static_cast<int>(u / layer_sites);
+                    const std::size_t lat = static_cast<std::size_t>(u % layer_sites);
+                    const int h = bottom + h_local;
+                    const int val_u = grid.get_site(h, lat);
+                    int x = 0, y_lat = 0;
+                    grid.decode_lat(lat, x, y_lat);
+                    const std::uint64_t lbase = static_cast<std::uint64_t>(h_local) * layer_sites;
+
+                    bool touches_other_span = false;
+                    if (L > 1) {
+                        const std::size_t nlat_xp = grid.lat_index((x + 1 == L) ? 0 : (x + 1), y_lat);
+                        if (bits_a.test(lbase + nlat_xp) && grid.get_site(h, nlat_xp) != val_u) {
+                            ++span_inter_bonds;
+                            touches_other_span = true;
+                        }
+                        const std::size_t nlat_xm = grid.lat_index((x == 0) ? (L - 1) : (x - 1), y_lat);
+                        if (bits_a.test(lbase + nlat_xm) && grid.get_site(h, nlat_xm) != val_u) {
+                            touches_other_span = true;
+                        }
+                        if (dim == 3) {
+                            const std::size_t nlat_yp = grid.lat_index(x, (y_lat + 1 == L) ? 0 : (y_lat + 1));
+                            if (bits_a.test(lbase + nlat_yp) && grid.get_site(h, nlat_yp) != val_u) {
+                                ++span_inter_bonds;
+                                touches_other_span = true;
+                            }
+                            const std::size_t nlat_ym = grid.lat_index(x, (y_lat == 0) ? (L - 1) : (y_lat - 1));
+                            if (bits_a.test(lbase + nlat_ym) && grid.get_site(h, nlat_ym) != val_u) {
+                                touches_other_span = true;
+                            }
+                        }
+                    }
+                    if (h_local + 1 < h_count) {
+                        if (bits_a.test(u + layer_sites) && grid.get_site(h + 1, lat) != val_u) {
+                            ++span_inter_bonds;
+                            touches_other_span = true;
+                        }
+                    }
+                    if (h_local > 0) {
+                        if (bits_a.test(u - layer_sites) && grid.get_site(h - 1, lat) != val_u) {
+                            touches_other_span = true;
+                        }
+                    }
+                    if (touches_other_span) {
+                        ++span_inter_sites;
+                    }
+                }
+            }
+            res.spanning_interspecies_bonds = span_inter_bonds;
+            res.spanning_interspecies_sites = span_inter_sites;
+            res.fractal_counts.spanning_interspecies_bonds = span_inter_bonds;
+            res.fractal_counts.spanning_interspecies_sites = span_inter_sites;
+        }
+    }
+
+    return res;
 }
 
 inline bool all_values_finite(const std::vector<double>& values)
@@ -3555,1055 +3057,26 @@ RawFractionsSeries network::create_raw_fractions(
     const int sample_gap_layers = std::max(
         0,
         static_cast<int>(std::llround(gap_over_L * static_cast<double>(L))));
-    const double stability_over_L = 2.0;
+    double stability_over_L = 2.0;
+    if (const char* env_stab = std::getenv("SOP_FRACTION_STABILITY_OVER_L")) {
+        if (*env_stab != '\0') {
+            stability_over_L = std::max(0.0, std::stod(env_stab));
+        }
+    }
     const int sample_stability_layers = std::max(
         0,
         static_cast<int>(std::llround(stability_over_L * static_cast<double>(L))));
     int hard_max_steps = stop_config.hard_max_steps;
     if (const char* env_steps = std::getenv("SOP_FRACTION_MAX_STEPS")) {
-        hard_max_steps = std::max(1, std::stoi(env_steps));
+        if (*env_steps != '\0') {
+            hard_max_steps = std::max(1, std::stoi(env_steps));
+        }
     }
-    int progress_interval = std::max(1000, L);
+    int progress_interval = std::max(500, L);
     if (const char* env_progress = std::getenv("SOP_FRACTION_PROGRESS_INTERVAL")) {
-        progress_interval = std::max(0, std::stoi(env_progress));
-    }
-    const bool run_fractal_counts = fractal_counts_eligible(dim, L);
-
-    if (dim == 2) {
-        RawFractionsSeries out;
-        out.dim = dim;
-        out.L = L;
-        out.seed = rng.get_seed();
-        out.num_colors = num_colors;
-        out.requested_samples = requested;
-        out.N_total = static_cast<long long>(L) * static_cast<long long>(L);
-        out.E_total = 2LL * static_cast<long long>(L) * static_cast<long long>(L) -
-                      static_cast<long long>(L);
-        out.sample_stability_layers = sample_stability_layers;
-        out.sample_stability_over_L = stability_over_L;
-        out.sample_gap_layers = sample_gap_layers;
-        out.sample_gap_over_L = gap_over_L;
-        out.type_percolation = type_percolation;
-        out.rho = rho;
-        out.t_eq_by_species.assign(static_cast<std::size_t>(num_colors),
-                                   std::numeric_limits<double>::quiet_NaN());
-        out.z_stat_by_species.assign(static_cast<std::size_t>(num_colors), -1);
-        out.stop_reason = "not_stopped";
-
-        const int cap_h = std::max(8, 10 * L + 128);
-        const std::size_t layer_size = static_cast<std::size_t>(L);
-        const std::size_t total_slots =
-            static_cast<std::size_t>(cap_h) * layer_size;
-        std::vector<std::int8_t> state(total_slots, static_cast<std::int8_t>(-1));
-        std::vector<int> layer_tag(static_cast<std::size_t>(cap_h), -1);
-
-        std::vector<unsigned char> tested_x;
-        std::vector<unsigned char> tested_y;
-        std::vector<unsigned char> open_x;
-        std::vector<unsigned char> open_y;
-        std::vector<int> bond_layer_tag;
-        if (!is_node) {
-            tested_x.assign(total_slots, 0u);
-            tested_y.assign(total_slots, 0u);
-            open_x.assign(total_slots, 0u);
-            open_y.assign(total_slots, 0u);
-            bond_layer_tag.assign(static_cast<std::size_t>(cap_h), -1);
+        if (*env_progress != '\0') {
+            progress_interval = std::max(0, std::stoi(env_progress));
         }
-
-        auto site_slot = [&](const int x, const int y) -> std::size_t {
-            return static_cast<std::size_t>(y % cap_h) * layer_size +
-                   static_cast<std::size_t>(x);
-        };
-        auto ensure_site_layer = [&](const int y) {
-            const int slot = y % cap_h;
-            if (layer_tag[static_cast<std::size_t>(slot)] == y) return;
-            const std::size_t begin = static_cast<std::size_t>(slot) * layer_size;
-            std::fill(state.begin() + static_cast<std::ptrdiff_t>(begin),
-                      state.begin() + static_cast<std::ptrdiff_t>(begin + layer_size),
-                      static_cast<std::int8_t>(-1));
-            layer_tag[static_cast<std::size_t>(slot)] = y;
-        };
-        auto get_site_2d = [&](const int x, const int y) -> int {
-            if (y < 0) return 0;
-            const int slot = y % cap_h;
-            if (layer_tag[static_cast<std::size_t>(slot)] != y) return -1;
-            return static_cast<int>(state[site_slot(x, y)]);
-        };
-        auto set_site_2d = [&](const int x, const int y, const int value) {
-            ensure_site_layer(y);
-            state[site_slot(x, y)] = static_cast<std::int8_t>(value);
-        };
-        auto ensure_bond_layer = [&](const int y) {
-            if (is_node || y < 0) return;
-            const int slot = y % cap_h;
-            if (bond_layer_tag[static_cast<std::size_t>(slot)] == y) return;
-            const std::size_t begin = static_cast<std::size_t>(slot) * layer_size;
-            std::fill(tested_x.begin() + static_cast<std::ptrdiff_t>(begin),
-                      tested_x.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
-            std::fill(tested_y.begin() + static_cast<std::ptrdiff_t>(begin),
-                      tested_y.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
-            std::fill(open_x.begin() + static_cast<std::ptrdiff_t>(begin),
-                      open_x.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
-            std::fill(open_y.begin() + static_cast<std::ptrdiff_t>(begin),
-                      open_y.begin() + static_cast<std::ptrdiff_t>(begin + layer_size), 0u);
-            bond_layer_tag[static_cast<std::size_t>(slot)] = y;
-        };
-        auto bond_slot = [&](const int x, const int y) -> std::size_t {
-            return static_cast<std::size_t>(y % cap_h) * layer_size +
-                   static_cast<std::size_t>(x);
-        };
-        auto mark_tested_bond_2d = [&](const int x1, const int y1,
-                                       const int x2, const int y2) -> bool {
-            if (is_node) return true;
-            if (y1 == y2) {
-                const int x_low = (x2 == ((x1 + 1) % L)) ? x1 : x2;
-                ensure_bond_layer(y1);
-                unsigned char& value = tested_x[bond_slot(x_low, y1)];
-                const bool fresh = value == 0u;
-                value = 1u;
-                return fresh;
-            }
-            const int y_low = std::min(y1, y2);
-            const int x = x1;
-            ensure_bond_layer(y_low);
-            unsigned char& value = tested_y[bond_slot(x, y_low)];
-            const bool fresh = value == 0u;
-            value = 1u;
-            return fresh;
-        };
-        auto set_open_bond_2d = [&](const int x1, const int y1,
-                                    const int x2, const int y2) {
-            if (is_node) return;
-            if (y1 == y2) {
-                const int x_low = (x2 == ((x1 + 1) % L)) ? x1 : x2;
-                ensure_bond_layer(y1);
-                open_x[bond_slot(x_low, y1)] = 1u;
-                return;
-            }
-            const int y_low = std::min(y1, y2);
-            const int x = x1;
-            ensure_bond_layer(y_low);
-            open_y[bond_slot(x, y_low)] = 1u;
-        };
-        auto is_open_bond_2d = [&](const int x1, const int y1,
-                                   const int x2, const int y2) -> bool {
-            if (is_node) return false;
-            if (y1 == y2) {
-                const int slot = y1 % cap_h;
-                if (bond_layer_tag[static_cast<std::size_t>(slot)] != y1) return false;
-                const int x_low = (x2 == ((x1 + 1) % L)) ? x1 : x2;
-                return open_x[bond_slot(x_low, y1)] != 0u;
-            }
-            const int y_low = std::min(y1, y2);
-            const int slot = y_low % cap_h;
-            if (bond_layer_tag[static_cast<std::size_t>(slot)] != y_low) return false;
-            return open_y[bond_slot(x1, y_low)] != 0u;
-        };
-
-        auto encode_xy = [&](const int x, const int y) -> std::uint64_t {
-            return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(y)) << 32) |
-                   static_cast<std::uint64_t>(static_cast<std::uint32_t>(x));
-        };
-        auto decode_xy = [&](const std::uint64_t key, int& x, int& y) {
-            x = static_cast<int>(key & 0xffffffffu);
-            y = static_cast<int>(key >> 32);
-        };
-
-        std::vector<double> p_curr = p0;
-        std::vector<double> p_next(static_cast<std::size_t>(num_colors), 0.0);
-        std::vector<int> N_current(static_cast<std::size_t>(num_colors), 0);
-        std::vector<double> f_current(static_cast<std::size_t>(num_colors), 0.0);
-        std::vector<int> max_heights(static_cast<std::size_t>(num_colors), 0);
-        std::vector<std::uint64_t> frontier;
-        std::vector<std::uint64_t> next_frontier;
-        frontier.reserve(static_cast<std::size_t>(L));
-        next_frontier.reserve(static_cast<std::size_t>(L));
-
-        std::vector<std::vector<double>> p_series(static_cast<std::size_t>(num_colors));
-        std::vector<std::vector<double>> f_series(static_cast<std::size_t>(num_colors));
-        std::vector<int> t_list;
-        t_list.reserve(4096);
-        auto commit_equilibrium_step = [&](const int t) {
-            t_list.push_back(t);
-            for (int color = 0; color < num_colors; ++color) {
-                p_series[static_cast<std::size_t>(color)].push_back(
-                    p_curr[static_cast<std::size_t>(color)]);
-                f_series[static_cast<std::size_t>(color)].push_back(
-                    f_current[static_cast<std::size_t>(color)]);
-            }
-        };
-
-        std::vector<int> seeds_quota(static_cast<std::size_t>(num_colors), 0);
-        for (int color = 0; color < num_colors; ++color) {
-            long long q = std::llround(P0 * rho[static_cast<std::size_t>(color)] * base_size);
-            q = std::max<long long>(0, std::min<long long>(q, base_size));
-            seeds_quota[static_cast<std::size_t>(color)] = static_cast<int>(q);
-        }
-
-        for (int color = 0; color < num_colors; ++color) {
-            const int active_val = color_to_active_value(num_colors, color);
-            auto activate_base_site = [&](const int x) -> bool {
-                const int v = get_site_2d(x, 0);
-                if (v != -1 && v != color_to_negative_value(num_colors, color)) return false;
-                set_site_2d(x, 0, active_val);
-                frontier.push_back(encode_xy(x, 0));
-                ++N_current[static_cast<std::size_t>(color)];
-                return true;
-            };
-
-            if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
-                int activated = 0;
-                int tries = 0;
-                const int max_tries = L * 20;
-                while (activated < seeds_quota[static_cast<std::size_t>(color)] &&
-                       tries < max_tries) {
-                    const int x = rng.uniform_int(0, L - 1);
-                    if (activate_base_site(x)) ++activated;
-                    ++tries;
-                }
-            } else {
-                int activated = 0;
-                const int quota = seeds_quota[static_cast<std::size_t>(color)];
-                for (int x = 0; x < L && activated < quota; ++x) {
-                    const bool belongs =
-                        stop_config.initial_base_layout == InitialBaseLayout::Alternating
-                            ? ((x % num_colors) == color)
-                            : (x >= (color * L) / num_colors &&
-                               x < ((color + 1) * L) / num_colors);
-                    if (belongs && activate_base_site(x)) ++activated;
-                }
-            }
-        }
-
-        for (int color = 0; color < num_colors; ++color) {
-            f_current[static_cast<std::size_t>(color)] =
-                static_cast<double>(N_current[static_cast<std::size_t>(color)]) / norm_factor;
-        }
-        commit_equilibrium_step(0);
-
-        struct DenseCandidate {
-            int color = 0;
-            int x_from = 0;
-            int y_from = 0;
-        };
-        std::vector<bool> died(static_cast<std::size_t>(num_colors), false);
-        std::vector<bool> species_equilibrated(static_cast<std::size_t>(num_colors), false);
-        bool all_equilibrated = false;
-        int anchor = -1;
-        struct PendingFractionSample {
-            int anchor = -1;
-            SlabFractionResult inst;
-            int t_inst = -1;
-        };
-        std::deque<PendingFractionSample> pending_samples;
-        auto print_progress_2d = [&](const int t, const char* phase) {
-            if (run_fractal_counts) return;
-            if (progress_interval <= 0 || (t % progress_interval) != 0) return;
-            const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
-            const int next_target = !all_equilibrated
-                ? L
-                : (pending_samples.empty()
-                    ? anchor + L
-                    : pending_samples.front().anchor + L + sample_stability_layers);
-            std::cout << "[fractions] phase=" << phase
-                      << " t=" << t
-                      << " z_max=" << z_max
-                      << " next_z=" << next_target
-                      << " collected=" << out.collected_samples << "/" << requested
-                      << " z_stab=" << out.z_stab
-                      << " anchor=" << anchor;
-            if (!p_curr.empty()) {
-                std::cout << " p=" << p_curr.front();
-            }
-            std::cout << std::endl;
-        };
-
-        auto compute_slab_2d = [&](const int bottom,
-                                   const int top,
-                                   const bool compute_fractal_counts = false,
-                                   const int fractal_sample_index = -1,
-                                   const int fractal_t_stab = -1) -> SlabFractionResult {
-            if (top < bottom) return {};
-            const int h_count = top - bottom + 1;
-            const long long total_sites = static_cast<long long>(L) * h_count;
-            const long long total_bonds =
-                static_cast<long long>(L) * h_count +
-                static_cast<long long>(L) * std::max(0, h_count - 1);
-            long long active_sites = 0;
-            long long open_bonds_count = 0;
-            for (int y = bottom; y <= top; ++y) {
-                for (int x = 0; x < L; ++x) {
-                    if (get_site_2d(x, y) > 0) ++active_sites;
-                    if (!is_node) {
-                        if (is_open_bond_2d(x, y, (x + 1) % L, y)) {
-                            ++open_bonds_count;
-                        }
-                        if (y < top && is_open_bond_2d(x, y, x, y + 1)) {
-                            ++open_bonds_count;
-                        }
-                    }
-                }
-            }
-
-            const char* snapshot_dir_env =
-                std::getenv("SOP_FRACTION_SNAPSHOT_DIR");
-            const bool capture_component_labels =
-                snapshot_dir_env != nullptr && snapshot_dir_env[0] != '\0';
-            const std::size_t slab_sites =
-                static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L);
-            std::vector<unsigned char> visited(slab_sites, 0u);
-            std::vector<std::uint32_t> component_labels;
-            if (capture_component_labels) component_labels.assign(slab_sites, 0u);
-            std::vector<std::uint32_t> queue;
-            queue.reserve(static_cast<std::size_t>(L));
-            std::vector<std::pair<std::vector<std::uint32_t>, long long>> spanning;
-            int largest = 0;
-            long long largest_edges = 0;
-            std::uint32_t largest_seed = std::numeric_limits<std::uint32_t>::max();
-            std::uint32_t largest_component_label = 0u;
-            std::uint32_t next_component_label = 0u;
-            auto local_idx = [&](const int x, const int y) -> std::uint32_t {
-                return static_cast<std::uint32_t>(
-                    (y - bottom) * L + x);
-            };
-            auto can_traverse_2d = [&](const int x1, const int y1,
-                                       const int x2, const int y2) -> bool {
-                if (y2 < bottom || y2 > top) return false;
-                if (get_site_2d(x2, y2) <= 0) return false;
-                return is_node || is_open_bond_2d(x1, y1, x2, y2);
-            };
-
-            for (int y = bottom; y <= top; ++y) {
-                for (int x = 0; x < L; ++x) {
-                    const std::uint32_t seed = local_idx(x, y);
-                    if (visited[seed] || get_site_2d(x, y) <= 0) continue;
-
-                    const std::uint32_t component_label = ++next_component_label;
-                    bool touches_bottom = false, touches_top = false;
-                    int component = 0;
-                    long long component_edge_visits = 0;
-                    std::size_t head = 0;
-                    queue.clear();
-                    queue.push_back(seed);
-                    visited[seed] = 1u;
-                    if (capture_component_labels) component_labels[seed] = component_label;
-
-                    while (head < queue.size()) {
-                        const std::uint32_t cur = queue[head++];
-                        const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
-                        const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-                        ++component;
-                        touches_bottom |= cy == bottom;
-                        touches_top |= cy == top;
-
-                        const int nx_values[4] = {
-                            (cx + L - 1) % L,
-                            (cx + 1) % L,
-                            cx,
-                            cx
-                        };
-                        const int ny_values[4] = {
-                            cy,
-                            cy,
-                            cy - 1,
-                            cy + 1
-                        };
-                        for (int ni = 0; ni < 4; ++ni) {
-                            const int nx = nx_values[ni];
-                            const int ny = ny_values[ni];
-                            if (ny < bottom || ny > top) continue;
-                            if (get_site_2d(nx, ny) <= 0) continue;
-                            if (!is_node && !is_open_bond_2d(cx, cy, nx, ny)) continue;
-                            ++component_edge_visits;
-                            const std::uint32_t nidx = local_idx(nx, ny);
-                            if (visited[nidx]) continue;
-                            visited[nidx] = 1u;
-                            if (capture_component_labels) component_labels[nidx] = component_label;
-                            queue.push_back(nidx);
-                        }
-                    }
-
-                    if (compute_fractal_counts && touches_bottom && touches_top)
-                        spanning.emplace_back(queue, component_edge_visits / 2);
-                    if (component > largest) {
-                        largest = component;
-                        largest_edges = component_edge_visits / 2;
-                        largest_seed = seed;
-                        largest_component_label = component_label;
-                    }
-                }
-            }
-
-            int shortest_path_edges = -1;
-            long long hull_length = 0;
-            long long full_boundary_length = 0;
-            long long external_perimeter_length = 0;
-            std::map<long long, long long> hole_size_counts;
-            bool has_fractal_counts = false;
-            FractalCountsSample fractal_counts;
-            if (compute_fractal_counts && fractal_counts_eligible(dim, L)) {
-                has_fractal_counts = true;
-                fractal_counts.sample_index = fractal_sample_index;
-                fractal_counts.anchor_z = bottom;
-                fractal_counts.t_stab = fractal_t_stab;
-                std::vector<unsigned char> membership(slab_sites, 0u);
-                for (const auto& cluster : spanning) {
-                    for (auto site : cluster.first) membership[site] = 1u;
-                    fractal_counts.spanning_clusters.push_back(compute_fractal_counts_2d(
-                        L, bottom, top, is_node, out.seed, fractal_sample_index,
-                        fractal_t_stab, active_sites, open_bonds_count, cluster.second,
-                        membership, can_traverse_2d));
-                    for (auto site : cluster.first) membership[site] = 0u;
-                }
-                sort_spanning_clusters(fractal_counts);
-            }
-            if (largest_seed != std::numeric_limits<std::uint32_t>::max()) {
-                std::vector<unsigned char> in_giant(
-                    static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
-                std::vector<std::uint32_t> bottom_sources;
-                bottom_sources.reserve(static_cast<std::size_t>(L));
-
-                std::size_t head = 0;
-                queue.clear();
-                queue.push_back(largest_seed);
-                in_giant[largest_seed] = 1u;
-                while (head < queue.size()) {
-                    const std::uint32_t cur = queue[head++];
-                    const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
-                    const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-                    if (cy == bottom) {
-                        bottom_sources.push_back(cur);
-                    }
-
-                    const int nx_values[4] = {
-                        (cx + L - 1) % L,
-                        (cx + 1) % L,
-                        cx,
-                        cx
-                    };
-                    const int ny_values[4] = {
-                        cy,
-                        cy,
-                        cy - 1,
-                        cy + 1
-                    };
-                    for (int ni = 0; ni < 4; ++ni) {
-                        const int nx = nx_values[ni];
-                        const int ny = ny_values[ni];
-                        if (!can_traverse_2d(cx, cy, nx, ny)) continue;
-                        const std::uint32_t nidx = local_idx(nx, ny);
-                        if (in_giant[nidx]) continue;
-                        in_giant[nidx] = 1u;
-                        queue.push_back(nidx);
-                    }
-                }
-
-                SlabHullHoleResult geometry =
-                    compute_cylindrical_slab_hull_holes_2d(L, h_count, in_giant);
-                hull_length = geometry.hull_length;
-                full_boundary_length = geometry.full_boundary_length;
-                external_perimeter_length = geometry.external_perimeter_length;
-                hole_size_counts = std::move(geometry.hole_size_counts);
-
-                if (!bottom_sources.empty()) {
-                    std::vector<unsigned char> reached(
-                        static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L), 0u);
-                    std::vector<std::uint32_t> current;
-                    std::vector<std::uint32_t> next;
-                    current.reserve(bottom_sources.size());
-                    next.reserve(bottom_sources.size());
-                    for (const std::uint32_t src : bottom_sources) {
-                        reached[src] = 1u;
-                        current.push_back(src);
-                    }
-
-                    int distance = 0;
-                    while (!current.empty() && shortest_path_edges < 0) {
-                        next.clear();
-                        for (const std::uint32_t cur : current) {
-                            const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
-                            const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
-                            if (cy == top) {
-                                shortest_path_edges = distance;
-                                break;
-                            }
-
-                            const int nx_values[4] = {
-                                (cx + L - 1) % L,
-                                (cx + 1) % L,
-                                cx,
-                                cx
-                            };
-                            const int ny_values[4] = {
-                                cy,
-                                cy,
-                                cy - 1,
-                                cy + 1
-                            };
-                            for (int ni = 0; ni < 4; ++ni) {
-                                const int nx = nx_values[ni];
-                                const int ny = ny_values[ni];
-                                if (!can_traverse_2d(cx, cy, nx, ny)) continue;
-                                const std::uint32_t nidx = local_idx(nx, ny);
-                                if (!in_giant[nidx] || reached[nidx]) continue;
-                                reached[nidx] = 1u;
-                                next.push_back(nidx);
-                            }
-                        }
-                        current.swap(next);
-                        ++distance;
-                    }
-                }
-
-                // Optional visualization snapshots preserve each component label,
-                // allowing the Python plotter to assign a distinct color per cluster.
-                // This is opt-in and does not retain the full temporal network.
-                if (compute_fractal_counts && capture_component_labels) {
-                        const std::filesystem::path snapshot_dir(snapshot_dir_env);
-                        std::filesystem::create_directories(snapshot_dir);
-                        const auto snapshot_path = snapshot_dir /
-                            ("sample_" + std::to_string(fractal_sample_index + 1) +
-                             ".components");
-                        std::ofstream snapshot(snapshot_path,
-                                               std::ios::binary | std::ios::trunc);
-                        if (!snapshot) {
-                            throw std::runtime_error(
-                                "Could not open fraction snapshot: " + snapshot_path.string());
-                        }
-                        snapshot.write("SOPCOMP1", 8);
-                        const std::uint32_t header[] = {
-                            static_cast<std::uint32_t>(L),
-                            static_cast<std::uint32_t>(h_count),
-                            largest_component_label
-                        };
-                        snapshot.write(reinterpret_cast<const char*>(header), sizeof(header));
-                        std::vector<std::uint32_t> row(static_cast<std::size_t>(L), 0u);
-                        for (int y = top; y >= bottom; --y) {
-                            const std::size_t row_offset =
-                                static_cast<std::size_t>(y - bottom) *
-                                static_cast<std::size_t>(L);
-                            for (int x = 0; x < L; ++x) {
-                                const std::size_t local = row_offset +
-                                    static_cast<std::size_t>(x);
-                                row[static_cast<std::size_t>(x)] =
-                                    get_site_2d(x, y) <= 0 ? 0u : component_labels[local];
-                            }
-                            snapshot.write(
-                                reinterpret_cast<const char*>(row.data()),
-                                static_cast<std::streamsize>(row.size() * sizeof(row[0])));
-                        }
-                        if (!snapshot) {
-                            throw std::runtime_error(
-                                "Failed writing fraction snapshot: " + snapshot_path.string());
-                        }
-
-                        // Capture the base network from y = 0 to y = bottom - 1.
-                        // At this point (sample 1 collected), all columns have grown
-                        // past the stabilization height, so the base is 100% complete.
-                        if (fractal_sample_index == 0) {
-                            const char* base_snapshot_env =
-                                std::getenv("SOP_FRACTION_BASE_SNAPSHOT");
-                            if (base_snapshot_env != nullptr && base_snapshot_env[0] != '\0') {
-                                const std::filesystem::path base_path(base_snapshot_env);
-                                if (!base_path.parent_path().empty()) {
-                                    std::filesystem::create_directories(base_path.parent_path());
-                                }
-                                std::ofstream base_snapshot(base_path,
-                                                            std::ios::binary | std::ios::trunc);
-                                if (!base_snapshot) {
-                                    throw std::runtime_error(
-                                        "Could not open base snapshot: " + base_path.string());
-                                }
-                                base_snapshot.write("SOPBASE1", 8);
-                                const std::uint32_t base_header[] = {
-                                    static_cast<std::uint32_t>(L),
-                                    static_cast<std::uint32_t>(bottom)
-                                };
-                                base_snapshot.write(
-                                    reinterpret_cast<const char*>(base_header),
-                                    sizeof(base_header));
-                                std::vector<unsigned char> row(static_cast<std::size_t>(L), 0u);
-                                for (int y = bottom - 1; y >= 0; --y) {
-                                    for (int x = 0; x < L; ++x) {
-                                        row[static_cast<std::size_t>(x)] =
-                                            get_site_2d(x, y) > 0 ? 1u : 0u;
-                                    }
-                                    base_snapshot.write(
-                                        reinterpret_cast<const char*>(row.data()),
-                                        static_cast<std::streamsize>(row.size()));
-                                }
-                                if (!base_snapshot) {
-                                    throw std::runtime_error(
-                                        "Failed writing base snapshot: " + base_path.string());
-                                }
-                            }
-                        }
-
-                        // Capture the gap slab immediately below sample 2.
-                        // At this point (sample 2 collected), all columns have grown
-                        // through the entire gap, so the gap is 100% complete.
-                        if (fractal_sample_index == 1) {
-                            const char* gap_snapshot_env =
-                                std::getenv("SOP_FRACTION_GAP_SNAPSHOT");
-                            if (gap_snapshot_env != nullptr && gap_snapshot_env[0] != '\0') {
-                                const std::filesystem::path gap_path(gap_snapshot_env);
-                                if (!gap_path.parent_path().empty()) {
-                                    std::filesystem::create_directories(gap_path.parent_path());
-                                }
-                                std::ofstream gap_snapshot(gap_path,
-                                                           std::ios::binary | std::ios::trunc);
-                                if (!gap_snapshot) {
-                                    throw std::runtime_error(
-                                        "Could not open gap snapshot: " + gap_path.string());
-                                }
-                                gap_snapshot.write("SOPGAP1", 8);
-                                const int actual_gap_h = sample_gap_layers > 0 ? sample_gap_layers : L;
-                                const std::uint32_t gap_header[] = {
-                                    static_cast<std::uint32_t>(L),
-                                    static_cast<std::uint32_t>(actual_gap_h)
-                                };
-                                gap_snapshot.write(
-                                    reinterpret_cast<const char*>(gap_header),
-                                    sizeof(gap_header));
-                                std::vector<unsigned char> gap_row(
-                                    static_cast<std::size_t>(L), 0u);
-                                const int gap_top = bottom - 1;
-                                const int gap_bottom = bottom - actual_gap_h;
-                                for (int y = gap_top; y >= gap_bottom; --y) {
-                                    for (int x = 0; x < L; ++x) {
-                                        gap_row[static_cast<std::size_t>(x)] =
-                                            get_site_2d(x, y) > 0 ? 1u : 0u;
-                                    }
-                                    gap_snapshot.write(
-                                        reinterpret_cast<const char*>(gap_row.data()),
-                                        static_cast<std::streamsize>(gap_row.size()));
-                                }
-                                if (!gap_snapshot) {
-                                    throw std::runtime_error(
-                                        "Failed writing gap snapshot: " + gap_path.string());
-                                }
-                            }
-                        }
-
-                        // Capture the tail slab immediately above the last sample.
-                        if (fractal_sample_index == requested - 1) {
-                            const char* tail_snapshot_env =
-                                std::getenv("SOP_FRACTION_TAIL_SNAPSHOT");
-                            if (tail_snapshot_env != nullptr && tail_snapshot_env[0] != '\0') {
-                                const std::filesystem::path tail_path(tail_snapshot_env);
-                                if (!tail_path.parent_path().empty()) {
-                                    std::filesystem::create_directories(tail_path.parent_path());
-                                }
-                                std::ofstream tail_snapshot(tail_path,
-                                                           std::ios::binary | std::ios::trunc);
-                                if (!tail_snapshot) {
-                                    throw std::runtime_error(
-                                        "Could not open tail snapshot: " + tail_path.string());
-                                }
-                                tail_snapshot.write("SOPTAIL1", 8);
-                                double tail_over_L = 0.75;
-                                if (const char* tail_env = std::getenv("SOP_FRACTION_TAIL_OVER_L")) {
-                                    tail_over_L = std::max(0.0, std::stod(tail_env));
-                                }
-                                const int cur_z_max = *std::max_element(max_heights.begin(), max_heights.end());
-                                const int desired_tail_h = static_cast<int>(std::llround(tail_over_L * static_cast<double>(L)));
-                                const int tail_bottom = top + 1;
-                                const int available_h = std::max(0, cur_z_max - tail_bottom + 1);
-                                const int actual_tail_h = desired_tail_h > 0 ? std::min(desired_tail_h, available_h) : available_h;
-                                const std::uint32_t tail_header[] = {
-                                    static_cast<std::uint32_t>(L),
-                                    static_cast<std::uint32_t>(actual_tail_h)
-                                };
-                                tail_snapshot.write(
-                                    reinterpret_cast<const char*>(tail_header),
-                                    sizeof(tail_header));
-                                std::vector<unsigned char> tail_row(
-                                    static_cast<std::size_t>(L), 0u);
-                                const int tail_top = tail_bottom + actual_tail_h - 1;
-                                for (int y = tail_top; y >= tail_bottom; --y) {
-                                    for (int x = 0; x < L; ++x) {
-                                        tail_row[static_cast<std::size_t>(x)] =
-                                            get_site_2d(x, y) > 0 ? 1u : 0u;
-                                    }
-                                    tail_snapshot.write(
-                                        reinterpret_cast<const char*>(tail_row.data()),
-                                        static_cast<std::streamsize>(tail_row.size()));
-                                }
-                                if (!tail_snapshot) {
-                                    throw std::runtime_error(
-                                        "Failed writing tail snapshot: " + tail_path.string());
-                                }
-                            }
-                        }
-                }
-            }
-
-            return {
-                total_sites > 0 ? static_cast<double>(active_sites) / static_cast<double>(total_sites) : 0.0,
-                total_bonds > 0 ? static_cast<double>(open_bonds_count) / static_cast<double>(total_bonds) : 0.0,
-                largest,
-                largest_edges,
-                shortest_path_edges,
-                hull_length,
-                full_boundary_length,
-                external_perimeter_length,
-                std::move(hole_size_counts),
-                has_fractal_counts,
-                std::move(fractal_counts)
-            };
-        };
-
-        for (int t = 1; hard_max_steps <= 0 || t <= hard_max_steps; ++t) {
-            std::fill(N_current.begin(), N_current.end(), 0);
-            std::fill(f_current.begin(), f_current.end(), 0.0);
-            next_frontier.clear();
-
-            if (is_node) {
-                std::unordered_map<std::uint64_t, std::vector<DenseCandidate>, AbsSiteKeyHash> candidates;
-                candidates.reserve(frontier.size() * 2u + 16u);
-
-                for (const std::uint64_t key : frontier) {
-                    int x = 0, y = 0;
-                    decode_xy(key, x, y);
-                    const int a_val = get_site_2d(x, y);
-                    if (a_val <= 0) continue;
-                    const int color = value_to_color_index(num_colors, a_val);
-                    if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
-
-                    const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
-                    const int ny_values[4] = {y, y, y - 1, y + 1};
-                    for (int ni = 0; ni < 4; ++ni) {
-                        const int nx = nx_values[ni];
-                        const int ny = ny_values[ni];
-                        if (ny < 0) continue;
-                        const int vv = get_site_2d(nx, ny);
-                        if (vv >= 0) continue;
-                        candidates[encode_xy(nx, ny)].push_back(DenseCandidate{color, x, y});
-                    }
-                }
-
-                for (const auto& kv : candidates) {
-                    const auto& list = kv.second;
-                    const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
-                    const DenseCandidate chosen = list[static_cast<std::size_t>(pick)];
-                    int x = 0, y = 0;
-                    decode_xy(kv.first, x, y);
-                    if (rng.uniform_real(0.0, 1.0) >=
-                        p_curr[static_cast<std::size_t>(chosen.color)]) {
-                        set_site_2d(x, y, 0);
-                        continue;
-                    }
-
-                    set_site_2d(x, y, color_to_active_value(num_colors, chosen.color));
-                    next_frontier.push_back(kv.first);
-                    ++N_current[static_cast<std::size_t>(chosen.color)];
-                    max_heights[static_cast<std::size_t>(chosen.color)] =
-                        std::max(max_heights[static_cast<std::size_t>(chosen.color)], y);
-                }
-            } else {
-                std::unordered_map<std::uint64_t, std::vector<DenseCandidate>, AbsSiteKeyHash> open_bond_candidates;
-                open_bond_candidates.reserve(frontier.size() * 2u + 16u);
-
-                for (const std::uint64_t key : frontier) {
-                    int x = 0, y = 0;
-                    decode_xy(key, x, y);
-                    const int a_val = get_site_2d(x, y);
-                    if (a_val <= 0) continue;
-                    const int color = value_to_color_index(num_colors, a_val);
-                    if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
-
-                    const int nx_values[4] = {(x + L - 1) % L, (x + 1) % L, x, x};
-                    const int ny_values[4] = {y, y, y - 1, y + 1};
-                    for (int ni = 0; ni < 4; ++ni) {
-                        const int nx = nx_values[ni];
-                        const int ny = ny_values[ni];
-                        if (ny < 0) continue;
-
-                        if (!mark_tested_bond_2d(x, y, nx, ny)) continue;
-
-                        const int vv = get_site_2d(nx, ny);
-                        if (vv == 0) continue;
-
-                        if (vv > 0) {
-                            const int neigh_color = value_to_color_index(num_colors, vv);
-                            if (neigh_color != color) continue;
-                            if (rng.uniform_real(0.0, 1.0) <
-                                p_curr[static_cast<std::size_t>(color)]) {
-                                set_open_bond_2d(x, y, nx, ny);
-                            }
-                            continue;
-                        }
-
-                        // vv < 0: inactive neighbor
-                        if (rng.uniform_real(0.0, 1.0) <
-                            p_curr[static_cast<std::size_t>(color)]) {
-                            open_bond_candidates[encode_xy(nx, ny)].push_back(
-                                DenseCandidate{color, x, y});
-                        }
-                    }
-                }
-
-                for (const auto& kv : open_bond_candidates) {
-                    const auto& list = kv.second;
-                    if (list.empty()) continue;
-
-                    const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
-                    const int winning_color = list[static_cast<std::size_t>(pick)].color;
-
-                    int x = 0, y = 0;
-                    decode_xy(kv.first, x, y);
-
-                    for (const auto& cand : list) {
-                        if (cand.color != winning_color) continue;
-                        set_open_bond_2d(cand.x_from, cand.y_from, x, y);
-                    }
-
-                    set_site_2d(x, y, color_to_active_value(num_colors, winning_color));
-                    next_frontier.push_back(kv.first);
-                    ++N_current[static_cast<std::size_t>(winning_color)];
-                    max_heights[static_cast<std::size_t>(winning_color)] =
-                        std::max(max_heights[static_cast<std::size_t>(winning_color)], y);
-                }
-            }
-
-            for (int color = 0; color < num_colors; ++color) {
-                f_current[static_cast<std::size_t>(color)] =
-                    static_cast<double>(N_current[static_cast<std::size_t>(color)]) / norm_factor;
-            }
-
-            if (!all_equilibrated) {
-                commit_equilibrium_step(t);
-                constexpr int teq_window_block = 10;
-                const double teq_rel_tol = growth_test_effective_rel_tol(
-                    stop_config.equilibrium_rel_tol, num_colors);
-                const int teq_min_stable_steps =
-                    growth_test_global_min_stable_steps(
-                        stop_config.equilibrium_consecutive_steps,
-                        teq_window_block);
-                const int teq_validation_window_steps =
-                    growth_test_global_validation_window_steps(
-                        stop_config.post_equilibrium_extra_steps,
-                        teq_window_block);
-
-                if (t % teq_window_block == 0) {
-                    for (int color = 0; color < num_colors; ++color) {
-                        if (died[static_cast<std::size_t>(color)] ||
-                            species_equilibrated[static_cast<std::size_t>(color)]) {
-                            continue;
-                        }
-                        const bool use_front_fraction_teq = (std::abs(c) <= 1e-12);
-                        if (!use_front_fraction_teq && max_heights[static_cast<std::size_t>(color)] < L) continue;
-                        const auto& series_to_check = use_front_fraction_teq
-                            ? f_series[static_cast<std::size_t>(color)]
-                            : p_series[static_cast<std::size_t>(color)];
-                        const double t_eq = estimate_t_eq_from_series(
-                            t_list,
-                            series_to_check,
-                            15,
-                            teq_window_block,
-                            teq_min_stable_steps,
-                            teq_rel_tol,
-                            stop_config.equilibrium_abs_tol,
-                            1.0e-5,
-                            false,
-                            0.0,
-                            teq_validation_window_steps,
-                            0u);
-                        if (std::isfinite(t_eq)) {
-                            species_equilibrated[static_cast<std::size_t>(color)] = true;
-                            out.t_eq_by_species[static_cast<std::size_t>(color)] = t_eq;
-                            out.z_stat_by_species[static_cast<std::size_t>(color)] =
-                                max_heights[static_cast<std::size_t>(color)];
-                        }
-                    }
-                }
-
-                bool any_alive = false;
-                all_equilibrated = true;
-                for (int color = 0; color < num_colors; ++color) {
-                    if (died[static_cast<std::size_t>(color)]) continue;
-                    any_alive = true;
-                    if (!species_equilibrated[static_cast<std::size_t>(color)]) {
-                        all_equilibrated = false;
-                    }
-                }
-                if (!any_alive) {
-                    out.stop_reason = "all_dead";
-                    out.stop_time = t;
-                    break;
-                }
-                if (all_equilibrated) {
-                    anchor = *std::max_element(out.z_stat_by_species.begin(),
-                                               out.z_stat_by_species.end());
-                    out.z_stab = anchor;
-
-                    // Note: base_snapshot is captured during compute_slab_2d for sample 1,
-                    // ensuring all columns have fully grown past z_stat before writing.
-                    if (!run_fractal_counts) {
-                        std::cout << "[fractions] stabilized"
-                                  << " t=" << t
-                                  << " z_stab=" << out.z_stab
-                                  << " next_inst_z=" << (anchor + L)
-                                  << " next_stab_z=" << (anchor + L + sample_stability_layers)
-                                  << " stability_layers=" << sample_stability_layers
-                                  << " gap_layers=" << sample_gap_layers
-                                  << " requested=" << requested
-                                  << std::endl;
-                    }
-                    p_series.clear();
-                    t_list.clear();
-                }
-            } else {
-                const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
-                while (out.collected_samples + static_cast<int>(pending_samples.size()) < requested &&
-                       z_max >= anchor + L) {
-                    PendingFractionSample sample;
-                    sample.anchor = anchor;
-                    sample.inst = compute_slab_2d(sample.anchor, sample.anchor + L - 1);
-                    sample.t_inst = t;
-                    if (!run_fractal_counts) {
-                        std::cout << "[fractions] inst_sample_ready"
-                                  << " sample=" << (out.collected_samples +
-                                                    static_cast<int>(pending_samples.size()) + 1)
-                                  << "/" << requested
-                                  << " t=" << t
-                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                                  << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
-                                  << " p_node=" << sample.inst.p_node
-                                  << " p_bond=" << sample.inst.p_bond
-                                  << " S=" << sample.inst.largest_component
-                                  << " E=" << sample.inst.largest_component_edges
-                                  << " SP=" << sample.inst.shortest_path_edges
-                                  << std::endl;
-                    }
-                    pending_samples.push_back(std::move(sample));
-                    anchor += L + sample_gap_layers;
-                }
-                while (!pending_samples.empty() &&
-                       z_max >= pending_samples.front().anchor + L + sample_stability_layers) {
-                    const PendingFractionSample sample = std::move(pending_samples.front());
-                    pending_samples.pop_front();
-                    if (run_fractal_counts) {
-                        std::cout << "[counts] sample_collecting"
-                                  << " sample=" << (out.collected_samples + 1)
-                                  << "/" << requested
-                                  << " t=" << t
-                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                                  << " status=calculating_stabilized_counts"
-                                  << std::endl;
-                    }
-                    const SlabFractionResult stab = compute_slab_2d(
-                        sample.anchor,
-                        sample.anchor + L - 1,
-                        true,
-                        out.collected_samples,
-                        t);
-                    out.p_inst_bond.push_back(sample.inst.p_bond);
-                    out.p_inst_node.push_back(sample.inst.p_node);
-                    out.S_inst.push_back(sample.inst.largest_component);
-                    out.E_inst.push_back(sample.inst.largest_component_edges);
-                    out.SP_inst.push_back(sample.inst.shortest_path_edges);
-                    out.p_stab_bond.push_back(stab.p_bond);
-                    out.p_stab_node.push_back(stab.p_node);
-                    out.S_stab.push_back(stab.largest_component);
-                    out.E_stab.push_back(stab.largest_component_edges);
-                    out.SP_stab.push_back(stab.shortest_path_edges);
-                    out.hull_length.push_back(stab.hull_length);
-                    out.full_boundary_length.push_back(stab.full_boundary_length);
-                    out.external_perimeter_length.push_back(stab.external_perimeter_length);
-                    out.hole_size_counts.push_back(stab.hole_size_counts);
-                    out.anchor_z.push_back(sample.anchor);
-                    out.t_inst.push_back(sample.t_inst);
-                    out.t_stab.push_back(t);
-                    if (stab.has_fractal_counts) {
-                        out.fractal_counts.push_back(stab.fractal_counts);
-                    }
-                    out.collected_samples = static_cast<int>(out.S_stab.size());
-                    if (run_fractal_counts && stab.has_fractal_counts) {
-                        std::cout << "[counts] sample_collected"
-                                  << " sample=" << out.collected_samples
-                                  << "/" << requested
-                                  << " t=" << t
-                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                                  << " spanning_clusters=" << stab.fractal_counts.spanning_clusters.size()
-                                  << std::endl;
-                    } else if (!run_fractal_counts) {
-                        std::cout << "[fractions] sample_collected"
-                                  << " sample=" << out.collected_samples
-                                  << "/" << requested
-                                  << " t=" << t
-                                  << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                                  << " next_anchor_z=" << anchor
-                                  << " p_node=" << stab.p_node
-                                  << " p_bond=" << stab.p_bond
-                                  << " S=" << stab.largest_component
-                                  << " E=" << stab.largest_component_edges
-                                  << " SP=" << stab.shortest_path_edges
-                                  << std::endl;
-                    }
-
-                    if (out.collected_samples >= requested) {
-                        out.stop_reason = "requested_samples_collected";
-                        out.stop_time = t;
-                        break;
-                    }
-                }
-                if (out.collected_samples >= requested) {
-                    break;
-                }
-            }
-            print_progress_2d(
-                t,
-                !all_equilibrated ? "equilibrating"
-                                  : (pending_samples.empty() ? "waiting_inst" : "waiting_stab"));
-
-            std::vector<int> next_counts(static_cast<std::size_t>(num_colors), 0);
-            for (const std::uint64_t key : next_frontier) {
-                int x = 0, y = 0;
-                decode_xy(key, x, y);
-                const int v = get_site_2d(x, y);
-                if (v <= 0) continue;
-                const int color = value_to_color_index(num_colors, v);
-                if (color >= 0 && color < num_colors) {
-                    ++next_counts[static_cast<std::size_t>(color)];
-                }
-            }
-            for (int color = 0; color < num_colors; ++color) {
-                if (!died[static_cast<std::size_t>(color)] &&
-                    next_counts[static_cast<std::size_t>(color)] == 0) {
-                    died[static_cast<std::size_t>(color)] = true;
-                }
-            }
-            if (std::all_of(died.begin(), died.end(), [](const bool v) { return v; })) {
-                out.stop_reason = "all_dead";
-                out.stop_time = t;
-                break;
-            }
-
-            for (int color = 0; color < num_colors; ++color) {
-                p_next[static_cast<std::size_t>(color)] =
-                    died[static_cast<std::size_t>(color)]
-                        ? p_curr[static_cast<std::size_t>(color)]
-                        : generate_p(type_f_T,
-                                     p_curr[static_cast<std::size_t>(color)],
-                                     t,
-                                     f_current[static_cast<std::size_t>(color)],
-                                     c_value,
-                                     f_T,
-                                     a,
-                                     alpha,
-                                     stop_config.feedback_control_rule);
-            }
-
-            frontier.swap(next_frontier);
-            p_curr.swap(p_next);
-        }
-
-        if (out.stop_time < 0 && hard_max_steps > 0) {
-            out.stop_time = hard_max_steps;
-            out.stop_reason = "hard_max_steps";
-        }
-        return out;
     }
 
     RawFractionsSeries out;
@@ -4613,9 +3086,9 @@ RawFractionsSeries network::create_raw_fractions(
     out.num_colors = num_colors;
     out.requested_samples = requested;
     if (dim == 2) {
-        out.N_total = static_cast<long long>(L) * static_cast<long long>(L);
-        out.E_total = 2LL * static_cast<long long>(L) * static_cast<long long>(L) -
-                      static_cast<long long>(L);
+        const long long LL = static_cast<long long>(L);
+        out.N_total = LL * LL;
+        out.E_total = 2LL * LL * LL - LL;
     } else {
         const long long LL = static_cast<long long>(L);
         out.N_total = LL * LL * LL;
@@ -4632,311 +3105,513 @@ RawFractionsSeries network::create_raw_fractions(
     out.z_stat_by_species.assign(static_cast<std::size_t>(num_colors), -1);
     out.stop_reason = "not_stopped";
 
-    std::unordered_map<std::uint64_t, std::int8_t, AbsSiteKeyHash> site_state;
-    site_state.reserve(static_cast<std::size_t>(base_size * 3));
-    std::unordered_set<AbsBondKey, AbsBondKeyHash> tested_bonds;
-    std::unordered_set<AbsBondKey, AbsBondKeyHash> open_bonds;
-    tested_bonds.reserve(static_cast<std::size_t>(base_size * 6));
-    open_bonds.reserve(static_cast<std::size_t>(base_size * 4));
+    // Optional 2D snapshot environment flags (opt-in only; zero memory cost when unset).
+    const char* snapshot_dir_env = std::getenv("SOP_FRACTION_SNAPSHOT_DIR");
+    const bool capture_2d_snapshots =
+        (dim == 2) && snapshot_dir_env != nullptr && snapshot_dir_env[0] != '\0';
+    const char* base_snapshot_env = std::getenv("SOP_FRACTION_BASE_SNAPSHOT");
+    const bool need_base_snapshot =
+        capture_2d_snapshots && base_snapshot_env != nullptr && base_snapshot_env[0] != '\0';
+    const char* gap_snapshot_env = std::getenv("SOP_FRACTION_GAP_SNAPSHOT");
+    const bool need_gap_snapshot =
+        capture_2d_snapshots && gap_snapshot_env != nullptr && gap_snapshot_env[0] != '\0';
 
-    auto get_site = [&](const std::uint64_t key) -> int {
-        const auto it = site_state.find(key);
-        return it == site_state.end() ? -1 : static_cast<int>(it->second);
-    };
-    auto set_site = [&](const std::uint64_t key, const int value) {
-        site_state[key] = static_cast<std::int8_t>(value);
-    };
+    SlidingSlabGrid grid(dim, L, is_node);
+    GridRegular base_grid(dim, L, 0, 1);
 
     std::vector<double> p_curr = p0;
+    if (static_cast<int>(p_curr.size()) < num_colors) {
+        p_curr.resize(static_cast<std::size_t>(num_colors),
+                      p_curr.empty() ? 0.5 : p_curr.back());
+    }
     std::vector<double> p_next(static_cast<std::size_t>(num_colors), 0.0);
-    std::vector<int> N_current(static_cast<std::size_t>(num_colors), 0);
+    std::vector<long long> N_current(static_cast<std::size_t>(num_colors), 0);
     std::vector<double> f_current(static_cast<std::size_t>(num_colors), 0.0);
     std::vector<int> max_heights(static_cast<std::size_t>(num_colors), 0);
-    std::vector<std::uint64_t> frontier;
-    std::vector<std::uint64_t> next_frontier;
+
+    std::vector<std::int64_t> frontier;
+    std::vector<std::int64_t> next_frontier;
     frontier.reserve(static_cast<std::size_t>(base_size));
     next_frontier.reserve(static_cast<std::size_t>(base_size));
+
+    SparseFrontCandidates front_candidates(0, true);
+    front_candidates.reserve_frontier(static_cast<std::size_t>(base_size));
 
     std::vector<std::vector<double>> p_series(static_cast<std::size_t>(num_colors));
     std::vector<std::vector<double>> f_series(static_cast<std::size_t>(num_colors));
     std::vector<int> t_list;
     t_list.reserve(4096);
-    auto commit_equilibrium_step = [&](const int t) {
-        t_list.push_back(t);
-        for (int c = 0; c < num_colors; ++c) {
-            p_series[static_cast<std::size_t>(c)].push_back(p_curr[static_cast<std::size_t>(c)]);
-            f_series[static_cast<std::size_t>(c)].push_back(f_current[static_cast<std::size_t>(c)]);
+    auto commit_equilibrium_step = [&](const int t_step) {
+        t_list.push_back(t_step);
+        for (int color = 0; color < num_colors; ++color) {
+            p_series[static_cast<std::size_t>(color)].push_back(
+                p_curr[static_cast<std::size_t>(color)]);
+            f_series[static_cast<std::size_t>(color)].push_back(
+                f_current[static_cast<std::size_t>(color)]);
         }
     };
 
     std::vector<int> seeds_quota(static_cast<std::size_t>(num_colors), 0);
-    for (int c = 0; c < num_colors; ++c) {
-        long long q = std::llround(P0 * rho[static_cast<std::size_t>(c)] * base_size);
+    for (int color = 0; color < num_colors; ++color) {
+        const double rho_c = (color < static_cast<int>(rho.size()))
+            ? rho[static_cast<std::size_t>(color)]
+            : (1.0 / static_cast<double>(num_colors));
+        long long q = std::llround(P0 * rho_c * static_cast<double>(base_size));
         q = std::max<long long>(0, std::min<long long>(q, base_size));
-        seeds_quota[static_cast<std::size_t>(c)] = static_cast<int>(q);
+        seeds_quota[static_cast<std::size_t>(color)] = static_cast<int>(q);
     }
 
+    // Exact same base initialization as create_network / animate_network for all 1..N species
+    // and all layouts (Clustered, Random, Blocks, Alternating) in both 2D and 3D.
     for (int color = 0; color < num_colors; ++color) {
+        const int prefer_neg = color_to_negative_value(num_colors, color);
         const int active_val = color_to_active_value(num_colors, color);
-        auto activate_base_site = [&](const std::uint64_t key) -> bool {
-            const int v = get_site(key);
-            if (v != -1 && v != color_to_negative_value(num_colors, color)) return false;
-            set_site(key, active_val);
-            frontier.push_back(key);
+
+        auto activate_base_site = [&](const std::int64_t base_idx) -> bool {
+            const std::size_t lat = static_cast<std::size_t>(base_idx);
+            const int v = grid.get_site(0, lat);
+            if (v != prefer_neg && v != -1) return false;
+            grid.set_site(0, lat, active_val);
+            frontier.push_back(grid.encode_key(0, lat));
             ++N_current[static_cast<std::size_t>(color)];
             return true;
         };
 
-        if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
+        if (stop_config.initial_base_layout == InitialBaseLayout::Clustered) {
+            activate_clustered_base_sites(
+                base_grid,
+                num_colors,
+                color,
+                seeds_quota[static_cast<std::size_t>(color)],
+                rng,
+                activate_base_site);
+        } else if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
             int activated = 0;
             int tries = 0;
-            const int max_tries = static_cast<int>(base_size) * 20;
+            const int max_tries = static_cast<int>(
+                std::min<long long>(static_cast<long long>(std::numeric_limits<int>::max()),
+                                    base_size * 20LL));
             while (activated < seeds_quota[static_cast<std::size_t>(color)] &&
                    tries < max_tries) {
                 const int x = rng.uniform_int(0, L - 1);
-                const int y = (dim == 3) ? rng.uniform_int(0, L - 1) : 0;
-                const std::uint64_t key = abs_site_key(x, y, 0);
-                if (activate_base_site(key)) ++activated;
+                const int y_lat = (dim == 3) ? rng.uniform_int(0, L - 1) : 0;
+                if (activate_base_site(static_cast<std::int64_t>(grid.lat_index(x, y_lat)))) {
+                    ++activated;
+                }
                 ++tries;
             }
         } else {
-            const int quota = seeds_quota[static_cast<std::size_t>(color)];
-            int activated = 0;
-            if (dim == 2) {
-                for (int x = 0; x < L && activated < quota; ++x) {
-                    const bool belongs =
-                        stop_config.initial_base_layout == InitialBaseLayout::Alternating
-                            ? ((x % num_colors) == color)
-                            : (x >= (color * L) / num_colors &&
-                               x < ((color + 1) * L) / num_colors);
-                    if (belongs && activate_base_site(abs_site_key(x, 0, 0))) ++activated;
-                }
-            } else {
-                for (int y = 0; y < L && activated < quota; ++y) {
-                    for (int x = 0; x < L && activated < quota; ++x) {
-                        const bool belongs =
-                            stop_config.initial_base_layout == InitialBaseLayout::Alternating
-                                ? (((x + L * y) % num_colors) == color)
-                                : (((x + L * y) % num_colors) == color);
-                        if (belongs && activate_base_site(abs_site_key(x, y, 0))) ++activated;
-                    }
-                }
-            }
+            activate_deterministic_base_sites(
+                base_grid,
+                num_colors,
+                color,
+                seeds_quota[static_cast<std::size_t>(color)],
+                stop_config.initial_base_layout,
+                activate_base_site);
         }
     }
 
-    for (int c = 0; c < num_colors; ++c) {
-        f_current[static_cast<std::size_t>(c)] =
-            static_cast<double>(N_current[static_cast<std::size_t>(c)]) / norm_factor;
+    for (int color = 0; color < num_colors; ++color) {
+        f_current[static_cast<std::size_t>(color)] =
+            static_cast<double>(N_current[static_cast<std::size_t>(color)]) / norm_factor;
     }
     commit_equilibrium_step(0);
 
     std::vector<bool> died(static_cast<std::size_t>(num_colors), false);
     std::vector<bool> species_equilibrated(static_cast<std::size_t>(num_colors), false);
     bool all_equilibrated = false;
-    int z_stab = -1;
     int anchor = -1;
-    struct PendingFractionSample {
-        int anchor = -1;
-        SlabFractionResult inst;
-        int t_inst = -1;
-    };
-    std::deque<PendingFractionSample> pending_samples;
-    auto print_progress_sparse = [&](const int t, const char* phase) {
-        if (run_fractal_counts) return;
-        if (progress_interval <= 0 || (t % progress_interval) != 0) return;
-        const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
-        const int next_target = !all_equilibrated
-            ? L
-            : (pending_samples.empty()
-                ? anchor + L
-                : pending_samples.front().anchor + L + sample_stability_layers);
-        std::cout << "[fractions] phase=" << phase
-                  << " t=" << t
-                  << " z_max=" << z_max
-                  << " next_z=" << next_target
-                  << " collected=" << out.collected_samples << "/" << requested
-                  << " z_stab=" << out.z_stab
-                  << " anchor=" << anchor;
-        if (!p_curr.empty()) {
-            std::cout << " p=" << p_curr.front();
+    std::deque<int> pending_anchors;
+
+    auto compute_alive_height_bounds = [&](int& min_alive_max_h, int& max_alive_max_h) -> bool {
+        bool any_alive = false;
+        min_alive_max_h = std::numeric_limits<int>::max();
+        max_alive_max_h = 0;
+        for (int c = 0; c < num_colors; ++c) {
+            if (died[static_cast<std::size_t>(c)]) continue;
+            any_alive = true;
+            min_alive_max_h = std::min(min_alive_max_h, max_heights[static_cast<std::size_t>(c)]);
+            max_alive_max_h = std::max(max_alive_max_h, max_heights[static_cast<std::size_t>(c)]);
         }
-        std::cout << std::endl;
+        if (!any_alive) {
+            min_alive_max_h = *std::max_element(max_heights.begin(), max_heights.end());
+            max_alive_max_h = min_alive_max_h;
+        }
+        return any_alive;
     };
 
-    struct RawBondCandidate {
-        int color = 0;
-        AbsBondKey bond;
-    };
+    auto write_optional_2d_snapshots = [&](const int bottom,
+                                           const int top,
+                                           const int sample_idx) {
+        if (!capture_2d_snapshots) return;
+        const int h_count = top - bottom + 1;
+        const std::size_t slab_sites =
+            static_cast<std::size_t>(h_count) * static_cast<std::size_t>(L);
+        std::vector<std::uint32_t> component_labels(slab_sites, 0u);
+        std::vector<std::uint32_t> queue;
+        queue.reserve(static_cast<std::size_t>(L));
+        std::uint32_t next_label = 0u;
+        std::uint32_t largest_spanning_label = 0u;
+        long long best_spanning_sites = 0;
 
-    auto active_frontier_by_color = [&]() {
-        std::vector<int> counts(static_cast<std::size_t>(num_colors), 0);
-        for (const std::uint64_t key : next_frontier) {
-            const int v = get_site(key);
-            if (v <= 0) continue;
-            const int color = value_to_color_index(num_colors, v);
-            if (color >= 0 && color < num_colors) {
-                ++counts[static_cast<std::size_t>(color)];
-            }
-        }
-        return counts;
-    };
-
-    auto discard_below = [&](const int min_height_to_keep) {
-        for (auto it = site_state.begin(); it != site_state.end(); ) {
-            if (abs_grow_coord_from_key(it->first, dim) < min_height_to_keep) {
-                it = site_state.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        frontier.erase(
-            std::remove_if(frontier.begin(), frontier.end(),
-                           [&](const std::uint64_t key) {
-                               return abs_grow_coord_from_key(key, dim) < min_height_to_keep;
-                           }),
-            frontier.end());
-        next_frontier.erase(
-            std::remove_if(next_frontier.begin(), next_frontier.end(),
-                           [&](const std::uint64_t key) {
-                               return abs_grow_coord_from_key(key, dim) < min_height_to_keep;
-                           }),
-            next_frontier.end());
-
-        std::unordered_set<AbsBondKey, AbsBondKeyHash> kept_tested;
-        kept_tested.reserve(tested_bonds.size());
-        std::unordered_set<AbsBondKey, AbsBondKeyHash> kept_open;
-        kept_open.reserve(open_bonds.size());
-        for (const AbsBondKey& bond : tested_bonds) {
-            const int ha = abs_grow_coord_from_key(bond.a, dim);
-            const int hb = abs_grow_coord_from_key(bond.b, dim);
-            if (ha >= min_height_to_keep && hb >= min_height_to_keep) {
-                kept_tested.insert(bond);
-            }
-        }
-        for (const AbsBondKey& bond : open_bonds) {
-            const int ha = abs_grow_coord_from_key(bond.a, dim);
-            const int hb = abs_grow_coord_from_key(bond.b, dim);
-            if (ha >= min_height_to_keep && hb >= min_height_to_keep) {
-                kept_open.insert(bond);
-            }
-        }
-        for (const auto& kv : site_state) {
-            std::uint64_t neigh[6];
-            int nneigh = 0;
-            collect_abs_neighbors(dim, L, kv.first, neigh, nneigh);
-            for (int ni = 0; ni < nneigh; ++ni) {
-                const AbsBondKey bond = make_abs_bond_key(kv.first, neigh[ni]);
-                if (open_bonds.find(bond) != open_bonds.end()) {
-                    kept_tested.insert(bond);
-                    kept_open.insert(bond);
+        for (int y = bottom; y <= top; ++y) {
+            for (int x = 0; x < L; ++x) {
+                const std::size_t local =
+                    static_cast<std::size_t>(y - bottom) * static_cast<std::size_t>(L) +
+                    static_cast<std::size_t>(x);
+                const int seed_val = grid.get_site(y, static_cast<std::size_t>(x));
+                if (seed_val <= 0 || component_labels[local] != 0u) continue;
+                const std::uint32_t label = ++next_label;
+                bool touches_b = false, touches_t = false;
+                long long comp_sz = 0;
+                queue.clear();
+                queue.push_back(static_cast<std::uint32_t>(local));
+                component_labels[local] = label;
+                for (std::size_t head = 0; head < queue.size(); ++head) {
+                    const std::uint32_t cur = queue[head];
+                    const int cy = bottom + static_cast<int>(cur / static_cast<std::uint32_t>(L));
+                    const int cx = static_cast<int>(cur % static_cast<std::uint32_t>(L));
+                    ++comp_sz;
+                    touches_b |= (cy == bottom);
+                    touches_t |= (cy == top);
+                    const int nx_arr[4] = {(cx == 0 ? L - 1 : cx - 1), (cx + 1 == L ? 0 : cx + 1), cx, cx};
+                    const int ny_arr[4] = {cy, cy, cy - 1, cy + 1};
+                    for (int ni = 0; ni < 4; ++ni) {
+                        const int nx = nx_arr[ni];
+                        const int ny = ny_arr[ni];
+                        if (ny < bottom || ny > top) continue;
+                        if (grid.get_site(ny, static_cast<std::size_t>(nx)) != seed_val) continue;
+                        if (!is_node) {
+                            const bool ok = (ni == 0) ? grid.is_open_bond(cy, static_cast<std::size_t>(nx), 0)
+                                          : (ni == 1) ? grid.is_open_bond(cy, static_cast<std::size_t>(cx), 0)
+                                          : (ni == 2) ? grid.is_open_bond(ny, static_cast<std::size_t>(cx), 2)
+                                                      : grid.is_open_bond(cy, static_cast<std::size_t>(cx), 2);
+                            if (!ok) continue;
+                        }
+                        const std::size_t nloc =
+                            static_cast<std::size_t>(ny - bottom) * static_cast<std::size_t>(L) +
+                            static_cast<std::size_t>(nx);
+                        if (component_labels[nloc] != 0u) continue;
+                        component_labels[nloc] = label;
+                        queue.push_back(static_cast<std::uint32_t>(nloc));
+                    }
+                }
+                if (touches_b && touches_t && comp_sz > best_spanning_sites) {
+                    best_spanning_sites = comp_sz;
+                    largest_spanning_label = label;
                 }
             }
         }
-        tested_bonds.swap(kept_tested);
-        open_bonds.swap(kept_open);
+
+        const std::filesystem::path snapshot_dir(snapshot_dir_env);
+        std::filesystem::create_directories(snapshot_dir);
+        const auto snapshot_path =
+            snapshot_dir / ("sample_" + std::to_string(sample_idx + 1) + ".components");
+        std::ofstream snapshot(snapshot_path, std::ios::binary | std::ios::trunc);
+        if (!snapshot) {
+            throw std::runtime_error("Could not open fraction snapshot: " + snapshot_path.string());
+        }
+        snapshot.write("SOPCOMP1", 8);
+        const std::uint32_t header[] = {
+            static_cast<std::uint32_t>(L),
+            static_cast<std::uint32_t>(h_count),
+            largest_spanning_label
+        };
+        snapshot.write(reinterpret_cast<const char*>(header), sizeof(header));
+        std::vector<std::uint32_t> row(static_cast<std::size_t>(L), 0u);
+        for (int y = top; y >= bottom; --y) {
+            const std::size_t row_off =
+                static_cast<std::size_t>(y - bottom) * static_cast<std::size_t>(L);
+            for (int x = 0; x < L; ++x) {
+                row[static_cast<std::size_t>(x)] =
+                    grid.get_site(y, static_cast<std::size_t>(x)) <= 0
+                        ? 0u
+                        : component_labels[row_off + static_cast<std::size_t>(x)];
+            }
+            snapshot.write(reinterpret_cast<const char*>(row.data()),
+                           static_cast<std::streamsize>(row.size() * sizeof(row[0])));
+        }
+
+        if (sample_idx == 0 && need_base_snapshot) {
+            const std::filesystem::path base_path(base_snapshot_env);
+            if (!base_path.parent_path().empty()) {
+                std::filesystem::create_directories(base_path.parent_path());
+            }
+            std::ofstream base_snap(base_path, std::ios::binary | std::ios::trunc);
+            if (base_snap) {
+                base_snap.write("SOPBASE1", 8);
+                const std::uint32_t bheader[] = {
+                    static_cast<std::uint32_t>(L),
+                    static_cast<std::uint32_t>(bottom)
+                };
+                base_snap.write(reinterpret_cast<const char*>(bheader), sizeof(bheader));
+                std::vector<unsigned char> brow(static_cast<std::size_t>(L), 0u);
+                for (int y = bottom - 1; y >= 0; --y) {
+                    for (int x = 0; x < L; ++x) {
+                        brow[static_cast<std::size_t>(x)] =
+                            grid.get_site(y, static_cast<std::size_t>(x)) > 0 ? 1u : 0u;
+                    }
+                    base_snap.write(reinterpret_cast<const char*>(brow.data()),
+                                    static_cast<std::streamsize>(brow.size()));
+                }
+            }
+        }
+
+        if (sample_idx == 1 && need_gap_snapshot) {
+            const std::filesystem::path gap_path(gap_snapshot_env);
+            if (!gap_path.parent_path().empty()) {
+                std::filesystem::create_directories(gap_path.parent_path());
+            }
+            std::ofstream gap_snap(gap_path, std::ios::binary | std::ios::trunc);
+            if (gap_snap) {
+                gap_snap.write("SOPGAP1", 8);
+                const int actual_gap_h = sample_gap_layers > 0 ? sample_gap_layers : L;
+                const std::uint32_t gheader[] = {
+                    static_cast<std::uint32_t>(L),
+                    static_cast<std::uint32_t>(actual_gap_h)
+                };
+                gap_snap.write(reinterpret_cast<const char*>(gheader), sizeof(gheader));
+                std::vector<unsigned char> grow(static_cast<std::size_t>(L), 0u);
+                for (int y = bottom - 1; y >= bottom - actual_gap_h; --y) {
+                    for (int x = 0; x < L; ++x) {
+                        grow[static_cast<std::size_t>(x)] =
+                            grid.get_site(y, static_cast<std::size_t>(x)) > 0 ? 1u : 0u;
+                    }
+                    gap_snap.write(reinterpret_cast<const char*>(grow.data()),
+                                   static_cast<std::streamsize>(grow.size()));
+                }
+            }
+        }
+
+        if (sample_idx == requested - 1) {
+            const char* tail_snapshot_env = std::getenv("SOP_FRACTION_TAIL_SNAPSHOT");
+            if (tail_snapshot_env != nullptr && tail_snapshot_env[0] != '\0') {
+                const std::filesystem::path tail_path(tail_snapshot_env);
+                if (!tail_path.parent_path().empty()) {
+                    std::filesystem::create_directories(tail_path.parent_path());
+                }
+                std::ofstream tail_snap(tail_path, std::ios::binary | std::ios::trunc);
+                if (tail_snap) {
+                    tail_snap.write("SOPTAIL1", 8);
+                    double tail_over_L = 0.75;
+                    if (const char* tail_env = std::getenv("SOP_FRACTION_TAIL_OVER_L")) {
+                        tail_over_L = std::max(0.0, std::stod(tail_env));
+                    }
+                    const int cur_z_max = *std::max_element(max_heights.begin(), max_heights.end());
+                    const int desired_tail_h = static_cast<int>(
+                        std::llround(tail_over_L * static_cast<double>(L)));
+                    const int tail_bottom = top + 1;
+                    const int avail_h = std::max(0, cur_z_max - tail_bottom + 1);
+                    const int actual_tail_h =
+                        desired_tail_h > 0 ? std::min(desired_tail_h, avail_h) : avail_h;
+                    const std::uint32_t theader[] = {
+                        static_cast<std::uint32_t>(L),
+                        static_cast<std::uint32_t>(actual_tail_h)
+                    };
+                    tail_snap.write(reinterpret_cast<const char*>(theader), sizeof(theader));
+                    std::vector<unsigned char> trow(static_cast<std::size_t>(L), 0u);
+                    for (int y = tail_bottom + actual_tail_h - 1; y >= tail_bottom; --y) {
+                        for (int x = 0; x < L; ++x) {
+                            trow[static_cast<std::size_t>(x)] =
+                                grid.get_site(y, static_cast<std::size_t>(x)) > 0 ? 1u : 0u;
+                        }
+                        tail_snap.write(reinterpret_cast<const char*>(trow.data()),
+                                        static_cast<std::streamsize>(trow.size()));
+                    }
+                }
+            }
+        }
     };
 
     for (int t = 1; hard_max_steps <= 0 || t <= hard_max_steps; ++t) {
         std::fill(N_current.begin(), N_current.end(), 0);
         std::fill(f_current.begin(), f_current.end(), 0.0);
         next_frontier.clear();
-
-        std::unordered_map<std::uint64_t, std::vector<FrontCandidate>, AbsSiteKeyHash> candidates;
-        std::unordered_map<std::uint64_t, std::vector<RawBondCandidate>, AbsSiteKeyHash> bond_candidates;
-        candidates.reserve(frontier.size() * 2u + 16u);
-        bond_candidates.reserve(frontier.size() * 2u + 16u);
-        std::uint64_t neigh[6];
-        int nneigh = 0;
+        front_candidates.clear();
 
         if (is_node) {
-            for (const std::uint64_t idx : frontier) {
-                const int a_val = get_site(idx);
+            for (const std::int64_t u_key : frontier) {
+                int h = 0;
+                std::size_t lat = 0;
+                grid.decode_key(u_key, h, lat);
+                const int a_val = grid.get_site(h, lat);
                 if (a_val <= 0) continue;
-                const int color = value_to_color_index(num_colors, a_val);
-                if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
 
-                collect_abs_neighbors(dim, L, idx, neigh, nneigh);
-                for (int ni = 0; ni < nneigh; ++ni) {
-                    const std::uint64_t target = neigh[ni];
-                    const int vv = get_site(target);
-                    if (vv >= 0) continue;
-                    candidates[target].push_back(FrontCandidate{0, color});
-                }
-            }
-
-            for (const auto& kv : candidates) {
-                const auto& list = kv.second;
-                const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
-                const int color = static_cast<int>(list[static_cast<std::size_t>(pick)].color_idx);
-                if (rng.uniform_real(0.0, 1.0) >= p_curr[static_cast<std::size_t>(color)]) {
-                    set_site(kv.first, 0);
+                const int cor_idx = value_to_color_index(num_colors, a_val);
+                if (cor_idx < 0 || cor_idx >= num_colors || died[static_cast<std::size_t>(cor_idx)]) {
                     continue;
                 }
-                set_site(kv.first, color_to_active_value(num_colors, color));
-                next_frontier.push_back(kv.first);
-                ++N_current[static_cast<std::size_t>(color)];
-                max_heights[static_cast<std::size_t>(color)] =
-                    std::max(max_heights[static_cast<std::size_t>(color)],
-                             abs_grow_coord_from_key(kv.first, dim));
+
+                int x = 0, y_lat = 0;
+                grid.decode_lat(lat, x, y_lat);
+
+                auto try_add_node_target = [&](const int nh, const std::size_t nlat) {
+                    if (nh < grid.min_retained_h) return;
+                    const int vv = grid.get_site(nh, nlat);
+                    if (vv >= 0) return;
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color = (vv == -1);
+                    if (!same_color && !no_color) return;
+                    front_candidates.add(grid.encode_key(nh, nlat), FrontCandidate{u_key, cor_idx});
+                };
+
+                try_add_node_target(h, grid.lat_index((x == 0) ? (L - 1) : (x - 1), y_lat));
+                try_add_node_target(h, grid.lat_index((x + 1 == L) ? 0 : (x + 1), y_lat));
+                if (dim == 3) {
+                    try_add_node_target(h, grid.lat_index(x, (y_lat == 0) ? (L - 1) : (y_lat - 1)));
+                    try_add_node_target(h, grid.lat_index(x, (y_lat + 1 == L) ? 0 : (y_lat + 1)));
+                }
+                if (h > 0) try_add_node_target(h - 1, lat);
+                try_add_node_target(h + 1, lat);
+            }
+
+            for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
+                const std::int64_t viz_key = front_candidates.touched_targets[slot];
+                const int n_cand = static_cast<int>(front_candidates.counts[slot]);
+                if (n_cand <= 0) continue;
+
+                const int pick = rng.uniform_int(0, n_cand - 1);
+                const FrontCandidate chosen = front_candidates.candidate(slot, pick);
+                const int cor_idx = static_cast<int>(chosen.color_idx);
+
+                if (rng.uniform_real(0.0, 1.0) >= p_curr[static_cast<std::size_t>(cor_idx)]) {
+                    grid.set_site_key(viz_key, 0);
+                    continue;
+                }
+
+                grid.set_site_key(viz_key, color_to_active_value(num_colors, cor_idx));
+                next_frontier.push_back(viz_key);
+                ++N_current[static_cast<std::size_t>(cor_idx)];
+                const int h_viz = grid.grow_coord(viz_key);
+                if (h_viz > max_heights[static_cast<std::size_t>(cor_idx)]) {
+                    max_heights[static_cast<std::size_t>(cor_idx)] = h_viz;
+                }
             }
         } else {
-            for (const std::uint64_t idx : frontier) {
-                const int a_val = get_site(idx);
+            for (const std::int64_t u_key : frontier) {
+                int h = 0;
+                std::size_t lat = 0;
+                grid.decode_key(u_key, h, lat);
+                const int a_val = grid.get_site(h, lat);
                 if (a_val <= 0) continue;
-                const int color = value_to_color_index(num_colors, a_val);
-                if (color < 0 || color >= num_colors || died[static_cast<std::size_t>(color)]) continue;
 
-                collect_abs_neighbors(dim, L, idx, neigh, nneigh);
-                for (int ni = 0; ni < nneigh; ++ni) {
-                    const std::uint64_t target = neigh[ni];
-                    const AbsBondKey bkey = make_abs_bond_key(idx, target);
-                    if (!tested_bonds.insert(bkey).second) continue;
+                const int cor_idx = value_to_color_index(num_colors, a_val);
+                if (cor_idx < 0 || cor_idx >= num_colors || died[static_cast<std::size_t>(cor_idx)]) {
+                    continue;
+                }
 
-                    const int vv = get_site(target);
-                    if (vv == 0) continue;
+                int x = 0, y_lat = 0;
+                grid.decode_lat(lat, x, y_lat);
+
+                auto try_bond_neighbor = [&](const int nh,
+                                             const std::size_t nlat,
+                                             const std::uint64_t bond_ref) {
+                    if (nh < grid.min_retained_h) return;
+                    const int vv = grid.get_site(nh, nlat);
+                    if (vv == 0) return;
 
                     if (vv > 0) {
                         const int neigh_color = value_to_color_index(num_colors, vv);
-                        if (neigh_color != color) continue;
-                        if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(color)]) {
-                            open_bonds.insert(bkey);
+                        if (neigh_color != cor_idx) return;
+                        if (!grid.mark_tested_bond_packed(bond_ref)) return;
+                        if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(cor_idx)]) {
+                            grid.set_open_bond_packed(bond_ref);
                         }
-                        continue;
+                        return;
                     }
 
-                    // vv < 0: inactive neighbor
-                    if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(color)]) {
-                        bond_candidates[target].push_back(RawBondCandidate{color, bkey});
+                    const bool same_color = (num_colors == 1) || (vv == -(cor_idx + 2));
+                    const bool no_color = (vv == -1);
+                    if (!same_color && !no_color) return;
+
+                    if (!grid.mark_tested_bond_packed(bond_ref)) return;
+                    if (rng.uniform_real(0.0, 1.0) < p_curr[static_cast<std::size_t>(cor_idx)]) {
+                        front_candidates.add(grid.encode_key(nh, nlat),
+                                             FrontCandidate{u_key, cor_idx, bond_ref});
+                    }
+                };
+
+                {
+                    const std::size_t nlat = grid.lat_index((x == 0) ? (L - 1) : (x - 1), y_lat);
+                    try_bond_neighbor(h, nlat, SlidingSlabGrid::pack_bond_ref(h, nlat, 0));
+                }
+                {
+                    const std::size_t nlat = grid.lat_index((x + 1 == L) ? 0 : (x + 1), y_lat);
+                    try_bond_neighbor(h, nlat, SlidingSlabGrid::pack_bond_ref(h, lat, 0));
+                }
+                if (dim == 3) {
+                    {
+                        const std::size_t nlat = grid.lat_index(x, (y_lat == 0) ? (L - 1) : (y_lat - 1));
+                        try_bond_neighbor(h, nlat, SlidingSlabGrid::pack_bond_ref(h, nlat, 1));
+                    }
+                    {
+                        const std::size_t nlat = grid.lat_index(x, (y_lat + 1 == L) ? 0 : (y_lat + 1));
+                        try_bond_neighbor(h, nlat, SlidingSlabGrid::pack_bond_ref(h, lat, 1));
                     }
                 }
+                if (h > 0) {
+                    try_bond_neighbor(h - 1, lat, SlidingSlabGrid::pack_bond_ref(h - 1, lat, 2));
+                }
+                try_bond_neighbor(h + 1, lat, SlidingSlabGrid::pack_bond_ref(h, lat, 2));
             }
 
-            for (const auto& kv : bond_candidates) {
-                const auto& list = kv.second;
-                if (list.empty()) continue;
+            for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
+                const std::int64_t viz_key = front_candidates.touched_targets[slot];
+                const int n_cand = static_cast<int>(front_candidates.counts[slot]);
+                if (n_cand <= 0) continue;
 
-                const int pick = rng.uniform_int(0, static_cast<int>(list.size()) - 1);
-                const int winning_color = list[static_cast<std::size_t>(pick)].color;
+                const int target_before = grid.get_site_key(viz_key);
+                const bool target_without_species = (num_colors > 1 && target_before == -1);
 
-                for (const auto& cand : list) {
-                    if (cand.color != winning_color) continue;
-                    open_bonds.insert(cand.bond);
+                int winning_color = -1;
+                bool valid = false;
+                if (target_without_species) {
+                    const int pick = rng.uniform_int(0, n_cand - 1);
+                    winning_color = static_cast<int>(front_candidates.candidate(slot, pick).color_idx);
+                    valid = (winning_color >= 0 && winning_color < num_colors);
+                } else {
+                    winning_color = (num_colors == 1)
+                        ? 0
+                        : value_to_color_index(num_colors, target_before);
+                    if (winning_color >= 0 && winning_color < num_colors) {
+                        for (int i = 0; i < n_cand; ++i) {
+                            if (static_cast<int>(front_candidates.candidate(slot, i).color_idx) == winning_color) {
+                                valid = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!valid) continue;
+
+                grid.set_site_key(viz_key, color_to_active_value(num_colors, winning_color));
+                for (int i = 0; i < n_cand; ++i) {
+                    const FrontCandidate fc = front_candidates.candidate(slot, i);
+                    if (static_cast<int>(fc.color_idx) != winning_color) continue;
+                    grid.set_open_bond_packed(fc.edge_bit);
                 }
 
-                set_site(kv.first, color_to_active_value(num_colors, winning_color));
-                next_frontier.push_back(kv.first);
+                next_frontier.push_back(viz_key);
                 ++N_current[static_cast<std::size_t>(winning_color)];
-                max_heights[static_cast<std::size_t>(winning_color)] =
-                    std::max(max_heights[static_cast<std::size_t>(winning_color)],
-                             abs_grow_coord_from_key(kv.first, dim));
+                const int h_viz = grid.grow_coord(viz_key);
+                if (h_viz > max_heights[static_cast<std::size_t>(winning_color)]) {
+                    max_heights[static_cast<std::size_t>(winning_color)] = h_viz;
+                }
             }
         }
 
         for (int color = 0; color < num_colors; ++color) {
             f_current[static_cast<std::size_t>(color)] =
                 static_cast<double>(N_current[static_cast<std::size_t>(color)]) / norm_factor;
+            if (!died[static_cast<std::size_t>(color)] &&
+                N_current[static_cast<std::size_t>(color)] == 0) {
+                died[static_cast<std::size_t>(color)] = true;
+            }
+        }
+
+        int min_frontier_h = std::numeric_limits<int>::max();
+        for (const std::int64_t k : next_frontier) {
+            min_frontier_h = std::min(min_frontier_h, grid.grow_coord(k));
         }
 
         if (!all_equilibrated) {
@@ -4959,12 +3634,14 @@ RawFractionsSeries network::create_raw_fractions(
                         species_equilibrated[static_cast<std::size_t>(color)]) {
                         continue;
                     }
-                    const bool use_front_fraction_teq = (std::abs(c) <= 1e-12);
-                    if (!use_front_fraction_teq && max_heights[static_cast<std::size_t>(color)] < L) continue;
+                    const bool use_front_fraction_teq = (std::abs(c_value) <= 1e-12);
+                    if (!use_front_fraction_teq &&
+                        max_heights[static_cast<std::size_t>(color)] < L) {
+                        continue;
+                    }
                     const auto& series_to_check = use_front_fraction_teq
                         ? f_series[static_cast<std::size_t>(color)]
                         : p_series[static_cast<std::size_t>(color)];
-
                     const double t_eq = estimate_t_eq_from_series(
                         t_list,
                         series_to_check,
@@ -5001,123 +3678,131 @@ RawFractionsSeries network::create_raw_fractions(
                 out.stop_time = t;
                 break;
             }
-            if (all_equilibrated) {
-                z_stab = *std::max_element(out.z_stat_by_species.begin(),
-                                           out.z_stat_by_species.end());
-                out.z_stab = z_stab;
-                anchor = z_stab;
-                if (!run_fractal_counts) {
-                    std::cout << "[fractions] stabilized"
-                              << " t=" << t
-                              << " z_stab=" << out.z_stab
-                              << " next_inst_z=" << (anchor + L)
-                              << " next_stab_z=" << (anchor + L + sample_stability_layers)
-                              << " stability_layers=" << sample_stability_layers
-                              << " gap_layers=" << sample_gap_layers
-                              << " requested=" << requested
-                              << std::endl;
+
+            // Keep memory bounded during long equilibration transients.
+            if (!need_base_snapshot && !next_frontier.empty()) {
+                int min_alive_h = 0, max_alive_h = 0;
+                compute_alive_height_bounds(min_alive_h, max_alive_h);
+                int safe_keep = std::min(min_frontier_h - 2,
+                                         min_alive_h - std::max(L, sample_stability_layers));
+                for (int c = 0; c < num_colors; ++c) {
+                    if (species_equilibrated[static_cast<std::size_t>(c)] &&
+                        out.z_stat_by_species[static_cast<std::size_t>(c)] >= 0) {
+                        safe_keep = std::min(safe_keep,
+                                             out.z_stat_by_species[static_cast<std::size_t>(c)] - 2);
+                    }
                 }
+                if (safe_keep > grid.min_retained_h) {
+                    grid.discard_below(safe_keep, false);
+                }
+            }
+
+            if (all_equilibrated) {
+                anchor = *std::max_element(out.z_stat_by_species.begin(),
+                                           out.z_stat_by_species.end());
+                out.z_stab = anchor;
+                std::cout << "[fractions] stabilized"
+                          << " t=" << t
+                          << " z_stab=" << out.z_stab
+                          << " next_stab_z=" << (anchor + L + sample_stability_layers)
+                          << " stability_layers=" << sample_stability_layers
+                          << " gap_layers=" << sample_gap_layers
+                          << " requested=" << requested
+                          << std::endl;
                 p_series.clear();
+                f_series.clear();
                 t_list.clear();
+                if (!need_base_snapshot && !next_frontier.empty()) {
+                    const int safe_keep = std::min(anchor, min_frontier_h - 2);
+                    if (safe_keep > grid.min_retained_h) {
+                        grid.discard_below(safe_keep, true);
+                    }
+                }
             }
         } else {
-            const int z_max = *std::max_element(max_heights.begin(), max_heights.end());
-            while (out.collected_samples + static_cast<int>(pending_samples.size()) < requested &&
-                   z_max >= anchor + L) {
-                PendingFractionSample sample;
-                sample.anchor = anchor;
-                sample.inst = compute_abs_slab_fractions(
-                    dim, L, site_state, open_bonds, sample.anchor, sample.anchor + L - 1, is_node);
-                sample.t_inst = t;
-                if (!run_fractal_counts) {
-                    std::cout << "[fractions] inst_sample_ready"
-                              << " sample=" << (out.collected_samples +
-                                                static_cast<int>(pending_samples.size()) + 1)
-                              << "/" << requested
-                              << " t=" << t
-                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                              << " next_stab_z=" << (sample.anchor + L + sample_stability_layers)
-                              << " p_node=" << sample.inst.p_node
-                              << " p_bond=" << sample.inst.p_bond
-                              << " S=" << sample.inst.largest_component
-                              << " E=" << sample.inst.largest_component_edges
-                              << " SP=" << sample.inst.shortest_path_edges
-                              << std::endl;
-                }
-                pending_samples.push_back(std::move(sample));
+            int z_ready = 0, z_max = 0;
+            const bool any_alive = compute_alive_height_bounds(z_ready, z_max);
+            while (out.collected_samples + static_cast<int>(pending_anchors.size()) < requested &&
+                   z_ready >= anchor + L) {
+                pending_anchors.push_back(anchor);
                 anchor += L + sample_gap_layers;
             }
-            bool collected_this_step = false;
-            while (!pending_samples.empty() &&
-                   z_max >= pending_samples.front().anchor + L + sample_stability_layers) {
-                const PendingFractionSample sample = std::move(pending_samples.front());
-                pending_samples.pop_front();
-                if (run_fractal_counts) {
-                    std::cout << "[counts] sample_collecting"
-                              << " sample=" << (out.collected_samples + 1)
-                              << "/" << requested
-                              << " t=" << t
-                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                              << " status=calculating_stabilized_counts"
-                              << std::endl;
-                }
-                const SlabFractionResult stab = compute_abs_slab_fractions(
-                    dim,
-                    L,
-                    site_state,
-                    open_bonds,
-                    sample.anchor,
-                    sample.anchor + L - 1,
-                    is_node,
-                    true,
-                    out.seed,
-                    out.collected_samples,
-                    t);
 
-                out.p_inst_bond.push_back(sample.inst.p_bond);
-                out.p_inst_node.push_back(sample.inst.p_node);
-                out.S_inst.push_back(sample.inst.largest_component);
-                out.E_inst.push_back(sample.inst.largest_component_edges);
-                out.SP_inst.push_back(sample.inst.shortest_path_edges);
+            while (!pending_anchors.empty() &&
+                   z_ready >= pending_anchors.front() + L + sample_stability_layers) {
+                const int sample_anchor = pending_anchors.front();
+                pending_anchors.pop_front();
+                const int sample_top = sample_anchor + L - 1;
+                const int sample_idx = out.collected_samples;
+
+                // Free layers strictly below sample_anchor before allocating temporary bitsets,
+                // unless opt-in 2D base/gap snapshots still need them.
+                if (!need_base_snapshot && !(need_gap_snapshot && sample_idx <= 1)) {
+                    const int pre_keep = next_frontier.empty()
+                        ? sample_anchor
+                        : std::min(sample_anchor, min_frontier_h - 2);
+                    grid.discard_below(pre_keep, true);
+                }
+
+                const SlabFractionResult stab = compute_slab_stabilized(
+                    grid, num_colors, sample_anchor, sample_top, sample_idx, t);
+
+                if (capture_2d_snapshots) {
+                    write_optional_2d_snapshots(sample_anchor, sample_top, sample_idx);
+                }
+
+                out.anchor_z.push_back(sample_anchor);
+                out.slab_top_z.push_back(sample_top);
+                out.t_stab.push_back(t);
                 out.p_stab_bond.push_back(stab.p_bond);
                 out.p_stab_node.push_back(stab.p_node);
-                out.S_stab.push_back(stab.largest_component);
-                out.E_stab.push_back(stab.largest_component_edges);
-                out.SP_stab.push_back(stab.shortest_path_edges);
-                out.hull_length.push_back(stab.hull_length);
-                out.full_boundary_length.push_back(stab.full_boundary_length);
-                out.external_perimeter_length.push_back(stab.external_perimeter_length);
-                out.hole_size_counts.push_back(stab.hole_size_counts);
-                out.anchor_z.push_back(sample.anchor);
-                out.t_inst.push_back(sample.t_inst);
-                out.t_stab.push_back(t);
-                if (stab.has_fractal_counts) {
-                    out.fractal_counts.push_back(stab.fractal_counts);
-                }
+                out.p_stab_bond_by_species.push_back(stab.p_bond_by_species);
+                out.p_stab_node_by_species.push_back(stab.p_node_by_species);
+                out.num_spanning_clusters.push_back(stab.num_spanning_clusters);
+                out.S_stab.push_back(stab.largest_spanning_sites);
+                out.E_stab.push_back(stab.largest_spanning_bonds);
+                out.SP_stab.push_back(stab.largest_spanning_sp);
+                out.hull_length.push_back(stab.largest_spanning_hull);
+                out.full_boundary_length.push_back(stab.largest_spanning_full_boundary);
+                out.largest_spanning_species.push_back(stab.largest_spanning_species);
+                out.largest_spanning_interspecies_bonds.push_back(
+                    stab.largest_spanning_interspecies_bonds);
+                out.other_spanning_sites.push_back(stab.other_spanning_sites);
+                out.other_spanning_bonds.push_back(stab.other_spanning_bonds);
+                out.other_spanning_sp.push_back(stab.other_spanning_sp);
+                out.other_spanning_hull.push_back(stab.other_spanning_hull);
+                out.other_spanning_species.push_back(stab.other_spanning_species);
+                out.other_spanning_interspecies_bonds.push_back(
+                    stab.other_spanning_interspecies_bonds);
+                out.interspecies_contact_bonds.push_back(stab.interspecies_contact_bonds);
+                out.interspecies_contact_sites.push_back(stab.interspecies_contact_sites);
+                out.spanning_interspecies_bonds.push_back(stab.spanning_interspecies_bonds);
+                out.spanning_interspecies_sites.push_back(stab.spanning_interspecies_sites);
+                out.fractal_counts.push_back(stab.fractal_counts);
                 out.collected_samples = static_cast<int>(out.S_stab.size());
-                if (run_fractal_counts && stab.has_fractal_counts) {
-                    std::cout << "[counts] sample_collected"
-                              << " sample=" << out.collected_samples
-                              << "/" << requested
-                              << " t=" << t
-                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                              << " spanning_clusters=" << stab.fractal_counts.spanning_clusters.size()
-                              << std::endl;
-                } else if (!run_fractal_counts) {
-                    std::cout << "[fractions] sample_collected"
-                              << " sample=" << out.collected_samples
-                              << "/" << requested
-                              << " t=" << t
-                              << " window=[" << sample.anchor << "," << (sample.anchor + L - 1) << "]"
-                              << " next_anchor_z=" << anchor
-                              << " p_node=" << stab.p_node
-                              << " p_bond=" << stab.p_bond
-                              << " S=" << stab.largest_component
-                              << " E=" << stab.largest_component_edges
-                              << " SP=" << stab.shortest_path_edges
-                              << std::endl;
+
+                std::cout << "[fractions] sample_collected"
+                          << " sample=" << out.collected_samples << "/" << requested
+                          << " t=" << t
+                          << " window=[" << sample_anchor << "," << sample_top << "]"
+                          << " spanning_clusters=" << stab.num_spanning_clusters
+                          << " S=" << stab.largest_spanning_sites
+                          << " hull=" << stab.largest_spanning_hull
+                          << " SP=" << stab.largest_spanning_sp;
+                if (num_colors > 1) {
+                    std::cout << " inter_span=" << stab.spanning_interspecies_bonds
+                              << " inter_total=" << stab.interspecies_contact_bonds;
                 }
-                collected_this_step = true;
+                std::cout << std::endl;
+
+                // Immediately discard the completed slab below the next oldest anchor.
+                const int next_oldest = pending_anchors.empty() ? anchor : pending_anchors.front();
+                if (!(need_gap_snapshot && out.collected_samples == 1)) {
+                    const int post_keep = next_frontier.empty()
+                        ? next_oldest
+                        : std::min(next_oldest, min_frontier_h - 2);
+                    grid.discard_below(post_keep, true);
+                }
 
                 if (out.collected_samples >= requested) {
                     out.stop_reason = "requested_samples_collected";
@@ -5125,31 +3810,38 @@ RawFractionsSeries network::create_raw_fractions(
                     break;
                 }
             }
-            if (collected_this_step) {
-                int min_keep = anchor;
-                if (!pending_samples.empty()) {
-                    min_keep = std::min(min_keep, pending_samples.front().anchor);
-                }
-                if (min_keep <= z_max) {
-                    discard_below(min_keep);
-                }
-            }
+
             if (out.collected_samples >= requested) {
                 break;
             }
-        }
-        print_progress_sparse(
-            t,
-            !all_equilibrated ? "equilibrating"
-                              : (pending_samples.empty() ? "waiting_inst" : "waiting_stab"));
-
-        const std::vector<int> next_counts = active_frontier_by_color();
-        for (int color = 0; color < num_colors; ++color) {
-            if (!died[static_cast<std::size_t>(color)] &&
-                next_counts[static_cast<std::size_t>(color)] == 0) {
-                died[static_cast<std::size_t>(color)] = true;
+            if (!any_alive) {
+                out.stop_reason = "all_dead";
+                out.stop_time = t;
+                break;
             }
         }
+
+        if (progress_interval > 0 && (t % progress_interval) == 0) {
+            int min_alive_h = 0, max_alive_h = 0;
+            compute_alive_height_bounds(min_alive_h, max_alive_h);
+            const int next_target = !all_equilibrated
+                ? L
+                : ((pending_anchors.empty() ? anchor : pending_anchors.front()) +
+                   L + sample_stability_layers);
+            std::cout << "[fractions] phase=" << (!all_equilibrated ? "equilibrating" : "waiting_stab")
+                      << " t=" << t
+                      << " z_ready=" << min_alive_h
+                      << " z_max=" << max_alive_h
+                      << " next_stab_z=" << next_target
+                      << " collected=" << out.collected_samples << "/" << requested
+                      << " retained_layers=" << grid.layers.size()
+                      << " anchor=" << (pending_anchors.empty() ? anchor : pending_anchors.front());
+            for (int c = 0; c < num_colors; ++c) {
+                std::cout << " p" << (c + 1) << "=" << p_curr[static_cast<std::size_t>(c)];
+            }
+            std::cout << std::endl;
+        }
+
         if (std::all_of(died.begin(), died.end(), [](const bool v) { return v; })) {
             out.stop_reason = "all_dead";
             out.stop_time = t;

@@ -56,8 +56,9 @@ void write_json_nullable_double_array(std::ostream& os,
     os << "]";
 }
 
-void write_json_int_matrix(std::ostream& os,
-                           const std::vector<std::vector<int>>& rows)
+template <typename T>
+void write_json_nested_array(std::ostream& os,
+                             const std::vector<std::vector<T>>& rows)
 {
     os << "[";
     for (size_t i = 0; i < rows.size(); ++i) {
@@ -68,14 +69,15 @@ void write_json_int_matrix(std::ostream& os,
 }
 
 void write_json_int_matrix(std::ostream& os,
+                           const std::vector<std::vector<int>>& rows)
+{
+    write_json_nested_array(os, rows);
+}
+
+void write_json_int_matrix(std::ostream& os,
                            const std::vector<std::vector<long long>>& rows)
 {
-    os << "[";
-    for (size_t i = 0; i < rows.size(); ++i) {
-        write_json_array(os, rows[i]);
-        if (i + 1 < rows.size()) os << ", ";
-    }
-    os << "]";
+    write_json_nested_array(os, rows);
 }
 
 void write_json_count_maps(std::ostream& os,
@@ -957,40 +959,37 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     ofs << "    \"z_stat_by_species\": ";
     write_json_nullable_int_array(ofs, fractions.z_stat_by_species);
     ofs << ",\n";
-    ofs << "    \"window_convention\": \"sample k uses slab [anchor_z[k], anchor_z[k]+L-1], exactly L layers; inst is measured when global height reaches anchor_z+L; stab remeasures the same slab after sample_stability_layers extra layers, at anchor_z+L+sample_stability_layers; next anchor advances by L+sample_gap_layers\",\n";
-    ofs << "    \"hull_convention\": \"hull_length counts the exterior hull of the giant component: edges in 2D or faces in 3D adjacent to the exterior complement, excluding enclosed holes/cavities; full_boundary_length counts all component-complement boundary elements including internal holes/cavities/fjords; external_perimeter_length is kept as an alias of hull_length for backward comparison; hole_size_counts stores enclosed void area/volume histograms per sample as {size: count}\",\n";
-    ofs << "    \"memory_convention\": \"layers below the moving retained window are discarded after each completed sample\"\n";
+    ofs << "    \"box_counting_enabled\": false,\n";
+    ofs << "    \"window_convention\": \"sample k uses slab [anchor_z[k], anchor_z[k]+L-1] (slab_top_z[k] = anchor_z[k]+L-1), exactly L layers; stab is measured after sample_stability_layers extra layers when all alive species reach anchor_z+L+sample_stability_layers; next anchor advances by L+sample_gap_layers\",\n";
+    ofs << "    \"spanning_convention\": \"monochromatic clusters strictly separated by species touching both anchor_z and anchor_z+L-1; S_stab, E_stab, SP_stab and hull_length describe the largest spanning cluster (0 / -1 if none); other_spanning_* list remaining spanning clusters in descending site order\",\n";
+    ofs << "    \"hull_convention\": \"hull_length counts the accessible exterior perimeter (Hull total) of the spanning cluster: edges in 2D or faces in 3D adjacent to the exterior accessible complement, excluding enclosed cavities; full_boundary_length counts all cluster-complement boundary elements\",\n";
+    ofs << "    \"interspecies_convention\": \"interspecies_contact_bonds/sites count lattice contacts (edges in 2D, faces in 3D) and touching sites between any occupied sites of different species inside the slab; spanning_interspecies_bonds/sites count direct lattice contacts and touching sites strictly between spanning clusters of different species; largest_spanning_interspecies_bonds and other_spanning_interspecies_bonds count boundary elements of each spanning cluster touching any occupied site of another species (0 when num_colors == 1)\",\n";
+    ofs << "    \"memory_convention\": \"dynamic per-layer allocation; layers below the active sliding window are immediately deallocated\"\n";
     ofs << "  },\n";
     ofs << "  \"data\": {\n";
     ofs << "    \"anchor_z\": ";
     write_json_array(ofs, fractions.anchor_z);
     ofs << ",\n";
-    ofs << "    \"t_inst\": ";
-    write_json_array(ofs, fractions.t_inst);
+    ofs << "    \"slab_top_z\": ";
+    write_json_array(ofs, fractions.slab_top_z);
     ofs << ",\n";
     ofs << "    \"t_stab\": ";
     write_json_array(ofs, fractions.t_stab);
-    ofs << ",\n";
-    ofs << "    \"p_inst_bond\": ";
-    write_json_array(ofs, fractions.p_inst_bond);
-    ofs << ",\n";
-    ofs << "    \"p_inst_node\": ";
-    write_json_array(ofs, fractions.p_inst_node);
-    ofs << ",\n";
-    ofs << "    \"S_inst\": ";
-    write_json_array(ofs, fractions.S_inst);
-    ofs << ",\n";
-    ofs << "    \"E_inst\": ";
-    write_json_array(ofs, fractions.E_inst);
-    ofs << ",\n";
-    ofs << "    \"SP_inst\": ";
-    write_json_array(ofs, fractions.SP_inst);
     ofs << ",\n";
     ofs << "    \"p_stab_bond\": ";
     write_json_array(ofs, fractions.p_stab_bond);
     ofs << ",\n";
     ofs << "    \"p_stab_node\": ";
     write_json_array(ofs, fractions.p_stab_node);
+    ofs << ",\n";
+    ofs << "    \"p_stab_bond_by_species\": ";
+    write_json_nested_array(ofs, fractions.p_stab_bond_by_species);
+    ofs << ",\n";
+    ofs << "    \"p_stab_node_by_species\": ";
+    write_json_nested_array(ofs, fractions.p_stab_node_by_species);
+    ofs << ",\n";
+    ofs << "    \"num_spanning_clusters\": ";
+    write_json_array(ofs, fractions.num_spanning_clusters);
     ofs << ",\n";
     ofs << "    \"S_stab\": ";
     write_json_array(ofs, fractions.S_stab);
@@ -1007,11 +1006,41 @@ void save_data::save_raw_fractions_json(const RawFractionsSeries& fractions,
     ofs << "    \"full_boundary_length\": ";
     write_json_array(ofs, fractions.full_boundary_length);
     ofs << ",\n";
-    ofs << "    \"external_perimeter_length\": ";
-    write_json_array(ofs, fractions.external_perimeter_length);
+    ofs << "    \"largest_spanning_species\": ";
+    write_json_array(ofs, fractions.largest_spanning_species);
     ofs << ",\n";
-    ofs << "    \"hole_size_counts\": ";
-    write_json_count_maps(ofs, fractions.hole_size_counts);
+    ofs << "    \"largest_spanning_interspecies_bonds\": ";
+    write_json_array(ofs, fractions.largest_spanning_interspecies_bonds);
+    ofs << ",\n";
+    ofs << "    \"other_spanning_sites\": ";
+    write_json_nested_array(ofs, fractions.other_spanning_sites);
+    ofs << ",\n";
+    ofs << "    \"other_spanning_bonds\": ";
+    write_json_nested_array(ofs, fractions.other_spanning_bonds);
+    ofs << ",\n";
+    ofs << "    \"other_spanning_sp\": ";
+    write_json_nested_array(ofs, fractions.other_spanning_sp);
+    ofs << ",\n";
+    ofs << "    \"other_spanning_hull\": ";
+    write_json_nested_array(ofs, fractions.other_spanning_hull);
+    ofs << ",\n";
+    ofs << "    \"other_spanning_species\": ";
+    write_json_nested_array(ofs, fractions.other_spanning_species);
+    ofs << ",\n";
+    ofs << "    \"other_spanning_interspecies_bonds\": ";
+    write_json_nested_array(ofs, fractions.other_spanning_interspecies_bonds);
+    ofs << ",\n";
+    ofs << "    \"interspecies_contact_bonds\": ";
+    write_json_array(ofs, fractions.interspecies_contact_bonds);
+    ofs << ",\n";
+    ofs << "    \"interspecies_contact_sites\": ";
+    write_json_array(ofs, fractions.interspecies_contact_sites);
+    ofs << ",\n";
+    ofs << "    \"spanning_interspecies_bonds\": ";
+    write_json_array(ofs, fractions.spanning_interspecies_bonds);
+    ofs << ",\n";
+    ofs << "    \"spanning_interspecies_sites\": ";
+    write_json_array(ofs, fractions.spanning_interspecies_sites);
     ofs << "\n";
     ofs << "  }\n";
     ofs << "}\n";
@@ -1275,30 +1304,36 @@ void save_data::save_fractal_counts_json(const RawFractionsSeries& fractions,
     ofs << "    \"num_colors\": " << fractions.num_colors << ",\n";
     ofs << "    \"type_percolation\": \"" << fractions.type_percolation << "\",\n";
     ofs << "    \"num_samples\": " << fractions.fractal_counts.size() << ",\n";
-    ofs << "    \"schema_version\": 2,\n";
-    ofs << "    \"spanning_definition\": \"connected_inside_slab_touching_bottom_and_top\",\n";
-    ofs << "    \"cluster_order\": \"num_sites_descending_then_component_seed_ascending\",\n";
-    ofs << "    \"dimension_fit\": \"OLS log(count) versus log(L/scale); 2 <= scale <= L/4; count > 1; at least 3 scales; d_bulk uses mean box counts over offsets; d_min uses shortest bottom-to-top path yardstick counts\",\n";
-    ofs << "    \"exponents_are_not_estimated_in_cpp\": false\n";
+    ofs << "    \"schema_version\": 3,\n";
+    ofs << "    \"box_counting_enabled\": false,\n";
+    ofs << "    \"spanning_definition\": \"monochromatic_connected_inside_slab_touching_bottom_and_top\",\n";
+    ofs << "    \"cluster_order\": \"num_sites_descending_then_num_bonds_descending_then_component_seed_ascending\"\n";
     ofs << "  },\n";
     ofs << "  \"samples\": [";
     for (std::size_t si = 0; si < fractions.fractal_counts.size(); ++si) {
         const auto& collected = fractions.fractal_counts[si];
         ofs << "\n    {\n      \"sample_index\": " << collected.sample_index
             << ",\n      \"anchor_z\": " << collected.anchor_z
+            << ",\n      \"slab_top_z\": " << collected.slab_top_z
             << ",\n      \"t_stab\": " << collected.t_stab
             << ",\n      \"num_spanning_clusters\": " << collected.spanning_clusters.size()
             << ",\n      \"largest_spanning_cluster_index\": "
             << (collected.spanning_clusters.empty() ? "null" : "0")
+            << ",\n      \"interspecies_contact_bonds\": " << collected.interspecies_contact_bonds
+            << ",\n      \"interspecies_contact_sites\": " << collected.interspecies_contact_sites
+            << ",\n      \"spanning_interspecies_bonds\": " << collected.spanning_interspecies_bonds
+            << ",\n      \"spanning_interspecies_sites\": " << collected.spanning_interspecies_sites
             << ",\n      \"spanning_clusters\": [";
         for (std::size_t ci = 0; ci < collected.spanning_clusters.size(); ++ci) {
             const auto& sample = collected.spanning_clusters[ci];
             ofs << "\n    {\n";
             ofs << "      \"eligible\": " << (sample.eligible ? "true" : "false") << ",\n";
             ofs << "      \"sample_index\": " << sample.sample_index << ",\n";
+            ofs << "      \"species\": " << sample.species << ",\n";
             ofs << "      \"dim\": " << sample.dim << ",\n";
             ofs << "      \"L\": " << sample.L << ",\n";
             ofs << "      \"anchor_z\": " << sample.anchor_z << ",\n";
+            ofs << "      \"slab_top_z\": " << sample.slab_top_z << ",\n";
             ofs << "      \"t_stab\": " << sample.t_stab << ",\n";
             ofs << "      \"type_percolation\": \"" << sample.type_percolation << "\",\n";
             ofs << "      \"boundary_conditions\": ";
@@ -1312,47 +1347,10 @@ void save_data::save_fractal_counts_json(const RawFractionsSeries& fractions,
             ofs << "        \"total_occupied_sites\": " << sample.total_occupied_sites << ",\n";
             ofs << "        \"total_active_bonds\": " << sample.total_active_bonds << "\n";
             ofs << "      },\n";
-            write_cluster_dimensions(ofs, sample);
-            ofs << "      \"chemical_distance\": {\n";
-            ofs << "        \"seed\": " << sample.chemical_seed << ",\n";
-            ofs << "        \"requested_origins\": " << sample.requested_origins << ",\n";
-            ofs << "        \"effective_origins\": " << sample.effective_origins << ",\n";
-            ofs << "        \"max_chemical_distance\": " << sample.max_chemical_distance << ",\n";
-            ofs << "        \"r_min\": " << std::setprecision(17) << sample.r_min << ",\n";
-            ofs << "        \"r_max\": " << std::setprecision(17) << sample.r_max << ",\n";
-            ofs << "        \"num_bins\": " << sample.num_bins << ",\n";
-            ofs << "        \"bin_edges\": ";
-            write_json_array(ofs, sample.bin_edges);
-            ofs << ",\n";
-            ofs << "        \"total_pairs_processed\": " << sample.total_pairs_processed << ",\n";
-            ofs << "        \"pairs_discarded_out_of_range\": " << sample.pairs_discarded_out_of_range << ",\n";
-            ofs << "        \"origins\": [";
-            for (std::size_t oi = 0; oi < sample.origins.size(); ++oi) {
-                const auto& origin = sample.origins[oi];
-                ofs << "\n          {\n";
-                ofs << "            \"site_id\": " << origin.site_id << ",\n";
-                ofs << "            \"coordinates\": ";
-                write_json_array(ofs, origin.coordinates);
-                ofs << ",\n";
-                ofs << "            \"bins\": ";
-                write_fractal_distance_bins(ofs, origin.bins, 14);
-                ofs << "\n          }";
-                if (oi + 1 < sample.origins.size()) ofs << ",";
-            }
-            if (!sample.origins.empty()) ofs << "\n        ";
-            ofs << "],\n";
-            ofs << "        \"radial_min_path\": ";
-            write_fractal_radial_min_path(ofs, sample.origins, sample.max_chemical_distance, 10);
-            ofs << "\n";
-            ofs << "      },\n";
-            ofs << "      \"box_counting_component\": {\n";
-            ofs << "        \"epsilon\": ";
-            write_json_array(ofs, sample.epsilons);
-            ofs << ",\n";
-            ofs << "        \"offset_seed\": " << sample.offset_seed << ",\n";
-            ofs << "        \"counts\": ";
-            write_fractal_box_rows(ofs, sample.component_box_counts, 10);
-            ofs << "\n      },\n";
+            ofs << "      \"hull_length\": " << sample.hull_length << ",\n";
+            ofs << "      \"full_boundary_length\": " << sample.full_boundary_length << ",\n";
+            ofs << "      \"interspecies_boundary_length\": " << sample.interspecies_boundary_length << ",\n";
+            ofs << "      \"shortest_path_edges\": " << sample.shortest_path_edges << ",\n";
             ofs << "      \"minimum_path_yardstick\": ";
             write_fractal_minimum_path_yardstick(ofs, sample.minimum_path_yardstick, 8);
             ofs << "\n    }";
