@@ -5,26 +5,26 @@ static inline int sx(const std::vector<int>& shape) { return shape[0]; }
 static inline int sy(const std::vector<int>& shape, int dim) { return (dim >= 2 ? shape[1] : 1); }
 static inline int sz(const std::vector<int>& shape, int dim) { return (dim == 3 ? shape[2] : 1); }
 
-static inline int lin_index(const std::vector<int>& shape, int dim, int x, int y, int z) {
-    const int SX = sx(shape);
-    if (dim == 2) return x + SX * y;
-    const int SY = sy(shape, dim);
-    return x + SX * (y + SY * z);
+static inline std::int64_t lin_index(const std::vector<int>& shape, int dim, int x, int y, int z) {
+    const std::int64_t SX = sx(shape);
+    if (dim == 2) return static_cast<std::int64_t>(x) + SX * y;
+    const std::int64_t SY = sy(shape, dim);
+    return static_cast<std::int64_t>(x) + SX * (static_cast<std::int64_t>(y) + SY * z);
 }
 
-static inline void unravel(const std::vector<int>& shape, int dim, int lin, int& x, int& y, int& z) {
-    const int SX = sx(shape);
-    const int SY = sy(shape, dim);
+static inline void unravel(const std::vector<int>& shape, int dim, std::int64_t lin, int& x, int& y, int& z) {
+    const std::int64_t SX = sx(shape);
+    const std::int64_t SY = sy(shape, dim);
     if (dim == 2) {
         z = 0;
-        y = lin / SX;
-        x = lin % SX;
+        y = static_cast<int>(lin / SX);
+        x = static_cast<int>(lin % SX);
     } else {
-        const int plane = SX * SY;
-        z = lin / plane;
-        int rem = lin % plane;
-        y = rem / SX;
-        x = rem % SX;
+        const std::int64_t plane = SX * SY;
+        z = static_cast<int>(lin / plane);
+        std::int64_t rem = lin % plane;
+        y = static_cast<int>(rem / SX);
+        x = static_cast<int>(rem % SX);
     }
 }
 
@@ -34,25 +34,24 @@ static inline int color_index_from_val(int v, int num_colors) {
     return std::abs(v) - 2;
 }
 
-static inline int level_of_lin(const std::vector<int>& shape, int dim, int grow_axis, int lin) {
+static inline int level_of_lin(const std::vector<int>& shape, int dim, int grow_axis, std::int64_t lin) {
     int x, y, z;
     unravel(shape, dim, lin, x, y, z);
     return (grow_axis == 0 ? x : (grow_axis == 1 ? y : z));
 }
 
 static inline void append_neighbors_lin(
-    int lin,
+    std::int64_t lin,
     int dim,
     const std::vector<int>& shape,
     int grow_axis,
-    std::vector<int>& out
+    std::vector<std::int64_t>& out
 ) {
     out.clear();
 
     const int SX = sx(shape);
     const int SY = sy(shape, dim);
     const int SZ = sz(shape, dim);
-    const int plane = SX * SY;
 
     int x, y, z;
     unravel(shape, dim, lin, x, y, z);
@@ -104,32 +103,32 @@ void BiggestComponent::compute_shortest_paths_to_base(
     const std::vector<int>&             shape,
     int                                 grow_axis,
     int                                 num_colors,
-    const std::vector<int>&             parent,
+    const std::vector<std::int64_t>&    parent,
     PercolationSeries&                  ps_out
 ) {
     const int SX = sx(shape);
     const int SY = sy(shape, dim);
     const int SZ = sz(shape, dim);
-    const int GRID_N = SX * SY * SZ;
+    const std::int64_t GRID_N = static_cast<std::int64_t>(SX) * SY * SZ;
 
     ps_out.sp_len.assign(num_colors, -1);
     ps_out.sp_path_lin.assign(num_colors, {});
 
-    if ((int)parent.size() != GRID_N) {
+    if (static_cast<std::int64_t>(parent.size()) != GRID_N) {
         return;
     }
 
     const int top_level = shape[grow_axis] - 1;
 
     for (int c = 0; c < num_colors; ++c) {
-        int top_lin = -1;
+        std::int64_t top_lin = -1;
 
         if (dim == 2) {
             for (int y = 0; y < SY && top_lin == -1; ++y) {
                 for (int x = 0; x < SX; ++x) {
                     const int xx = (grow_axis == 0 ? top_level : x);
                     const int yy = (grow_axis == 1 ? top_level : y);
-                    const int lin = lin_index(shape, dim, xx, yy, 0);
+                    const std::int64_t lin = lin_index(shape, dim, xx, yy, 0);
                     if (color_index_from_val(net.get(lin), num_colors) == c) {
                         top_lin = lin;
                         break;
@@ -143,7 +142,7 @@ void BiggestComponent::compute_shortest_paths_to_base(
                         const int xx = (grow_axis == 0 ? top_level : x);
                         const int yy = (grow_axis == 1 ? top_level : y);
                         const int zz = (grow_axis == 2 ? top_level : z);
-                        const int lin = lin_index(shape, dim, xx, yy, zz);
+                        const std::int64_t lin = lin_index(shape, dim, xx, yy, zz);
                         if (color_index_from_val(net.get(lin), num_colors) == c) {
                             top_lin = lin;
                             break;
@@ -157,10 +156,10 @@ void BiggestComponent::compute_shortest_paths_to_base(
             continue;
         }
 
-        std::vector<int> path;
+        std::vector<std::int64_t> path;
         path.reserve(shape[grow_axis]);
 
-        int cur = top_lin;
+        std::int64_t cur = top_lin;
         while (true) {
             if (cur < 0 || cur >= GRID_N) {
                 path.clear();
@@ -174,7 +173,7 @@ void BiggestComponent::compute_shortest_paths_to_base(
 
             path.push_back(cur);
 
-            const int par = parent[cur];
+            const std::int64_t par = parent[static_cast<std::size_t>(cur)];
             if (par == -1) {
                 break;
             }
@@ -262,11 +261,11 @@ void BiggestComponent::compute_shortest_paths_to_base_compact(
         if (found_target == -1) continue;
 
         // reconstruct path from found_target back to a source
-        std::vector<int> path;
+        std::vector<std::int64_t> path;
         int cur = found_target;
         while (cur != -1) {
             // map compact index to original linear pos
-            path.push_back(static_cast<int>(netc.pos_flat[static_cast<uint32_t>(cur)]));
+            path.push_back(static_cast<std::int64_t>(netc.pos_flat[static_cast<std::size_t>(cur)]));
             cur = parent[cur];
         }
         std::reverse(path.begin(), path.end());
@@ -276,7 +275,7 @@ void BiggestComponent::compute_shortest_paths_to_base_compact(
 }
 
 // ===== Maior cluster QUE PERCOLA por cor =====
-std::vector<int> BiggestComponent::largest_cluster_sizes(
+std::vector<std::int64_t> BiggestComponent::largest_cluster_sizes(
     const NetworkPattern&   net,
     int                     dim,
     const std::vector<int>& shape,
@@ -286,35 +285,35 @@ std::vector<int> BiggestComponent::largest_cluster_sizes(
     const int SX = sx(shape);
     const int SY = sy(shape, dim);
     const int SZ = sz(shape, dim);
-    const int GRID_N = SX * SY * SZ;
+    const std::int64_t GRID_N = static_cast<std::int64_t>(SX) * SY * SZ;
     const int L = shape[grow_axis];
 
-    std::vector<int> best(num_colors, 0);
-    std::vector<unsigned char> seen((size_t)GRID_N, 0);
-    std::vector<int> q;
-    std::vector<int> neigh;
+    std::vector<std::int64_t> best(num_colors, 0);
+    std::vector<unsigned char> seen(static_cast<std::size_t>(GRID_N), 0);
+    std::vector<std::int64_t> q;
+    std::vector<std::int64_t> neigh;
 
     q.reserve(4096);
     neigh.reserve(2 * dim);
 
     for (int c = 0; c < num_colors; ++c) {
         std::fill(seen.begin(), seen.end(), 0);
-        int best_c = 0;
+        std::int64_t best_c = 0;
 
-        for (int lin = 0; lin < GRID_N; ++lin) {
-            if (seen[lin]) continue;
+        for (std::int64_t lin = 0; lin < GRID_N; ++lin) {
+            if (seen[static_cast<std::size_t>(lin)]) continue;
             if (color_index_from_val(net.get(lin), num_colors) != c) continue;
 
             q.clear();
             q.push_back(lin);
-            seen[lin] = 1;
+            seen[static_cast<std::size_t>(lin)] = 1;
 
-            int comp_size = 0;
+            std::int64_t comp_size = 0;
             bool touches_base = false;
             bool touches_top = false;
 
             while (!q.empty()) {
-                const int u = q.back();
+                const std::int64_t u = q.back();
                 q.pop_back();
                 ++comp_size;
 
@@ -323,10 +322,10 @@ std::vector<int> BiggestComponent::largest_cluster_sizes(
                 if (h == L - 1) touches_top = true;
 
                 append_neighbors_lin(u, dim, shape, grow_axis, neigh);
-                for (int w : neigh) {
-                    if (seen[w]) continue;
+                for (std::int64_t w : neigh) {
+                    if (seen[static_cast<std::size_t>(w)]) continue;
                     if (color_index_from_val(net.get(w), num_colors) != c) continue;
-                    seen[w] = 1;
+                    seen[static_cast<std::size_t>(w)] = 1;
                     q.push_back(w);
                 }
             }
@@ -343,63 +342,59 @@ std::vector<int> BiggestComponent::largest_cluster_sizes(
 }
 
 // ===== largest_cluster_sizes using NetworkCompact CSR =====
-std::vector<int> BiggestComponent::largest_cluster_sizes_compact(
+std::vector<std::int64_t> BiggestComponent::largest_cluster_sizes_compact(
     const NetworkCompact&   netc,
     int                     dim,
     const std::vector<int>& shape,
     int                     grow_axis,
     int                     num_colors
 ) {
-    const int SX = sx(shape);
-    const int SY = sy(shape, dim);
-    const int SZ = sz(shape, dim);
-    const int GRID_N = SX * SY * SZ;
     const int L = shape[grow_axis];
 
-    std::vector<int> best(num_colors, 0);
+    std::vector<std::int64_t> best(num_colors, 0);
     std::vector<char> seen(netc.N, 0);
 
-    std::vector<int> q;
+    std::vector<NetworkCompact::index_t> q;
     q.reserve(4096);
 
-    auto level_of_compact = [&](uint32_t lin) {
-        int x,y,z;
-        unravel(shape, dim, static_cast<int>(lin), x, y, z);
+    auto level_of_compact = [&](NetworkCompact::index_t lin) {
+        int x, y, z;
+        unravel(shape, dim, static_cast<std::int64_t>(lin), x, y, z);
         return (grow_axis == 0 ? x : (grow_axis == 1 ? y : z));
     };
 
     for (int c = 0; c < num_colors; ++c) {
         std::fill(seen.begin(), seen.end(), 0);
-        int best_c = 0;
+        std::int64_t best_c = 0;
 
-        for (uint32_t i = 0; i < netc.N; ++i) {
-            if (seen[i]) continue;
-            if (netc.species[i] != static_cast<uint8_t>(c+1)) continue;
+        for (NetworkCompact::index_t i = 0; i < netc.N; ++i) {
+            if (seen[static_cast<std::size_t>(i)]) continue;
+            if (netc.species[static_cast<std::size_t>(i)] != static_cast<uint8_t>(c+1)) continue;
 
             q.clear();
-            q.push_back(static_cast<int>(i));
-            seen[i] = 1;
+            q.push_back(i);
+            seen[static_cast<std::size_t>(i)] = 1;
 
-            int comp_size = 0;
+            std::int64_t comp_size = 0;
             bool touches_base = false;
             bool touches_top = false;
 
             while (!q.empty()) {
-                const int u = q.back(); q.pop_back();
+                const NetworkCompact::index_t u = q.back(); q.pop_back();
                 ++comp_size;
-                const int lvl = level_of_compact(netc.pos_flat[static_cast<uint32_t>(u)]);
+                const int lvl = level_of_compact(netc.pos_flat[static_cast<std::size_t>(u)]);
                 if (lvl == 0) touches_base = true;
                 if (lvl == L - 1) touches_top = true;
 
-                const uint32_t start = netc.neighbors_start(static_cast<uint32_t>(u));
-                const uint32_t end = netc.neighbors_end(static_cast<uint32_t>(u));
-                for (uint32_t k = start; k < end; ++k) {
-                    const uint32_t v = netc.edges[k];
+                const NetworkCompact::index_t start = netc.neighbors_start(u);
+                const NetworkCompact::index_t end = netc.neighbors_end(u);
+                for (NetworkCompact::index_t k = start; k < end; ++k) {
+                    const NetworkCompact::index_t v = netc.edges[static_cast<std::size_t>(k)];
                     if (v >= netc.N) continue;
-                    if (seen[v]) continue;
-                    if (netc.species[v] != static_cast<uint8_t>(c+1)) continue;
-                    seen[v] = 1;
-                    q.push_back(static_cast<int>(v));
+                    if (seen[static_cast<std::size_t>(v)]) continue;
+                    if (netc.species[static_cast<std::size_t>(v)] != static_cast<uint8_t>(c+1)) continue;
+                    seen[static_cast<std::size_t>(v)] = 1;
+                    q.push_back(v);
                 }
             }
 

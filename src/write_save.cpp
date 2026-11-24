@@ -110,7 +110,8 @@ void write_json_nullable_int_array(std::ostream& os,
     os << "]";
 }
 
-void write_json_path_edge_pairs(std::ostream& os, const std::vector<int>& path)
+template <typename T>
+void write_json_path_edge_pairs(std::ostream& os, const std::vector<T>& path)
 {
     os << "[";
     if (path.size() >= 2) {
@@ -561,7 +562,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
         const int color_1b = ps.color_percolation[i];
         const int crow = std::max(0, color_1b - 1);
 
-        const int M_size =
+        const std::int64_t M_size =
             ps.M_size_at_perc.empty() ? -1 : ps.M_size_at_perc[i];
 
         int shortest_path_lin_value = -1;
@@ -579,12 +580,12 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 ? ps.sp_lin_posteq[crow]
                 : -1;
 
-        const int M_size_preteq =
+        const std::int64_t M_size_preteq =
             (crow < static_cast<int>(ps.M_size_preteq.size()))
                 ? ps.M_size_preteq[crow]
                 : -1;
 
-        const int M_size_posteq =
+        const std::int64_t M_size_posteq =
             (crow < static_cast<int>(ps.M_size_posteq.size()))
                 ? ps.M_size_posteq[crow]
                 : -1;
@@ -663,7 +664,7 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
                 ? ps.M_L_by_species[static_cast<std::size_t>(crow)]
                 : std::numeric_limits<double>::quiet_NaN();
 
-        const std::vector<int>* M_cluster_sizes_ptr = nullptr;
+        const std::vector<std::int64_t>* M_cluster_sizes_ptr = nullptr;
         if (crow >= 0 && crow < static_cast<int>(ps.M_cluster_sizes_by_species.size())) {
             const auto& row = ps.M_cluster_sizes_by_species[static_cast<std::size_t>(crow)];
             if (!row.empty()) {
@@ -671,17 +672,17 @@ void save_data::save_percolation_json(const PercolationSeries& ps,
             }
         }
 
-        const std::vector<int>* sp_path_lin_ptr = nullptr;
+        const std::vector<std::int64_t>* sp_path_lin_ptr = nullptr;
         if (crow < static_cast<int>(ps.sp_path_lin.size())) {
             sp_path_lin_ptr = &ps.sp_path_lin[crow];
         }
         
-        const std::vector<int>* sp_path_lin_preteq_ptr = nullptr;
+        const std::vector<std::int64_t>* sp_path_lin_preteq_ptr = nullptr;
         if (crow < static_cast<int>(ps.sp_path_lin_preteq.size())) {
             sp_path_lin_preteq_ptr = &ps.sp_path_lin_preteq[crow];
         }
 
-        const std::vector<int>* sp_path_lin_posteq_ptr = nullptr;
+        const std::vector<std::int64_t>* sp_path_lin_posteq_ptr = nullptr;
         if (crow < static_cast<int>(ps.sp_path_lin_posteq.size())) {
             sp_path_lin_posteq_ptr = &ps.sp_path_lin_posteq[crow];
         }

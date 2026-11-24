@@ -27,9 +27,9 @@ struct GridRegular {
     int SY;
     int SZ;
     int grow_axis;
-    int stride_y;
-    int stride_z;
-    int total_size;
+    std::int64_t stride_y;
+    std::int64_t stride_z;
+    std::int64_t total_size;
 
     GridRegular(const int dim_, const int L)
         : dim(dim_),
@@ -38,85 +38,83 @@ struct GridRegular {
           SZ(dim_ == 3 ? L : 1),
           grow_axis(dim_ - 1),
           stride_y(SX),
-          stride_z(SX * (dim_ >= 2 ? L : 1)),
-          total_size(SX * (dim_ >= 2 ? L : 1) * (dim_ == 3 ? L : 1)) {}
+          stride_z(static_cast<std::int64_t>(SX) * (dim_ >= 2 ? L : 1)),
+          total_size(static_cast<std::int64_t>(SX) * (dim_ >= 2 ? L : 1) * (dim_ == 3 ? L : 1)) {}
 
-    inline int x_of(const int idx) const { return idx % SX; }
-    inline int y_of(const int idx) const { return (idx / SX) % SY; }
-    inline int z_of(const int idx) const { return idx / (SX * SY); }
+    inline int x_of(const std::int64_t idx) const { return static_cast<int>(idx % SX); }
+    inline int y_of(const std::int64_t idx) const { return static_cast<int>((idx / SX) % SY); }
+    inline int z_of(const std::int64_t idx) const { return static_cast<int>(idx / stride_z); }
 
-    inline int grow_coord(const int idx) const {
+    inline int grow_coord(const std::int64_t idx) const {
         return (dim == 2) ? y_of(idx) : z_of(idx);
     }
 
-    inline int lin_index(const int x, const int y, const int z) const {
-        return x + SX * (y + SY * z);
+    inline std::int64_t lin_index(const int x, const int y, const int z) const {
+        return static_cast<std::int64_t>(x) + static_cast<std::int64_t>(SX) * (static_cast<std::int64_t>(y) + static_cast<std::int64_t>(SY) * z);
     }
 
-    inline int neighbor_xm(const int idx) const {
-        const int x = idx % SX;
+    inline std::int64_t neighbor_xm(const std::int64_t idx) const {
+        const int x = static_cast<int>(idx % SX);
         if (grow_axis == 0) return (x == 0) ? -1 : (idx - 1);
         return (x == 0) ? (idx + (SX - 1)) : (idx - 1);
     }
 
-    inline int neighbor_xp(const int idx) const {
-        const int x = idx % SX;
+    inline std::int64_t neighbor_xp(const std::int64_t idx) const {
+        const int x = static_cast<int>(idx % SX);
         if (grow_axis == 0) return (x == SX - 1) ? -1 : (idx + 1);
         return (x == SX - 1) ? (idx - (SX - 1)) : (idx + 1);
     }
 
-    inline int neighbor_ym(const int idx) const {
-        const int y = (idx / SX) % SY;
+    inline std::int64_t neighbor_ym(const std::int64_t idx) const {
+        const int y = static_cast<int>((idx / SX) % SY);
         if (grow_axis == 1) return (y == 0) ? -1 : (idx - SX);
-        return (y == 0) ? (idx + SX * (SY - 1)) : (idx - SX);
+        return (y == 0) ? (idx + static_cast<std::int64_t>(SX) * (SY - 1)) : (idx - SX);
     }
 
-    inline int neighbor_yp(const int idx) const {
-        const int y = (idx / SX) % SY;
+    inline std::int64_t neighbor_yp(const std::int64_t idx) const {
+        const int y = static_cast<int>((idx / SX) % SY);
         if (grow_axis == 1) return (y == SY - 1) ? -1 : (idx + SX);
-        return (y == SY - 1) ? (idx - SX * (SY - 1)) : (idx + SX);
+        return (y == SY - 1) ? (idx - static_cast<std::int64_t>(SX) * (SY - 1)) : (idx + SX);
     }
 
-    inline int neighbor_zm(const int idx) const {
+    inline std::int64_t neighbor_zm(const std::int64_t idx) const {
         if (dim != 3) return -1;
-        const int plane = SX * SY;
-        const int z = idx / plane;
-        return (z == 0) ? -1 : (idx - plane);
+        const int z = static_cast<int>(idx / stride_z);
+        return (z == 0) ? -1 : (idx - stride_z);
     }
 
-    inline int neighbor_zp(const int idx) const {
+    inline std::int64_t neighbor_zp(const std::int64_t idx) const {
         if (dim != 3) return -1;
-        const int plane = SX * SY;
-        const int z = idx / plane;
-        return (z == SZ - 1) ? -1 : (idx + plane);
+        const int z = static_cast<int>(idx / stride_z);
+        return (z == SZ - 1) ? -1 : (idx + stride_z);
     }
 
-    inline void for_each_neighbor(const int idx, const std::function<void(int)>& fn) const {
-        const int xm = neighbor_xm(idx);
-        const int xp = neighbor_xp(idx);
+    inline void for_each_neighbor(const std::int64_t idx, const std::function<void(std::int64_t)>& fn) const {
+        const std::int64_t xm = neighbor_xm(idx);
+        const std::int64_t xp = neighbor_xp(idx);
         if (xm >= 0) fn(xm);
         if (xp >= 0) fn(xp);
 
         if (dim >= 2) {
-            const int ym = neighbor_ym(idx);
-            const int yp = neighbor_yp(idx);
+            const std::int64_t ym = neighbor_ym(idx);
+            const std::int64_t yp = neighbor_yp(idx);
             if (ym >= 0) fn(ym);
             if (yp >= 0) fn(yp);
         }
 
         if (dim == 3) {
-            const int zm = neighbor_zm(idx);
-            const int zp = neighbor_zp(idx);
+            const std::int64_t zm = neighbor_zm(idx);
+            const std::int64_t zp = neighbor_zp(idx);
             if (zm >= 0) fn(zm);
             if (zp >= 0) fn(zp);
         }
     }
 };
 
-std::vector<int> build_path(const std::vector<int>& parent, const int target) {
-    std::vector<int> path;
+std::vector<std::int64_t> build_path(const std::vector<std::int64_t>& parent, const std::int64_t target) {
+    std::vector<std::int64_t> path;
     if (target < 0) return path;
-    int cur = target;
+    std::int64_t cur = target;
     while (cur >= 0) {
         path.push_back(cur);
         cur = parent[static_cast<std::size_t>(cur)];
@@ -126,7 +124,7 @@ std::vector<int> build_path(const std::vector<int>& parent, const int target) {
     return path;
 }
 
-int largest_component_single_color_sparse(
+std::int64_t largest_component_single_color_sparse(
     const SparseSubgraph& net,
     const GridRegular& grid,
     const int color_idx)
@@ -138,28 +136,28 @@ int largest_component_single_color_sparse(
     const auto& active = net.active_idx_by_color[color_idx];
     if (active.empty()) return 0;
 
-    std::unordered_set<int> visited;
+    std::unordered_set<std::int64_t> visited;
     visited.reserve(active.size() * 2 + 1);
 
-    std::vector<int> stack;
+    std::vector<std::int64_t> stack;
     stack.reserve(1024);
 
-    int best = 0;
+    std::int64_t best = 0;
 
-    for (const int idx : active) {
+    for (const std::int64_t idx : active) {
         if (visited.find(idx) != visited.end()) continue;
 
-        int comp_size = 0;
+        std::int64_t comp_size = 0;
         stack.clear();
         stack.push_back(idx);
         visited.insert(idx);
 
         while (!stack.empty()) {
-            const int u = stack.back();
+            const std::int64_t u = stack.back();
             stack.pop_back();
             ++comp_size;
 
-            grid.for_each_neighbor(u, [&](const int v) {
+            grid.for_each_neighbor(u, [&](const std::int64_t v) {
                 if (v < 0) return;
                 if (active.find(v) == active.end()) return;
                 if (visited.find(v) != visited.end()) return;
@@ -179,7 +177,7 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
     const SparseSubgraph& net,
     const GridRegular& grid,
     const int color_idx,
-    std::vector<int>& out_path,
+    std::vector<std::int64_t>& out_path,
     int& out_len)
 {
     if (color_idx < 0 || color_idx >= net.num_colors) {
@@ -197,18 +195,18 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
 
     const std::size_t total = net.total_size;
     std::vector<char> visited(total, 0);
-    std::vector<int> parent(static_cast<std::size_t>(total), -1);
-    std::queue<int> q;
+    std::vector<std::int64_t> parent(static_cast<std::size_t>(total), -1);
+    std::queue<std::int64_t> q;
 
     int base_subgraph = std::numeric_limits<int>::max();
     int top_subgraph = std::numeric_limits<int>::min();
-    for (const int idx : active_set) {
+    for (const std::int64_t idx : active_set) {
         const int g = grid.grow_coord(idx);
         base_subgraph = std::min(base_subgraph, g);
         top_subgraph = std::max(top_subgraph, g);
     }
 
-    for (const int idx : active_set) {
+    for (const std::int64_t idx : active_set) {
         if (grid.grow_coord(idx) != base_subgraph) continue;
         visited[static_cast<std::size_t>(idx)] = 1;
         parent[static_cast<std::size_t>(idx)] = -1;
@@ -221,15 +219,15 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
         return false;
     }
 
-    int target = -1;
+    std::int64_t target = -1;
     while (!q.empty()) {
-        const int u = q.front(); q.pop();
+        const std::int64_t u = q.front(); q.pop();
         if (grid.grow_coord(u) == top_subgraph) {
             target = u;
             break;
         }
 
-        grid.for_each_neighbor(u, [&](const int v) {
+        grid.for_each_neighbor(u, [&](const std::int64_t v) {
             if (v < 0) return;
             if (visited[static_cast<std::size_t>(v)]) return;
             if (active_set.find(v) == active_set.end()) return;
@@ -250,7 +248,7 @@ bool shortest_path_to_subgraph_top_single_color_sparse(
     return true;
 }
 
-int largest_component_single_color(
+std::int64_t largest_component_single_color(
     const NetworkPattern& net,
     const GridRegular& grid,
     const int color_idx)
@@ -258,28 +256,28 @@ int largest_component_single_color(
     const int active_val = color_to_active_value(net.num_colors, color_idx);
 
     std::vector<char> visited(net.data.size(), 0);
-    std::vector<int> stack;
-    int best = 0;
+    std::vector<std::int64_t> stack;
+    std::int64_t best = 0;
 
-    for (int idx = 0; idx < static_cast<int>(net.data.size()); ++idx) {
-        if (visited[idx]) continue;
-        if (static_cast<int>(net.data[idx]) != active_val) continue;
+    for (std::int64_t idx = 0; idx < static_cast<std::int64_t>(net.data.size()); ++idx) {
+        if (visited[static_cast<std::size_t>(idx)]) continue;
+        if (static_cast<int>(net.data[static_cast<std::size_t>(idx)]) != active_val) continue;
 
-        int comp_size = 0;
+        std::int64_t comp_size = 0;
         stack.clear();
         stack.push_back(idx);
-        visited[idx] = 1;
+        visited[static_cast<std::size_t>(idx)] = 1;
 
         while (!stack.empty()) {
-            const int u = stack.back();
+            const std::int64_t u = stack.back();
             stack.pop_back();
             ++comp_size;
 
-            grid.for_each_neighbor(u, [&](const int v) {
+            grid.for_each_neighbor(u, [&](const std::int64_t v) {
                 if (v < 0) return;
-                if (visited[v]) return;
-                if (static_cast<int>(net.data[v]) != active_val) return;
-                visited[v] = 1;
+                if (visited[static_cast<std::size_t>(v)]) return;
+                if (static_cast<int>(net.data[static_cast<std::size_t>(v)]) != active_val) return;
+                visited[static_cast<std::size_t>(v)] = 1;
                 stack.push_back(v);
             });
         }
@@ -294,23 +292,23 @@ bool shortest_path_to_subgraph_top_single_color(
     const NetworkPattern& net,
     const GridRegular& grid,
     const int color_idx,
-    std::vector<int>& out_path,
+    std::vector<std::int64_t>& out_path,
     int& out_len)
 {
     const int active_val = color_to_active_value(net.num_colors, color_idx);
-    const int N = static_cast<int>(net.data.size());
+    const std::int64_t N = static_cast<std::int64_t>(net.data.size());
 
-    std::vector<char> visited(N, 0);
-    std::vector<int> parent(N, -1);
-    std::vector<int> dist(N, -1);
-    std::queue<int> q;
+    std::vector<char> visited(static_cast<std::size_t>(N), 0);
+    std::vector<std::int64_t> parent(static_cast<std::size_t>(N), -1);
+    std::vector<int> dist(static_cast<std::size_t>(N), -1);
+    std::queue<std::int64_t> q;
 
     bool has_active_nodes = false;
     int base_subgraph = std::numeric_limits<int>::max();
     int top_subgraph  = -1;
 
-    for (int idx = 0; idx < N; ++idx) {
-        if (static_cast<int>(net.data[idx]) != active_val) continue;
+    for (std::int64_t idx = 0; idx < N; ++idx) {
+        if (static_cast<int>(net.data[static_cast<std::size_t>(idx)]) != active_val) continue;
         has_active_nodes = true;
         const int g = grid.grow_coord(idx);
         base_subgraph = std::min(base_subgraph, g);
@@ -323,13 +321,13 @@ bool shortest_path_to_subgraph_top_single_color(
         return false;
     }
 
-    for (int idx = 0; idx < N; ++idx) {
-        if (static_cast<int>(net.data[idx]) != active_val) continue;
+    for (std::int64_t idx = 0; idx < N; ++idx) {
+        if (static_cast<int>(net.data[static_cast<std::size_t>(idx)]) != active_val) continue;
         if (grid.grow_coord(idx) != base_subgraph) continue;
 
-        visited[idx] = 1;
-        dist[idx] = 0;
-        parent[idx] = -1;
+        visited[static_cast<std::size_t>(idx)] = 1;
+        dist[static_cast<std::size_t>(idx)] = 0;
+        parent[static_cast<std::size_t>(idx)] = -1;
         q.push(idx);
     }
 
@@ -339,10 +337,10 @@ bool shortest_path_to_subgraph_top_single_color(
         return false;
     }
 
-    int target = -1;
+    std::int64_t target = -1;
 
     while (!q.empty()) {
-        const int u = q.front();
+        const std::int64_t u = q.front();
         q.pop();
 
         if (grid.grow_coord(u) == top_subgraph) {
@@ -350,14 +348,14 @@ bool shortest_path_to_subgraph_top_single_color(
             break;
         }
 
-        grid.for_each_neighbor(u, [&](const int v) {
+        grid.for_each_neighbor(u, [&](const std::int64_t v) {
             if (v < 0) return;
-            if (visited[v]) return;
-            if (static_cast<int>(net.data[v]) != active_val) return;
+            if (visited[static_cast<std::size_t>(v)]) return;
+            if (static_cast<int>(net.data[static_cast<std::size_t>(v)]) != active_val) return;
 
-            visited[v] = 1;
-            parent[v] = u;
-            dist[v] = dist[u] + 1;
+            visited[static_cast<std::size_t>(v)] = 1;
+            parent[static_cast<std::size_t>(v)] = u;
+            dist[static_cast<std::size_t>(v)] = dist[static_cast<std::size_t>(u)] + 1;
             q.push(v);
         });
     }
@@ -477,7 +475,7 @@ SubgraphAnalysis analyze_sparse_isolated_subgraph(const SparseSubgraph& net)
         analysis.largest_component[c] =
             largest_component_single_color_sparse(net, grid, c);
 
-        std::vector<int> path;
+        std::vector<std::int64_t> path;
         int path_len = -1;
 
         const bool has_path =
@@ -999,7 +997,7 @@ SparseSubgraph build_preteq_sparse_subgraph(
     out.value_by_idx.reserve(encoded_net.active_idx.size() / 2);
 
     for (std::size_t k = 0; k < encoded_net.active_idx.size(); ++k) {
-        const int lin = encoded_net.active_idx[k];
+        const std::int64_t lin = encoded_net.active_idx[k];
         const int enc = encoded_net.active_val[k];
 
         const DecodedValue dv =
@@ -1036,7 +1034,7 @@ SparseSubgraph build_postteq_sparse_subgraph(
     out.value_by_idx.reserve(encoded_net.active_idx.size() / 2);
 
     for (std::size_t k = 0; k < encoded_net.active_idx.size(); ++k) {
-        const int lin = encoded_net.active_idx[k];
+        const std::int64_t lin = encoded_net.active_idx[k];
         const int enc = encoded_net.active_val[k];
 
         const DecodedValue dv =

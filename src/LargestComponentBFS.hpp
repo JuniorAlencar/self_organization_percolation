@@ -17,7 +17,7 @@ public:
         const std::vector<int>&             shape,
         int                                 grow_axis,
         int                                 num_colors,
-        const std::vector<int>&             parent,
+        const std::vector<std::int64_t>&    parent,
         PercolationSeries&                  ps_out
     );
 
@@ -30,7 +30,7 @@ public:
         PercolationSeries&                  ps_out
     );
 
-    std::vector<int> largest_cluster_sizes(
+    std::vector<std::int64_t> largest_cluster_sizes(
         const NetworkPattern&   net,
         int                     dim,
         const std::vector<int>& shape,
@@ -38,7 +38,7 @@ public:
         int                     num_colors
     );
 
-    std::vector<int> largest_cluster_sizes_compact(
+    std::vector<std::int64_t> largest_cluster_sizes_compact(
         const NetworkCompact&   netc,
         int                     dim,
         const std::vector<int>& shape,

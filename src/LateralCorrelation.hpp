@@ -72,7 +72,7 @@ LateralObservablesSeries compute_lateral_observables(
     const std::vector<int>& times,
     const std::string& boundary_mode = "periodic",
     bool store_correlation_rows = true,
-    const std::vector<int>* activated_indices = nullptr);
+    const std::vector<std::int64_t>* activated_indices = nullptr);
 
 bool validate_lateral_observables(std::string* error_message = nullptr);
 

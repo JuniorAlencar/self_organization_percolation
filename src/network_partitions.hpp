@@ -30,11 +30,11 @@ struct SparseEncodedNetwork {
     std::vector<int> shape;
     std::vector<double> rho;
 
-    std::vector<int> active_idx;   // índice linear
+    std::vector<std::int64_t> active_idx;   // índice linear
     std::vector<int> active_val;   // valor codificado = species_factor*(c+1) + t
 
-    std::unordered_map<int, int> encoded_value_by_idx;
-    std::vector<std::unordered_set<int>> active_idx_by_color;
+    std::unordered_map<std::int64_t, int> encoded_value_by_idx;
+    std::vector<std::unordered_set<std::int64_t>> active_idx_by_color;
 
     std::size_t total_size = 0;
 };
@@ -47,11 +47,11 @@ struct SparseSubgraph {
     std::vector<double> rho;
 
     // subgrafo já decodificado por cor
-    std::vector<int> active_idx;   // índice linear
+    std::vector<std::int64_t> active_idx;   // índice linear
     std::vector<int> active_val;   // valor decodificado: 1 ou (c+2)
 
-    std::unordered_map<int, int> value_by_idx;
-    std::vector<std::unordered_set<int>> active_idx_by_color;
+    std::unordered_map<std::int64_t, int> value_by_idx;
+    std::vector<std::unordered_set<std::int64_t>> active_idx_by_color;
 
     std::size_t total_size = 0;
 };
@@ -62,9 +62,9 @@ struct SubgraphAnalysis {
     std::vector<int> color_percolation;
     std::vector<int> percolation_order;
 
-    std::vector<int> largest_component;
+    std::vector<std::int64_t> largest_component;
     std::vector<int> sp_len;
-    std::vector<std::vector<int>> sp_path_lin;
+    std::vector<std::vector<std::int64_t>> sp_path_lin;
 };
 
 struct ReanalysisResult {

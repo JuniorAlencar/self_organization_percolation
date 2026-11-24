@@ -137,11 +137,7 @@ def process_file(filepath):
 
 def main():
     dirs = [
-        'SOP_data/tests_data/linear/bond_percolation/num_colors_1/dim_2/L_16384/fT_constant/fT_0.000000e+00/c_0.000000e+00/rho_1.0000e+00/data',
-        'SOP_data/tests_data/linear/bond_percolation/num_colors_1/dim_2/L_4096/fT_constant/fT_0.000000e+00/c_0.000000e+00/rho_1.0000e+00/data',
         'SOP_data/tests_data/linear/bond_percolation/num_colors_2/dim_2/L_4096/fT_constant/fT_0.000000e+00/c_0.000000e+00/rho_5.0000e-01/data',
-        'SOP_data/tests_data/linear/node_percolation/num_colors_1/dim_2/L_16384/fT_constant/fT_0.000000e+00/c_0.000000e+00/rho_1.0000e+00/data',
-        'SOP_data/tests_data/linear/node_percolation/num_colors_1/dim_2/L_4096/fT_constant/fT_0.000000e+00/c_0.000000e+00/rho_1.0000e+00/data',
         'SOP_data/tests_data/linear/node_percolation/num_colors_2/dim_2/L_4096/fT_constant/fT_0.000000e+00/c_0.000000e+00/rho_5.0000e-01/data'
     ]
     

@@ -30,7 +30,7 @@ struct NetworkPattern {
     std::vector<int> shape;         // Forma da rede, ex: {L, L} ou {L, L, L}
     std::vector<state_t> data;      // Estado por sítio
     std::vector<double> rho;        // Fração global por cor (aplicada na rede toda)
-    std::vector<std::pair<uint32_t, uint32_t>> edge_pairs; // Arestas dirigidas u -> v
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> edge_pairs; // Arestas dirigidas u -> v
 
     NetworkPattern(int dim_, const std::vector<int>& shape_, int num_colors_,
                    const std::vector<double>& rho_, bool initialize_data = true)
@@ -56,11 +56,11 @@ struct NetworkPattern {
         }
     }
 
-    inline int get(int idx) const {
+    inline int get(const std::int64_t idx) const {
         return static_cast<int>(data[static_cast<std::size_t>(idx)]);
     }
 
-    inline void set(int idx, int value) {
+    inline void set(const std::int64_t idx, const int value) {
         data[static_cast<std::size_t>(idx)] = static_cast<state_t>(value);
     }
 
@@ -70,7 +70,7 @@ struct NetworkPattern {
 
     void print() const {
         if (dim == 2) {
-            int idx = 0;
+            std::int64_t idx = 0;
             for (int i = 0; i < shape[0]; ++i) {
                 for (int j = 0; j < shape[1]; ++j) {
                     std::cout << get(idx++) << ' ';
@@ -80,13 +80,13 @@ struct NetworkPattern {
             return;
         }
 
-        const int plane = shape[0] * shape[1];
+        const std::int64_t plane = static_cast<std::int64_t>(shape[0]) * shape[1];
         for (int k = 0; k < shape[2]; ++k) {
             std::cout << "z = " << k << '\n';
-            int base = k * plane;
+            std::int64_t base = k * plane;
             for (int i = 0; i < shape[0]; ++i) {
                 for (int j = 0; j < shape[1]; ++j) {
-                    std::cout << get(base + i * shape[1] + j) << ' ';
+                    std::cout << get(base + static_cast<std::int64_t>(i) * shape[1] + j) << ' ';
                 }
                 std::cout << '\n';
             }
@@ -94,8 +94,8 @@ struct NetworkPattern {
         }
     }
 
-    inline int size() const {
-        return static_cast<int>(data.size());
+    inline std::size_t size() const {
+        return data.size();
     }
 };
 
@@ -120,19 +120,19 @@ struct PercolationSeries {
     std::vector<int> color_percolation;
     std::vector<int> percolation_order;
 
-    std::vector<int> M_size_at_perc;
+    std::vector<std::int64_t> M_size_at_perc;
     std::vector<int> sp_len;
-    std::vector<std::vector<int>> sp_path_lin;
+    std::vector<std::vector<std::int64_t>> sp_path_lin;
 
     // novos campos
     double t_eq = std::numeric_limits<double>::quiet_NaN();
     std::vector<double> t_eq_by_species;
     std::vector<int> sp_lin_preteq;
-    std::vector<std::vector<int>> sp_path_lin_preteq;
+    std::vector<std::vector<std::int64_t>> sp_path_lin_preteq;
     std::vector<int> sp_lin_posteq;
-    std::vector<std::vector<int>> sp_path_lin_posteq;
-    std::vector<int> M_size_preteq;
-    std::vector<int> M_size_posteq;
+    std::vector<std::vector<std::int64_t>> sp_path_lin_posteq;
+    std::vector<std::int64_t> M_size_preteq;
+    std::vector<std::int64_t> M_size_posteq;
     std::vector<int> z_max_at_perc;
     std::vector<int> z_max_final;
     std::vector<int> z_stat_by_species;
@@ -146,7 +146,7 @@ struct PercolationSeries {
     std::vector<std::vector<double>> grad_sur_by_species;
     std::vector<std::vector<double>> S_sur_by_species;
     std::vector<double> M_L_by_species;
-    std::vector<std::vector<int>> M_cluster_sizes_by_species;
+    std::vector<std::vector<std::int64_t>> M_cluster_sizes_by_species;
     int surface_deltaT = -1;
     bool surface_observables_enabled = false;
     // growth_test: 1 = estabilizou, -1 = morreu, 0 = nao estabilizou ate a parada.
@@ -295,7 +295,7 @@ struct RawFractionsSeries {
 
 // Compact network representation: Structure of Arrays (SoA) + CSR edges
 struct NetworkCompact {
-    using index_t = uint32_t;
+    using index_t = std::uint64_t;
 
     index_t N = 0;                         // número de sítios
     std::vector<index_t> pos_flat;        // posição flattened por sítio (N)

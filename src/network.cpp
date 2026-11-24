@@ -34,9 +34,9 @@ struct GridRegular {
     int SY;
     int SZ;
     int grow_axis;
-    int stride_y;
-    int stride_z;
-    int total_size;
+    std::int64_t stride_y;
+    std::int64_t stride_z;
+    std::int64_t total_size;
 
     GridRegular(const int dim_,
                 const int L,
@@ -54,8 +54,8 @@ struct GridRegular {
                  : 1),
           grow_axis(dim_ - 1),
           stride_y(SX),
-          stride_z(SX * SY),
-          total_size(SX * SY * SZ) {}
+          stride_z(static_cast<std::int64_t>(SX) * SY),
+          total_size(static_cast<std::int64_t>(SX) * SY * SZ) {}
 
     inline int grow_height() const {
         return (dim == 2) ? SY : SZ;
@@ -65,31 +65,31 @@ struct GridRegular {
         const int h = std::max(1, new_height);
         if (dim == 2) {
             SY = h;
-            stride_z = SX * SY;
-            total_size = SX * SY;
+            stride_z = static_cast<std::int64_t>(SX) * SY;
+            total_size = static_cast<std::int64_t>(SX) * SY;
         } else {
             SZ = h;
-            total_size = SX * SY * SZ;
+            total_size = static_cast<std::int64_t>(SX) * SY * SZ;
         }
     }
 
-    inline int lin_index(const int x, const int y = 0, const int z = 0) const {
-        return x + SX * (y + SY * z);
+    inline std::int64_t lin_index(const int x, const int y = 0, const int z = 0) const {
+        return static_cast<std::int64_t>(x) + static_cast<std::int64_t>(SX) * (static_cast<std::int64_t>(y) + static_cast<std::int64_t>(SY) * z);
     }
 
-    inline int x_of(const int idx) const {
-        return idx % SX;
+    inline int x_of(const std::int64_t idx) const {
+        return static_cast<int>(idx % SX);
     }
 
-    inline int y_of(const int idx) const {
-        return (idx / SX) % SY;
+    inline int y_of(const std::int64_t idx) const {
+        return static_cast<int>((idx / SX) % SY);
     }
 
-    inline int z_of(const int idx) const {
-        return idx / (SX * SY);
+    inline int z_of(const std::int64_t idx) const {
+        return static_cast<int>(idx / stride_z);
     }
 
-    inline int grow_coord(const int idx) const {
+    inline int grow_coord(const std::int64_t idx) const {
         return (dim == 2) ? y_of(idx) : z_of(idx);
     }
 
@@ -97,74 +97,72 @@ struct GridRegular {
         return (dim == 2) ? (SY - 1) : (SZ - 1);
     }
 
-    inline void coords_of(const int idx, int& x, int& y, int& z) const {
+    inline void coords_of(const std::int64_t idx, int& x, int& y, int& z) const {
         x = x_of(idx);
         y = (dim >= 2 ? y_of(idx) : 0);
         z = (dim == 3 ? z_of(idx) : 0);
     }
 
-    inline int neighbor_xm(const int idx) const {
-        const int x = idx % SX;
+    inline std::int64_t neighbor_xm(const std::int64_t idx) const {
+        const int x = static_cast<int>(idx % SX);
         if (grow_axis == 0) {
             return (x == 0) ? -1 : (idx - 1);
         }
         return (x == 0) ? (idx + (SX - 1)) : (idx - 1);
     }
 
-    inline int neighbor_xp(const int idx) const {
-        const int x = idx % SX;
+    inline std::int64_t neighbor_xp(const std::int64_t idx) const {
+        const int x = static_cast<int>(idx % SX);
         if (grow_axis == 0) {
             return (x == SX - 1) ? -1 : (idx + 1);
         }
         return (x == SX - 1) ? (idx - (SX - 1)) : (idx + 1);
     }
 
-    inline int neighbor_ym(const int idx) const {
-        const int y = (idx / SX) % SY;
+    inline std::int64_t neighbor_ym(const std::int64_t idx) const {
+        const int y = static_cast<int>((idx / SX) % SY);
         if (grow_axis == 1) {
             return (y == 0) ? -1 : (idx - SX);
         }
-        return (y == 0) ? (idx + SX * (SY - 1)) : (idx - SX);
+        return (y == 0) ? (idx + static_cast<std::int64_t>(SX) * (SY - 1)) : (idx - SX);
     }
 
-    inline int neighbor_yp(const int idx) const {
-        const int y = (idx / SX) % SY;
+    inline std::int64_t neighbor_yp(const std::int64_t idx) const {
+        const int y = static_cast<int>((idx / SX) % SY);
         if (grow_axis == 1) {
             return (y == SY - 1) ? -1 : (idx + SX);
         }
-        return (y == SY - 1) ? (idx - SX * (SY - 1)) : (idx + SX);
+        return (y == SY - 1) ? (idx - static_cast<std::int64_t>(SX) * (SY - 1)) : (idx + SX);
     }
 
-    inline int neighbor_zm(const int idx) const {
+    inline std::int64_t neighbor_zm(const std::int64_t idx) const {
         if (dim != 3) return -1;
-        const int plane = SX * SY;
-        const int z = idx / plane;
-        return (z == 0) ? -1 : (idx - plane);
+        const int z = static_cast<int>(idx / stride_z);
+        return (z == 0) ? -1 : (idx - stride_z);
     }
 
-    inline int neighbor_zp(const int idx) const {
+    inline std::int64_t neighbor_zp(const std::int64_t idx) const {
         if (dim != 3) return -1;
-        const int plane = SX * SY;
-        const int z = idx / plane;
-        return (z == SZ - 1) ? -1 : (idx + plane);
+        const int z = static_cast<int>(idx / stride_z);
+        return (z == SZ - 1) ? -1 : (idx + stride_z);
     }
 
-    inline void for_each_neighbor(const int idx, const std::function<void(int)>& fn) const {
-        const int xm = neighbor_xm(idx);
-        const int xp = neighbor_xp(idx);
+    inline void for_each_neighbor(const std::int64_t idx, const std::function<void(std::int64_t)>& fn) const {
+        const std::int64_t xm = neighbor_xm(idx);
+        const std::int64_t xp = neighbor_xp(idx);
         if (xm >= 0) fn(xm);
         if (xp >= 0) fn(xp);
 
         if (dim >= 2) {
-            const int ym = neighbor_ym(idx);
-            const int yp = neighbor_yp(idx);
+            const std::int64_t ym = neighbor_ym(idx);
+            const std::int64_t yp = neighbor_yp(idx);
             if (ym >= 0) fn(ym);
             if (yp >= 0) fn(yp);
         }
 
         if (dim == 3) {
-            const int zm = neighbor_zm(idx);
-            const int zp = neighbor_zp(idx);
+            const std::int64_t zm = neighbor_zm(idx);
+            const std::int64_t zp = neighbor_zp(idx);
             if (zm >= 0) fn(zm);
             if (zp >= 0) fn(zp);
         }
@@ -188,12 +186,12 @@ inline long long compute_base_size(const GridRegular& grid) {
                            : static_cast<long long>(grid.SX) * static_cast<long long>(grid.SY);
 }
 
-std::vector<int> base_candidates_for_color(const GridRegular& grid,
-                                           const int num_colors,
-                                           const int color_idx,
-                                           const InitialBaseLayout layout)
+std::vector<std::int64_t> base_candidates_for_color(const GridRegular& grid,
+                                                    const int num_colors,
+                                                    const int color_idx,
+                                                    const InitialBaseLayout layout)
 {
-    std::vector<int> out;
+    std::vector<std::int64_t> out;
     if (color_idx < 0 || color_idx >= num_colors) return out;
 
     if (layout == InitialBaseLayout::Blocks) {
@@ -243,10 +241,10 @@ std::vector<int> base_candidates_for_color(const GridRegular& grid,
         }
 
         out.reserve(static_cast<std::size_t>(
-            (grid.SX * grid.SY + num_colors - 1) / num_colors));
+            (static_cast<std::int64_t>(grid.SX) * grid.SY + num_colors - 1) / num_colors));
         for (int y = 0; y < grid.SY; ++y) {
             for (int x = 0; x < grid.SX; ++x) {
-                if (((x + grid.SX * y) % num_colors) == color_idx) {
+                if (((x + static_cast<std::int64_t>(grid.SX) * y) % num_colors) == color_idx) {
                     out.push_back(grid.lin_index(x, y, 0));
                 }
             }
@@ -266,7 +264,7 @@ int activate_deterministic_base_sites(const GridRegular& grid,
 {
     if (quota <= 0) return 0;
 
-    const std::vector<int> candidates =
+    const std::vector<std::int64_t> candidates =
         base_candidates_for_color(grid, num_colors, color_idx, layout);
     if (candidates.empty()) return 0;
 
@@ -332,7 +330,7 @@ int activate_clustered_base_sites(const GridRegular& grid,
             }
             ++step;
             ++tries;
-            const int idx = grid.lin_index(x, 0, 0);
+            const std::int64_t idx = grid.lin_index(x, 0, 0);
             if (activate_site(idx)) {
                 ++activated;
             }
@@ -353,19 +351,20 @@ int activate_clustered_base_sites(const GridRegular& grid,
             y_center = (ty * grid.SY) / ny + grid.SY / (2 * ny);
         }
 
-        std::vector<char> visited(static_cast<std::size_t>(grid.SX * grid.SY), 0);
+        std::vector<char> visited(static_cast<std::size_t>(static_cast<std::int64_t>(grid.SX) * grid.SY), 0);
         std::deque<std::pair<int, int>> queue;
         queue.push_back({x_center, y_center});
-        visited[static_cast<std::size_t>(x_center + grid.SX * y_center)] = 1;
+        visited[static_cast<std::size_t>(x_center + static_cast<std::int64_t>(grid.SX) * y_center)] = 1;
 
         int tries = 0;
-        const int max_tries = grid.SX * grid.SY * 2;
+        const int max_tries = static_cast<int>(std::min<std::int64_t>(
+            std::numeric_limits<int>::max(), static_cast<std::int64_t>(grid.SX) * grid.SY * 2));
         while (!queue.empty() && activated < quota && tries < max_tries) {
             const auto [cx, cy] = queue.front();
             queue.pop_front();
             ++tries;
 
-            const int idx = grid.lin_index(cx, cy, 0);
+            const std::int64_t idx = grid.lin_index(cx, cy, 0);
             if (activate_site(idx)) {
                 ++activated;
             }
@@ -377,7 +376,7 @@ int activate_clustered_base_sites(const GridRegular& grid,
                 if (nx < 0) nx += grid.SX;
                 int ny = (cy + dys[dir]) % grid.SY;
                 if (ny < 0) ny += grid.SY;
-                const std::size_t v_idx = static_cast<std::size_t>(nx + grid.SX * ny);
+                const std::size_t v_idx = static_cast<std::size_t>(nx + static_cast<std::int64_t>(grid.SX) * ny);
                 if (!visited[v_idx]) {
                     visited[v_idx] = 1;
                     queue.push_back({nx, ny});
@@ -413,46 +412,46 @@ struct DecodedValue {
 
 
 struct FrontCandidate {
-    std::uint32_t activator = std::numeric_limits<std::uint32_t>::max();
+    std::uint64_t activator = std::numeric_limits<std::uint64_t>::max();
     std::uint8_t color_idx = std::numeric_limits<std::uint8_t>::max();
     std::uint64_t edge_bit = std::numeric_limits<std::uint64_t>::max();
 
     FrontCandidate() = default;
 
-    FrontCandidate(const int activator_, const int color_idx_)
-        : activator(static_cast<std::uint32_t>(activator_)),
+    FrontCandidate(const std::int64_t activator_, const int color_idx_)
+        : activator(static_cast<std::uint64_t>(activator_)),
           color_idx(static_cast<std::uint8_t>(color_idx_)) {}
 
-    FrontCandidate(const int activator_, const int color_idx_, const std::uint64_t edge_bit_)
-        : activator(static_cast<std::uint32_t>(activator_)),
+    FrontCandidate(const std::int64_t activator_, const int color_idx_, const std::uint64_t edge_bit_)
+        : activator(static_cast<std::uint64_t>(activator_)),
           color_idx(static_cast<std::uint8_t>(color_idx_)),
           edge_bit(edge_bit_) {}
 };
 
 struct NeighborBond {
-    int idx = -1;
+    std::int64_t idx = -1;
     std::uint64_t edge_bit = std::numeric_limits<std::uint64_t>::max();
 };
 
-inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
+inline int collect_neighbors(const GridRegular& grid, const std::int64_t idx, std::int64_t out[6])
 {
     int n = 0;
 
-    const int xm = grid.neighbor_xm(idx);
-    const int xp = grid.neighbor_xp(idx);
+    const std::int64_t xm = grid.neighbor_xm(idx);
+    const std::int64_t xp = grid.neighbor_xp(idx);
     if (xm >= 0) out[n++] = xm;
     if (xp >= 0) out[n++] = xp;
 
     if (grid.dim >= 2) {
-        const int ym = grid.neighbor_ym(idx);
-        const int yp = grid.neighbor_yp(idx);
+        const std::int64_t ym = grid.neighbor_ym(idx);
+        const std::int64_t yp = grid.neighbor_yp(idx);
         if (ym >= 0) out[n++] = ym;
         if (yp >= 0) out[n++] = yp;
     }
 
     if (grid.dim == 3) {
-        const int zm = grid.neighbor_zm(idx);
-        const int zp = grid.neighbor_zp(idx);
+        const std::int64_t zm = grid.neighbor_zm(idx);
+        const std::int64_t zp = grid.neighbor_zp(idx);
         if (zm >= 0) out[n++] = zm;
         if (zp >= 0) out[n++] = zp;
     }
@@ -460,27 +459,27 @@ inline int collect_neighbors(const GridRegular& grid, const int idx, int out[6])
     return n;
 }
 
-inline int collect_neighbor_bonds(const GridRegular& grid, const int idx, NeighborBond out[6])
+inline int collect_neighbor_bonds(const GridRegular& grid, const std::int64_t idx, NeighborBond out[6])
 {
     int n = 0;
 
-    const int xm = grid.neighbor_xm(idx);
-    const int xp = grid.neighbor_xp(idx);
+    const std::int64_t xm = grid.neighbor_xm(idx);
+    const std::int64_t xp = grid.neighbor_xp(idx);
     if (xm >= 0) out[n++] = NeighborBond{xm, static_cast<std::uint64_t>(xm)};
     if (xp >= 0) out[n++] = NeighborBond{xp, static_cast<std::uint64_t>(idx)};
 
     if (grid.dim >= 2) {
         const std::uint64_t y_offset = static_cast<std::uint64_t>(grid.total_size);
-        const int ym = grid.neighbor_ym(idx);
-        const int yp = grid.neighbor_yp(idx);
+        const std::int64_t ym = grid.neighbor_ym(idx);
+        const std::int64_t yp = grid.neighbor_yp(idx);
         if (ym >= 0) out[n++] = NeighborBond{ym, y_offset + static_cast<std::uint64_t>(ym)};
         if (yp >= 0) out[n++] = NeighborBond{yp, y_offset + static_cast<std::uint64_t>(idx)};
     }
 
     if (grid.dim == 3) {
         const std::uint64_t z_offset = 2ull * static_cast<std::uint64_t>(grid.total_size);
-        const int zm = grid.neighbor_zm(idx);
-        const int zp = grid.neighbor_zp(idx);
+        const std::int64_t zm = grid.neighbor_zm(idx);
+        const std::int64_t zp = grid.neighbor_zp(idx);
         if (zm >= 0) out[n++] = NeighborBond{zm, z_offset + static_cast<std::uint64_t>(zm)};
         if (zp >= 0) out[n++] = NeighborBond{zp, z_offset + static_cast<std::uint64_t>(idx)};
     }
@@ -488,10 +487,10 @@ inline int collect_neighbor_bonds(const GridRegular& grid, const int idx, Neighb
     return n;
 }
 
-inline std::uint64_t dynamic_bond_key(const int direction, const int lower_idx)
+inline std::uint64_t dynamic_bond_key(const int direction, const std::int64_t lower_idx)
 {
     return (static_cast<std::uint64_t>(direction) << 62) |
-           static_cast<std::uint64_t>(lower_idx);
+           (static_cast<std::uint64_t>(lower_idx) & ((1ull << 62) - 1ull));
 }
 
 struct DynamicTestedBondBitmap {
@@ -528,25 +527,25 @@ struct DynamicTestedBondBitmap {
     }
 };
 
-inline int collect_neighbor_bonds_dynamic(const GridRegular& grid, const int idx, NeighborBond out[6])
+inline int collect_neighbor_bonds_dynamic(const GridRegular& grid, const std::int64_t idx, NeighborBond out[6])
 {
     int n = 0;
 
-    const int xm = grid.neighbor_xm(idx);
-    const int xp = grid.neighbor_xp(idx);
+    const std::int64_t xm = grid.neighbor_xm(idx);
+    const std::int64_t xp = grid.neighbor_xp(idx);
     if (xm >= 0) out[n++] = NeighborBond{xm, dynamic_bond_key(0, xm)};
     if (xp >= 0) out[n++] = NeighborBond{xp, dynamic_bond_key(0, idx)};
 
     if (grid.dim >= 2) {
-        const int ym = grid.neighbor_ym(idx);
-        const int yp = grid.neighbor_yp(idx);
+        const std::int64_t ym = grid.neighbor_ym(idx);
+        const std::int64_t yp = grid.neighbor_yp(idx);
         if (ym >= 0) out[n++] = NeighborBond{ym, dynamic_bond_key(1, ym)};
         if (yp >= 0) out[n++] = NeighborBond{yp, dynamic_bond_key(1, idx)};
     }
 
     if (grid.dim == 3) {
-        const int zm = grid.neighbor_zm(idx);
-        const int zp = grid.neighbor_zp(idx);
+        const std::int64_t zm = grid.neighbor_zm(idx);
+        const std::int64_t zp = grid.neighbor_zp(idx);
         if (zm >= 0) out[n++] = NeighborBond{zm, dynamic_bond_key(2, zm)};
         if (zp >= 0) out[n++] = NeighborBond{zp, dynamic_bond_key(2, idx)};
     }
@@ -555,72 +554,72 @@ inline int collect_neighbor_bonds_dynamic(const GridRegular& grid, const int idx
 }
 
 struct OpenBondGraph {
-    std::vector<uint32_t> offsets;
-    std::vector<uint32_t> neighbors;
+    std::vector<std::size_t> offsets;
+    std::vector<std::int64_t> neighbors;
 
     OpenBondGraph() = default;
 
-    OpenBondGraph(const int total_size,
-                  const std::vector<std::pair<uint32_t, uint32_t>>& edge_pairs)
+    OpenBondGraph(const std::int64_t total_size,
+                  const std::vector<std::pair<std::uint64_t, std::uint64_t>>& edge_pairs)
     {
         build(total_size, edge_pairs);
     }
 
-    void build(const int total_size,
-               const std::vector<std::pair<uint32_t, uint32_t>>& edge_pairs)
+    void build(const std::int64_t total_size,
+               const std::vector<std::pair<std::uint64_t, std::uint64_t>>& edge_pairs)
     {
         offsets.assign(static_cast<std::size_t>(total_size) + 1u, 0u);
 
         for (const auto& edge : edge_pairs) {
-            if (edge.first >= static_cast<uint32_t>(total_size) ||
-                edge.second >= static_cast<uint32_t>(total_size)) {
+            if (static_cast<std::int64_t>(edge.first) >= total_size ||
+                static_cast<std::int64_t>(edge.second) >= total_size) {
                 continue;
             }
             ++offsets[static_cast<std::size_t>(edge.first) + 1u];
         }
 
-        for (int i = 1; i <= total_size; ++i) {
-            offsets[static_cast<std::size_t>(i)] += offsets[static_cast<std::size_t>(i - 1)];
+        for (std::size_t i = 1; i <= static_cast<std::size_t>(total_size); ++i) {
+            offsets[i] += offsets[i - 1u];
         }
 
-        neighbors.assign(edge_pairs.size(), 0u);
-        std::vector<uint32_t> cursor(offsets.begin(), offsets.end());
+        neighbors.assign(edge_pairs.size(), 0);
+        std::vector<std::size_t> cursor = offsets;
         for (const auto& edge : edge_pairs) {
-            if (edge.first >= static_cast<uint32_t>(total_size) ||
-                edge.second >= static_cast<uint32_t>(total_size)) {
+            if (static_cast<std::int64_t>(edge.first) >= total_size ||
+                static_cast<std::int64_t>(edge.second) >= total_size) {
                 continue;
             }
-            neighbors[static_cast<std::size_t>(cursor[edge.first]++)] = edge.second;
+            neighbors[cursor[static_cast<std::size_t>(edge.first)]++] = static_cast<std::int64_t>(edge.second);
         }
     }
 };
 
 struct ComponentSummary {
-    int seed = -1;
-    int size = 0;
+    std::int64_t seed = -1;
+    std::int64_t size = 0;
 };
 
 struct TimeSplit {
-    int pre = 0;
-    int post = 0;
+    std::int64_t pre = 0;
+    std::int64_t post = 0;
 };
 
-std::vector<int> shortest_open_bond_path_single_color(
+std::vector<std::int64_t> shortest_open_bond_path_single_color(
     const GridRegular& grid,
     const OpenBondGraph& graph,
     const int active_val,
-    const std::function<int(int)>& get_site,
+    const std::function<int(std::int64_t)>& get_site,
     const int target_height = -1)
 {
     const int top_coord = (target_height >= 0)
         ? std::min(target_height, grid.grow_top_coord())
         : grid.grow_top_coord();
     std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-    std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
-    std::vector<int> queue;
-    queue.reserve(static_cast<std::size_t>(grid.total_size));
+    std::vector<std::int64_t> parent(static_cast<std::size_t>(grid.total_size), -2);
+    std::vector<std::int64_t> queue;
+    queue.reserve(static_cast<std::size_t>(compute_base_size(grid)));
 
-    for (int idx = 0; idx < grid.total_size; ++idx) {
+    for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
         if (get_site(idx) != active_val) continue;
         if (grid.grow_coord(idx) != 0) continue;
         visited[static_cast<std::size_t>(idx)] = 1;
@@ -628,18 +627,18 @@ std::vector<int> shortest_open_bond_path_single_color(
         queue.push_back(idx);
     }
 
-    int target = -1;
+    std::int64_t target = -1;
     for (std::size_t qi = 0; qi < queue.size(); ++qi) {
-        const int u = queue[qi];
+        const std::int64_t u = queue[qi];
         if (grid.grow_coord(u) == top_coord) {
             target = u;
             break;
         }
 
-        const uint32_t begin = graph.offsets[static_cast<std::size_t>(u)];
-        const uint32_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
-        for (uint32_t k = begin; k < end; ++k) {
-            const int v = static_cast<int>(graph.neighbors[static_cast<std::size_t>(k)]);
+        const std::size_t begin = graph.offsets[static_cast<std::size_t>(u)];
+        const std::size_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
+        for (std::size_t k = begin; k < end; ++k) {
+            const std::int64_t v = static_cast<std::int64_t>(graph.neighbors[k]);
             if (visited[static_cast<std::size_t>(v)]) continue;
             if (get_site(v) != active_val) continue;
             visited[static_cast<std::size_t>(v)] = 1;
@@ -648,45 +647,45 @@ std::vector<int> shortest_open_bond_path_single_color(
         }
     }
 
-    std::vector<int> path;
+    std::vector<std::int64_t> path;
     if (target < 0) return path;
 
-    for (int cur = target; cur >= 0; cur = parent[static_cast<std::size_t>(cur)]) {
+    for (std::int64_t cur = target; cur >= 0; cur = parent[static_cast<std::size_t>(cur)]) {
         path.push_back(cur);
     }
     std::reverse(path.begin(), path.end());
     return path;
 }
 
-std::vector<int> shortest_site_path_single_color(
+std::vector<std::int64_t> shortest_site_path_single_color(
     const GridRegular& grid,
     const int active_val,
-    const std::function<int(int)>& get_site,
+    const std::function<int(std::int64_t)>& get_site,
     const int target_height = -1)
 {
     const int top_coord = (target_height >= 0)
         ? std::min(target_height, grid.grow_top_coord())
         : grid.grow_top_coord();
-    std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
-    std::vector<int> current;
-    std::vector<int> next;
+    std::vector<std::int64_t> parent(static_cast<std::size_t>(grid.total_size), -2);
+    std::vector<std::int64_t> current;
+    std::vector<std::int64_t> next;
     current.reserve(static_cast<std::size_t>(compute_base_size(grid)));
     next.reserve(static_cast<std::size_t>(compute_base_size(grid)));
 
-    for (int idx = 0; idx < grid.total_size; ++idx) {
+    for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
         if (grid.grow_coord(idx) != 0) continue;
         if (get_site(idx) != active_val) continue;
         parent[static_cast<std::size_t>(idx)] = -1;
         current.push_back(idx);
     }
 
-    int reached_top = -1;
-    int neigh[6];
+    std::int64_t reached_top = -1;
+    std::int64_t neigh[6];
 
     while (!current.empty() && reached_top < 0) {
         next.clear();
 
-        for (const int u : current) {
+        for (const std::int64_t u : current) {
             if (grid.grow_coord(u) == top_coord) {
                 reached_top = u;
                 break;
@@ -694,7 +693,7 @@ std::vector<int> shortest_site_path_single_color(
 
             const int nneigh = collect_neighbors(grid, u, neigh);
             for (int ni = 0; ni < nneigh; ++ni) {
-                const int v = neigh[ni];
+                const std::int64_t v = neigh[ni];
                 if (parent[static_cast<std::size_t>(v)] != -2) continue;
                 if (get_site(v) != active_val) continue;
 
@@ -708,8 +707,8 @@ std::vector<int> shortest_site_path_single_color(
 
     if (reached_top < 0) return {};
 
-    std::vector<int> path;
-    for (int at = reached_top; at != -1; at = parent[static_cast<std::size_t>(at)]) {
+    std::vector<std::int64_t> path;
+    for (std::int64_t at = reached_top; at != -1; at = parent[static_cast<std::size_t>(at)]) {
         path.push_back(at);
     }
     std::reverse(path.begin(), path.end());
@@ -727,10 +726,10 @@ struct TestedBondBitmap {
                  63u) / 64u,
                 0u) {}
 
-    std::uint64_t edge_index(const int u, const int v) const {
-        const int lo = std::min(u, v);
-        const int hi = std::max(u, v);
-        const int diff = hi - lo;
+    std::uint64_t edge_index(const std::int64_t u, const std::int64_t v) const {
+        const std::int64_t lo = std::min(u, v);
+        const std::int64_t hi = std::max(u, v);
+        const std::int64_t diff = hi - lo;
 
         // X bonds occupy [0, total_size). X is periodic for the 2D/3D
         // geometries used here, so the wrap bond is anchored at x = SX - 1.
@@ -751,7 +750,7 @@ struct TestedBondBitmap {
                 }
                 // Y is periodic only when growth is along Z (3D).
                 if (grid.grow_axis != 1 &&
-                    diff == grid.SX * (grid.SY - 1) &&
+                    diff == static_cast<std::int64_t>(grid.SX) * (grid.SY - 1) &&
                     lo / grid.stride_z == hi / grid.stride_z) {
                     return y_offset + static_cast<std::uint64_t>(hi);
                 }
@@ -766,7 +765,7 @@ struct TestedBondBitmap {
         throw std::runtime_error("TestedBondBitmap: non-neighbor bond");
     }
 
-    bool mark_if_new(const int u, const int v) {
+    bool mark_if_new(const std::int64_t u, const std::int64_t v) {
         const std::uint64_t bit = edge_index(u, v);
         return mark_if_new(bit);
     }
@@ -780,7 +779,7 @@ struct TestedBondBitmap {
         return true;
     }
 
-    void mark_open(const int u, const int v) {
+    void mark_open(const std::int64_t u, const std::int64_t v) {
         const std::uint64_t bit = edge_index(u, v);
         mark_open(bit);
     }
@@ -789,7 +788,7 @@ struct TestedBondBitmap {
         words[static_cast<std::size_t>(bit >> 6u)] |= (1ull << (bit & 63u));
     }
 
-    bool contains(const int u, const int v) const {
+    bool contains(const std::int64_t u, const std::int64_t v) const {
         const std::uint64_t bit = edge_index(u, v);
         return contains(bit);
     }
@@ -801,42 +800,42 @@ struct TestedBondBitmap {
 };
 
 inline bool mark_bond_if_new(TestedBondBitmap& tested_bonds,
-                             const int u,
-                             const int v)
+                             const std::int64_t u,
+                             const std::int64_t v)
 {
     return tested_bonds.mark_if_new(u, v);
 }
 
-std::vector<int> shortest_open_bond_path_single_color(
+std::vector<std::int64_t> shortest_open_bond_path_single_color(
     const GridRegular& grid,
     const TestedBondBitmap& open_bonds,
     const int active_val,
-    const std::function<int(int)>& get_site,
+    const std::function<int(std::int64_t)>& get_site,
     const int target_height = -1)
 {
     const int top_coord = (target_height >= 0)
         ? std::min(target_height, grid.grow_top_coord())
         : grid.grow_top_coord();
-    std::vector<int> parent(static_cast<std::size_t>(grid.total_size), -2);
-    std::vector<int> current;
-    std::vector<int> next;
+    std::vector<std::int64_t> parent(static_cast<std::size_t>(grid.total_size), -2);
+    std::vector<std::int64_t> current;
+    std::vector<std::int64_t> next;
     current.reserve(static_cast<std::size_t>(compute_base_size(grid)));
     next.reserve(static_cast<std::size_t>(compute_base_size(grid)));
 
-    for (int idx = 0; idx < grid.total_size; ++idx) {
+    for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
         if (grid.grow_coord(idx) != 0) continue;
         if (get_site(idx) != active_val) continue;
         parent[static_cast<std::size_t>(idx)] = -1;
         current.push_back(idx);
     }
 
-    int reached_top = -1;
-    int neigh[6];
+    std::int64_t reached_top = -1;
+    std::int64_t neigh[6];
 
     while (!current.empty() && reached_top < 0) {
         next.clear();
 
-        for (const int u : current) {
+        for (const std::int64_t u : current) {
             if (grid.grow_coord(u) == top_coord) {
                 reached_top = u;
                 break;
@@ -844,7 +843,7 @@ std::vector<int> shortest_open_bond_path_single_color(
 
             const int nneigh = collect_neighbors(grid, u, neigh);
             for (int ni = 0; ni < nneigh; ++ni) {
-                const int v = neigh[ni];
+                const std::int64_t v = neigh[ni];
                 if (parent[static_cast<std::size_t>(v)] != -2) continue;
                 if (get_site(v) != active_val) continue;
                 if (!open_bonds.contains(u, v)) continue;
@@ -859,8 +858,8 @@ std::vector<int> shortest_open_bond_path_single_color(
 
     if (reached_top < 0) return {};
 
-    std::vector<int> path;
-    for (int at = reached_top; at != -1; at = parent[static_cast<std::size_t>(at)]) {
+    std::vector<std::int64_t> path;
+    for (std::int64_t at = reached_top; at != -1; at = parent[static_cast<std::size_t>(at)]) {
         path.push_back(at);
     }
     std::reverse(path.begin(), path.end());
@@ -874,7 +873,7 @@ inline double topology_uniform01(std::mt19937_64& rng)
 
 struct FastSlotMap {
     struct Entry {
-        int key = -1;
+        std::int64_t key = -1;
         int val = -1;
     };
     std::vector<Entry> table;
@@ -891,9 +890,9 @@ struct FastSlotMap {
         }
     }
 
-    inline int find(const int key) const {
+    inline int find(const std::int64_t key) const {
         if (mask == 0) return -1;
-        uint32_t h = (static_cast<uint32_t>(key) * 0x9E3779B9u) & mask;
+        uint32_t h = static_cast<uint32_t>((static_cast<std::uint64_t>(key) * 11400714819323198485ull) >> 32) & mask;
         while (table[h].key != -1) {
             if (table[h].key == key) return table[h].val;
             h = (h + 1) & mask;
@@ -901,11 +900,11 @@ struct FastSlotMap {
         return -1;
     }
 
-    inline void insert(const int key, const int val) {
+    inline void insert(const std::int64_t key, const int val) {
         if (mask == 0 || (touched_slots.size() * 2 >= mask)) {
             rehash(table.empty() ? 512 : table.size() * 2);
         }
-        uint32_t h = (static_cast<uint32_t>(key) * 0x9E3779B9u) & mask;
+        uint32_t h = static_cast<uint32_t>((static_cast<std::uint64_t>(key) * 11400714819323198485ull) >> 32) & mask;
         while (table[h].key != -1 && table[h].key != key) {
             h = (h + 1) & mask;
         }
@@ -945,16 +944,16 @@ struct SparseFrontCandidates {
     // state the model can produce.
     static constexpr int max_candidates_per_target = 6;
 
-    std::vector<int> touched_targets;
+    std::vector<std::int64_t> touched_targets;
     std::vector<int> slot_of_target;
     FastSlotMap sparse_slot_of_target;
-    std::vector<std::array<std::uint32_t, max_candidates_per_target>> activators;
+    std::vector<std::array<std::uint64_t, max_candidates_per_target>> activators;
     std::vector<std::array<std::uint8_t, max_candidates_per_target>> colors;
     std::vector<std::array<std::uint64_t, max_candidates_per_target>> edge_bits;
     std::vector<unsigned char> counts;
     bool sparse_lookup = false;
 
-    explicit SparseFrontCandidates(const int nsites = 0,
+    explicit SparseFrontCandidates(const std::int64_t nsites = 0,
                                    const bool sparse_lookup_ = false)
         : slot_of_target(sparse_lookup_
                              ? 0u
@@ -964,7 +963,7 @@ struct SparseFrontCandidates {
     {
     }
 
-    void resize_site_count(const int nsites) {
+    void resize_site_count(const std::int64_t nsites) {
         if (sparse_lookup) return;
         slot_of_target.resize(static_cast<std::size_t>(nsites), -1);
     }
@@ -984,7 +983,7 @@ struct SparseFrontCandidates {
         if (sparse_lookup) {
             sparse_slot_of_target.clear();
         } else {
-            for (const int target : touched_targets) {
+            for (const std::int64_t target : touched_targets) {
                 slot_of_target[static_cast<std::size_t>(target)] = -1;
             }
         }
@@ -995,7 +994,7 @@ struct SparseFrontCandidates {
         counts.clear();
     }
 
-    void add(const int target, const FrontCandidate candidate) {
+    void add(const std::int64_t target, const FrontCandidate candidate) {
         int slot = -1;
         if (sparse_lookup) {
             slot = sparse_slot_of_target.find(target);
@@ -1028,7 +1027,7 @@ struct SparseFrontCandidates {
 
     FrontCandidate candidate(const std::size_t slot, const int idx) const {
         return FrontCandidate{
-            static_cast<int>(activators[slot][static_cast<std::size_t>(idx)]),
+            static_cast<std::int64_t>(activators[slot][static_cast<std::size_t>(idx)]),
             static_cast<int>(colors[slot][static_cast<std::size_t>(idx)]),
             edge_bits[slot][static_cast<std::size_t>(idx)]
         };
@@ -1057,7 +1056,7 @@ inline DecodedValue decode_animation_value(const long long code,
 }
 
 inline bool is_active_color_site_encoded(const std::vector<NetworkPattern::state_t>& activation_code,
-                                         const int idx,
+                                         const std::int64_t idx,
                                          const int color_idx,
                                          const int species_factor,
                                          int* time_out = nullptr)
@@ -1540,14 +1539,14 @@ double compute_upper_surface_fraction(
     const int active_val = color_to_active_value(num_colors, color_idx);
     const int top = std::min(upper_height, grid.grow_top_coord());
     const int bottom = std::max(0, std::min(lower_height, top));
-    const int n_sites = std::min(
+    const std::int64_t n_sites = std::min(
         grid.total_size,
-        static_cast<int>(site_state.size()));
+        static_cast<std::int64_t>(site_state.size()));
 
     std::vector<char> exterior_air(static_cast<std::size_t>(grid.total_size), 0);
-    std::deque<int> queue;
+    std::deque<std::int64_t> queue;
 
-    for (int idx = 0; idx < n_sites; ++idx) {
+    for (std::int64_t idx = 0; idx < n_sites; ++idx) {
         if (grid.grow_coord(idx) != top) continue;
         if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) > 0) {
             continue;
@@ -1556,14 +1555,14 @@ double compute_upper_surface_fraction(
         queue.push_back(idx);
     }
 
-    int neigh[6];
+    std::int64_t neigh[6];
     while (!queue.empty()) {
-        const int u = queue.front();
+        const std::int64_t u = queue.front();
         queue.pop_front();
 
         const int nneigh = collect_neighbors(grid, u, neigh);
         for (int ni = 0; ni < nneigh; ++ni) {
-            const int v = neigh[ni];
+            const std::int64_t v = neigh[ni];
             if (v < 0 || v >= n_sites) continue;
             const int hv = grid.grow_coord(v);
             if (hv > top || hv < bottom) continue;
@@ -1577,14 +1576,14 @@ double compute_upper_surface_fraction(
     }
 
     std::uint32_t count = 0u;
-    for (int idx = 0; idx < n_sites; ++idx) {
+    for (std::int64_t idx = 0; idx < n_sites; ++idx) {
         const int h = grid.grow_coord(idx);
         if (h < bottom || h > top) continue;
         if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) == active_val) {
             bool exposed_to_upper_air = (h == top);
             const int nneigh = collect_neighbors(grid, idx, neigh);
             for (int ni = 0; ni < nneigh && !exposed_to_upper_air; ++ni) {
-                const int v = neigh[ni];
+                const std::int64_t v = neigh[ni];
                 if (v < 0 || v >= n_sites) continue;
                 if (grid.grow_coord(v) > top ||
                     exterior_air[static_cast<std::size_t>(v)]) {
@@ -1618,13 +1617,13 @@ std::vector<int> compute_upper_surface_heights(
     const int bottom = std::max(0, lower_height);
     const int top = std::min(upper_height, grid.grow_top_coord());
     if (top < bottom) return {};
-    const int lateral_size = (grid.dim == 2) ? grid.SX : grid.SX * grid.SY;
+    const std::int64_t lateral_size = (grid.dim == 2) ? grid.SX : static_cast<std::int64_t>(grid.SX) * grid.SY;
     std::vector<int> heights(static_cast<std::size_t>(lateral_size), -1);
 
-    const int n_sites = std::min(
+    const std::int64_t n_sites = std::min(
         grid.total_size,
-        static_cast<int>(site_state.size()));
-    for (int idx = 0; idx < n_sites; ++idx) {
+        static_cast<std::int64_t>(site_state.size()));
+    for (std::int64_t idx = 0; idx < n_sites; ++idx) {
         if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) != active_val) {
             continue;
         }
@@ -1632,9 +1631,9 @@ std::vector<int> compute_upper_surface_heights(
         const int h = grid.grow_coord(idx);
         if (h < bottom || h > top) continue;
 
-        const int lateral_idx = (grid.dim == 2)
+        const std::int64_t lateral_idx = (grid.dim == 2)
             ? grid.x_of(idx)
-            : grid.x_of(idx) + grid.SX * grid.y_of(idx);
+            : static_cast<std::int64_t>(grid.x_of(idx)) + static_cast<std::int64_t>(grid.SX) * grid.y_of(idx);
         heights[static_cast<std::size_t>(lateral_idx)] =
             std::max(heights[static_cast<std::size_t>(lateral_idx)], h);
     }
@@ -1680,9 +1679,9 @@ double compute_surface_gradient(
     } else {
         for (int y = 0; y < grid.SY; ++y) {
             for (int x = 0; x < grid.SX; ++x) {
-                const int idx = x + grid.SX * y;
-                const int hx = ((x + 1) % grid.SX) + grid.SX * y;
-                const int hy = x + grid.SX * ((y + 1) % grid.SY);
+                const std::int64_t idx = x + static_cast<std::int64_t>(grid.SX) * y;
+                const std::int64_t hx = ((x + 1) % grid.SX) + static_cast<std::int64_t>(grid.SX) * y;
+                const std::int64_t hy = x + static_cast<std::int64_t>(grid.SX) * ((y + 1) % grid.SY);
                 const int h0 = heights[static_cast<std::size_t>(idx)];
                 const int h_x = heights[static_cast<std::size_t>(hx)];
                 const int h_y = heights[static_cast<std::size_t>(hy)];
@@ -1710,7 +1709,7 @@ double compute_lateral_area(const GridRegular& grid)
 
 struct SlabClusterMassResult {
     double largest_spanning_mass = 0.0;
-    std::vector<int> cluster_sizes;
+    std::vector<std::int64_t> cluster_sizes;
 };
 
 SlabClusterMassResult compute_slab_cluster_masses(
@@ -1731,16 +1730,16 @@ SlabClusterMassResult compute_slab_cluster_masses(
     const int top = std::min(upper_height, grid.grow_top_coord());
     if (top < bottom) return {};
 
-    const int n_sites = std::min(
+    const std::int64_t n_sites = std::min(
         grid.total_size,
-        static_cast<int>(site_state.size()));
+        static_cast<std::int64_t>(site_state.size()));
     std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-    std::deque<int> queue;
-    int neigh[6];
+    std::deque<std::int64_t> queue;
+    std::int64_t neigh[6];
     std::uint64_t largest_spanning_mass = 0u;
-    std::vector<int> cluster_sizes;
+    std::vector<std::int64_t> cluster_sizes;
 
-    for (int idx = 0; idx < n_sites; ++idx) {
+    for (std::int64_t idx = 0; idx < n_sites; ++idx) {
         if (visited[static_cast<std::size_t>(idx)]) continue;
         if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) != active_val) {
             continue;
@@ -1758,7 +1757,7 @@ SlabClusterMassResult compute_slab_cluster_masses(
         bool touches_top = false;
 
         while (!queue.empty()) {
-            const int u = queue.front();
+            const std::int64_t u = queue.front();
             queue.pop_front();
             ++component_mass;
             const int hu = grid.grow_coord(u);
@@ -1767,7 +1766,7 @@ SlabClusterMassResult compute_slab_cluster_masses(
 
             const int nneigh = collect_neighbors(grid, u, neigh);
             for (int ni = 0; ni < nneigh; ++ni) {
-                const int v = neigh[ni];
+                const std::int64_t v = neigh[ni];
                 if (v < 0 || v >= n_sites) continue;
                 if (visited[static_cast<std::size_t>(v)]) continue;
                 if (static_cast<int>(site_state[static_cast<std::size_t>(v)]) != active_val) {
@@ -1782,14 +1781,14 @@ SlabClusterMassResult compute_slab_cluster_masses(
             }
         }
 
-        cluster_sizes.push_back(static_cast<int>(component_mass));
+        cluster_sizes.push_back(static_cast<std::int64_t>(component_mass));
         if (touches_bottom && touches_top) {
             largest_spanning_mass =
                 std::max(largest_spanning_mass, component_mass);
         }
     }
 
-    std::sort(cluster_sizes.begin(), cluster_sizes.end(), std::greater<int>());
+    std::sort(cluster_sizes.begin(), cluster_sizes.end(), std::greater<std::int64_t>());
     return {
         static_cast<double>(largest_spanning_mass),
         std::move(cluster_sizes)
@@ -1815,19 +1814,19 @@ double compute_volume_fraction_between_upper_surfaces(
     if (top < bottom) return 0.0;
 
     long long occupied_between_surfaces = 0;
-    const int n_sites = std::min(
+    const std::int64_t n_sites = std::min(
         grid.total_size,
-        static_cast<int>(site_state.size()));
-    for (int idx = 0; idx < n_sites; ++idx) {
+        static_cast<std::int64_t>(site_state.size()));
+    for (std::int64_t idx = 0; idx < n_sites; ++idx) {
         if (static_cast<int>(site_state[static_cast<std::size_t>(idx)]) != active_val) {
             continue;
         }
 
-        const int lateral_idx = (grid.dim == 2)
+        const std::int64_t lateral_idx = (grid.dim == 2)
             ? grid.x_of(idx)
-            : grid.x_of(idx) + grid.SX * grid.y_of(idx);
+            : static_cast<std::int64_t>(grid.x_of(idx)) + static_cast<std::int64_t>(grid.SX) * grid.y_of(idx);
         if (lateral_idx < 0 ||
-            lateral_idx >= static_cast<int>(current_heights.size())) {
+            lateral_idx >= static_cast<std::int64_t>(current_heights.size())) {
             continue;
         }
 
@@ -2349,7 +2348,7 @@ bool fractal_counts_eligible(const int dim, const int L)
             return true;
         }
     }
-    return (dim == 2 && L == 16384) || (dim == 3 && L == 1024);
+    return (dim == 2 && L >= 16384) || (dim == 3 && L >= 1024);
 }
 
 int env_int_or_default(const char* name, const int fallback)
@@ -5222,10 +5221,10 @@ NetworkPattern network::create_network(
     std::vector<std::int8_t> site_state(
         static_cast<std::size_t>(grid.total_size),
         static_cast<std::int8_t>(-1));
-    auto get_site = [&](const int idx) -> int {
+    auto get_site = [&](const std::int64_t idx) -> int {
         return static_cast<int>(site_state[static_cast<std::size_t>(idx)]);
     };
-    auto set_site = [&](const int idx, const int value) {
+    auto set_site = [&](const std::int64_t idx, const int value) {
         site_state[static_cast<std::size_t>(idx)] = static_cast<std::int8_t>(value);
     };
 
@@ -5244,11 +5243,11 @@ NetworkPattern network::create_network(
             static_cast<std::size_t>(grid.total_size),
             std::numeric_limits<uint32_t>::max());
     }
-    std::vector<int> activated_indices_for_lateral;
+    std::vector<std::int64_t> activated_indices_for_lateral;
     if (save_lateral_observables) {
         activated_indices_for_lateral.reserve(static_cast<std::size_t>(base_size));
     }
-    auto set_activation_time = [&](const int idx, const uint32_t t_value)
+    auto set_activation_time = [&](const std::int64_t idx, const uint32_t t_value)
     {
         if (!needs_activation_time) return;
         activation_time[static_cast<std::size_t>(idx)] = t_value;
@@ -5274,8 +5273,8 @@ NetworkPattern network::create_network(
     std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
     std::vector<int>    z_max_at_perc(num_colors, -1);
-    std::vector<int>    frontier;
-    std::vector<int>    next_frontier;
+    std::vector<std::int64_t> frontier;
+    std::vector<std::int64_t> next_frontier;
 
     const std::size_t lateral_size = static_cast<std::size_t>(base_size);
     std::vector<std::vector<int>> surface_height;
@@ -5292,12 +5291,12 @@ NetworkPattern network::create_network(
     std::vector<double> front_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
     std::vector<uint32_t> front_count(static_cast<std::size_t>(num_colors), 0);
 
-    auto lateral_index_of = [&](const int idx) -> std::size_t {
+    auto lateral_index_of = [&](const std::int64_t idx) -> std::size_t {
         if (dim == 2) {
             return static_cast<std::size_t>(grid.x_of(idx));
         }
         return static_cast<std::size_t>(
-            grid.x_of(idx) + grid.SX * grid.y_of(idx));
+            grid.x_of(idx) + static_cast<std::int64_t>(grid.SX) * grid.y_of(idx));
     };
 
     auto reset_front_height_accumulators = [&]() {
@@ -5307,7 +5306,7 @@ NetworkPattern network::create_network(
         std::fill(front_count.begin(), front_count.end(), 0u);
     };
 
-    auto record_height_activation = [&](const int color_idx, const int idx) {
+    auto record_height_activation = [&](const int color_idx, const std::int64_t idx) {
         if (!calculate_height_timeseries) return;
         if (color_idx < 0 || color_idx >= num_colors) return;
         const std::size_t c = static_cast<std::size_t>(color_idx);
@@ -5403,7 +5402,7 @@ NetworkPattern network::create_network(
         const int prefer_neg = color_to_negative_value(num_colors, c);
         const int active_val = color_to_active_value(num_colors, c);
 
-        auto activate_base_site = [&](const int idx) -> bool {
+        auto activate_base_site = [&](const std::int64_t idx) -> bool {
             const int v = get_site(idx);
             if (v != prefer_neg && v != -1) return false;
 
@@ -5426,13 +5425,13 @@ NetworkPattern network::create_network(
         } else if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
             int activated = 0;
             int tries = 0;
-            const int max_tries = static_cast<int>(base_size) * 20;
+            const int max_tries = static_cast<int>(std::min<long long>(static_cast<long long>(std::numeric_limits<int>::max()), base_size * 20));
 
             while (activated < seeds_quota[c] && tries < max_tries) {
                 const int x = rng.uniform_int(0, grid.SX - 1);
                 const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
                 const int z = 0;
-                const int idx = grid.lin_index(x, y, z);
+                const std::int64_t idx = grid.lin_index(x, y, z);
 
                 if (activate_base_site(idx)) {
                     ++activated;
@@ -5454,14 +5453,14 @@ NetworkPattern network::create_network(
     ps_out.initial_base_layout =
         initial_base_layout_name(stop_config.initial_base_layout);
     ps_out.sp_lin_preteq.assign(num_colors, -1);
-    ps_out.sp_path_lin_preteq.assign(num_colors, std::vector<int>{});
+    ps_out.sp_path_lin_preteq.assign(num_colors, std::vector<std::int64_t>{});
     ps_out.sp_lin_posteq.assign(num_colors, -1);
-    ps_out.sp_path_lin_posteq.assign(num_colors, std::vector<int>{});
+    ps_out.sp_path_lin_posteq.assign(num_colors, std::vector<std::int64_t>{});
     ps_out.M_size_preteq.assign(num_colors, -1);
     ps_out.M_size_posteq.assign(num_colors, -1);
 
     ps_out.sp_len.assign(num_colors, -1);
-    ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
+    ps_out.sp_path_lin.assign(num_colors, std::vector<std::int64_t>{});
     ps_out.color_percolation.clear();
     ps_out.percolation_order.clear();
     ps_out.M_size_at_perc.clear();
@@ -5488,7 +5487,7 @@ NetworkPattern network::create_network(
         ps_out.percolation_order.clear();
         ps_out.M_size_at_perc.clear();
         ps_out.sp_len.assign(num_colors, -1);
-        ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
+        ps_out.sp_path_lin.assign(num_colors, std::vector<std::int64_t>{});
 
         struct ValidPercolation {
             int rank;
@@ -5524,34 +5523,34 @@ NetworkPattern network::create_network(
         }
     };
 
-    auto largest_component_single_color = [&](const int color_idx) -> int
+    auto largest_component_single_color = [&](const int color_idx) -> std::int64_t
     {
         const int active_val = color_to_active_value(num_colors, color_idx);
 
-        std::vector<char> visited(grid.total_size, 0);
-        std::vector<int> stack;
-        int max_component = 0;
+        std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
+        std::vector<std::int64_t> stack;
+        std::int64_t max_component = 0;
 
-        for (int idx = 0; idx < grid.total_size; ++idx) {
-            if (visited[idx]) continue;
+        for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
+            if (visited[static_cast<std::size_t>(idx)]) continue;
             if (get_site(idx) != active_val) continue;
 
-            int comp_size = 0;
+            std::int64_t comp_size = 0;
             stack.clear();
             stack.push_back(idx);
-            visited[idx] = 1;
+            visited[static_cast<std::size_t>(idx)] = 1;
 
             while (!stack.empty()) {
-                const int u = stack.back();
+                const std::int64_t u = stack.back();
                 stack.pop_back();
                 ++comp_size;
 
-                grid.for_each_neighbor(u, [&](const int v) {
+                grid.for_each_neighbor(u, [&](const std::int64_t v) {
                     if (v < 0) return;
-                    if (visited[v]) return;
+                    if (visited[static_cast<std::size_t>(v)]) return;
                     if (get_site(v) != active_val) return;
 
-                    visited[v] = 1;
+                    visited[static_cast<std::size_t>(v)] = 1;
                     stack.push_back(v);
                 });
             }
@@ -5566,12 +5565,12 @@ NetworkPattern network::create_network(
 
     // Union-find for open bonds. Encoding: 0 = inactive, negative = root
     // storing -component_size, positive = parent_index + 1.
-    std::vector<int> dsu;
+    std::vector<std::int64_t> dsu;
     if (calculate_detailed_properties) {
         dsu.assign(static_cast<std::size_t>(grid.total_size), 0);
     }
 
-    auto dsu_make_active = [&](const int idx)
+    auto dsu_make_active = [&](const std::int64_t idx)
     {
         if (!calculate_detailed_properties) return;
         if (idx < 0 || idx >= grid.total_size) return;
@@ -5579,29 +5578,29 @@ NetworkPattern network::create_network(
         dsu[static_cast<std::size_t>(idx)] = -1;
     };
 
-    auto dsu_find = [&](int x)
+    auto dsu_find = [&](std::int64_t x)
     {
-        int root = x;
+        std::int64_t root = x;
         while (dsu[static_cast<std::size_t>(root)] > 0) {
             root = dsu[static_cast<std::size_t>(root)] - 1;
         }
         while (x != root) {
-            const int next = dsu[static_cast<std::size_t>(x)] - 1;
+            const std::int64_t next = dsu[static_cast<std::size_t>(x)] - 1;
             dsu[static_cast<std::size_t>(x)] = root + 1;
             x = next;
         }
         return root;
     };
 
-    auto dsu_union = [&](const int a, const int b)
+    auto dsu_union = [&](const std::int64_t a, const std::int64_t b)
     {
         if (!calculate_detailed_properties) return;
         if (a < 0 || b < 0 || a >= grid.total_size || b >= grid.total_size) return;
         dsu_make_active(a);
         dsu_make_active(b);
 
-        int ra = dsu_find(a);
-        int rb = dsu_find(b);
+        std::int64_t ra = dsu_find(a);
+        std::int64_t rb = dsu_find(b);
         if (ra == rb) return;
 
         if (dsu[static_cast<std::size_t>(ra)] >
@@ -5613,15 +5612,15 @@ NetworkPattern network::create_network(
         dsu[static_cast<std::size_t>(rb)] = ra + 1;
     };
 
-    auto largest_open_component_single_color = [&](const int color_idx) -> int
+    auto largest_open_component_single_color = [&](const int color_idx) -> std::int64_t
     {
         const int active_val = color_to_active_value(num_colors, color_idx);
-        int max_component = 0;
+        std::int64_t max_component = 0;
 
-        for (int idx = 0; idx < grid.total_size; ++idx) {
+        for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
             if (get_site(idx) != active_val) continue;
             if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
-            const int root = dsu_find(idx);
+            const std::int64_t root = dsu_find(idx);
             max_component = std::max(
                 max_component,
                 -dsu[static_cast<std::size_t>(root)]
@@ -5632,7 +5631,7 @@ NetworkPattern network::create_network(
     };
 
     // To store chosen edge pairs during the simulation.
-    std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> edge_pairs;
     std::unique_ptr<TestedBondBitmap> tested_bonds_bitmap;
     DynamicTestedBondBitmap tested_bonds_dynamic;
     if (stop_config.dynamic_height) {
@@ -5657,8 +5656,8 @@ NetworkPattern network::create_network(
         }
         return tested_bonds_bitmap->mark_if_new(edge_bit);
     };
-    auto open_bond = [&](const int u,
-                         const int v,
+    auto open_bond = [&](const std::int64_t u,
+                         const std::int64_t v,
                          const std::uint64_t edge_bit =
                              std::numeric_limits<std::uint64_t>::max())
     {
@@ -5672,10 +5671,10 @@ NetworkPattern network::create_network(
                 }
             }
             if (save_compact || is_node) {
-                edge_pairs.emplace_back(static_cast<uint32_t>(u),
-                                        static_cast<uint32_t>(v));
-                edge_pairs.emplace_back(static_cast<uint32_t>(v),
-                                        static_cast<uint32_t>(u));
+                edge_pairs.emplace_back(static_cast<std::uint64_t>(u),
+                                        static_cast<std::uint64_t>(v));
+                edge_pairs.emplace_back(static_cast<std::uint64_t>(v),
+                                        static_cast<std::uint64_t>(u));
             }
         }
     };
@@ -5685,9 +5684,9 @@ NetworkPattern network::create_network(
         if (!stop_config.dynamic_height) return;
         if (min_grow_coord <= grid.grow_top_coord()) return;
 
-        const int old_total = grid.total_size;
+        const std::int64_t old_total = grid.total_size;
         grid.resize_growth_height(min_grow_coord + 1);
-        const int new_total = grid.total_size;
+        const std::int64_t new_total = grid.total_size;
         if (new_total <= old_total) return;
 
         if (static_cast<std::size_t>(new_total) > site_state.capacity()) {
@@ -5716,7 +5715,7 @@ NetworkPattern network::create_network(
     };
 
     if (calculate_detailed_properties) {
-        for (int idx = 0; idx < grid.total_size; ++idx) {
+        for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
             if (get_site(idx) > 0) {
                 dsu_make_active(idx);
             }
@@ -5786,7 +5785,7 @@ NetworkPattern network::create_network(
     for (int t = 1; t <= hard_max_steps; ++t) {
         if (stop_config.dynamic_height && !frontier.empty()) {
             int max_frontier_h = 0;
-            for (const int idx : frontier) {
+            for (const std::int64_t idx : frontier) {
                 max_frontier_h = std::max(max_frontier_h, grid.grow_coord(idx));
             }
             ensure_growth_capacity(max_frontier_h + 1);
@@ -5802,9 +5801,9 @@ NetworkPattern network::create_network(
             // Site percolation (Leath/SOP): each perimeter target exposed by
             // the current growth front is considered once. If the selected
             // attempt fails, the target is blocked forever.
-            int neigh[6];
+            std::int64_t neigh[6];
 
-            for (const int idx : frontier) {
+            for (const std::int64_t idx : frontier) {
                 const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
@@ -5814,7 +5813,7 @@ NetworkPattern network::create_network(
 
                 const int nneigh = collect_neighbors(grid, idx, neigh);
                 for (int ni = 0; ni < nneigh; ++ni) {
-                    const int viz_idx = neigh[ni];
+                    const std::int64_t viz_idx = neigh[ni];
 
                     const int vv = get_site(viz_idx);
                     if (vv >= 0) continue; // already active/blocked
@@ -5828,7 +5827,7 @@ NetworkPattern network::create_network(
             }
 
             for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
-                const int viz = front_candidates.touched_targets[slot];
+                const std::int64_t viz = front_candidates.touched_targets[slot];
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
@@ -5868,7 +5867,7 @@ NetworkPattern network::create_network(
             // bond opens in this time step.
             NeighborBond neigh[6];
 
-            for (const int idx : frontier) {
+            for (const std::int64_t idx : frontier) {
                 const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
@@ -5880,7 +5879,7 @@ NetworkPattern network::create_network(
                     ? collect_neighbor_bonds_dynamic(grid, idx, neigh)
                     : collect_neighbor_bonds(grid, idx, neigh);
                 for (int ni = 0; ni < nneigh; ++ni) {
-                    const int viz_idx = neigh[ni].idx;
+                    const std::int64_t viz_idx = neigh[ni].idx;
                     const std::uint64_t edge_bit = neigh[ni].edge_bit;
 
                     const int vv = get_site(viz_idx);
@@ -5916,7 +5915,7 @@ NetworkPattern network::create_network(
             }
 
             for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
-                const int viz = front_candidates.touched_targets[slot];
+                const std::int64_t viz = front_candidates.touched_targets[slot];
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
@@ -5924,7 +5923,7 @@ NetworkPattern network::create_network(
                 const bool target_without_species = (num_colors > 1 && target_before == -1);
 
                 int cor_idx = -1;
-                int chosen_u = -1;
+                std::int64_t chosen_u = -1;
 
                 if (target_without_species) {
                     // For a species-free target, the accepted bond is picked
@@ -6293,7 +6292,7 @@ NetworkPattern network::create_network(
                 }
 
                 const int active_val = color_to_active_value(num_colors, c);
-                std::vector<int> path = is_node
+                std::vector<std::int64_t> path = is_node
                     ? shortest_site_path_single_color(grid, active_val, get_site)
                     : shortest_open_bond_path_single_color(
                         grid, *open_bonds, active_val, get_site);
@@ -6531,7 +6530,7 @@ NetworkPattern network::create_network(
             std::numeric_limits<double>::quiet_NaN());
         ps_out.M_cluster_sizes_by_species.assign(
             static_cast<std::size_t>(num_colors),
-            std::vector<int>{});
+            std::vector<std::int64_t>{});
         for (int c = 0; c < num_colors; ++c) {
             const int z_stat = z_stat_by_species[static_cast<std::size_t>(c)];
             if (z_stat >= 0) {
@@ -6593,7 +6592,7 @@ NetworkPattern network::create_network(
             }
 
             const int active_val = color_to_active_value(num_colors, c);
-            const std::vector<int>& path = ps_out.sp_path_lin[c];
+            const std::vector<std::int64_t>& path = ps_out.sp_path_lin[c];
             ps_out.sp_path_lin_preteq[c].clear();
             ps_out.sp_path_lin_posteq[c].clear();
             if (!path.empty()) {
@@ -6604,7 +6603,7 @@ NetworkPattern network::create_network(
             int sp_pre = 0;
             int sp_post = 0;
             for (std::size_t k = 1; k < path.size(); ++k) {
-                const int idx = path[k];
+                const std::int64_t idx = path[k];
                 if (idx < 0 || idx >= grid.total_size ||
                     get_site(idx) != active_val ||
                     activation_time[static_cast<std::size_t>(idx)] ==
@@ -6624,16 +6623,16 @@ NetworkPattern network::create_network(
             ps_out.sp_lin_preteq[c] = sp_pre;
             ps_out.sp_lin_posteq[c] = sp_post;
 
-            int m_pre = 0;
-            int m_post = 0;
+            std::int64_t m_pre = 0;
+            std::int64_t m_post = 0;
 
             if (is_node) {
                 std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-                std::vector<int> stack;
-                std::vector<int> comp_nodes;
-                std::vector<int> best_nodes;
+                std::vector<std::int64_t> stack;
+                std::vector<std::int64_t> comp_nodes;
+                std::vector<std::int64_t> best_nodes;
 
-                for (int idx = 0; idx < grid.total_size; ++idx) {
+                for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
                     if (visited[static_cast<std::size_t>(idx)]) continue;
                     if (get_site(idx) != active_val) continue;
 
@@ -6644,11 +6643,11 @@ NetworkPattern network::create_network(
                     visited[static_cast<std::size_t>(idx)] = 1;
 
                     while (!stack.empty()) {
-                        const int u = stack.back();
+                        const std::int64_t u = stack.back();
                         stack.pop_back();
                         comp_nodes.push_back(u);
 
-                        grid.for_each_neighbor(u, [&](const int v) {
+                        grid.for_each_neighbor(u, [&](const std::int64_t v) {
                             if (v < 0) return;
                             if (visited[static_cast<std::size_t>(v)]) return;
                             if (get_site(v) != active_val) return;
@@ -6663,7 +6662,7 @@ NetworkPattern network::create_network(
                     }
                 }
 
-                for (const int idx : best_nodes) {
+                for (const std::int64_t idx : best_nodes) {
                     if (activation_time[static_cast<std::size_t>(idx)] ==
                         std::numeric_limits<uint32_t>::max()) {
                         throw std::runtime_error(
@@ -6673,14 +6672,14 @@ NetworkPattern network::create_network(
                     else ++m_post;
                 }
             } else {
-                int best_root = -1;
-                int best_size = 0;
+                std::int64_t best_root = -1;
+                std::int64_t best_size = 0;
 
-                for (int idx = 0; idx < grid.total_size; ++idx) {
+                for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
                     if (get_site(idx) != active_val) continue;
                     if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
-                    const int root = dsu_find(idx);
-                    const int size = -dsu[static_cast<std::size_t>(root)];
+                    const std::int64_t root = dsu_find(idx);
+                    const std::int64_t size = -dsu[static_cast<std::size_t>(root)];
                     if (size > best_size) {
                         best_size = size;
                         best_root = root;
@@ -6688,7 +6687,7 @@ NetworkPattern network::create_network(
                 }
 
                 if (best_root >= 0) {
-                    for (int idx = 0; idx < grid.total_size; ++idx) {
+                    for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
                         if (get_site(idx) != active_val) continue;
                         if (dsu[static_cast<std::size_t>(idx)] == 0) continue;
                         if (dsu_find(idx) != best_root) continue;
@@ -6717,7 +6716,7 @@ NetworkPattern network::create_network(
 
         netc.species.resize(netc.N);
         for (NetworkCompact::index_t i = 0; i < netc.N; ++i) {
-            const int v = get_site(static_cast<int>(i));
+            const int v = get_site(static_cast<std::int64_t>(i));
             if (v <= 0) {
                 netc.species[i] = 0;
             } else {
@@ -6752,8 +6751,8 @@ NetworkPattern network::create_network(
     }
 
     std::vector<uint32_t>().swap(activation_time);
-    std::vector<int>().swap(dsu);
-    std::vector<std::pair<uint32_t,uint32_t>>().swap(edge_pairs);
+    std::vector<std::int64_t>().swap(dsu);
+    std::vector<std::pair<std::uint64_t,std::uint64_t>>().swap(edge_pairs);
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
 
@@ -6765,7 +6764,7 @@ NetworkPattern network::create_network(
     NetworkPattern net(dim, final_shape, num_colors, rho, save_compact);
     net.seed = net_seed;
     if (save_compact) {
-        for (int idx = 0; idx < grid.total_size; ++idx) {
+        for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
             net.set(idx, get_site(idx));
         }
     }
@@ -6812,10 +6811,10 @@ NetworkPattern network::animate_network(
     std::vector<std::int8_t> site_state(
         static_cast<std::size_t>(grid.total_size),
         static_cast<std::int8_t>(-1));
-    auto get_site = [&](const int idx) -> int {
+    auto get_site = [&](const std::int64_t idx) -> int {
         return static_cast<int>(site_state[static_cast<std::size_t>(idx)]);
     };
-    auto set_site = [&](const int idx, const int value) {
+    auto set_site = [&](const std::int64_t idx, const int value) {
         site_state[static_cast<std::size_t>(idx)] = static_cast<std::int8_t>(value);
     };
 
@@ -6868,8 +6867,8 @@ NetworkPattern network::animate_network(
     std::vector<double> f_current(num_colors, 0.0);
     std::vector<int>    max_heights(num_colors, 0);
     std::vector<int>    z_max_at_perc(num_colors, -1);
-    std::vector<int>    frontier;
-    std::vector<int>    next_frontier;
+    std::vector<std::int64_t> frontier;
+    std::vector<std::int64_t> next_frontier;
 
     const std::size_t lateral_size = static_cast<std::size_t>(base_size);
     std::vector<std::vector<int>> surface_height;
@@ -6886,12 +6885,12 @@ NetworkPattern network::animate_network(
     std::vector<double> front_sum_height_sq(static_cast<std::size_t>(num_colors), 0.0);
     std::vector<uint32_t> front_count(static_cast<std::size_t>(num_colors), 0);
 
-    auto lateral_index_of = [&](const int idx) -> std::size_t {
+    auto lateral_index_of = [&](const std::int64_t idx) -> std::size_t {
         if (dim == 2) {
             return static_cast<std::size_t>(grid.x_of(idx));
         }
         return static_cast<std::size_t>(
-            grid.x_of(idx) + grid.SX * grid.y_of(idx));
+            grid.x_of(idx) + static_cast<std::int64_t>(grid.SX) * grid.y_of(idx));
     };
 
     auto reset_front_height_accumulators = [&]() {
@@ -6901,7 +6900,7 @@ NetworkPattern network::animate_network(
         std::fill(front_count.begin(), front_count.end(), 0u);
     };
 
-    auto record_height_activation = [&](const int color_idx, const int idx) {
+    auto record_height_activation = [&](const int color_idx, const std::int64_t idx) {
         if (!calculate_height_timeseries) return;
         if (color_idx < 0 || color_idx >= num_colors) return;
         const std::size_t c = static_cast<std::size_t>(color_idx);
@@ -7000,14 +6999,14 @@ NetworkPattern network::animate_network(
     ps_out.percolation_order.clear();
     ps_out.M_size_at_perc.clear();
     ps_out.sp_len.assign(num_colors, -1);
-    ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
+    ps_out.sp_path_lin.assign(num_colors, std::vector<std::int64_t>{});
 
     // novas métricas temporais
     ps_out.t_eq = std::numeric_limits<double>::quiet_NaN();
     ps_out.sp_lin_preteq.assign(num_colors, -1);
-    ps_out.sp_path_lin_preteq.assign(num_colors, std::vector<int>{});
+    ps_out.sp_path_lin_preteq.assign(num_colors, std::vector<std::int64_t>{});
     ps_out.sp_lin_posteq.assign(num_colors, -1);
-    ps_out.sp_path_lin_posteq.assign(num_colors, std::vector<int>{});
+    ps_out.sp_path_lin_posteq.assign(num_colors, std::vector<std::int64_t>{});
     ps_out.M_size_preteq.assign(num_colors, 0);
     ps_out.M_size_posteq.assign(num_colors, 0);
 
@@ -7016,7 +7015,7 @@ NetworkPattern network::animate_network(
         const int prefer_neg = color_to_negative_value(num_colors, c);
         const int active_val = color_to_active_value(num_colors, c);
 
-        auto activate_base_site = [&](const int idx) -> bool {
+        auto activate_base_site = [&](const std::int64_t idx) -> bool {
             const int v = get_site(idx);
             if (v != prefer_neg && v != -1) return false;
 
@@ -7040,13 +7039,13 @@ NetworkPattern network::animate_network(
         } else if (stop_config.initial_base_layout == InitialBaseLayout::Random) {
             int activated = 0;
             int tries = 0;
-            const int max_tries = static_cast<int>(base_size) * 20;
+            const int max_tries = static_cast<int>(std::min<long long>(static_cast<long long>(std::numeric_limits<int>::max()), base_size * 20));
 
             while (activated < seeds_quota[c] && tries < max_tries) {
                 const int x = rng.uniform_int(0, grid.SX - 1);
                 const int y = (dim == 3 ? rng.uniform_int(0, grid.SY - 1) : 0);
                 const int z = 0;
-                const int idx = grid.lin_index(x, y, z);
+                const std::int64_t idx = grid.lin_index(x, y, z);
 
                 if (activate_base_site(idx)) {
                     ++activated;
@@ -7128,31 +7127,31 @@ NetworkPattern network::animate_network(
     // cache leve do maior componente global por cor: semente + tamanho.
     std::vector<ComponentSummary> largest_comp_cache(num_colors);
     bool global_metrics_finalized = false;
-    std::vector<std::pair<uint32_t,uint32_t>> edge_pairs;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> edge_pairs;
 
     auto largest_component_single_color_summary = [&](const int color_idx) -> ComponentSummary
     {
         const int active_val = color_to_active_value(num_colors, color_idx);
 
         std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-        std::vector<int> stack;
+        std::vector<std::int64_t> stack;
         ComponentSummary best;
 
-        for (int idx = 0; idx < grid.total_size; ++idx) {
+        for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
             if (visited[static_cast<std::size_t>(idx)]) continue;
             if (get_site(idx) != active_val) continue;
 
-            int comp_size = 0;
+            std::int64_t comp_size = 0;
             stack.clear();
             stack.push_back(idx);
             visited[static_cast<std::size_t>(idx)] = 1;
 
             while (!stack.empty()) {
-                const int u = stack.back();
+                const std::int64_t u = stack.back();
                 stack.pop_back();
                 ++comp_size;
 
-                grid.for_each_neighbor(u, [&](const int v) {
+                grid.for_each_neighbor(u, [&](const std::int64_t v) {
                     if (v < 0) return;
                     if (visited[static_cast<std::size_t>(v)]) return;
                     if (get_site(v) != active_val) return;
@@ -7177,27 +7176,27 @@ NetworkPattern network::animate_network(
         const int active_val = color_to_active_value(num_colors, color_idx);
 
         std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-        std::vector<int> stack;
+        std::vector<std::int64_t> stack;
         ComponentSummary best;
 
-        for (int idx = 0; idx < grid.total_size; ++idx) {
+        for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
             if (visited[static_cast<std::size_t>(idx)]) continue;
             if (get_site(idx) != active_val) continue;
 
-            int comp_size = 0;
+            std::int64_t comp_size = 0;
             stack.clear();
             stack.push_back(idx);
             visited[static_cast<std::size_t>(idx)] = 1;
 
             while (!stack.empty()) {
-                const int u = stack.back();
+                const std::int64_t u = stack.back();
                 stack.pop_back();
                 ++comp_size;
 
-                const uint32_t begin = graph.offsets[static_cast<std::size_t>(u)];
-                const uint32_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
-                for (uint32_t k = begin; k < end; ++k) {
-                    const int v = static_cast<int>(graph.neighbors[static_cast<std::size_t>(k)]);
+                const std::uint64_t begin = graph.offsets[static_cast<std::size_t>(u)];
+                const std::uint64_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
+                for (std::uint64_t k = begin; k < end; ++k) {
+                    const std::int64_t v = graph.neighbors[static_cast<std::size_t>(k)];
                     if (visited[static_cast<std::size_t>(v)]) continue;
                     if (get_site(v) != active_val) continue;
                     visited[static_cast<std::size_t>(v)] = 1;
@@ -7215,19 +7214,19 @@ NetworkPattern network::animate_network(
     };
 
     auto count_component_time_split_single_color =
-        [&](const int seed, const int color_idx) -> TimeSplit
+        [&](const std::int64_t seed, const int color_idx) -> TimeSplit
     {
         TimeSplit split;
         if (seed < 0) return split;
 
         const int active_val = color_to_active_value(num_colors, color_idx);
         std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-        std::vector<int> stack;
+        std::vector<std::int64_t> stack;
         stack.push_back(seed);
         visited[static_cast<std::size_t>(seed)] = 1;
 
         while (!stack.empty()) {
-            const int u = stack.back();
+            const std::int64_t u = stack.back();
             stack.pop_back();
 
             int t_site = -1;
@@ -7240,7 +7239,7 @@ NetworkPattern network::animate_network(
             if (t_site <= ps_out.t_eq) ++split.pre;
             else ++split.post;
 
-            grid.for_each_neighbor(u, [&](const int v) {
+            grid.for_each_neighbor(u, [&](const std::int64_t v) {
                 if (v < 0) return;
                 if (visited[static_cast<std::size_t>(v)]) return;
                 if (get_site(v) != active_val) return;
@@ -7253,19 +7252,19 @@ NetworkPattern network::animate_network(
     };
 
     auto count_open_component_time_split_single_color =
-        [&](const int seed, const int color_idx, const OpenBondGraph& graph) -> TimeSplit
+        [&](const std::int64_t seed, const int color_idx, const OpenBondGraph& graph) -> TimeSplit
     {
         TimeSplit split;
         if (seed < 0) return split;
 
         const int active_val = color_to_active_value(num_colors, color_idx);
         std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-        std::vector<int> stack;
+        std::vector<std::int64_t> stack;
         stack.push_back(seed);
         visited[static_cast<std::size_t>(seed)] = 1;
 
         while (!stack.empty()) {
-            const int u = stack.back();
+            const std::int64_t u = stack.back();
             stack.pop_back();
 
             int t_site = -1;
@@ -7278,10 +7277,10 @@ NetworkPattern network::animate_network(
             if (t_site <= ps_out.t_eq) ++split.pre;
             else ++split.post;
 
-            const uint32_t begin = graph.offsets[static_cast<std::size_t>(u)];
-            const uint32_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
-            for (uint32_t k = begin; k < end; ++k) {
-                const int v = static_cast<int>(graph.neighbors[static_cast<std::size_t>(k)]);
+            const std::uint64_t begin = graph.offsets[static_cast<std::size_t>(u)];
+            const std::uint64_t end = graph.offsets[static_cast<std::size_t>(u) + 1u];
+            for (std::uint64_t k = begin; k < end; ++k) {
+                const std::int64_t v = graph.neighbors[static_cast<std::size_t>(k)];
                 if (visited[static_cast<std::size_t>(v)]) continue;
                 if (get_site(v) != active_val) continue;
                 visited[static_cast<std::size_t>(v)] = 1;
@@ -7299,7 +7298,7 @@ NetworkPattern network::animate_network(
         ps_out.M_size_at_perc.clear();
 
         ps_out.sp_len.assign(num_colors, -1);
-        ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
+        ps_out.sp_path_lin.assign(num_colors, std::vector<std::int64_t>{});
 
         std::fill(largest_comp_cache.begin(), largest_comp_cache.end(), ComponentSummary{});
         const OpenBondGraph open_bond_graph(grid.total_size, edge_pairs);
@@ -7336,7 +7335,7 @@ NetworkPattern network::animate_network(
             const int target_height = dynamic_equilibrium_mode
                 ? max_heights[static_cast<std::size_t>(c)]
                 : grid.grow_top_coord();
-            std::vector<int> path = is_node
+            std::vector<std::int64_t> path = is_node
                 ? shortest_site_path_single_color(
                     grid, active_val, get_site, target_height)
                 : shortest_open_bond_path_single_color(
@@ -7397,7 +7396,7 @@ NetworkPattern network::animate_network(
         ps_out.percolation_order.clear();
         ps_out.M_size_at_perc.clear();
         ps_out.sp_len.assign(num_colors, -1);
-        ps_out.sp_path_lin.assign(num_colors, std::vector<int>{});
+        ps_out.sp_path_lin.assign(num_colors, std::vector<std::int64_t>{});
 
         struct ValidPercolation {
             int rank;
@@ -7453,9 +7452,9 @@ NetworkPattern network::animate_network(
         if (!stop_config.dynamic_height) return;
         if (min_grow_coord <= grid.grow_top_coord()) return;
 
-        const int old_total = grid.total_size;
+        const std::int64_t old_total = grid.total_size;
         grid.resize_growth_height(min_grow_coord + 1);
-        const int new_total = grid.total_size;
+        const std::int64_t new_total = grid.total_size;
         if (new_total <= old_total) return;
 
         site_state.resize(
@@ -7478,7 +7477,7 @@ NetworkPattern network::animate_network(
     for (int t = 1; t <= hard_max_steps; ++t) {
         if (stop_config.dynamic_height && !frontier.empty()) {
             int max_frontier_h = 0;
-            for (const int idx : frontier) {
+            for (const std::int64_t idx : frontier) {
                 max_frontier_h = std::max(max_frontier_h, grid.grow_coord(idx));
             }
             ensure_growth_capacity(max_frontier_h + 1);
@@ -7492,9 +7491,9 @@ NetworkPattern network::animate_network(
 
         if (is_node) {
             // Same activation logic used by create_network for site/SOP.
-            int neigh[6];
+            std::int64_t neigh[6];
 
-            for (const int idx : frontier) {
+            for (const std::int64_t idx : frontier) {
                 const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
@@ -7504,7 +7503,7 @@ NetworkPattern network::animate_network(
 
                 const int nneigh = collect_neighbors(grid, idx, neigh);
                 for (int ni = 0; ni < nneigh; ++ni) {
-                    const int viz_idx = neigh[ni];
+                    const std::int64_t viz_idx = neigh[ni];
 
                     const int vv = get_site(viz_idx);
                     if (vv >= 0) continue;
@@ -7518,7 +7517,7 @@ NetworkPattern network::animate_network(
             }
 
             for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
-                const int viz = front_candidates.touched_targets[slot];
+                const std::int64_t viz = front_candidates.touched_targets[slot];
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
@@ -7553,10 +7552,10 @@ NetworkPattern network::animate_network(
                     z_max_at_perc[cor_idx] = max_heights[cor_idx];
                 }
 
-                edge_pairs.emplace_back(static_cast<uint32_t>(chosen.activator),
-                                        static_cast<uint32_t>(viz));
-                edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                        static_cast<uint32_t>(chosen.activator));
+                edge_pairs.emplace_back(chosen.activator,
+                                        static_cast<std::uint64_t>(viz));
+                edge_pairs.emplace_back(static_cast<std::uint64_t>(viz),
+                                        chosen.activator);
             }
         } else {
             // Same activation logic used by create_network for bond/SOP.
@@ -7564,7 +7563,7 @@ NetworkPattern network::animate_network(
             // any target site is activated, removing for-loop order bias.
             NeighborBond neigh[6];
 
-            for (const int idx : frontier) {
+            for (const std::int64_t idx : frontier) {
                 const int a_val = get_site(idx);
                 if (a_val <= 0) continue;
 
@@ -7576,7 +7575,7 @@ NetworkPattern network::animate_network(
                     ? collect_neighbor_bonds_dynamic(grid, idx, neigh)
                     : collect_neighbor_bonds(grid, idx, neigh);
                 for (int ni = 0; ni < nneigh; ++ni) {
-                    const int viz_idx = neigh[ni].idx;
+                    const std::int64_t viz_idx = neigh[ni].idx;
                     const std::uint64_t edge_bit = neigh[ni].edge_bit;
 
                     const int vv = get_site(viz_idx);
@@ -7592,10 +7591,10 @@ NetworkPattern network::animate_network(
                         if (!mark_tested_bond(edge_bit)) continue;
 
                         if (rng.uniform_real(0.0, 1.0) < p_curr[cor_idx]) {
-                            edge_pairs.emplace_back(static_cast<uint32_t>(idx),
-                                                    static_cast<uint32_t>(viz_idx));
-                            edge_pairs.emplace_back(static_cast<uint32_t>(viz_idx),
-                                                    static_cast<uint32_t>(idx));
+                            edge_pairs.emplace_back(static_cast<std::uint64_t>(idx),
+                                                    static_cast<std::uint64_t>(viz_idx));
+                            edge_pairs.emplace_back(static_cast<std::uint64_t>(viz_idx),
+                                                    static_cast<std::uint64_t>(idx));
                         }
                         continue;
                     }
@@ -7613,7 +7612,7 @@ NetworkPattern network::animate_network(
             }
 
             for (std::size_t slot = 0; slot < front_candidates.touched_targets.size(); ++slot) {
-                const int viz = front_candidates.touched_targets[slot];
+                const std::int64_t viz = front_candidates.touched_targets[slot];
                 const int n_cand = static_cast<int>(front_candidates.counts[slot]);
                 if (n_cand <= 0) continue;
 
@@ -7621,13 +7620,13 @@ NetworkPattern network::animate_network(
                 const bool target_without_species = (num_colors > 1 && target_before == -1);
 
                 int cor_idx = -1;
-                int chosen_u = -1;
+                std::int64_t chosen_u = -1;
 
                 if (target_without_species) {
                     const int pick = rng.uniform_int(0, n_cand - 1);
                     const FrontCandidate chosen = front_candidates.candidate(slot, pick);
                     cor_idx = chosen.color_idx;
-                    chosen_u = chosen.activator;
+                    chosen_u = static_cast<std::int64_t>(chosen.activator);
                 } else {
                     cor_idx = (num_colors == 1)
                         ? 0
@@ -7651,7 +7650,7 @@ NetworkPattern network::animate_network(
                         const FrontCandidate fc = front_candidates.candidate(slot, i);
                         if (fc.color_idx != cor_idx) continue;
                         if (seen == parent_pick) {
-                            chosen_u = fc.activator;
+                            chosen_u = static_cast<std::int64_t>(fc.activator);
                             break;
                         }
                         ++seen;
@@ -7685,10 +7684,10 @@ NetworkPattern network::animate_network(
                 for (int i = 0; i < n_cand; ++i) {
                     const FrontCandidate fc = front_candidates.candidate(slot, i);
                     if (fc.color_idx != cor_idx) continue;
-                    edge_pairs.emplace_back(static_cast<uint32_t>(fc.activator),
-                                            static_cast<uint32_t>(viz));
-                    edge_pairs.emplace_back(static_cast<uint32_t>(viz),
-                                            static_cast<uint32_t>(fc.activator));
+                    edge_pairs.emplace_back(fc.activator,
+                                            static_cast<std::uint64_t>(viz));
+                    edge_pairs.emplace_back(static_cast<std::uint64_t>(viz),
+                                            fc.activator);
                 }
             }
         }
@@ -8074,7 +8073,7 @@ NetworkPattern network::animate_network(
             std::numeric_limits<double>::quiet_NaN());
         ps_out.M_cluster_sizes_by_species.assign(
             static_cast<std::size_t>(num_colors),
-            std::vector<int>{});
+            std::vector<std::int64_t>{});
         for (int c = 0; c < num_colors; ++c) {
             const int z_stat = z_stat_by_species[static_cast<std::size_t>(c)];
             if (z_stat >= 0) {
@@ -8160,7 +8159,7 @@ NetworkPattern network::animate_network(
             ps_out.sp_path_lin_preteq[c].clear();
             ps_out.sp_path_lin_posteq[c].clear();
 
-            const std::vector<int>& path = ps_out.sp_path_lin[c];
+            const std::vector<std::int64_t>& path = ps_out.sp_path_lin[c];
             if (!path.empty()) {
                 // mantém o nó inicial da base em ambos os caminhos, se você quiser
                 // preservar a referência completa do caminho original
@@ -8169,7 +8168,7 @@ NetworkPattern network::animate_network(
             }
 
             for (std::size_t k = 1; k < path.size(); ++k) {
-                const int idx = path[k];
+                const std::int64_t idx = path[k];
 
                 int t_site = -1;
                 const bool ok = is_active_color_site_encoded(
@@ -8259,8 +8258,8 @@ NetworkPattern network::animate_network(
     }
 
     std::vector<std::int8_t>().swap(site_state);
-    std::vector<int>().swap(frontier);
-    std::vector<int>().swap(next_frontier);
+    std::vector<std::int64_t>().swap(frontier);
+    std::vector<std::int64_t>().swap(next_frontier);
     std::vector<ComponentSummary>().swap(largest_comp_cache);
     SparseFrontCandidates empty_front_candidates;
     std::swap(front_candidates, empty_front_candidates);
@@ -8307,7 +8306,7 @@ NetworkPattern network::filter_percolating_clusters_from_encoded(
 
     const GridRegular grid(encoded_net.dim, L);
 
-    if (static_cast<int>(encoded_net.data.size()) != grid.total_size) {
+    if (static_cast<std::int64_t>(encoded_net.data.size()) != grid.total_size) {
         throw std::runtime_error(
             "[filter_percolating_clusters_from_encoded] tamanho de data inconsistente com shape");
     }
@@ -8320,7 +8319,7 @@ NetworkPattern network::filter_percolating_clusters_from_encoded(
     const int num_colors = encoded_net.num_colors;
     const int top_coord = (encoded_net.dim == 2) ? (grid.SY - 1) : (grid.SZ - 1);
 
-    auto color_idx_from_encoded = [&](const int idx) -> int
+    auto color_idx_from_encoded = [&](const std::int64_t idx) -> int
     {
         const long long code =
             static_cast<long long>(encoded_net.data[static_cast<std::size_t>(idx)]);
@@ -8332,10 +8331,10 @@ NetworkPattern network::filter_percolating_clusters_from_encoded(
     };
 
     std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-    std::vector<int> stack;
-    std::vector<int> component;
+    std::vector<std::int64_t> stack;
+    std::vector<std::int64_t> component;
 
-    for (int start = 0; start < grid.total_size; ++start) {
+    for (std::int64_t start = 0; start < grid.total_size; ++start) {
         if (visited[static_cast<std::size_t>(start)]) continue;
 
         const int color_idx = color_idx_from_encoded(start);
@@ -8351,7 +8350,7 @@ NetworkPattern network::filter_percolating_clusters_from_encoded(
         visited[static_cast<std::size_t>(start)] = 1;
 
         while (!stack.empty()) {
-            const int u = stack.back();
+            const std::int64_t u = stack.back();
             stack.pop_back();
 
             component.push_back(u);
@@ -8360,7 +8359,7 @@ NetworkPattern network::filter_percolating_clusters_from_encoded(
             if (h == 0) touches_base = true;
             if (h == top_coord) touches_top = true;
 
-            grid.for_each_neighbor(u, [&](const int v) {
+            grid.for_each_neighbor(u, [&](const std::int64_t v) {
                 if (v < 0) return;
                 if (visited[static_cast<std::size_t>(v)]) return;
                 if (color_idx_from_encoded(v) != color_idx) return;
@@ -8374,7 +8373,7 @@ NetworkPattern network::filter_percolating_clusters_from_encoded(
             continue;
         }
 
-        for (const int idx : component) {
+        for (const std::int64_t idx : component) {
             out.data[static_cast<std::size_t>(idx)] =
                 encoded_net.data[static_cast<std::size_t>(idx)];
         }

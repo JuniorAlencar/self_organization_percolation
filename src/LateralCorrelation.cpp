@@ -58,7 +58,7 @@ LateralObservablesSeries compute_lateral_observables(
     const std::vector<int>& times,
     const std::string& boundary_mode,
     const bool store_correlation_rows,
-    const std::vector<int>* activated_indices)
+    const std::vector<std::int64_t>* activated_indices)
 {
     if (dim != 2 && dim != 3) {
         throw std::invalid_argument("compute_lateral_observables: dim must be 2 or 3");
@@ -77,10 +77,10 @@ LateralObservablesSeries compute_lateral_observables(
     result.boundary_mode = boundary_mode.empty() ? "periodic" : boundary_mode;
 
     const int max_time = times.empty() ? 0 : *std::max_element(times.begin(), times.end());
-    std::vector<std::vector<int>> sites_by_time(static_cast<std::size_t>(max_time + 1));
+    std::vector<std::vector<std::int64_t>> sites_by_time(static_cast<std::size_t>(max_time + 1));
 
-    auto add_activated_index = [&](const int idx) {
-        if (idx < 0 || idx >= static_cast<int>(activation_time.size())) {
+    auto add_activated_index = [&](const std::int64_t idx) {
+        if (idx < 0 || idx >= static_cast<std::int64_t>(activation_time.size())) {
             return;
         }
         const auto activation = activation_time[static_cast<std::size_t>(idx)];
@@ -95,11 +95,11 @@ LateralObservablesSeries compute_lateral_observables(
     };
 
     if (activated_indices != nullptr) {
-        for (const int idx : *activated_indices) {
+        for (const std::int64_t idx : *activated_indices) {
             add_activated_index(idx);
         }
     } else {
-        for (int idx = 0; idx < static_cast<int>(activation_time.size()); ++idx) {
+        for (std::int64_t idx = 0; idx < static_cast<std::int64_t>(activation_time.size()); ++idx) {
             add_activated_index(idx);
         }
     }
@@ -131,7 +131,7 @@ LateralObservablesSeries compute_lateral_observables(
             continue;
         }
 
-        const std::vector<int>& positions = sites_by_time[static_cast<std::size_t>(t)];
+        const std::vector<std::int64_t>& positions = sites_by_time[static_cast<std::size_t>(t)];
         if (stamp_id == std::numeric_limits<int>::max()) {
             std::fill(stamp.begin(), stamp.end(), -1);
             if (dim == 3) {
@@ -145,9 +145,9 @@ LateralObservablesSeries compute_lateral_observables(
         touched_rows.clear();
         touched_cols.clear();
 
-        for (const int idx : positions) {
-            const int x = idx % sx;
-            const int y = (dim >= 2) ? ((idx / sx) % sy) : 0;
+        for (const std::int64_t idx : positions) {
+            const int x = static_cast<int>(idx % sx);
+            const int y = (dim >= 2) ? static_cast<int>((idx / sx) % sy) : 0;
             const int lateral_idx = (dim == 2) ? x : lateral_index_2d(x, y, L);
             if (stamp[static_cast<std::size_t>(lateral_idx)] == stamp_id) {
                 continue;

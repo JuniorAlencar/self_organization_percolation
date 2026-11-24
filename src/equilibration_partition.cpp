@@ -20,9 +20,9 @@ struct GridRegular {
     int SY;
     int SZ;
     int grow_axis;
-    int stride_y;
-    int stride_z;
-    int total_size;
+    std::int64_t stride_y;
+    std::int64_t stride_z;
+    std::int64_t total_size;
 
     GridRegular(const int dim_, const int L)
         : dim(dim_),
@@ -31,8 +31,8 @@ struct GridRegular {
           SZ(dim_ == 3 ? L : 1),
           grow_axis(dim_ - 1),
           stride_y(SX),
-          stride_z(SX * (dim_ >= 2 ? L : 1)),
-          total_size(SX * (dim_ >= 2 ? L : 1) * (dim_ == 3 ? L : 1)) {}
+          stride_z(static_cast<std::int64_t>(SX) * (dim_ >= 2 ? L : 1)),
+          total_size(static_cast<std::int64_t>(SX) * (dim_ >= 2 ? L : 1) * (dim_ == 3 ? L : 1)) {}
 
     GridRegular(const int dim_, const std::vector<int>& shape)
         : dim(dim_),
@@ -41,8 +41,8 @@ struct GridRegular {
           SZ((dim_ == 3 && shape.size() > 2) ? shape[2] : 1),
           grow_axis(dim_ - 1),
           stride_y(SX),
-          stride_z(SX * (dim_ >= 2 ? SY : 1)),
-          total_size(SX * (dim_ >= 2 ? SY : 1) * (dim_ == 3 ? SZ : 1))
+          stride_z(static_cast<std::int64_t>(SX) * (dim_ >= 2 ? SY : 1)),
+          total_size(static_cast<std::int64_t>(SX) * (dim_ >= 2 ? SY : 1) * (dim_ == 3 ? SZ : 1))
     {
         if (dim != 2 && dim != 3) {
             throw std::runtime_error("GridRegular: dim deve ser 2 ou 3");
@@ -55,68 +55,70 @@ struct GridRegular {
         }
     }
 
-    inline int x_of(const int idx) const { return idx % SX; }
-    inline int y_of(const int idx) const { return (idx / SX) % SY; }
-    inline int z_of(const int idx) const { return idx / (SX * SY); }
+    inline int x_of(const std::int64_t idx) const { return static_cast<int>(idx % SX); }
+    inline int y_of(const std::int64_t idx) const { return static_cast<int>((idx / SX) % SY); }
+    inline int z_of(const std::int64_t idx) const { return static_cast<int>(idx / stride_z); }
 
-    inline int grow_coord(const int idx) const {
+    inline int grow_coord(const std::int64_t idx) const {
         return (dim == 2) ? y_of(idx) : z_of(idx);
     }
 
-    inline int neighbor_xm(const int idx) const {
-        const int x = idx % SX;
+    inline std::int64_t lin_index(const int x, const int y, const int z) const {
+        return static_cast<std::int64_t>(x) + static_cast<std::int64_t>(SX) * (static_cast<std::int64_t>(y) + static_cast<std::int64_t>(SY) * z);
+    }
+
+    inline std::int64_t neighbor_xm(const std::int64_t idx) const {
+        const int x = static_cast<int>(idx % SX);
         if (grow_axis == 0) return (x == 0) ? -1 : (idx - 1);
         return (x == 0) ? (idx + (SX - 1)) : (idx - 1);
     }
 
-    inline int neighbor_xp(const int idx) const {
-        const int x = idx % SX;
+    inline std::int64_t neighbor_xp(const std::int64_t idx) const {
+        const int x = static_cast<int>(idx % SX);
         if (grow_axis == 0) return (x == SX - 1) ? -1 : (idx + 1);
         return (x == SX - 1) ? (idx - (SX - 1)) : (idx + 1);
     }
 
-    inline int neighbor_ym(const int idx) const {
-        const int y = (idx / SX) % SY;
+    inline std::int64_t neighbor_ym(const std::int64_t idx) const {
+        const int y = static_cast<int>((idx / SX) % SY);
         if (grow_axis == 1) return (y == 0) ? -1 : (idx - SX);
-        return (y == 0) ? (idx + SX * (SY - 1)) : (idx - SX);
+        return (y == 0) ? (idx + static_cast<std::int64_t>(SX) * (SY - 1)) : (idx - SX);
     }
 
-    inline int neighbor_yp(const int idx) const {
-        const int y = (idx / SX) % SY;
+    inline std::int64_t neighbor_yp(const std::int64_t idx) const {
+        const int y = static_cast<int>((idx / SX) % SY);
         if (grow_axis == 1) return (y == SY - 1) ? -1 : (idx + SX);
-        return (y == SY - 1) ? (idx - SX * (SY - 1)) : (idx + SX);
+        return (y == SY - 1) ? (idx - static_cast<std::int64_t>(SX) * (SY - 1)) : (idx + SX);
     }
 
-    inline int neighbor_zm(const int idx) const {
+    inline std::int64_t neighbor_zm(const std::int64_t idx) const {
         if (dim != 3) return -1;
-        const int plane = SX * SY;
-        const int z = idx / plane;
-        return (z == 0) ? -1 : (idx - plane);
+        const int z = static_cast<int>(idx / stride_z);
+        return (z == 0) ? -1 : (idx - stride_z);
     }
 
-    inline int neighbor_zp(const int idx) const {
+    inline std::int64_t neighbor_zp(const std::int64_t idx) const {
         if (dim != 3) return -1;
-        const int plane = SX * SY;
-        const int z = idx / plane;
-        return (z == SZ - 1) ? -1 : (idx + plane);
+        const int z = static_cast<int>(idx / stride_z);
+        return (z == SZ - 1) ? -1 : (idx + stride_z);
     }
 
-    inline void for_each_neighbor(const int idx, const std::function<void(int)>& fn) const {
-        const int xm = neighbor_xm(idx);
-        const int xp = neighbor_xp(idx);
+    inline void for_each_neighbor(const std::int64_t idx, const std::function<void(std::int64_t)>& fn) const {
+        const std::int64_t xm = neighbor_xm(idx);
+        const std::int64_t xp = neighbor_xp(idx);
         if (xm >= 0) fn(xm);
         if (xp >= 0) fn(xp);
 
         if (dim >= 2) {
-            const int ym = neighbor_ym(idx);
-            const int yp = neighbor_yp(idx);
+            const std::int64_t ym = neighbor_ym(idx);
+            const std::int64_t yp = neighbor_yp(idx);
             if (ym >= 0) fn(ym);
             if (yp >= 0) fn(yp);
         }
 
         if (dim == 3) {
-            const int zm = neighbor_zm(idx);
-            const int zp = neighbor_zp(idx);
+            const std::int64_t zm = neighbor_zm(idx);
+            const std::int64_t zp = neighbor_zp(idx);
             if (zm >= 0) fn(zm);
             if (zp >= 0) fn(zp);
         }
@@ -307,7 +309,7 @@ std::vector<double> build_mean_p_series(const TimeSeries& ts)
 }
 
 bool is_active_color_site(const NetworkPattern& net,
-                          const int idx,
+                          const std::int64_t idx,
                           const int color_idx,
                           const int species_factor,
                           int* time_out = nullptr)
@@ -322,18 +324,18 @@ bool is_active_color_site(const NetworkPattern& net,
     return true;
 }
 
-std::vector<int> largest_component_nodes_single_color(
+std::vector<std::int64_t> largest_component_nodes_single_color(
     const NetworkPattern& net,
     const GridRegular& grid,
     const int color_idx,
     const int species_factor)
 {
     std::vector<char> visited(static_cast<std::size_t>(grid.total_size), 0);
-    std::vector<int> stack;
-    std::vector<int> best_nodes;
-    std::vector<int> comp_nodes;
+    std::vector<std::int64_t> stack;
+    std::vector<std::int64_t> best_nodes;
+    std::vector<std::int64_t> comp_nodes;
 
-    for (int idx = 0; idx < grid.total_size; ++idx) {
+    for (std::int64_t idx = 0; idx < grid.total_size; ++idx) {
         if (visited[static_cast<std::size_t>(idx)]) continue;
         if (!is_active_color_site(net, idx, color_idx, species_factor)) continue;
 
@@ -344,11 +346,11 @@ std::vector<int> largest_component_nodes_single_color(
         visited[static_cast<std::size_t>(idx)] = 1;
 
         while (!stack.empty()) {
-            const int u = stack.back();
+            const std::int64_t u = stack.back();
             stack.pop_back();
             comp_nodes.push_back(u);
 
-            grid.for_each_neighbor(u, [&](const int v) {
+            grid.for_each_neighbor(u, [&](const std::int64_t v) {
                 if (v < 0) return;
                 if (visited[static_cast<std::size_t>(v)]) return;
                 if (!is_active_color_site(net, v, color_idx, species_factor)) return;
@@ -599,13 +601,13 @@ void compute_equilibration_partition_metrics(
     }
 
     for (int c = 0; c < num_colors; ++c) {
-        const std::vector<int> comp_nodes =
+        const std::vector<std::int64_t> comp_nodes =
             largest_component_nodes_single_color(encoded_net, grid, c, cfg.species_factor);
 
-        int m_pre = 0;
-        int m_post = 0;
+        std::int64_t m_pre = 0;
+        std::int64_t m_post = 0;
 
-        for (const int idx : comp_nodes) {
+        for (const std::int64_t idx : comp_nodes) {
             int t_site = -1;
             const bool ok = is_active_color_site(
                 encoded_net, idx, c, cfg.species_factor, &t_site);
@@ -628,7 +630,7 @@ void compute_equilibration_partition_metrics(
             continue;
         }
 
-        const std::vector<int>& path = ps.sp_path_lin[c];
+        const std::vector<std::int64_t>& path = ps.sp_path_lin[c];
         if (path.empty()) {
             continue;
         }
@@ -637,7 +639,7 @@ void compute_equilibration_partition_metrics(
         int sp_post = 0;
 
         for (std::size_t k = 1; k < path.size(); ++k) {
-            const int idx = path[k];
+            const std::int64_t idx = path[k];
 
             int t_site = -1;
             const bool ok = is_active_color_site(
