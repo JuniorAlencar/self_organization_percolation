@@ -4844,7 +4844,8 @@ NetworkPattern network::create_network(
                         : p_series[static_cast<std::size_t>(c)];
                     const bool reached_global_height = use_front_fraction_teq
                         ? true
-                        : (!stop_config.dynamic_height ||
+                        : (stop_config.hard_max_steps > 0 ||
+                           !stop_config.dynamic_height ||
                            max_heights[static_cast<std::size_t>(c)] >= lenght_network);
                     const double t_eq_candidate = reached_global_height
                         ? estimate_t_eq_from_series(
@@ -5107,11 +5108,12 @@ NetworkPattern network::create_network(
             const auto& series_to_check = use_front_fraction_teq
                 ? f_series[static_cast<std::size_t>(c)]
                 : p_series[static_cast<std::size_t>(c)];
-            const bool reached_global_height = use_front_fraction_teq
-                ? true
-                : (!stop_config.dynamic_height ||
-                   max_heights[static_cast<std::size_t>(c)] >= lenght_network);
-            if (reached_global_height) {
+            const bool allow_fallback_teq =
+                (stop_config.hard_max_steps > 0) ||
+                use_front_fraction_teq ||
+                (!stop_config.dynamic_height ||
+                 max_heights[static_cast<std::size_t>(c)] >= lenght_network);
+            if (allow_fallback_teq) {
                 constexpr int teq_window_block = 10;
                 const double teq_rel_tol = growth_test_effective_rel_tol(
                     stop_config.equilibrium_rel_tol, num_colors);
@@ -5119,10 +5121,16 @@ NetworkPattern network::create_network(
                     growth_test_global_min_stable_steps(
                         stop_config.equilibrium_consecutive_steps,
                         teq_window_block);
-                const int teq_validation_window_steps =
+                int teq_validation_window_steps =
                     growth_test_global_validation_window_steps(
                         stop_config.post_equilibrium_extra_steps,
                         teq_window_block);
+                const int available_steps = static_cast<int>(t_list.size());
+                if (available_steps > 0 &&
+                    available_steps < 2 * teq_validation_window_steps) {
+                    teq_validation_window_steps =
+                        std::max(3 * teq_window_block, available_steps / 2);
+                }
                 const double t_eq_candidate = estimate_t_eq_from_series(
                     t_list,
                     series_to_check,
@@ -6523,7 +6531,8 @@ NetworkPattern network::animate_network(
                         : p_series[static_cast<std::size_t>(c)];
                     const bool reached_global_height = use_front_fraction_teq
                         ? true
-                        : (!stop_config.dynamic_height ||
+                        : (stop_config.hard_max_steps > 0 ||
+                           !stop_config.dynamic_height ||
                            max_heights[static_cast<std::size_t>(c)] >= lenght_network);
                     const double t_eq_candidate = reached_global_height
                         ? estimate_t_eq_from_series(
@@ -6708,11 +6717,12 @@ NetworkPattern network::animate_network(
             const auto& series_to_check = use_front_fraction_teq
                 ? f_series[static_cast<std::size_t>(c)]
                 : p_series[static_cast<std::size_t>(c)];
-            const bool reached_global_height = use_front_fraction_teq
-                ? true
-                : (!stop_config.dynamic_height ||
-                   max_heights[static_cast<std::size_t>(c)] >= lenght_network);
-            if (reached_global_height) {
+            const bool allow_fallback_teq =
+                (stop_config.hard_max_steps > 0) ||
+                use_front_fraction_teq ||
+                (!stop_config.dynamic_height ||
+                 max_heights[static_cast<std::size_t>(c)] >= lenght_network);
+            if (allow_fallback_teq) {
                 constexpr int teq_window_block = 10;
                 const double teq_rel_tol = growth_test_effective_rel_tol(
                     stop_config.equilibrium_rel_tol, num_colors);
@@ -6720,10 +6730,16 @@ NetworkPattern network::animate_network(
                     growth_test_global_min_stable_steps(
                         stop_config.equilibrium_consecutive_steps,
                         teq_window_block);
-                const int teq_validation_window_steps =
+                int teq_validation_window_steps =
                     growth_test_global_validation_window_steps(
                         stop_config.post_equilibrium_extra_steps,
                         teq_window_block);
+                const int available_steps = static_cast<int>(t_list.size());
+                if (available_steps > 0 &&
+                    available_steps < 2 * teq_validation_window_steps) {
+                    teq_validation_window_steps =
+                        std::max(3 * teq_window_block, available_steps / 2);
+                }
                 const double t_eq_candidate = estimate_t_eq_from_series(
                     t_list,
                     series_to_check,
