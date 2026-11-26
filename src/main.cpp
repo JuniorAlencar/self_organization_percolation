@@ -459,7 +459,7 @@ int main(int argc, char* argv[]) {
                       << "_seed_" << seed
                       << "_ts_" << timestamp_now
                       << "_P0_" << std::fixed << std::setprecision(2) << P0
-                      << "_p0_" << std::fixed << std::setprecision(2) << pp0;
+                      << "_p0_" << std::fixed << std::setprecision(6) << pp0;
             if (initial_layout != "random") {
                 base_name << "_base_" << helpers::sanitize_for_filename(initial_layout);
             }
@@ -551,7 +551,7 @@ int main(int argc, char* argv[]) {
                   << "_seed_" << seed
                   << "_ts_" << timestamp_now
                   << "_P0_" << std::fixed << std::setprecision(2) << P0
-                  << "_p0_" << std::fixed << std::setprecision(2) << pp0;
+                  << "_p0_" << std::fixed << std::setprecision(6) << pp0;
         if (initial_layout != "random") {
             base_name << "_base_" << helpers::sanitize_for_filename(initial_layout);
         }

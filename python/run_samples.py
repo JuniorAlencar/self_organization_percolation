@@ -40,9 +40,9 @@ os.chdir(Path(__file__).resolve().parent)
 seed = -1
 dim = 2
 nc = 1
-c = 0.05
+c = 0.00
 f_T = 0.0
-P0 = 0.2
+P0 = 1.0
 
 rho = [1.0 / nc]
 multi = True
@@ -74,6 +74,7 @@ ControlRule = 'linear'
 # }
 CONFIG_2D = {
     #   L:    (N_samples, max_steps)
+     4096:  ( 400,  4500),
     16384:  ( 100, 11000),
 }
 # Configuração otimizada para cálculo das médias das caudas (DIM = 3)
@@ -102,19 +103,32 @@ p0_2D = 0.8
 p0_3D = 0.5
 p0 = p0_2D if dim == 2 else p0_3D
 #p0_lst = np.linspace(0.01, 1.0, 40)
-ft_lst = np.linspace(0.41, 0.5, 10)
+p0_site = 0.59274605079016
+p0_bond = 0.5
+
+#ft_lst = np.linspace(0.01, 0.5, 50)
 type_perc_lst = ['bond', 'node']
 
 count = 0
 
 for type_perc in type_perc_lst:
     for L, (num_runs, max_steps) in config.items():
-        for f_T in ft_lst:
-#        for p0 in p0_lst:
+        # Faixa visível na Fig. 3(b) e (c): xlim(0.0005, 0.4) para site e xlim(0.0005, 0.15) para bond
+        if type_perc == 'bond':
+            # ~15 pts/década de dp=0.0005 até dp=0.15 (p0 de 0.5005 até 0.65)
+            # Se quiser ir até p0=1.0 (dp=0.5), troque 0.15 por 0.5 e n=45
+            dp_lst = np.geomspace(0.0005, 0.15, 38)
+            p0_lst = p0_bond + dp_lst
+        else:
+            # ~15 pts/década de dp=0.0005 até p0=1.0 (dp=0.407254)
+            dp_lst = np.geomspace(0.0005, 1.0 - p0_site, 45)
+            p0_lst = p0_site + dp_lst
+#        for f_T in ft_lst:
+        for p0 in p0_lst:
             p0_val = float(p0)
             exec_name = (
                 f"L_{L}_ft_{f_T:.4g}_c_{c}_nc_{nc}_dim_{dim}"
-                f"_p0_{p0:.4f}_P0_{P0:.3f}_tmax_{max_steps}_{Mode}_{InitialLayout}_{ControlRule}_type_{type_perc}.sh"
+                f"_p0_{p0:.6f}_P0_{P0:.3f}_tmax_{max_steps}_{Mode}_{InitialLayout}_{ControlRule}_type_{type_perc}.sh"
             )
             shell_data(
                 L=L,

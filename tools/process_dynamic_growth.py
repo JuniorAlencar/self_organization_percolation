@@ -337,17 +337,66 @@ def fingerprint_matches_mode(fingerprint: str | None, mode: str) -> bool:
     return False
 
 
+def read_sample_pt0_fast(path: Path) -> float | None:
+    """Read the first value of the 'pt' series quickly without parsing the entire JSON."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            chunk = handle.read(65536)
+        pt_idx = chunk.find('"pt"')
+        if pt_idx != -1:
+            bracket_start = chunk.find("[", pt_idx + 4)
+            if bracket_start != -1:
+                i = bracket_start + 1
+                n = len(chunk)
+                while i < n and chunk[i] in " \t\r\n":
+                    i += 1
+                j = i
+                while j < n and chunk[j] not in ",]\r\n \t":
+                    j += 1
+                if j > i:
+                    val = finite_float(float(chunk[i:j]))
+                    if val is not None:
+                        return val
+        with path.open("r", encoding="utf-8") as handle:
+            sample = json.load(handle)
+        results = sample.get("results", {}) if isinstance(sample, dict) else {}
+        if isinstance(results, dict):
+            for block in results.values():
+                if not isinstance(block, dict):
+                    continue
+                data = block.get("data", block)
+                if isinstance(data, dict):
+                    pt = data.get("pt")
+                    if isinstance(pt, list) and len(pt) > 0:
+                        val = finite_float(pt[0])
+                        if val is not None:
+                            return val
+        return None
+    except Exception:
+        return None
+
+
 def parse_sample_name(path: Path) -> tuple[float, float] | None:
     name = path.name
     m_p0 = RE_p0.search(name)
     m_P0 = RE_P0.search(name)
     if not m_p0:
         return None
-    p0_val = float(m_p0.group("p0"))
+    p0_val = round(float(m_p0.group("p0")), 6)
+    data_params = parse_data_dir(path.parent)
+    if (
+        data_params is not None
+        and not math.isnan(data_params.get("c", math.nan))
+        and not math.isnan(data_params.get("f_T", math.nan))
+        and math.isclose(float(data_params["c"]), 0.0, abs_tol=1e-12)
+        and math.isclose(float(data_params["f_T"]), 0.0, abs_tol=1e-12)
+    ):
+        pt0 = read_sample_pt0_fast(path)
+        if pt0 is not None:
+            p0_val = round(float(pt0), 6)
     if m_P0:
         P0_val = float(m_P0.group("P0"))
     else:
-        data_params = parse_data_dir(path.parent)
         if data_params and not math.isnan(data_params.get("f_T", math.nan)):
             P0_val = min(1.0, 1.2 * float(data_params["f_T"]))
         else:
@@ -878,13 +927,22 @@ def mean_sem_std(values: list[float]) -> tuple[float, float, float, int]:
     return mean, float(std / math.sqrt(n)), std, n
 
 
-def dat_value(value: Any) -> str:
+def dat_value(value: Any, column: str | None = None) -> str:
     if value is None:
         return "nan"
     if isinstance(value, float):
         if not math.isfinite(value):
             return "nan"
+        if column == "p0":
+            return f"{round(value, 6):.6f}"
         return f"{value:.12g}"
+    if column == "p0":
+        try:
+            fval = float(value)
+            if math.isfinite(fval):
+                return f"{round(fval, 6):.6f}"
+        except Exception:
+            pass
     return str(value)
 
 
@@ -1902,6 +1960,7 @@ def load_dynamic_sample(
     f_T_val = float(data_params["f_T"]) if data_params and "f_T" in data_params else None
 
     is_c0 = (c_val is not None and math.isclose(c_val, 0.0, abs_tol=1e-12))
+    is_ft0 = (f_T_val is not None and math.isclose(f_T_val, 0.0, abs_tol=1e-12))
 
     m_p0 = RE_p0.search(path.name)
     p0_from_file = float(m_p0.group("p0")) if m_p0 else None
@@ -1949,10 +2008,12 @@ def load_dynamic_sample(
             color_1b = None
 
         if is_c0:
-            sample_p = p0_from_file
-            if sample_p is None:
-                pt_data = data.get("pt")
-                if pt_data and len(pt_data) > 0:
+            pt_data = data.get("pt")
+            if is_ft0 and pt_data and len(pt_data) > 0:
+                sample_p = float(pt_data[0])
+            else:
+                sample_p = p0_from_file
+                if sample_p is None and pt_data and len(pt_data) > 0:
                     sample_p = float(pt_data[0])
             if sample_p is None:
                 sample_p = tail_mean_after_t_eq(data.get("time"), data.get("pt"), t_eq)
@@ -4510,7 +4571,7 @@ def write_all_data(rows: list[dict[str, Any]], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as f:
         f.write(" ".join(ALL_DATA_COLUMNS) + "\n")
         for r in rows:
-            f.write(" ".join(dat_value(r.get(col)) for col in ALL_DATA_COLUMNS) + "\n")
+            f.write(" ".join(dat_value(r.get(col), col) for col in ALL_DATA_COLUMNS) + "\n")
 
 
 def write_all_colors(rows: list[dict[str, Any]], output_path: Path) -> None:
@@ -4534,7 +4595,7 @@ def write_all_colors(rows: list[dict[str, Any]], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as f:
         f.write(" ".join(ALL_COLORS_COLUMNS) + "\n")
         for r in rows:
-            f.write(" ".join(dat_value(r.get(col)) for col in ALL_COLORS_COLUMNS) + "\n")
+            f.write(" ".join(dat_value(r.get(col), col) for col in ALL_COLORS_COLUMNS) + "\n")
 
 
 def compress_published_only(
